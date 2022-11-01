@@ -22,7 +22,7 @@ import org.apache.jena.sparql.expr.ExprList;
  *
  * @author erich
  */
-public class RapIterator implements Iterator<BindingNodeId> {
+public class BeakIterator implements Iterator<BindingNodeId> {
     private int i;
     private int low;
     private int high;
@@ -33,7 +33,7 @@ public class RapIterator implements Iterator<BindingNodeId> {
     private final boolean scan;
     private final NodeTable nodeTable;
     
-    public RapIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
+    public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
        // System.out.println(bnid+"\n==============[ "+triple.getSubject().isVariable()+" ]================== RapIterator : "+triple+" F ---> "+filter);
        // if (triple.getSubject().isVariable()) System.out.println("Subject : "+triple.getSubject().getName());
        // if (triple.getObject().isVariable()) System.out.println("Object : "+triple.getObject().getName());

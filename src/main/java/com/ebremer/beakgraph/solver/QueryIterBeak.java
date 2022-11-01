@@ -12,11 +12,11 @@ import org.apache.jena.sparql.engine.iterator.QueryIterPlainWrapper;
  *
  * @author erich
  */
-public class QueryIterRaptor extends QueryIterPlainWrapper {
+public class QueryIterBeak extends QueryIterPlainWrapper {
     final private QueryIterator originalInput;
     private final List<Abortable> killList;
     
-    public QueryIterRaptor(Iterator<Binding> iterBinding, List<Abortable> killList, QueryIterator originalInput, ExecutionContext execCxt) {
+    public QueryIterBeak(Iterator<Binding> iterBinding, List<Abortable> killList, QueryIterator originalInput, ExecutionContext execCxt) {
         super(iterBinding, execCxt);
         this.originalInput = originalInput;
         this.killList = killList;

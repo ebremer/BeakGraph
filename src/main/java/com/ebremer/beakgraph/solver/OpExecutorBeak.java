@@ -26,18 +26,18 @@ import org.apache.jena.sparql.mgt.Explain;
  *
  * @author erich
  */
-public class OpExecutorRaptor extends OpExecutor {
+public class OpExecutorBeak extends OpExecutor {
     
     public final static OpExecutorFactory opExecFactoryRaptor = new OpExecutorFactory() {
         @Override
         public OpExecutor create(ExecutionContext execCxt) { 
-            return new OpExecutorRaptor(execCxt) ; 
+            return new OpExecutorBeak(execCxt) ; 
         }
     };
     
     private final boolean isForRaptor;
 
-    protected OpExecutorRaptor(ExecutionContext execCtx) {
+    protected OpExecutorBeak(ExecutionContext execCtx) {
 	super(execCtx);
 	isForRaptor = execCtx.getActiveGraph() instanceof BeakGraph;
     }
@@ -94,7 +94,7 @@ public class OpExecutorRaptor extends OpExecutor {
             Explain.explain("Execute", pattern, execCxt.getContext());
            // Predicate<Tuple<NodeId>> filter = QC2.getFilter(execCxt.getContext());
             BeakGraph g = (BeakGraph) execCxt.getActiveGraph();
-            return PatternMatchRaptor.execute(g, pattern, input, exprs, execCxt);
+            return PatternMatchBeak.execute(g, pattern, input, exprs, execCxt);
         }
         Op op = TransformFilterPlacement.transform(exprs, pattern);
         return plainExecute(op, input, execCxt) ;
@@ -112,7 +112,7 @@ public class OpExecutorRaptor extends OpExecutor {
     }
     
     private static QueryIterator plainExecute(Op op, QueryIterator input, ExecutionContext execCxt) {
-        ExecutionContextRaptor ec2 = new ExecutionContextRaptor(execCxt, op);
+        ExecutionContextBeak ec2 = new ExecutionContextBeak(execCxt, op);
         ec2.setExecutor(plainFactory);
         return QC2.execute(op, input, ec2) ;
     }
@@ -137,7 +137,7 @@ public class OpExecutorRaptor extends OpExecutor {
         @SuppressWarnings("unchecked")
         public OpExecutorPlainRaptor(ExecutionContext execCxt) {
             super(execCxt);
-            ExecutionContextRaptor ecr = (ExecutionContextRaptor) execCxt;
+            ExecutionContextBeak ecr = (ExecutionContextBeak) execCxt;
             filter = ecr.getFilter();
         }
         
@@ -152,9 +152,9 @@ public class OpExecutorRaptor extends OpExecutor {
                // });
                 Explain.explain("Execute", bgp, execCxt.getContext()) ;
                 if (filter!=null) {
-                    return PatternMatchRaptor.execute(graphRaptor, bgp, input, filter, execCxt);
+                    return PatternMatchBeak.execute(graphRaptor, bgp, input, filter, execCxt);
                 }
-                return PatternMatchRaptor.execute(graphRaptor, bgp, input, filter, execCxt);
+                return PatternMatchBeak.execute(graphRaptor, bgp, input, filter, execCxt);
             }
             Log.warn(this, "Non-RaptorGraph passed to OpExecutorPlainRaptor");
             return super.execute(opBGP, input) ;

@@ -56,7 +56,7 @@ import org.apache.jena.vocabulary.SchemaDO;
  *
  * @author erich
  */
-public final class RaptorWriter {
+public final class BeakWriter {
     private final BufferAllocator allocator = new RootAllocator();
     private final MapDictionaryProvider provider = new MapDictionaryProvider();
     private Dictionary dictionary;
@@ -69,7 +69,7 @@ public final class RaptorWriter {
     private VarCharVector dict;
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
     
-    public RaptorWriter(Model m, File dest) throws IOException {
+    public BeakWriter(Model m, File dest) throws IOException {
         this.m = m;
         long begin = System.nanoTime();
         CreateDictionary();
@@ -84,7 +84,7 @@ public final class RaptorWriter {
         System.out.println("Done.  "+end);
     }
     
-    public RaptorWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
+    public BeakWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
         this.m = m;
         long begin = System.nanoTime();
         CreateDictionary();
@@ -192,7 +192,7 @@ public final class RaptorWriter {
             byte[] digest = md.digest();
             return DatatypeConverter.printHexBinary(digest).toUpperCase();
         } catch (NoSuchAlgorithmException ex) {
-            Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
         return null;
     }
@@ -216,9 +216,9 @@ public final class RaptorWriter {
                 writer.writeBatch();
                 writer.end();
             } catch (FileNotFoundException ex) {
-                Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
             } catch (IOException ex) {
-                Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
             }        
         });
         System.out.println("================== FILE WRITTEN =====================================");
@@ -244,9 +244,9 @@ public final class RaptorWriter {
                     .addProperty(RDFS.range, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
                     .addProperty(RDF.type, ResourceFactory.createResource("https://www.ebremer.com/beakgraph/ns/PredicateVector"));
             } catch (FileNotFoundException ex) {
-                Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
             } catch (IOException ex) {
-                Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
             }        
         });
         System.out.println("================== FILE WRITTEN =====================================");
@@ -269,7 +269,7 @@ public final class RaptorWriter {
                 .Add(target, base, "dictionary", out.toByteArray(), ZipMethod.STORED, true)
                 .addProperty(RDF.type, ResourceFactory.createResource("https://www.ebremer.com/beakgraph/ns/Dictionary"));
         } catch (IOException ex) {
-            Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
         System.out.println("================== Dictionary WRITTEN =====================================");
     }
@@ -290,9 +290,9 @@ public final class RaptorWriter {
             writer.writeBatch();
             writer.end();
         } catch (FileNotFoundException ex) {
-            Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
-            Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
         System.out.println("================== Dictionary WRITTEN =====================================");
     }
@@ -427,7 +427,7 @@ public final class RaptorWriter {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException ex) {
-                Logger.getLogger(RaptorWriter.class.getName()).log(Level.SEVERE, null, ex);
+                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
             }
         }
         System.out.println("Engine shutdown");

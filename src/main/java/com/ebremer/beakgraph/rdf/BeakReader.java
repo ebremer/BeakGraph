@@ -1,7 +1,7 @@
 package com.ebremer.beakgraph.rdf;
 
 import com.ebremer.beakgraph.solver.BindingNodeId;
-import com.ebremer.beakgraph.solver.RapIterator;
+import com.ebremer.beakgraph.solver.BeakIterator;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -31,13 +31,13 @@ import org.apache.jena.sparql.expr.ExprList;
  *
  * @author erich
  */
-public final class RaptorReader {
+public final class BeakReader {
     private NodeTable nodeTable;
     private final HashMap<String,PAR> byPredicate;
     private final BufferAllocator root;
     private Dictionary dictionary;
     
-    public RaptorReader(File file) throws FileNotFoundException, IOException {
+    public BeakReader(File file) throws FileNotFoundException, IOException {
         byPredicate = new HashMap<>();
         root = new RootAllocator();
         Files.list(file.toPath()).forEach(f->{
@@ -74,7 +74,7 @@ public final class RaptorReader {
             reader.loadRecordBatch(arrowBlock);
             return vectorSchemaRoot.getVector(0);
         } catch (IOException ex) {
-            Logger.getLogger(RaptorReader.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(BeakReader.class.getName()).log(Level.SEVERE, null, ex);
         }
         return null;
     }
@@ -100,7 +100,7 @@ public final class RaptorReader {
             PAR par = byPredicate.get(triple.getPredicate().getURI());
             LinkedList<Iterator<BindingNodeId>> its = new LinkedList<>();
             par.getAllTypes().forEach((k,dual)->{
-                Iterator<BindingNodeId> i = new RapIterator(bnid, k, dual, triple, filter, nodeTable);
+                Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable);
                 its.add(i);
             });
             return new IteratorChain(its);

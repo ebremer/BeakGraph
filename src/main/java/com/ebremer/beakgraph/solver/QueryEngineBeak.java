@@ -16,13 +16,13 @@ import org.apache.jena.sparql.util.Context;
  *
  * @author erich
  */
-public class QueryEngineRaptor extends QueryEngineMain {
+public class QueryEngineBeak extends QueryEngineMain {
     protected Query query;
     protected DatasetGraph TDataset;
     protected Binding TBinding;
     protected Context TContext;
 	
-    public QueryEngineRaptor(Query query, DatasetGraph dataset, Binding input, Context context) { 
+    public QueryEngineBeak(Query query, DatasetGraph dataset, Binding input, Context context) { 
         super(query, dataset, input, context) ;
         this.query = query;
         this.TDataset = dataset;
@@ -31,7 +31,7 @@ public class QueryEngineRaptor extends QueryEngineMain {
         context.set(ARQ.optFilterPlacementBGP, true);
     }
 	
-    public QueryEngineRaptor(Op op, DatasetGraph dataset, Binding input, Context context) {
+    public QueryEngineBeak(Op op, DatasetGraph dataset, Binding input, Context context) {
 	super(op, dataset, input, context);
     }
 
@@ -57,7 +57,7 @@ public class QueryEngineRaptor extends QueryEngineMain {
 
     	@Override
     	public Plan create(Query query, DatasetGraph dataset, Binding initial, Context context) {
-            QueryEngineRaptor engine = new QueryEngineRaptor(query, dataset, initial, context);
+            QueryEngineBeak engine = new QueryEngineBeak(query, dataset, initial, context);
             return engine.getPlan();
     	}
 

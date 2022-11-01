@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph.rdf;
 
-import com.ebremer.beakgraph.solver.OpExecutorRaptor;
-import com.ebremer.beakgraph.solver.QueryEngineRaptor;
-import com.ebremer.beakgraph.solver.StageGeneratorDirectorRaptor;
+import com.ebremer.beakgraph.solver.OpExecutorBeak;
+import com.ebremer.beakgraph.solver.QueryEngineBeak;
+import com.ebremer.beakgraph.solver.StageGeneratorDirectorBeak;
 import com.ebremer.rocrate4j.ROCrate;
 import com.ebremer.rocrate4j.destinations.ZipDestination;
 import java.io.File;
@@ -42,18 +42,18 @@ import org.apache.jena.vocabulary.SchemaDO;
  */
 public class BeakGraph extends GraphBase {
     static {
-	QC.setFactory(ARQ.getContext(), OpExecutorRaptor.opExecFactoryRaptor);
-	QueryEngineRaptor.register();
+	QC.setFactory(ARQ.getContext(), OpExecutorBeak.opExecFactoryRaptor);
+	QueryEngineBeak.register();
     }
 
-    private final RaptorReader reader;
+    private final BeakReader reader;
 
     public BeakGraph(File file) throws IOException {
-        reader = new RaptorReader(file);
+        reader = new BeakReader(file);
         wireIntoExecution();
     }
     
-    public RaptorReader getReader() {
+    public BeakReader getReader() {
         return reader;
     }
 
@@ -91,7 +91,7 @@ public class BeakGraph extends GraphBase {
     private static void wireIntoExecution() {
         Context cxt = ARQ.getContext() ;
         StageGenerator orig = StageBuilder.chooseStageGenerator(cxt) ;
-        StageGenerator stageGenerator = new StageGeneratorDirectorRaptor(orig) ;
+        StageGenerator stageGenerator = new StageGeneratorDirectorBeak(orig) ;
         StageBuilder.setGenerator(ARQ.getContext(), stageGenerator) ;
     }
     
@@ -169,7 +169,7 @@ public class BeakGraph extends GraphBase {
             Model m = ModelFactory.createDefaultModel();
             RDFDataMgr.read(m, new GZIPInputStream(new FileInputStream("/nlms2/halcyon/TCGA-3C-AALI-01Z-00-DX1.F6E9A5DF-D8FB-45CF-B4BD-C6B76294C291.ttl.gz")), Lang.TURTLE);
             ROCrate.Builder builder = new ROCrate.Builder(new ZipDestination(new File("d:\\nlms2\\halcyon\\x.zip")));
-            new RaptorWriter(m, builder, "halcyon");
+            new BeakWriter(m, builder, "halcyon");
             builder.build();
         }
         //RaptorGraph g = new RaptorGraph(file);

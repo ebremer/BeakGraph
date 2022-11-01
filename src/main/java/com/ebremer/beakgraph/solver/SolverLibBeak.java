@@ -13,7 +13,7 @@ import org.apache.jena.sparql.engine.binding.Binding;
  *
  * @author erich
  */
-public class SolverLibRaptor {
+public class SolverLibBeak {
     
     public static Iterator<BindingNodeId> convertToIds(Iterator<Binding> iterBindings, NodeTable nodeTable) {
         return Iter.map(iterBindings, convFromBinding(nodeTable));
@@ -32,7 +32,7 @@ public class SolverLibRaptor {
     }
 
     public static Function<Binding, BindingNodeId> convFromBinding(final NodeTable nodeTable) {
-        return binding -> SolverLibRaptor.convert(binding, nodeTable);
+        return binding -> SolverLibBeak.convert(binding, nodeTable);
     }
 
     public static BindingNodeId convert(Binding binding, NodeTable nodeTable) {

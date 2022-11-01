@@ -15,7 +15,7 @@ import org.apache.jena.tdb.solver.BindingNodeId;
  *
  * @author erich
  */
-public class SolverRXRaptor {
+public class SolverRXBeak {
 
     static Iterator<BindingNodeId> matchQuadPattern(Iterator<BindingNodeId> chain, Node graphNode, Triple tPattern, Tuple<Node> patternTuple, ExecutionContext execCxt) {
         throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody

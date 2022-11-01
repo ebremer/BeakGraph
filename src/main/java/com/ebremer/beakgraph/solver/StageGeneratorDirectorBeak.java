@@ -10,12 +10,12 @@ import org.apache.jena.sparql.engine.main.StageGenerator;
 /** Execute TDB requests directly -- no reordering
  *  Using OpExecutor is preferred.
  */
-public class StageGeneratorDirectorRaptor implements StageGenerator
+public class StageGeneratorDirectorBeak implements StageGenerator
 {
     // Using OpExecutor is preferred.
     StageGenerator above = null ;
 
-    public StageGeneratorDirectorRaptor(StageGenerator original) {
+    public StageGeneratorDirectorBeak(StageGenerator original) {
         above = original ;
     }
 
@@ -28,6 +28,6 @@ public class StageGeneratorDirectorRaptor implements StageGenerator
             return above.execute(pattern, input, execCxt);
         BeakGraph graph = (BeakGraph)g ;
         //Predicate<Tuple<NodeId>> filter = QC2.getFilter(execCxt.getContext());
-        return PatternMatchRaptor.execute(graph, pattern, input, null, execCxt);
+        return PatternMatchBeak.execute(graph, pattern, input, null, execCxt);
     }
 }

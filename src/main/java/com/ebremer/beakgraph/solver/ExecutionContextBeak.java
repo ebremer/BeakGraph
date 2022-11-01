@@ -13,10 +13,10 @@ import org.apache.jena.sparql.expr.ExprList;
  *
  * @author erich
  */
-public class ExecutionContextRaptor extends ExecutionContext {
+public class ExecutionContextBeak extends ExecutionContext {
     private final Op op;
     
-    public ExecutionContextRaptor(ExecutionContext other, Op op) {
+    public ExecutionContextBeak(ExecutionContext other, Op op) {
         super(other);
         this.op = op;
     }
