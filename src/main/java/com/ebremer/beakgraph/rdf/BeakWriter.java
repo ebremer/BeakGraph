@@ -68,7 +68,8 @@ public final class BeakWriter {
     private final NodeTable nt;
     private VarCharVector dict;
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
-    
+
+/*    
     public BeakWriter(Model m, File dest) throws IOException {
         this.m = m;
         long begin = System.nanoTime();
@@ -83,6 +84,7 @@ public final class BeakWriter {
         long end = (long) ((System.nanoTime()-begin)/1000000000d);
         System.out.println("Done.  "+end);
     }
+    */
     
     public BeakWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
         this.m = m;
@@ -238,11 +240,11 @@ public final class BeakWriter {
                 writer.writeBatch();
                 writer.end();
                 Resource rde = roc.getRDE();
-                Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
+                Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
                 roc
                     .Add(target, base, MD5(v.getField().getName().getBytes()), out.toByteArray(), ZipMethod.STORED, true)
                     .addProperty(RDFS.range, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
-                    .addProperty(RDF.type, ResourceFactory.createResource("https://www.ebremer.com/beakgraph/ns/PredicateVector"));
+                    .addProperty(RDF.type, BG.PredicateVector);
             } catch (FileNotFoundException ex) {
                 Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
             } catch (IOException ex) {
@@ -267,7 +269,7 @@ public final class BeakWriter {
             Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
             roc
                 .Add(target, base, "dictionary", out.toByteArray(), ZipMethod.STORED, true)
-                .addProperty(RDF.type, ResourceFactory.createResource("https://www.ebremer.com/beakgraph/ns/Dictionary"));
+                .addProperty(RDF.type, BG.Dictionary);
         } catch (IOException ex) {
             Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }

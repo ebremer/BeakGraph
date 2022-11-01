@@ -42,6 +42,7 @@ import org.apache.jena.vocabulary.SchemaDO;
  * @author erich
  */
 public class BeakGraph extends GraphBase {
+    
     static {
 	QC.setFactory(ARQ.getContext(), OpExecutorBeak.opExecFactoryRaptor);
 	QueryEngineBeak.register();
