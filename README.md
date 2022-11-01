@@ -1,4 +1,4 @@
-"# BeakGraph" 
+# BeakGraph<br>
 <img
   src="https://github.com/ebremer/BeakGraph/raw/master/beakgraph.png?raw=true"
   alt="Alt text"
