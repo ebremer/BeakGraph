@@ -1,6 +1,6 @@
 "# BeakGraph" 
 <img
-  src="/ebremer/BeakGraph/raw/master/beakgraph.png?raw=true"
+  src="https://github.com/ebremer/BeakGraph/raw/master/beakgraph.png?raw=true"
   alt="Alt text"
-  title="Optional title"
+  title="BeakGraph"
   style="display: inline-block; margin: 0 auto; max-width: 300px">
