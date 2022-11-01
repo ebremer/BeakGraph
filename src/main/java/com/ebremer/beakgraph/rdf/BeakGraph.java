@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.solver.OpExecutorBeak;
 import com.ebremer.beakgraph.solver.QueryEngineBeak;
 import com.ebremer.beakgraph.solver.StageGeneratorDirectorBeak;
 import com.ebremer.rocrate4j.ROCrate;
+import com.ebremer.rocrate4j.destinations.FolderDestination;
 import com.ebremer.rocrate4j.destinations.ZipDestination;
 import java.io.File;
 import java.io.FileInputStream;
@@ -169,6 +170,7 @@ public class BeakGraph extends GraphBase {
             Model m = ModelFactory.createDefaultModel();
             RDFDataMgr.read(m, new GZIPInputStream(new FileInputStream("/nlms2/halcyon/TCGA-3C-AALI-01Z-00-DX1.F6E9A5DF-D8FB-45CF-B4BD-C6B76294C291.ttl.gz")), Lang.TURTLE);
             ROCrate.Builder builder = new ROCrate.Builder(new ZipDestination(new File("d:\\nlms2\\halcyon\\x.zip")));
+         //   ROCrate.Builder builder = new ROCrate.Builder(new FolderDestination(new File("d:\\nlms2\\halcyon\\x")));
             new BeakWriter(m, builder, "halcyon");
             builder.build();
         }
