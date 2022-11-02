@@ -2,10 +2,13 @@ package com.ebremer.beakgraph.rdf;
 
 import com.ebremer.beakgraph.solver.BindingNodeId;
 import com.ebremer.beakgraph.solver.BeakIterator;
+import com.ebremer.rocrate4j.ROCrate;
+import com.ebremer.rocrate4j.ROCrateReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -25,21 +28,79 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.graph.Triple;
+import org.apache.jena.query.ParameterizedSparqlString;
+import org.apache.jena.query.QueryExecution;
+import org.apache.jena.query.QueryExecutionFactory;
+import org.apache.jena.query.ResultSet;
+import org.apache.jena.rdf.model.Model;
 import org.apache.jena.sparql.expr.ExprList;
+import org.apache.jena.vocabulary.RDFS;
+import org.apache.jena.vocabulary.SchemaDO;
 
 /**
  *
  * @author erich
  */
 public final class BeakReader {
-    private NodeTable nodeTable;
+    private final NodeTable nodeTable;
     private final HashMap<String,PAR> byPredicate;
     private final BufferAllocator root;
-    private Dictionary dictionary;
+    private final Dictionary dictionary;
+    private final Model manifest;
+    private String base;
+    private final ROCrateReader reader;
     
-    public BeakReader(File file) throws FileNotFoundException, IOException {
+    public BeakReader(ROCrateReader reader) throws FileNotFoundException, IOException {
+        this.reader = reader;
         byPredicate = new HashMap<>();
         root = new RootAllocator();
+        manifest = reader.getManifest();
+        this.base = reader.getBase();
+        ParameterizedSparqlString pss = new ParameterizedSparqlString(
+            """
+            select ?file where {
+                ?s a bg:BeakGraph; so:hasPart ?file .
+                ?file a bg:PredicateVector .
+            }
+            """);
+        pss.setNsPrefix("bg", BG.NS);
+        pss.setNsPrefix("rdfs", RDFS.uri);
+        pss.setNsPrefix("so", SchemaDO.NS);
+        QueryExecution qe = QueryExecutionFactory.create(pss.toString(), manifest);
+        ResultSet rs = qe.execSelect();
+        rs.forEachRemaining(qs->{
+            String x = qs.get("file").asResource().getURI();  
+            x = x.substring(base.length()+1, x.length());
+            System.out.println("=================================> "+x);
+            try {
+                SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
+                ArrowFileReader afr = new ArrowFileReader(xxx, root);
+                VectorSchemaRoot za = afr.getVectorSchemaRoot();
+                afr.loadNextBatch();
+                StructVector v = (StructVector) za.getVector(0);
+                String p = v.getName();                
+                String dt = p.substring(0, 1);
+                p = p.substring(1);
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAR(p));
+                }
+                PAR par = byPredicate.get(p);
+                par.put(dt, v);
+            } catch (FileNotFoundException ex) {
+                Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
+            } catch (IOException ex) {
+                Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        });
+        
+        DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
+        SeekableByteChannel d = reader.getSeekableByteChannel("dictionary");
+        ArrowFileReader afr = new ArrowFileReader(d, root);
+        VectorSchemaRoot za = afr.getVectorSchemaRoot();
+        afr.loadNextBatch();
+        dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
+        nodeTable = new NodeTable(dictionary);
+        /*
         Files.list(file.toPath()).forEach(f->{
             FieldVector vx = ReadVector(f);
             if ("dictionary".equals(f.toFile().getName())) {
@@ -57,8 +118,12 @@ public final class BeakReader {
                 PAR par = byPredicate.get(p);
                 par.put(dt, v);
             }
-        });
+        });*/
         //DisplayAll();
+    }
+    
+    public String getBase() {
+        return base;
     }
 
     public NodeTable getNodeTable() {

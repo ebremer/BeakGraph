@@ -4,13 +4,12 @@ import com.ebremer.beakgraph.solver.OpExecutorBeak;
 import com.ebremer.beakgraph.solver.QueryEngineBeak;
 import com.ebremer.beakgraph.solver.StageGeneratorDirectorBeak;
 import com.ebremer.rocrate4j.ROCrate;
-import com.ebremer.rocrate4j.destinations.FolderDestination;
-import com.ebremer.rocrate4j.destinations.ZipDestination;
+import com.ebremer.rocrate4j.ROCrateReader;
+import com.ebremer.rocrate4j.readers.ZipReader;
+import com.ebremer.rocrate4j.writers.ZipWriter;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.stream.Stream;
-import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.graph.impl.GraphBase;
@@ -22,8 +21,6 @@ import org.apache.jena.query.ResultSet;
 import org.apache.jena.query.ResultSetFormatter;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.shared.AddDeniedException;
 import org.apache.jena.shared.DeleteDeniedException;
 import org.apache.jena.sparql.engine.main.QC;
@@ -50,8 +47,8 @@ public class BeakGraph extends GraphBase {
 
     private final BeakReader reader;
 
-    public BeakGraph(File file) throws IOException {
-        reader = new BeakReader(file);
+    public BeakGraph(ROCrateReader rocreader) throws IOException {
+        this.reader = new BeakReader(rocreader);
         wireIntoExecution();
     }
     
@@ -163,19 +160,19 @@ public class BeakGraph extends GraphBase {
     public ReorderTransformation getReorderTransform() {
         return null;
     }
-    
+       
     public static void main(String[] args) throws IOException {
         System.out.println("Loading RDF...");
-        File file = new File("/nlms2/halcyon/boo");
-        if (!file.exists()) {
-            Model m = ModelFactory.createDefaultModel();
-            RDFDataMgr.read(m, new GZIPInputStream(new FileInputStream("/nlms2/halcyon/TCGA-3C-AALI-01Z-00-DX1.F6E9A5DF-D8FB-45CF-B4BD-C6B76294C291.ttl.gz")), Lang.TURTLE);
-            ROCrate.Builder builder = new ROCrate.Builder(new ZipDestination(new File("d:\\nlms2\\halcyon\\x.zip")));
-         //   ROCrate.Builder builder = new ROCrate.Builder(new FolderDestination(new File("d:\\nlms2\\halcyon\\x")));
-            new BeakWriter(m, builder, "halcyon");
-            builder.build();
-        }
-        //RaptorGraph g = new RaptorGraph(file);
-        //g.Core();
+        /*
+        Model m = ModelFactory.createDefaultModel();
+        RDFDataMgr.read(m, new GZIPInputStream(new FileInputStream("/nlms2/halcyon/TCGA-3C-AALI-01Z-00-DX1.F6E9A5DF-D8FB-45CF-B4BD-C6B76294C291.ttl.gz")), Lang.TURTLE);
+        //ROCrate.Builder builder = new ROCrate.Builder(new ZipWriter(new File("d:\\nlms2\\halcyon\\x.zip")));
+        ROCrate.Builder builder = new ROCrate.Builder(new FolderWriter(new File("d:\\nlms2\\halcyon\\x")));
+        new BeakWriter(m, builder, "halcyon");
+        builder.build();
+        */
+        String base = "http://www.ebremer.com/YAY";
+        BeakGraph g = new BeakGraph(new ROCrateReader(base, new ZipReader(new File("d:\\nlms2\\halcyon\\x.zip"))));
+        g.Core();
     }    
 }
