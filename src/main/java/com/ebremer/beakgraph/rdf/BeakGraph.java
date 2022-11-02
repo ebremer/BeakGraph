@@ -3,10 +3,8 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.solver.OpExecutorBeak;
 import com.ebremer.beakgraph.solver.QueryEngineBeak;
 import com.ebremer.beakgraph.solver.StageGeneratorDirectorBeak;
-import com.ebremer.rocrate4j.ROCrate;
 import com.ebremer.rocrate4j.ROCrateReader;
 import com.ebremer.rocrate4j.readers.ZipReader;
-import com.ebremer.rocrate4j.writers.ZipWriter;
 import java.io.File;
 import java.io.IOException;
 import java.util.stream.Stream;
@@ -130,11 +128,11 @@ public class BeakGraph extends GraphBase {
             """); 
         */
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
-                """
-                select * where {
-                    
-                }
-                """);
+            """
+            select * where {
+                ?s oa:hasBody ?body
+            } limit 20
+            """);
         pss.setNsPrefix("", "https://www.ebremer.com/ns/");
         pss.setNsPrefix("rdf", RDF.uri);
         pss.setNsPrefix("rdfs", RDFS.uri);
@@ -145,6 +143,7 @@ public class BeakGraph extends GraphBase {
         pss.setNsPrefix("dcmi", "http://purl.org/dc/terms/");
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(), m);
         ResultSet results = qe.execSelect();
+        System.out.println("======================= DONE ============================= ");
         ResultSetFormatter.out(System.out, results);
     }
     

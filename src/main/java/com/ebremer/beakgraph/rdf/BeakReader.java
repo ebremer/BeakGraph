@@ -19,6 +19,7 @@ import java.util.logging.Logger;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
@@ -71,13 +72,14 @@ public final class BeakReader {
         rs.forEachRemaining(qs->{
             String x = qs.get("file").asResource().getURI();  
             x = x.substring(base.length()+1, x.length());
-            System.out.println("=================================> "+x);
+            System.out.println("Load Vector ---> "+x);
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
                 ArrowFileReader afr = new ArrowFileReader(xxx, root);
                 VectorSchemaRoot za = afr.getVectorSchemaRoot();
                 afr.loadNextBatch();
                 StructVector v = (StructVector) za.getVector(0);
+                System.out.println(v.getName()+" "+v.getValueCount());
                 String p = v.getName();                
                 String dt = p.substring(0, 1);
                 p = p.substring(1);
@@ -94,12 +96,14 @@ public final class BeakReader {
         });
         
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        SeekableByteChannel d = reader.getSeekableByteChannel("dictionary");
+        SeekableByteChannel d = reader.getSeekableByteChannel("halcyon/dictionary");
         ArrowFileReader afr = new ArrowFileReader(d, root);
         VectorSchemaRoot za = afr.getVectorSchemaRoot();
         afr.loadNextBatch();
         dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
         nodeTable = new NodeTable(dictionary);
+        ValueVector vv = (ValueVector) za.getVector(0);
+        System.out.println("Dictionary Loaded : "+vv.getValueCount());
         /*
         Files.list(file.toPath()).forEach(f->{
             FieldVector vx = ReadVector(f);
