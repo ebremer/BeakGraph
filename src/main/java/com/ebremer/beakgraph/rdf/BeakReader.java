@@ -2,14 +2,11 @@ package com.ebremer.beakgraph.rdf;
 
 import com.ebremer.beakgraph.solver.BindingNodeId;
 import com.ebremer.beakgraph.solver.BeakIterator;
-import com.ebremer.rocrate4j.ROCrate;
 import com.ebremer.rocrate4j.ROCrateReader;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.channels.SeekableByteChannel;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -49,10 +46,9 @@ public final class BeakReader {
     private final Dictionary dictionary;
     private final Model manifest;
     private String base;
-    private final ROCrateReader reader;
+    private int numtriples = 0;
     
     public BeakReader(ROCrateReader reader) throws FileNotFoundException, IOException {
-        this.reader = reader;
         byPredicate = new HashMap<>();
         root = new RootAllocator();
         manifest = reader.getManifest();
@@ -72,16 +68,15 @@ public final class BeakReader {
         rs.forEachRemaining(qs->{
             String x = qs.get("file").asResource().getURI();  
             x = x.substring(base.length()+1, x.length());
-            System.out.println("Load Vector ---> "+x);
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
                 ArrowFileReader afr = new ArrowFileReader(xxx, root);
                 VectorSchemaRoot za = afr.getVectorSchemaRoot();
                 afr.loadNextBatch();
                 StructVector v = (StructVector) za.getVector(0);
-                System.out.println(v.getName()+" "+v.getValueCount());
                 String p = v.getName();                
                 String dt = p.substring(0, 1);
+                numtriples = numtriples + v.getValueCount();
                 p = p.substring(1);
                 if (!byPredicate.containsKey(p)) {
                     byPredicate.put(p, new PAR(p));
@@ -103,27 +98,11 @@ public final class BeakReader {
         dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
         nodeTable = new NodeTable(dictionary);
         ValueVector vv = (ValueVector) za.getVector(0);
-        System.out.println("Dictionary Loaded : "+vv.getValueCount());
-        /*
-        Files.list(file.toPath()).forEach(f->{
-            FieldVector vx = ReadVector(f);
-            if ("dictionary".equals(f.toFile().getName())) {
-                DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-                dictionary = new Dictionary(vx, dictionaryEncoding);
-                nodeTable = new NodeTable(dictionary);
-            } else {
-                StructVector v = (StructVector) vx;
-                String p = v.getName();                
-                String dt = p.substring(0, 1);
-                p = p.substring(1);
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAR(p));
-                }
-                PAR par = byPredicate.get(p);
-                par.put(dt, v);
-            }
-        });*/
-        //DisplayAll();
+        DisplayAll();
+    }
+    
+    public int getNumberOfTriples() {
+        return numtriples;
     }
     
     public String getBase() {
@@ -137,10 +116,10 @@ public final class BeakReader {
     public FieldVector ReadVector(Path p) {
         try {
             FileInputStream fileInputStream = new FileInputStream(p.toFile());
-            ArrowFileReader reader = new ArrowFileReader(fileInputStream.getChannel(), root);
-            VectorSchemaRoot vectorSchemaRoot = reader.getVectorSchemaRoot();
-            ArrowBlock arrowBlock = reader.getRecordBlocks().get(0);
-            reader.loadRecordBatch(arrowBlock);
+            ArrowFileReader afr = new ArrowFileReader(fileInputStream.getChannel(), root);
+            VectorSchemaRoot vectorSchemaRoot = afr.getVectorSchemaRoot();
+            ArrowBlock arrowBlock = afr.getRecordBlocks().get(0);
+            afr.loadRecordBatch(arrowBlock);
             return vectorSchemaRoot.getVector(0);
         } catch (IOException ex) {
             Logger.getLogger(BeakReader.class.getName()).log(Level.SEVERE, null, ex);
@@ -149,13 +128,14 @@ public final class BeakReader {
     }
     
     public void DisplayAll() {
-        System.out.println("byPredicate =========================================== "+byPredicate.size());
+        System.out.println("Predicate Vectors >>>>=========================================== "+byPredicate.size());
         byPredicate.forEach((p,par)->{
             par.getAllTypes().forEach((dt,s)->{
                 System.out.println(p+" "+dt+" "+s.getValueCount());
             });
         });
-        System.out.println("byPredicate ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
+        System.out.println("^^^^^^^^^^^^^^^^ End of Predicate Vectors ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
+        System.out.println("Dictionary Loaded : "+nodeTable.getDictionary().getVector().getValueCount());
     }
 
     public Iterator<BindingNodeId> Read(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {

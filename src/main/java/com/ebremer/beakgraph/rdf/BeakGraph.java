@@ -85,6 +85,11 @@ public class BeakGraph extends GraphBase {
         throw new UnsupportedOperationException("Not supported yet."); 
     }
     
+    @Override
+    protected int graphBaseSize() {
+        return reader.getNumberOfTriples();
+    }
+    
     private static void wireIntoExecution() {
         Context cxt = ARQ.getContext() ;
         StageGenerator orig = StageBuilder.chooseStageGenerator(cxt) ;
