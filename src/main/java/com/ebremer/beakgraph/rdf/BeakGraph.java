@@ -12,13 +12,6 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.graph.impl.GraphBase;
 import org.apache.jena.query.ARQ;
-import org.apache.jena.query.ParameterizedSparqlString;
-import org.apache.jena.query.QueryExecution;
-import org.apache.jena.query.QueryExecutionFactory;
-import org.apache.jena.query.ResultSet;
-import org.apache.jena.query.ResultSetFormatter;
-import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.shared.AddDeniedException;
 import org.apache.jena.shared.DeleteDeniedException;
 import org.apache.jena.sparql.engine.main.QC;
@@ -27,10 +20,6 @@ import org.apache.jena.sparql.engine.main.StageGenerator;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.util.iterator.ExtendedIterator;
-import org.apache.jena.vocabulary.OA;
-import org.apache.jena.vocabulary.RDF;
-import org.apache.jena.vocabulary.RDFS;
-import org.apache.jena.vocabulary.SchemaDO;
 
 /**
  *
@@ -96,7 +85,7 @@ public class BeakGraph extends GraphBase {
         StageGenerator stageGenerator = new StageGeneratorDirectorBeak(orig) ;
         StageBuilder.setGenerator(ARQ.getContext(), stageGenerator) ;
     }
-    
+    /*
     public void Core() {    
         Model m = ModelFactory.createModelForGraph(this);
         /*
@@ -121,17 +110,8 @@ public class BeakGraph extends GraphBase {
                 #filter(?certainty<1.0)
             } limit 10
             """); 
-        */
         
-        /*
-        """
-            select * where {
-                ?CreateAction a so:CreateAction;
-                so:object/exif:width ?width;
-                so:object/exif:height ?height
-            } limit 1
-            """); 
-        */
+        
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select * where {
@@ -160,7 +140,7 @@ public class BeakGraph extends GraphBase {
         ResultSetFormatter.out(System.out, results);
         System.out.println("Lapse : "+(System.nanoTime()-begin));
     }
-
+*/
     public ReorderTransformation getReorderTransform() {
         return null;
     }
@@ -177,6 +157,6 @@ public class BeakGraph extends GraphBase {
         */
         String base = "http://www.ebremer.com/YAY";
         BeakGraph g = new BeakGraph(new ROCrateReader(base, new ZipReader(new File("d:\\nlms2\\halcyon\\x.zip"))));
-        g.Core();
+    //    g.Core();
     }    
 }
