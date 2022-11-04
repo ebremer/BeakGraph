@@ -3,9 +3,14 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.solver.BindingNodeId;
 import com.ebremer.beakgraph.solver.BeakIterator;
 import com.ebremer.rocrate4j.ROCrateReader;
+import com.ebremer.rocrate4j.readers.FolderReader;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -41,14 +46,15 @@ import org.apache.jena.vocabulary.SchemaDO;
  */
 public final class BeakReader {
     private final NodeTable nodeTable;
-    private final HashMap<String,PAR> byPredicate;
-    private final BufferAllocator root;
+    private HashMap<String,PAR> byPredicate;
+    private BufferAllocator root;
     private final Dictionary dictionary;
     private final Model manifest;
-    private String base;
+    private final String base;
     private int numtriples = 0;
     
-    public BeakReader(ROCrateReader reader) throws FileNotFoundException, IOException {
+    public BeakReader(String base, URI uri) throws FileNotFoundException, IOException {
+        ROCrateReader reader = new ROCrateReader(base, uri);
         byPredicate = new HashMap<>();
         root = new RootAllocator();
         manifest = reader.getManifest();
@@ -99,6 +105,12 @@ public final class BeakReader {
         nodeTable = new NodeTable(dictionary);
         ValueVector vv = (ValueVector) za.getVector(0);
         DisplayAll();
+    }
+    
+    public static void main(String[] args) throws URISyntaxException {
+        File file = new File("d:\\nlms2\\halcyon\\x.zip");
+  //      new BeakReader(file.toURI());
+    //    new BeakReader(new URI("https://www.ebremer.com/wow.zip"));
     }
     
     public int getNumberOfTriples() {

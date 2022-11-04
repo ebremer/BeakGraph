@@ -7,6 +7,7 @@ import com.ebremer.rocrate4j.ROCrateReader;
 import com.ebremer.rocrate4j.readers.ZipReader;
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
@@ -34,8 +35,8 @@ public class BeakGraph extends GraphBase {
 
     private final BeakReader reader;
 
-    public BeakGraph(ROCrateReader rocreader) throws IOException {
-        this.reader = new BeakReader(rocreader);
+    public BeakGraph(String base, URI uri) throws IOException {
+        this.reader = new BeakReader(base, uri);
         wireIntoExecution();
     }
     
@@ -156,7 +157,7 @@ public class BeakGraph extends GraphBase {
         builder.build();
         */
         String base = "http://www.ebremer.com/YAY";
-        BeakGraph g = new BeakGraph(new ROCrateReader(base, new ZipReader(new File("d:\\nlms2\\halcyon\\x.zip"))));
+   //     BeakGraph g = new BeakGraph(new ROCrateReader(base, new ZipReader(new File("d:\\nlms2\\halcyon\\x.zip"))));
     //    g.Core();
     }    
 }
