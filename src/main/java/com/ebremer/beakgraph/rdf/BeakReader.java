@@ -107,6 +107,10 @@ public final class BeakReader {
         DisplayAll();
     }
     
+    public HashMap<String,PAR> getPredicates() {
+        return byPredicate;
+    }
+    
     public static void main(String[] args) throws URISyntaxException {
         File file = new File("d:\\nlms2\\halcyon\\x.zip");
   //      new BeakReader(file.toURI());
