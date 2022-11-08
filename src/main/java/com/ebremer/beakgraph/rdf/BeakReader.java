@@ -3,14 +3,13 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.solver.BindingNodeId;
 import com.ebremer.beakgraph.solver.BeakIterator;
 import com.ebremer.rocrate4j.ROCrateReader;
-import com.ebremer.rocrate4j.readers.FolderReader;
+import com.ebremer.rocrate4j.StopWatch;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -58,6 +57,7 @@ public final class BeakReader {
         byPredicate = new HashMap<>();
         root = new RootAllocator();
         manifest = reader.getManifest();
+        //sw.Lapse("Manifest Loaded...");
         this.base = reader.getBase();
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
@@ -95,16 +95,19 @@ public final class BeakReader {
                 Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
             }
         });
-        
+        //sw.Lapse("Vectors Loaded...");
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
         SeekableByteChannel d = reader.getSeekableByteChannel("halcyon/dictionary");
         ArrowFileReader afr = new ArrowFileReader(d, root);
         VectorSchemaRoot za = afr.getVectorSchemaRoot();
         afr.loadNextBatch();
+        //sw.Lapse("Dictionary Loaded...");
         dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
+        //sw.Lapse("Dictionary Processed...");
         nodeTable = new NodeTable(dictionary);
+        //sw.Lapse("NodeTableCreated...");
         ValueVector vv = (ValueVector) za.getVector(0);
-        DisplayAll();
+        //DisplayAll();
     }
     
     public HashMap<String,PAR> getPredicates() {

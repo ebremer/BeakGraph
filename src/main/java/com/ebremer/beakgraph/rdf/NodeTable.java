@@ -3,6 +3,12 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.store.NodeId;
 import com.ebremer.beakgraph.store.NodeType;
 import java.util.HashMap;
+import org.apache.arrow.algorithm.search.VectorSearcher;
+import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
+import org.apache.arrow.algorithm.sort.VectorValueComparator;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
 import org.apache.jena.datatypes.xsd.XSDDatatype;
@@ -18,29 +24,48 @@ public class NodeTable {
     private final VarCharVector dictionary;
     private final HashMap<String, Integer> map;
     private final Dictionary dict;
+    private final VectorValueComparator<VarCharVector> comparator;
+    private long hits = 0;
     
     public NodeTable(Dictionary v) {
         this.dict = v;
         dictionary = (VarCharVector) v.getVector();
         map = new HashMap<>(dictionary.getValueCount());
-        for(int i=0; i<dictionary.getValueCount();i++) {
-            map.put(new String(dictionary.get(i)), i);
-        }
+        comparator = DefaultVectorComparators.createDefaultComparator(dictionary);
+        //for(int i=0; i<dictionary.getValueCount();i++) {
+          //  map.put(new String(dictionary.get(i)), i);
+        //}
+        //System.out.println("Dictionary size : "+dictionary.getValueCount());
     }
     
     public Dictionary getDictionary() {
         return dict;
     }
 
-    public int getID(String n) {
-        if (map.containsKey(n)) {
-            return map.get(n);
+    public int getID(String s) {
+        if (map.containsKey(s)) {
+            return map.get(s);
         }
-        throw new Error("not in dictionary : "+n);
-    }
-    
-    public HashMap<String, Integer> getMap() {
-        return map;
+        //System.out.println("Search --> "+s);
+        try (
+            BufferAllocator allocator = new RootAllocator();
+            VarCharVector key = new VarCharVector("", allocator);
+        ) {
+            key.allocateNew(1);
+            key.setValueCount(1);
+            key.set(0, s.getBytes());
+            int result = VectorSearcher.binarySearch(dictionary, comparator, key, 0);
+            if (result!=VectorSearcher.SEARCH_FAIL_RESULT) {
+                //System.out.println("Search Results --> "+result);
+                hits++;
+                //System.out.println("Hits : "+hits);
+                String blah = new String(dictionary.get(result));
+                //System.out.println("YAY --> "+result+"  "+blah);
+                map.put(blah, result);
+                return result;
+            }
+        }      
+        throw new Error("not in dictionary : "+s);
     }
     
     public NodeId getNodeIdForNode(Node n) {
