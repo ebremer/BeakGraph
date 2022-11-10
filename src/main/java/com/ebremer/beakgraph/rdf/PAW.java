@@ -173,16 +173,16 @@ public class PAW {
         System.out.println("Finishing : "+p+" "+cs.size());
         cs.forEach((k,v)->{
             v.getWriter().setValueCount(counts.get(k));
-            System.out.println(p+" ["+k+"] AAA >>> "+counts.get(k)+ " XYXYXYXY "+v.getValueCount()+" === this finish ---> "+v.getChild("o").getValueCount());
-            System.out.println(p+" ZAM ===> "+v);
+            //System.out.println(p+" ["+k+"] AAA >>> "+counts.get(k)+ " XYXYXYXY "+v.getValueCount()+" === this finish ---> "+v.getChild("o").getValueCount());
+            //System.out.println(p+" ZAM ===> "+v);
             //DisplayVector(v.getChild("s"));
             //DisplayVector(v.getChild("o"));
             StructVector z = upgrade(k,v);
-            System.out.println(p+" ["+k+"] XXX >>> "+z.getValueCount()+"  "+z);
-            System.out.println("BF/V : "+fields.size()+" "+vectors.size());
+            //System.out.println(p+" ["+k+"] XXX >>> "+z.getValueCount()+"  "+z);
+            //System.out.println("BF/V : "+fields.size()+" "+vectors.size());
             fields.add(z.getField());
             vectors.add(z);
-            System.out.println("AF/V : "+fields.size()+" "+vectors.size());
+            //System.out.println("AF/V : "+fields.size()+" "+vectors.size());
         });
     }
     

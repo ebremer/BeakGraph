@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.rdf;
 
 import com.ebremer.rocrate4j.ROCrate;
+import com.ebremer.rocrate4j.StopWatch;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -67,37 +68,24 @@ public final class BeakWriter {
     private long numresources = 0;
     private final NodeTable nt;
     private VarCharVector dict;
+    private final Resource metairi;
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
-
-/*    
-    public BeakWriter(Model m, File dest) throws IOException {
-        this.m = m;
-        long begin = System.nanoTime();
-        CreateDictionary();
-        nt = new NodeTable(dictionary);
-        Create(m);
-        System.out.println("# of vectors : "+vectors.size());
-        WriteDataToFile(dest);
-        File dp = Path.of(dest.toString(),"dictionary").toFile();
-        WriteDictionaryToFile(dp);
-        DisplayMeta();
-        long end = (long) ((System.nanoTime()-begin)/1000000000d);
-        System.out.println("Done.  "+end);
-    }
-    */
     
     public BeakWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
         this.m = m;
-        long begin = System.nanoTime();
+        StopWatch sw = new StopWatch();
         CreateDictionary();
         nt = new NodeTable(dictionary);
         Create(m);
         System.out.println("# of vectors : "+vectors.size());
         WriteDataToFile(base, roc);
-        WriteDictionaryToFile(base, roc);
+        metairi = WriteDictionaryToFile(base, roc);
         DisplayMeta();
-        long end = (long) ((System.nanoTime()-begin)/1000000000d);
-        System.out.println("Done.  "+end);
+        sw.Lapse("BeakGraph Completed");
+    }
+    
+    public Resource getMetaIRI() {
+        return metairi;
     }
     
     public void closeAll2() {
@@ -105,7 +93,6 @@ public final class BeakWriter {
             System.out.println("Closing Vector --> "+v.getName());
             v.close();
         });
-        
     }
     
     public void DisplayMeta() {
@@ -226,8 +213,10 @@ public final class BeakWriter {
         System.out.println("================== FILE WRITTEN =====================================");
     }
     
-    public void WriteDataToFile(String base, ROCrate.Builder roc) {
+    public Resource WriteDataToFile(String base, ROCrate.Builder roc) {
         System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
+        Resource rde = roc.getRDE();
+        Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
         vectors.forEach(v->{
             System.out.println("Writing --> "+v.getName());
             VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
@@ -238,9 +227,7 @@ public final class BeakWriter {
             ) {
                 writer.start();
                 writer.writeBatch();
-                writer.end();
-                Resource rde = roc.getRDE();
-                Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
+                writer.end();        
                 roc
                     .Add(target, base, MD5(v.getField().getName().getBytes()), out.toByteArray(), ZipMethod.STORED, true)
                     .addProperty(RDFS.range, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
@@ -252,10 +239,13 @@ public final class BeakWriter {
             }        
         });
         System.out.println("================== FILE WRITTEN =====================================");
+        return target;
     }
     
-    public void WriteDictionaryToFile(String base, ROCrate.Builder roc) {
+    public Resource WriteDictionaryToFile(String base, ROCrate.Builder roc) {
         System.out.println("================== WRITING Dictionary to File =====================================");
+        Resource rde = roc.getRDE();
+        Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
         VarCharVector v = (VarCharVector) provider.lookup(0).getVector();
         VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
         try (
@@ -265,8 +255,6 @@ public final class BeakWriter {
             writer.start();
             writer.writeBatch();
             writer.end();
-            Resource rde = roc.getRDE();
-            Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
             roc
                 .Add(target, base, "dictionary", out.toByteArray(), ZipMethod.STORED, true)
                 .addProperty(RDF.type, BG.Dictionary);
@@ -274,6 +262,7 @@ public final class BeakWriter {
             Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
         System.out.println("================== Dictionary WRITTEN =====================================");
+        return target;
     }
     
     public void WriteDictionaryToFile(File file) {
@@ -410,7 +399,6 @@ public final class BeakWriter {
         System.out.println("Creating..."); 
         ProcessTriples();
         System.out.println("Closing Source Graph...");
-        m.close();
         int cores = Runtime.getRuntime().availableProcessors();
         System.out.println(cores+" cores available");
         ThreadPoolExecutor engine = new ThreadPoolExecutor(cores,cores,0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -425,7 +413,7 @@ public final class BeakWriter {
         while ((engine.getQueue().size()+engine.getActiveCount())>0) {
             int c = engine.getQueue().size()+engine.getActiveCount();
             long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
-            System.out.println(engine.isTerminated()+" "+engine.isTerminating()+" jobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
+            System.out.println("jobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException ex) {
@@ -451,7 +439,7 @@ public final class BeakWriter {
         @Override
         public Model call() {
             pa.Finish(f,v);
-            System.out.println("PP COMPLETE "+pa.getPredicate()+" "+f.size()+" "+v.size());
+            //System.out.println("PP COMPLETE "+pa.getPredicate()+" "+f.size()+" "+v.size());
             return null;
         }
     }
