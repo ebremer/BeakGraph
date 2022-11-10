@@ -170,7 +170,7 @@ public class PAW {
     }
     
     public void Finish(CopyOnWriteArrayList<Field> fields, CopyOnWriteArrayList<FieldVector> vectors) {
-        System.out.println("Finishing : "+p+" "+cs.size());
+        //System.out.println("Finishing : "+p+" "+cs.size());
         cs.forEach((k,v)->{
             v.getWriter().setValueCount(counts.get(k));
             //System.out.println(p+" ["+k+"] AAA >>> "+counts.get(k)+ " XYXYXYXY "+v.getValueCount()+" === this finish ---> "+v.getChild("o").getValueCount());

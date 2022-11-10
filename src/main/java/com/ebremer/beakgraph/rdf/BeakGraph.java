@@ -142,19 +142,4 @@ public class BeakGraph extends GraphBase {
     public ReorderTransformation getReorderTransform() {
         return null;
     }
-       
-    public static void main(String[] args) throws IOException {
-        System.out.println("Loading RDF...");
-        /*
-        Model m = ModelFactory.createDefaultModel();
-        RDFDataMgr.read(m, new GZIPInputStream(new FileInputStream("/nlms2/halcyon/TCGA-3C-AALI-01Z-00-DX1.F6E9A5DF-D8FB-45CF-B4BD-C6B76294C291.ttl.gz")), Lang.TURTLE);
-        //ROCrate.Builder builder = new ROCrate.Builder(new ZipWriter(new File("d:\\nlms2\\halcyon\\x.zip")));
-        ROCrate.Builder builder = new ROCrate.Builder(new FolderWriter(new File("d:\\nlms2\\halcyon\\x")));
-        new BeakWriter(m, builder, "halcyon");
-        builder.build();
-        */
-        String base = "http://www.ebremer.com/YAY";
-   //     BeakGraph g = new BeakGraph(new ROCrateReader(base, new ZipReader(new File("d:\\nlms2\\halcyon\\x.zip"))));
-    //    g.Core();
-    }    
 }

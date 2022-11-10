@@ -3,13 +3,10 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.rocrate4j.ROCrate;
 import com.ebremer.rocrate4j.StopWatch;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
@@ -50,7 +47,6 @@ import org.apache.jena.rdf.model.ResIterator;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.vocabulary.RDF;
-import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.SchemaDO;
 
 /**
@@ -74,13 +70,21 @@ public final class BeakWriter {
     public BeakWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
         this.m = m;
         StopWatch sw = new StopWatch();
+        sw.LapStart("Create Dictionary");
         CreateDictionary();
         nt = new NodeTable(dictionary);
+        sw.Lap("Dictionary Created");
+        sw.LapStart("Create Predicate Vectors");
         Create(m);
         System.out.println("# of vectors : "+vectors.size());
-        WriteDataToFile(base, roc);
+        sw.Lap("Predicate Vectors Created");
         metairi = WriteDictionaryToFile(base, roc);
-        DisplayMeta();
+        sw.LapStart("Generate VoID Data");
+        Model VoID = BGVoID.GenerateVoID(metairi, m);
+        metairi.getModel().add(VoID);
+        sw.Lap("VoID Data Generated");
+        WriteDataToFile(base, roc);
+        //DisplayMeta();
         sw.Lapse("BeakGraph Completed");
     }
     
@@ -103,7 +107,6 @@ public final class BeakWriter {
     }
     
     private void CreateDictionary() {
-        System.out.println("Creating Dictionary...");
         HashMap<String,Integer> resources = new HashMap<>();
         ResIterator ri = m.listSubjects();
         System.out.println("Scanning Subjects...");
@@ -185,34 +188,7 @@ public final class BeakWriter {
         }
         return null;
     }
-       
-    public void WriteDataToFile(File file) {
-        System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
-        if (!file.exists()) {
-            file.mkdirs();
-        }
-        String base = file.toString();
-        vectors.forEach(v->{
-            System.out.println("Writing --> "+v.getName());
-            File dump = Path.of(base,MD5(v.getField().getName().getBytes())).toFile();
-            VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
-            root.setRowCount(v.getValueCount());
-            try (                   
-                FileOutputStream fos = new FileOutputStream(dump);
-                ArrowFileWriter writer = new ArrowFileWriter(root, null, fos.getChannel())
-            ) {
-                writer.start();
-                writer.writeBatch();
-                writer.end();
-            } catch (FileNotFoundException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-            } catch (IOException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-            }        
-        });
-        System.out.println("================== FILE WRITTEN =====================================");
-    }
-    
+
     public Resource WriteDataToFile(String base, ROCrate.Builder roc) {
         System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
         Resource rde = roc.getRDE();
@@ -221,6 +197,7 @@ public final class BeakWriter {
             System.out.println("Writing --> "+v.getName());
             VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
             root.setRowCount(v.getValueCount());
+            
             try (                   
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out));
@@ -230,7 +207,12 @@ public final class BeakWriter {
                 writer.end();        
                 roc
                     .Add(target, base, MD5(v.getField().getName().getBytes()), out.toByteArray(), ZipMethod.STORED, true)
-                    .addProperty(RDFS.range, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
+                    .addProperty(SchemaDO.name, v.getField().getName().substring(1))
+                    .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
+                    .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                    .addLiteral(SchemaDO.contentSize, out.size())
+                    .addProperty(RDF.type, SchemaDO.MediaObject)
+                    .addLiteral(BG.triples, v.getValueCount())
                     .addProperty(RDF.type, BG.PredicateVector);
             } catch (FileNotFoundException ex) {
                 Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
@@ -257,35 +239,15 @@ public final class BeakWriter {
             writer.end();
             roc
                 .Add(target, base, "dictionary", out.toByteArray(), ZipMethod.STORED, true)
+                .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                .addLiteral(SchemaDO.contentSize, out.size())
+                .addProperty(RDF.type, SchemaDO.MediaObject)
                 .addProperty(RDF.type, BG.Dictionary);
         } catch (IOException ex) {
             Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
         System.out.println("================== Dictionary WRITTEN =====================================");
         return target;
-    }
-    
-    public void WriteDictionaryToFile(File file) {
-        System.out.println("================== WRITING Dictionary to File =====================================");
-        System.out.println("Writing with this provider : "+provider.getDictionaryIds().size());
-        if (!file.getParentFile().exists()) {
-            file.mkdirs();
-        }
-        VarCharVector v = (VarCharVector) provider.lookup(0).getVector();
-        VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
-        try (
-            FileOutputStream fos = new FileOutputStream(file);
-            ArrowFileWriter writer = new ArrowFileWriter(root, null, fos.getChannel())
-        ) {
-            writer.start();
-            writer.writeBatch();
-            writer.end();
-        } catch (FileNotFoundException ex) {
-            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (IOException ex) {
-            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        System.out.println("================== Dictionary WRITTEN =====================================");
     }
     
     public static Model genData() {
@@ -398,7 +360,7 @@ public final class BeakWriter {
     public void Create(Model src) throws IOException {
         System.out.println("Creating..."); 
         ProcessTriples();
-        System.out.println("Closing Source Graph...");
+        //System.out.println("Closing Source Graph...");
         int cores = Runtime.getRuntime().availableProcessors();
         System.out.println(cores+" cores available");
         ThreadPoolExecutor engine = new ThreadPoolExecutor(cores,cores,0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
