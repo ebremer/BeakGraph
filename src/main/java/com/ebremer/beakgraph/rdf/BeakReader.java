@@ -34,6 +34,7 @@ import org.apache.jena.query.ParameterizedSparqlString;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
 import org.apache.jena.query.ResultSet;
+import org.apache.jena.query.ResultSetFormatter;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.vocabulary.RDFS;
@@ -57,7 +58,6 @@ public final class BeakReader {
         byPredicate = new HashMap<>();
         root = new RootAllocator();
         manifest = reader.getManifest();
-        //sw.Lapse("Manifest Loaded...");
         this.base = reader.getBase();
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
@@ -71,6 +71,9 @@ public final class BeakReader {
         pss.setNsPrefix("so", SchemaDO.NS);
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(), manifest);
         ResultSet rs = qe.execSelect();
+        System.out.println(rs);
+        System.out.println(rs.hasNext());
+        ResultSetFormatter.out(System.out,rs);
         rs.forEachRemaining(qs->{
             String x = qs.get("file").asResource().getURI();  
             x = x.substring(base.length()+1, x.length());
