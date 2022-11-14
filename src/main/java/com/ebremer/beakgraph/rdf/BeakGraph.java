@@ -32,8 +32,10 @@ public class BeakGraph extends GraphBase {
 
     private final BeakReader reader;
 
-    public BeakGraph(String base, URI uri) throws IOException {
-        this.reader = new BeakReader(base, uri);
+    //public BeakGraph(String base, URI uri) throws IOException {
+    public BeakGraph(URI uri) throws IOException {
+        //this.reader = new BeakReader(base, uri);
+        this.reader = new BeakReader(uri);
         wireIntoExecution();
     }
     

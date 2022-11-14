@@ -3,7 +3,6 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.solver.BindingNodeId;
 import com.ebremer.beakgraph.solver.BeakIterator;
 import com.ebremer.rocrate4j.ROCrateReader;
-import com.ebremer.rocrate4j.StopWatch;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -33,9 +32,12 @@ import org.apache.jena.graph.Triple;
 import org.apache.jena.query.ParameterizedSparqlString;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
+import org.apache.jena.query.QuerySolution;
 import org.apache.jena.query.ResultSet;
 import org.apache.jena.query.ResultSetFormatter;
 import org.apache.jena.rdf.model.Model;
+import org.apache.jena.riot.RDFDataMgr;
+import org.apache.jena.riot.RDFFormat;
 import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.SchemaDO;
@@ -50,15 +52,17 @@ public final class BeakReader {
     private BufferAllocator root;
     private final Dictionary dictionary;
     private final Model manifest;
-    private final String base;
+    //private final String base;
     private int numtriples = 0;
     
-    public BeakReader(String base, URI uri) throws FileNotFoundException, IOException {
-        ROCrateReader reader = new ROCrateReader(base, uri);
+    //public BeakReader(String base, URI uri) throws FileNotFoundException, IOException {
+    public BeakReader(URI uri) throws FileNotFoundException, IOException {
+        //ROCrateReader reader = new ROCrateReader(base, uri);
+        ROCrateReader reader = new ROCrateReader(uri);
         byPredicate = new HashMap<>();
         root = new RootAllocator();
         manifest = reader.getManifest();
-        this.base = reader.getBase();
+        //this.base = reader.getBase();
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select ?file where {
@@ -69,15 +73,18 @@ public final class BeakReader {
         pss.setNsPrefix("bg", BG.NS);
         pss.setNsPrefix("rdfs", RDFS.uri);
         pss.setNsPrefix("so", SchemaDO.NS);
+        //System.out.println("THE MANIFEST ============================================");
+        //RDFDataMgr.write(System.out, manifest, RDFFormat.TURTLE_PRETTY);
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(), manifest);
         ResultSet rs = qe.execSelect();
-        System.out.println(rs);
-        System.out.println(rs.hasNext());
-        ResultSetFormatter.out(System.out,rs);
-        rs.forEachRemaining(qs->{
+        //ResultSetFormatter.out(System.out,rs);
+       //System.out.println(rs.hasNext());
+        while (rs.hasNext()) {
+            QuerySolution qs = rs.next();
             String x = qs.get("file").asResource().getURI();  
-            x = x.substring(base.length()+1, x.length());
+//            /x = x.substring(base.length(), x.length());
             try {
+                //System.out.println("VECTOR READ : "+x);
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
                 ArrowFileReader afr = new ArrowFileReader(xxx, root);
                 VectorSchemaRoot za = afr.getVectorSchemaRoot();
@@ -88,6 +95,7 @@ public final class BeakReader {
                 numtriples = numtriples + v.getValueCount();
                 p = p.substring(1);
                 if (!byPredicate.containsKey(p)) {
+                  //  System.out.println("Add Predicate : "+p);
                     byPredicate.put(p, new PAR(p));
                 }
                 PAR par = byPredicate.get(p);
@@ -97,10 +105,10 @@ public final class BeakReader {
             } catch (IOException ex) {
                 Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
             }
-        });
+        }
         //sw.Lapse("Vectors Loaded...");
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        SeekableByteChannel d = reader.getSeekableByteChannel("halcyon/dictionary");
+        SeekableByteChannel d = reader.getSeekableByteChannel(uri.toString()+"/halcyon/dictionary");
         ArrowFileReader afr = new ArrowFileReader(d, root);
         VectorSchemaRoot za = afr.getVectorSchemaRoot();
         afr.loadNextBatch();
@@ -110,7 +118,8 @@ public final class BeakReader {
         nodeTable = new NodeTable(dictionary);
         //sw.Lapse("NodeTableCreated...");
         ValueVector vv = (ValueVector) za.getVector(0);
-        //DisplayAll();
+        
+       // DisplayAll();
     }
     
     public HashMap<String,PAR> getPredicates() {
@@ -127,9 +136,9 @@ public final class BeakReader {
         return numtriples;
     }
     
-    public String getBase() {
-        return base;
-    }
+    //public String getBase() {
+//        return base;
+  //  }
 
     public NodeTable getNodeTable() {
         return nodeTable;
