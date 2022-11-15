@@ -73,7 +73,7 @@ public class NodeTable {
             return new NodeId(map.get(n.getURI()));
         }
         if (n.isLiteral()) {
-            throw new Error("is Literal");
+            return new NodeId(n.getLiteralValue());
         }
         throw new Error("UGH");
     }

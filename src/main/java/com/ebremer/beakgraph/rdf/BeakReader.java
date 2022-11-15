@@ -118,7 +118,7 @@ public final class BeakReader {
         nodeTable = new NodeTable(dictionary);
         //sw.Lapse("NodeTableCreated...");
         ValueVector vv = (ValueVector) za.getVector(0);
-        
+        reader.close();
        // DisplayAll();
     }
     

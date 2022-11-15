@@ -34,22 +34,12 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final NodeTable nodeTable;
     
     public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
-       // System.out.println(bnid+"\n==============[ "+triple.getSubject().isVariable()+" ]================== RapIterator : "+triple+" F ---> "+filter);
+       // System.out.println("BeakIterator =========================\n"
+         //       +bnid+"\n===[ "+triple.getSubject().isVariable()
+           //     +" ]==== Triple : \n"+triple+"\n F ---> "+filter+"\n=== END ======");
        // if (triple.getSubject().isVariable()) System.out.println("Subject : "+triple.getSubject().getName());
        // if (triple.getObject().isVariable()) System.out.println("Object : "+triple.getObject().getName());
         this.nodeTable = nodeTable;
-       // bnid.forEach(p->{
-         //   System.out.println(bnid+"  NODE : "+p.asNode());
-       // });
-        /*
-        if (filter!=null) {
-            filter.forEach(c->{
-                System.out.println("E-> "+c+" "+c.getFunction().getOpName()+" "+c.getFunction().getArgs());
-                c.getFunction().getArgs().forEach(a->{
-                    System.out.println("ARG : "+a+" "+a.getVarName()+" "+a.getConstant()+" "+a.isConstant()+" "+a.isVariable());
-                });
-            });            
-        }*/
         if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
          //   System.out.println("Setting index to SO");
             this.pa = (StructVector) dual.getChild("so");
@@ -112,7 +102,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                 this.low = 0;
                 this.high = dual.getValueCount()-1;
                 filter.forEach(c->{
-                   // System.out.println("C ===> "+c);
+                  //  System.out.println("C ===> "+c);
                     if (c.getFunction().getOpName().compareTo(">=")==0) {
                         List<Expr> args = c.getFunction().getArgs();
                         if (args.size()==2) {
@@ -134,13 +124,13 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                             } else {
                                 
                             }
-                        }
-                     //   c.getFunction().getArgs().forEach(a->{
-                       //     System.out.println("ARG : "+a+" "+a.getVarName()+" "+a.getConstant()+" "+a.isConstant()+" "+a.isVariable());
-                       // });                        
+                        }                  
                     } else if (c.getFunction().getOpName().compareTo("<=")==0) {
                         List<Expr> args = c.getFunction().getArgs();
                         if (args.size()==2) {
+                    //        args.forEach(v->{
+                      //          System.out.println("FUNCTION --> "+v.getVarName()+"  "+v.toString());
+                        //    });
                             if (args.get(0).isVariable()) {
                                 long tar = args.get(1).getConstant().getInteger().longValueExact();
                                // System.out.println("Restrict high range to ... "+args.get(1).getConstant()+"  "+tar+"  "+triple);
