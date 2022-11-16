@@ -41,6 +41,7 @@ import org.apache.jena.query.QuerySolution;
 import org.apache.jena.query.ResultSet;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
+import org.apache.jena.rdf.model.NodeIterator;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.ResIterator;
@@ -61,7 +62,7 @@ public final class BeakWriter {
     private final CopyOnWriteArrayList<Field> fields = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<FieldVector> vectors = new CopyOnWriteArrayList<>();
     private long bnodes = 0;
-    private long numresources = 0;
+    //private long numresources = 0;
     private final NodeTable nt;
     private VarCharVector dict;
     private final Resource metairi;
@@ -110,16 +111,14 @@ public final class BeakWriter {
         HashMap<String,Integer> resources = new HashMap<>();
         ResIterator ri = m.listSubjects();
         System.out.println("Scanning Subjects...");
-        int count = 0;
         while (ri.hasNext()) {
-            count++;
             Resource r = ri.next();
             String rs;
             if (r.isAnon()) {
                 bnodes++;
                 rs = "_:"+r.toString();
             } else if (r.isResource()) {
-                numresources++;
+             //   numresources++;
                 rs = r.toString();
             } else  {
                 throw new Error("What is this?");
@@ -131,35 +130,28 @@ public final class BeakWriter {
                 resources.put(rs, 1);
             }
         }
-        System.out.println("# of subjects       : "+resources.size());
-        System.out.println("# of resources  : "+numresources);
-        System.out.println("# of blank nodes    : "+bnodes);
-        System.out.println("Scanning Objects...");
-        QueryExecution qe = QueryExecutionFactory.create("""
-            select distinct ?o where {
-                ?s ?p ?o
-                filter(isIRI(?o)||isBlank(?o))
-            }
-            """, m);
-        ResultSet rs = qe.execSelect();
-        while (rs.hasNext()) {
-            QuerySolution qs = rs.next();
-            Resource r = qs.get("o").asResource();
-            String ss;
+        NodeIterator ni = m.listObjects();
+        while (ni.hasNext()) {
+            RDFNode r = ni.next();
+            String rs;
             if (r.isAnon()) {
                 bnodes++;
-                ss =  "_:"+r.toString();
+                rs = "_:"+r.toString();
             } else if (r.isResource()) {
-                numresources++;
-                ss = r.getURI();
+         //       numresources++;
+                rs = r.toString();
             } else  {
                 throw new Error("What is this?");
             }
-            if (!resources.containsKey(ss)) {
-                resources.put(ss, 1);
-            }   
+            if (rs==null) {
+                throw new Error("ack");
+            }
+            if (!resources.containsKey(rs)) {
+                resources.put(rs, 1);
+            }
         }
-        System.out.println("# of resources : "+resources.size());
+        System.out.println("# of blank nodes    : " + bnodes);
+        System.out.println("# of resources      : "+resources.size());
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
         dict = new VarCharVector("Resource Dictionary", allocator);
         dict.allocateNewSafe();
