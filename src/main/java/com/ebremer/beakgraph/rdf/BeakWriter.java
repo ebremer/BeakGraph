@@ -221,7 +221,7 @@ public final class BeakWriter {
         System.out.println("================== WRITING Dictionary to File =====================================");
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
-        VarCharVector v = (VarCharVector) provider.lookup(0).getVector();
+        LargeVarCharVector v = (LargeVarCharVector) provider.lookup(0).getVector();
         VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
         try (
             ByteArrayOutputStream out = new ByteArrayOutputStream();
