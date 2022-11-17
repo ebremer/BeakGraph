@@ -4,12 +4,10 @@ import com.ebremer.beakgraph.store.NodeId;
 import com.ebremer.beakgraph.store.NodeType;
 import java.util.HashMap;
 import org.apache.arrow.algorithm.search.VectorSearcher;
-import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
 import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.Node;
@@ -21,15 +19,15 @@ import org.apache.jena.graph.NodeFactory;
  */
 public class NodeTable {
     
-    private final VarCharVector dictionary;
+    private final LargeVarCharVector dictionary;
     private final HashMap<String, Integer> map;
     private final Dictionary dict;
-    private final VectorValueComparator<VarCharVector> comparator;
+    private final VectorValueComparator<LargeVarCharVector> comparator;
     private long hits = 0;
     
     public NodeTable(Dictionary v) {
         this.dict = v;
-        dictionary = (VarCharVector) v.getVector();
+        dictionary = (LargeVarCharVector) v.getVector();
         map = new HashMap<>(dictionary.getValueCount());
         comparator = DefaultVectorComparators.createDefaultComparator(dictionary);
         //for(int i=0; i<dictionary.getValueCount();i++) {
@@ -46,10 +44,9 @@ public class NodeTable {
         if (map.containsKey(s)) {
             return map.get(s);
         }
-        //System.out.println("Search --> "+s);
         try (
             BufferAllocator allocator = new RootAllocator();
-            VarCharVector key = new VarCharVector("", allocator);
+            LargeVarCharVector key = new LargeVarCharVector("", allocator);
         ) {
             key.allocateNew(1);
             key.setValueCount(1);

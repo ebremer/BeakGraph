@@ -25,6 +25,7 @@ import javax.xml.bind.DatatypeConverter;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.dictionary.Dictionary;
@@ -62,9 +63,8 @@ public final class BeakWriter {
     private final CopyOnWriteArrayList<Field> fields = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<FieldVector> vectors = new CopyOnWriteArrayList<>();
     private long bnodes = 0;
-    //private long numresources = 0;
     private final NodeTable nt;
-    private VarCharVector dict;
+    private LargeVarCharVector dict;
     private final Resource metairi;
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
     
@@ -130,6 +130,7 @@ public final class BeakWriter {
                 resources.put(rs, 1);
             }
         }
+        System.out.println("Scanning Objects...");
         NodeIterator ni = m.listObjects();
         while (ni.hasNext()) {
             RDFNode r = ni.next();
@@ -140,22 +141,22 @@ public final class BeakWriter {
             } else if (r.isResource()) {
          //       numresources++;
                 rs = r.toString();
-            } else  {
-                throw new Error("What is this?");
+            } else {
+                rs = null;
             }
-            if (rs==null) {
-                throw new Error("ack");
-            }
-            if (!resources.containsKey(rs)) {
-                resources.put(rs, 1);
+            if (rs!=null) {
+                if (!resources.containsKey(rs)) {
+                    resources.put(rs, 1);
+                }
             }
         }
         System.out.println("# of blank nodes    : " + bnodes);
         System.out.println("# of resources      : "+resources.size());
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        dict = new VarCharVector("Resource Dictionary", allocator);
+        dict = new LargeVarCharVector("Resource Dictionary", allocator);
         dict.allocateNewSafe();
         String[] rrr = resources.keySet().toArray(new String[resources.size()]);
+        System.out.println("Sorting Dictionary...");
         Arrays.sort(rrr);
         for (int i=0; i<resources.size(); i++) {
             dict.setSafe(i, rrr[i].getBytes(StandardCharsets.UTF_8));
