@@ -27,7 +27,7 @@
         <jena.ver>4.6.1</jena.ver>
         <arrow.version>10.0.0</arrow.version>        
     </properties>
-        <dependencies>
+    <dependencies>
         <dependency>
             <groupId>org.apache.jena</groupId>
             <artifactId>jena-core</artifactId>
@@ -76,10 +76,10 @@
             <artifactId>jaxb-api</artifactId>
             <version>2.4.0-b180830.0359</version>
         </dependency>
-                <dependency>
-                        <groupId>${project.groupId}</groupId>
-                        <artifactId>RO-Crate4J</artifactId>
-                        <version>${project.version}</version>
-                </dependency>
-        </dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>RO-Crate4J</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
 </project>

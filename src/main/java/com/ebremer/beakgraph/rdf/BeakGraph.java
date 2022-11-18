@@ -32,9 +32,7 @@ public class BeakGraph extends GraphBase {
 
     private final BeakReader reader;
 
-    //public BeakGraph(String base, URI uri) throws IOException {
     public BeakGraph(URI uri) throws IOException {
-        //this.reader = new BeakReader(base, uri);
         this.reader = new BeakReader(uri);
         wireIntoExecution();
     }
@@ -90,62 +88,7 @@ public class BeakGraph extends GraphBase {
         StageGenerator stageGenerator = new StageGeneratorDirectorBeak(orig) ;
         StageBuilder.setGenerator(ARQ.getContext(), stageGenerator) ;
     }
-    /*
-    public void Core() {    
-        Model m = ModelFactory.createModelForGraph(this);
-        /*
-              #filter(isiri(?type))
-              #values (?type) {(<http://www.ebremer.com/1>) (<http://www.ebremer.com/2>) (<http://www.ebremer.com/3>)}
-            """); */
-        /*
-        ParameterizedSparqlString pss = new ParameterizedSparqlString(
-            """
-            select * where {
-                #?x rdf:value ?polygon
-                ?s  oa:hasBody [
-                        hal:hasCertainty ?certainty;
-                        a ?BodyType;
-                        hal:assertedClass ?assertedClass
-                    ];
-                    oa:hasSelector [
-                        a ?SelectorType
-                        #rdf:value ?polygon
-                    ]
-                #filter(?certainty>0.0)
-                #filter(?certainty<1.0)
-            } limit 10
-            """); 
-        
-        
-        ParameterizedSparqlString pss = new ParameterizedSparqlString(
-            """
-            select * where {
-                ?s oa:hasBody ?body
-            } limit 20
-            """);
-        pss.setNsPrefix("", "https://www.ebremer.com/ns/");
-        pss.setNsPrefix("rdf", RDF.uri);
-        pss.setNsPrefix("rdfs", RDFS.uri);
-        pss.setNsPrefix("so", SchemaDO.NS);
-        pss.setNsPrefix("oa", OA.NS);
-        pss.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
-        pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
-        pss.setNsPrefix("dcmi", "http://purl.org/dc/terms/");
-        QueryExecution qe = QueryExecutionFactory.create(pss.toString(), m);
-        ResultSet results = qe.execSelect();
-        System.out.println("======================= DONE ============================= ");
-        ResultSetFormatter.out(System.out, results);
-    }
-    
-    public void Core2(String sparql) {    
-        long begin = System.nanoTime();
-        Model m = ModelFactory.createModelForGraph(this);
-        QueryExecution qe = QueryExecutionFactory.create(sparql, m);
-        ResultSet results = qe.execSelect();
-        ResultSetFormatter.out(System.out, results);
-        System.out.println("Lapse : "+(System.nanoTime()-begin));
-    }
-*/
+
     public ReorderTransformation getReorderTransform() {
         return null;
     }

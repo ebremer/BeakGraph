@@ -45,82 +45,62 @@ public class BeakIterator implements Iterator<BindingNodeId> {
             this.pa = (StructVector) dual.getChild("so");
             int skey = bnid.get(Var.alloc(triple.getSubject())).getID();
             IntVector s = (IntVector) pa.getChild("s");
-            IntVector search = new IntVector("search", dual.getAllocator());
-            search.allocateNew(1);
-            search.set(0, skey);
-            search.setValueCount(1);
-            VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
-            low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0 );
-            high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );            
-            scan = !((low<0)||(high<0));         
+            try (IntVector search = new IntVector("search", dual.getAllocator())) {
+                search.allocateNew(1);
+                search.set(0, skey);
+                search.setValueCount(1);
+                VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
+                low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0 );
+                high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );
+                scan = !((low<0)||(high<0));
+                search.close();
+            }
         } else {
-           // System.out.println("Setting index to OS");
             this.pa = (StructVector) dual.getChild("os");
             if (!triple.getObject().isVariable()) {
-                //System.out.println("CONCRETE ");
                 int tar = nodeTable.getID(triple.getObject().getURI());
-               // System.out.println("Restrict low/high range to ... "+tar+"  "+triple);
                 IntVector s = (IntVector) pa.getChild("o");
-                IntVector ss = (IntVector) pa.getChild("s");
-                IntVector search = new IntVector("search", dual.getAllocator());
-               // IntStream.range(0, s.getValueCount()).forEach(ii->{
-                 //   System.out.println(ii+" "+ss.get(ii)+" "+s.get(ii));
-                //});
-                search.allocateNew(1);
-                search.set(0, tar);
-                search.setValueCount(1);
-                VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
-                low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0);
-                high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );
-                //low = VectorSearch.getFirstOrClosestMatch(s, comparator, search, 0 );
-                //high = VectorSearch.getFirstOrLargestRight(s, comparator, search, 0 );
-                scan = !((low<0)||(high<0));
-                search.close();
-                //System.out.println("BOOM >>> low/high : "+s.getValueCount()+" ]]] "+low+"  "+high);
+                try (IntVector search = new IntVector("search", dual.getAllocator())) {
+                    search.allocateNew(1);
+                    search.set(0, tar);
+                    search.setValueCount(1);
+                    VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
+                    low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0);
+                    high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );
+                    scan = !((low<0)||(high<0));
+                    search.close();
+                }
             } else if (bnid.containsKey(Var.alloc(triple.getObject().getName()))) {
-                //System.out.println("CONCRETE ");
                 int tar = bnid.get(Var.alloc(triple.getObject().getName())).getID();
-               // System.out.println("Restrict low/high range to ... "+tar+"  "+triple);
                 IntVector s = (IntVector) pa.getChild("o");
-                IntVector ss = (IntVector) pa.getChild("s");
-                IntVector search = new IntVector("search", dual.getAllocator());
-               // IntStream.range(0, s.getValueCount()).forEach(ii->{
-                 //   System.out.println(ii+" "+ss.get(ii)+" "+s.get(ii));
-                //});
-                search.allocateNew(1);
-                search.set(0, tar);
-                search.setValueCount(1);
-                VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
-                low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0);
-                high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );
-                //low = VectorSearch.getFirstOrClosestMatch(s, comparator, search, 0 );
-                //high = VectorSearch.getFirstOrLargestRight(s, comparator, search, 0 );
-                scan = !((low<0)||(high<0));
-                search.close();
-                //System.out.println("BOOM >>> low/high : "+s.getValueCount()+" ]]] "+low+"  "+high);
+                try (IntVector search = new IntVector("search", dual.getAllocator())) {
+                    search.allocateNew(1);
+                    search.set(0, tar);
+                    search.setValueCount(1);
+                    VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
+                    low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0);
+                    high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );
+                    scan = !((low<0)||(high<0));
+                    search.close();
+                }
             } else if (filter!=null) {
                 this.low = 0;
                 this.high = dual.getValueCount()-1;
                 filter.forEach(c->{
-                  //  System.out.println("C ===> "+c);
                     if (c.getFunction().getOpName().compareTo(">=")==0) {
                         List<Expr> args = c.getFunction().getArgs();
                         if (args.size()==2) {
                             if (args.get(0).isVariable()) {
                                 long tar = args.get(1).getConstant().getInteger().longValueExact();
-                             //   System.out.println("Restrict low range to ... "+args.get(1).getConstant()+"  "+tar+"  "+triple);
                                 BigIntVector s = (BigIntVector) pa.getChild("o");
-                                IntVector ss = (IntVector) pa.getChild("s");
-                                BigIntVector search = new BigIntVector("search", dual.getAllocator());
-                                //IntStream.range(0, s.getValueCount()).forEach(ii->{
-                                  //      System.out.println(ss.get(ii));
-                               // });
-                                search.allocateNew(1);
-                                search.set(0, tar);
-                                search.setValueCount(1);
-                                VectorValueComparator<BigIntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
-                                low = VectorSearch.getFirstOrClosestMatch(s, comparator, search, 0 );
-                                search.close();
+                                try (BigIntVector search = new BigIntVector("search", dual.getAllocator())) {
+                                    search.allocateNew(1);
+                                    search.set(0, tar);
+                                    search.setValueCount(1);
+                                    VectorValueComparator<BigIntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
+                                    low = VectorSearch.getFirstOrClosestMatch(s, comparator, search, 0 );
+                                    search.close();
+                                }
                             } else {
                                 
                             }
@@ -128,33 +108,25 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                     } else if (c.getFunction().getOpName().compareTo("<=")==0) {
                         List<Expr> args = c.getFunction().getArgs();
                         if (args.size()==2) {
-                    //        args.forEach(v->{
-                      //          System.out.println("FUNCTION --> "+v.getVarName()+"  "+v.toString());
-                        //    });
                             if (args.get(0).isVariable()) {
                                 long tar = args.get(1).getConstant().getInteger().longValueExact();
-                               // System.out.println("Restrict high range to ... "+args.get(1).getConstant()+"  "+tar+"  "+triple);
                                 BigIntVector s = (BigIntVector) pa.getChild("o");
-                                //System.out.println("CHILD : "+s.getValueCount());
-                                BigIntVector search = new BigIntVector("search", dual.getAllocator());
-                                search.allocateNew(1);
-                                search.set(0, tar);
-                                search.setValueCount(1);
-                                VectorValueComparator<BigIntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
-                                high = VectorSearch.getFirstOrLargestRight(s, comparator, search, 0 );
-                                search.close();
+                                try (BigIntVector search = new BigIntVector("search", dual.getAllocator())) {
+                                    search.allocateNew(1);
+                                    search.set(0, tar);
+                                    search.setValueCount(1);
+                                    VectorValueComparator<BigIntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
+                                    high = VectorSearch.getFirstOrLargestRight(s, comparator, search, 0 );
+                                    search.close();
+                                }
                             } else {
                                 
                             }
                         }
-                        //c.getFunction().getArgs().forEach(a->{
-                          //  System.out.println("ARG : "+a+" "+a.getVarName()+" "+a.getConstant()+" "+a.isConstant()+" "+a.isVariable());
-                       // });                        
+                     
                     } else {
                         System.out.println("What is this??! : "+c);
                     }
-                //    System.out.println("E-> "+c+" "+c.getFunction().getOpName()+" "+c.getFunction().getArgs());
-
                 });
                 scan = !((low<0)||(high<0));
             } else {
@@ -166,9 +138,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
         this.triple = triple;
         this.bnid = bnid;
         this.datatype = datatype;
-        //System.out.println("FINAL   low/high : "+low+"  "+high);
         i = low;
-        //System.out.println("SCAN : "+scan);
     }
 
     @Override
@@ -205,17 +175,6 @@ public class BeakIterator implements Iterator<BindingNodeId> {
         } else {
             System.out.println("NOT A VARIABLE");
         }
-        /*
-        System.out.println("binding NODE : "+bnid);
-        if (!neo.isEmpty()) {
-            neo.forEach(v->{
-                int d = (int) pa.getChild("s").getObject(i);
-                System.out.println("V -> "+v+" "+d+" "+nodeTable.getStringforID(d));
-            });
-        } else {
-            int d = (int) pa.getChild("s").getObject(i);
-            System.out.println("ZZEV -> "+d+" "+nodeTable.getStringforID(d)); 
-        }*/
         i++;
         return neo;
     }

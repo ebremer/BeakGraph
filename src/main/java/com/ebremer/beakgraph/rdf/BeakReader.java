@@ -3,12 +3,10 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.solver.BindingNodeId;
 import com.ebremer.beakgraph.solver.BeakIterator;
 import com.ebremer.rocrate4j.ROCrateReader;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -19,7 +17,6 @@ import java.util.logging.Logger;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
@@ -52,12 +49,10 @@ public final class BeakReader {
     private int numtriples = 0;
     
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
-        //ROCrateReader reader = new ROCrateReader(base, uri);
         ROCrateReader reader = new ROCrateReader(uri);
         byPredicate = new HashMap<>();
         root = new RootAllocator();
         manifest = reader.getManifest();
-        //this.base = reader.getBase();
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select ?file where {
@@ -68,18 +63,12 @@ public final class BeakReader {
         pss.setNsPrefix("bg", BG.NS);
         pss.setNsPrefix("rdfs", RDFS.uri);
         pss.setNsPrefix("so", SchemaDO.NS);
-        //System.out.println("THE MANIFEST ============================================");
-        //RDFDataMgr.write(System.out, manifest, RDFFormat.TURTLE_PRETTY);
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(), manifest);
         ResultSet rs = qe.execSelect();
-        //ResultSetFormatter.out(System.out,rs);
-       //System.out.println(rs.hasNext());
         while (rs.hasNext()) {
             QuerySolution qs = rs.next();
             String x = qs.get("file").asResource().getURI();  
-//            /x = x.substring(base.length(), x.length());
             try {
-                //System.out.println("VECTOR READ : "+x);
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
                 ArrowFileReader afr = new ArrowFileReader(xxx, root);
                 VectorSchemaRoot za = afr.getVectorSchemaRoot();
@@ -90,7 +79,6 @@ public final class BeakReader {
                 numtriples = numtriples + v.getValueCount();
                 p = p.substring(1);
                 if (!byPredicate.containsKey(p)) {
-                  //  System.out.println("Add Predicate : "+p);
                     byPredicate.put(p, new PAR(p));
                 }
                 PAR par = byPredicate.get(p);
@@ -101,20 +89,14 @@ public final class BeakReader {
                 Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
             }
         }
-        //sw.Lapse("Vectors Loaded...");
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
         SeekableByteChannel d = reader.getSeekableByteChannel(uri.toString()+"/halcyon/dictionary");
         ArrowFileReader afr = new ArrowFileReader(d, root);
         VectorSchemaRoot za = afr.getVectorSchemaRoot();
         afr.loadNextBatch();
-        //sw.Lapse("Dictionary Loaded...");
         dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
-        //sw.Lapse("Dictionary Processed...");
         nodeTable = new NodeTable(dictionary);
-        //sw.Lapse("NodeTableCreated...");
-        ValueVector vv = (ValueVector) za.getVector(0);
         reader.close();
-       // DisplayAll();
     }
     
     public void close() {
@@ -122,6 +104,7 @@ public final class BeakReader {
             v.close();
         });
         nodeTable.close();
+        root.close();
     }
     
     public HashMap<String,PAR> getPredicates() {
@@ -162,12 +145,6 @@ public final class BeakReader {
     }
 
     public Iterator<BindingNodeId> Read(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
-        //System.out.println(" ______________________________________TRIPLE : "+triple+"   FILTER : "+filter);
-        //System.out.println(triple.getSubject().toString());
-        //Node s = triple.getSubject();
-        //boolean blank = s.isBlank();
-        //System.out.println(blank);
-        //System.out.println(triple.getSubject().isVariable()+" "+triple.getObject().isVariable());
         if (byPredicate.containsKey(triple.getPredicate().getURI())) {
             PAR par = byPredicate.get(triple.getPredicate().getURI());
             LinkedList<Iterator<BindingNodeId>> its = new LinkedList<>();
