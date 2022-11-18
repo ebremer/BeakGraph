@@ -42,6 +42,11 @@ public class BeakGraph extends GraphBase {
     public BeakReader getReader() {
         return reader;
     }
+    
+    @Override
+    public void close() {
+        reader.close();
+    }
 
     @Override
     protected ExtendedIterator<Triple> graphBaseFind(Triple tp) {

@@ -39,6 +39,10 @@ public class NodeTable {
     public Dictionary getDictionary() {
         return dict;
     }
+    
+    public void close() {
+        dictionary.close();
+    }
 
     public int getID(String s) {
         if (map.containsKey(s)) {

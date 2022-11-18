@@ -34,10 +34,7 @@ import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
 import org.apache.jena.query.QuerySolution;
 import org.apache.jena.query.ResultSet;
-import org.apache.jena.query.ResultSetFormatter;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.riot.RDFDataMgr;
-import org.apache.jena.riot.RDFFormat;
 import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.SchemaDO;
@@ -52,10 +49,8 @@ public final class BeakReader {
     private BufferAllocator root;
     private final Dictionary dictionary;
     private final Model manifest;
-    //private final String base;
     private int numtriples = 0;
     
-    //public BeakReader(String base, URI uri) throws FileNotFoundException, IOException {
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
         //ROCrateReader reader = new ROCrateReader(base, uri);
         ROCrateReader reader = new ROCrateReader(uri);
@@ -122,23 +117,20 @@ public final class BeakReader {
        // DisplayAll();
     }
     
-    public HashMap<String,PAR> getPredicates() {
-        return byPredicate;
+    public void close() {
+        byPredicate.forEach((k,v)->{
+            v.close();
+        });
+        nodeTable.close();
     }
     
-    public static void main(String[] args) throws URISyntaxException {
-        File file = new File("d:\\nlms2\\halcyon\\x.zip");
-  //      new BeakReader(file.toURI());
-    //    new BeakReader(new URI("https://www.ebremer.com/wow.zip"));
+    public HashMap<String,PAR> getPredicates() {
+        return byPredicate;
     }
     
     public int getNumberOfTriples() {
         return numtriples;
     }
-    
-    //public String getBase() {
-//        return base;
-  //  }
 
     public NodeTable getNodeTable() {
         return nodeTable;

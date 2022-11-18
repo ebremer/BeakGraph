@@ -20,6 +20,12 @@ public class PAR {
         cs = new HashMap<>();
     }
     
+    public void close() {
+        cs.forEach((k,v)->{
+            v.close();
+        });
+    }
+    
     public void put(String dt, StructVector v) {
         DataType datatype = DataType.getType(dt);
         if (!cs.containsKey(datatype)) {
