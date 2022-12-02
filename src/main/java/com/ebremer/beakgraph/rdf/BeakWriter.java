@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.rdf;
 
 import com.ebremer.rocrate4j.ROCrate;
 import com.ebremer.rocrate4j.StopWatch;
-import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.channels.Channels;
@@ -22,11 +21,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.xml.bind.DatatypeConverter;
+import net.lingala.zip4j.io.outputstream.CountingOutputStream;
+import net.lingala.zip4j.io.outputstream.ZipOutputStream;
+import net.lingala.zip4j.model.FileHeader;
+import net.lingala.zip4j.model.enums.CompressionMethod;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.LargeVarCharVector;
-import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.dictionary.Dictionary;
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider;
@@ -34,7 +36,6 @@ import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.commons.compress.archivers.zip.ZipMethod;
 import org.apache.jena.query.ParameterizedSparqlString;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
@@ -92,14 +93,7 @@ public final class BeakWriter {
     public Resource getMetaIRI() {
         return metairi;
     }
-    
-    public void closeAll2() {
-        vectors.forEach(v->{
-            System.out.println("Closing Vector --> "+v.getName());
-            v.close();
-        });
-    }
-    
+        
     public void DisplayMeta() {
         System.out.println("Displaying Metadata...");    
         vectors.forEach(v->{
@@ -108,9 +102,10 @@ public final class BeakWriter {
     }
     
     private void CreateDictionary() {
-        HashMap<String,Integer> resources = new HashMap<>();
-        ResIterator ri = m.listSubjects();
+        HashMap<String,Integer> resources = new HashMap<>(5000000);
         System.out.println("Scanning Subjects...");
+        ResIterator ri = m.listSubjects();
+        System.out.println("Have iterator...");
         while (ri.hasNext()) {
             Resource r = ri.next();
             String rs;
@@ -130,9 +125,16 @@ public final class BeakWriter {
                 resources.put(rs, 1);
             }
         }
+        System.out.println("# of resources so far : "+resources.size());
         System.out.println("Scanning Objects...");
         NodeIterator ni = m.listObjects();
+        System.out.println("Have iterator...");
+        int count=0;
         while (ni.hasNext()) {
+            count++;
+            if ((count%10000)==0) {
+                System.out.println("# of resources so far : "+resources.size());
+            }
             RDFNode r = ni.next();
             String rs;
             if (r.isAnon()) {
@@ -191,22 +193,31 @@ public final class BeakWriter {
             VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
             root.setRowCount(v.getValueCount());
             
-            try (                   
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out));
-            ) {
+            try //(                   
+               // ByteArrayOutputStream out = new ByteArrayOutputStream();
+               // ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out));
+            //)
+            {
+                ZipOutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
+                CountingOutputStream cos = new CountingOutputStream(zos);
+                ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
                 writer.start();
                 writer.writeBatch();
-                writer.end();        
+                writer.end();
+                long numbytes = cos.getNumberOfBytesWritten();
+                FileHeader fh = zos.closeEntry();
+                fh.setUncompressedSize(numbytes);
                 roc
-                    .Add(target, base, MD5(v.getField().getName().getBytes()), out.toByteArray(), ZipMethod.STORED, true)
+                    //.Add(target, base, MD5(v.getField().getName().getBytes()), out.toByteArray(), CompressionMethod.STORE, true)
+                    .Add(target, base, MD5(v.getField().getName().getBytes()), CompressionMethod.STORE, true)
                     .addProperty(SchemaDO.name, v.getField().getName().substring(1))
                     .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
                     .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
-                    .addLiteral(SchemaDO.contentSize, out.size())
+                    .addLiteral(SchemaDO.contentSize, numbytes)
                     .addProperty(RDF.type, SchemaDO.MediaObject)
                     .addLiteral(BG.triples, v.getValueCount())
                     .addProperty(RDF.type, BG.PredicateVector);
+              //  writer.close();
             } catch (FileNotFoundException ex) {
                 Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
             } catch (IOException ex) {
@@ -223,19 +234,39 @@ public final class BeakWriter {
         Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
         LargeVarCharVector v = (LargeVarCharVector) provider.lookup(0).getVector();
         VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
-        try (
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out))
-        ) {
+   //     try (
+            //ByteArrayOutputStream out = new ByteArrayOutputStream();
+            //ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out))
+          //  ZipOutputStream zos = roc.getDestination().GetOutputStream("dictionary", CompressionMethod.STORE);
+           // CountingOutputStream cos = new CountingOutputStream(zos);
+           // ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos))
+     //   ) {
+        try {
+            ZipOutputStream zos = roc.getDestination().GetOutputStream(base+"/dictionary", CompressionMethod.STORE);
+            CountingOutputStream cos = new CountingOutputStream(zos);
+            ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
             writer.start();
             writer.writeBatch();
             writer.end();
+            long numbytes = cos.getNumberOfBytesWritten();
+            FileHeader fh = zos.closeEntry();
+            fh.setUncompressedSize(numbytes);
             roc
-                .Add(target, base, "dictionary", out.toByteArray(), ZipMethod.STORED, true)
+                //.Add(target, base, "dictionary", out.toByteArray(), CompressionMethod.STORE, true)
+                .Add(target, base, "dictionary", CompressionMethod.STORE, true)
+                .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                .addLiteral(SchemaDO.contentSize, numbytes)
+                .addProperty(RDF.type, SchemaDO.MediaObject)
+                .addProperty(RDF.type, BG.Dictionary);
+            /*
+                        roc
+                .Add(target, base, "dictionary", out.toByteArray(), CompressionMethod.STORE, true)
                 .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
                 .addLiteral(SchemaDO.contentSize, out.size())
                 .addProperty(RDF.type, SchemaDO.MediaObject)
                 .addProperty(RDF.type, BG.Dictionary);
+            */
+          // writer.close();
         } catch (IOException ex) {
             Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }

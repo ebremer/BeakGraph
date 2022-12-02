@@ -17,6 +17,7 @@ import java.util.logging.Logger;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
@@ -74,6 +75,8 @@ public final class BeakReader {
                 VectorSchemaRoot za = afr.getVectorSchemaRoot();
                 afr.loadNextBatch();
                 StructVector v = (StructVector) za.getVector(0);
+          //      System.out.println("Reading Vector : "+v.getName());
+            //    System.out.println(v);
                 String p = v.getName();                
                 String dt = p.substring(0, 1);
                 numtriples = numtriples + v.getValueCount();
@@ -97,6 +100,7 @@ public final class BeakReader {
         dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
         nodeTable = new NodeTable(dictionary);
         reader.close();
+     //   DisplayAll();
     }
     
     public void close() {
@@ -142,6 +146,11 @@ public final class BeakReader {
         });
         System.out.println("^^^^^^^^^^^^^^^^ End of Predicate Vectors ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
         System.out.println("Dictionary Loaded : "+nodeTable.getDictionary().getVector().getValueCount());
+        ValueVector vv = (ValueVector) nodeTable.getDictionary().getVector();
+      //  int f = nodeTable.getDictionary().getVector().getValueCount();
+//        for (int i=0; i<f; i++) {
+  //          System.out.println(vv.getObject(i));
+    //    }
     }
 
     public Iterator<BindingNodeId> Read(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
