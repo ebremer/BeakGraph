@@ -3,21 +3,22 @@ package com.ebremer.beakgraph.store;
 final public class NodeId implements Comparable<NodeId> {
     public static final NodeId NodeDoesNotExist = new NodeId(-8) ;
     public static final NodeId NodeIdAny = new NodeId(-9) ;
-    private int id = -1;
-    private Object value;
-    private NodeType type;
+    private final int id;
+    private final Object value;
+    private final NodeType type;
 
     public NodeId(int c) {
-        //System.out.println("Create a NodeId(int c) : "+c);
         id = c;
         type = NodeType.RESOURCE;
+        value = null;
+        toString();
     }
     
     public NodeId(Object c) {
-        //String yah = (c==null) ? "NULL" : c.getClass().toGenericString();
-        //System.out.println("Create a NodeId(Object c) : "+c+" "+yah);
         value = c;
+        id = -1;
         type = NodeType.LITERAL;
+        toString();
     }
     
     public NodeType getType() {

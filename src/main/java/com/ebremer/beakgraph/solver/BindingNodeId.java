@@ -59,9 +59,7 @@ public class BindingNodeId extends Map2<Var, NodeId> {
 
     public void putAll(BindingNodeId other) {
         Iterator<Var> vIter = other.iterator();
-
-        for (; vIter.hasNext() ; )
-        {
+        for (; vIter.hasNext() ; ) {
             Var v = vIter.next();
             if ( v == null )
                 throw new IllegalArgumentException("Null key");

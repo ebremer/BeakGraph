@@ -7,6 +7,7 @@ import com.ebremer.beakgraph.rdf.VectorSearch;
 import com.ebremer.beakgraph.store.NodeId;
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.apache.arrow.algorithm.search.VectorRangeSearcher;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
@@ -40,6 +41,10 @@ public class BeakIterator implements Iterator<BindingNodeId> {
        // if (triple.getSubject().isVariable()) System.out.println("Subject : "+triple.getSubject().getName());
        // if (triple.getObject().isVariable()) System.out.println("Object : "+triple.getObject().getName());
         this.nodeTable = nodeTable;
+        boolean v = false;
+        if ("http://www.w3.org/ns/oa#hasSelector".equals(triple.getPredicate().getURI())) {
+            v = true;
+        }
         if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
          //   System.out.println("Setting index to SO");
             this.pa = (StructVector) dual.getChild("so");
@@ -73,6 +78,12 @@ public class BeakIterator implements Iterator<BindingNodeId> {
             } else if (bnid.containsKey(Var.alloc(triple.getObject().getName()))) {
                 int tar = bnid.get(Var.alloc(triple.getObject().getName())).getID();
                 IntVector s = (IntVector) pa.getChild("o");
+                if (v) {
+                    IntStream.range(0, s.getValueCount()).forEach(g->{
+                        System.out.println(tar+" "+g+" = "+s.get(g));
+                    });
+                    int zz = 0;
+                }
                 try (IntVector search = new IntVector("search", dual.getAllocator())) {
                     search.allocateNew(1);
                     search.set(0, tar);
@@ -150,7 +161,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
 
     @Override
     public BindingNodeId next() {
-        //System.out.println(bnid+" NEXT ["+i+","+low+"->"+high+"] =-=-=-=> "+triple+" NEXT "+i+" "+hasNext());
+       // System.out.println(bnid+" NEXT ["+i+","+low+"->"+high+"] =-=-=-=> "+triple+" NEXT "+i+" "+hasNext());
         /*
         Binding pb = bnid.getParentBinding();
         pb.forEach((v,n)->{

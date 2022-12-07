@@ -157,6 +157,7 @@ public final class BeakReader {
         if (byPredicate.containsKey(triple.getPredicate().getURI())) {
             PAR par = byPredicate.get(triple.getPredicate().getURI());
             LinkedList<Iterator<BindingNodeId>> its = new LinkedList<>();
+          //  System.out.println("Predicate : "+triple.getPredicate().getURI());
             par.getAllTypes().forEach((k,dual)->{
                 Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable);
                 its.add(i);

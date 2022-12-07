@@ -109,7 +109,6 @@ public final class BeakWriter {
     
     private void CreateDictionary() {
         HashMap<String,Integer> resources = new HashMap<>(2500000);
-//
         System.out.println("Scanning Subjects...");
         ResIterator ri = m.listSubjects();
         System.out.println("Have iterator...");
@@ -117,15 +116,15 @@ public final class BeakWriter {
             Resource r = ri.next();
             String rs;
             if (r.isAnon()) {
-                bnodes++;
                 rs = "_:"+r.toString();
                 if (!blanknodes.containsKey(rs)) {
+                   bnodes++;
                    blanknodes.put(rs, bnodes);
                 }
             } else if (r.isResource()) {
-                numresources++;
                 rs = r.toString();
                 if (!resources.containsKey(rs)) {
+                    numresources++;
                     resources.put(rs, 1);
                 }
             } else  {
@@ -148,15 +147,15 @@ public final class BeakWriter {
             RDFNode r = ni.next();
             String rs;
             if (r.isAnon()) {
-                bnodes++;
                 rs = "_:"+r.toString();
                 if (!blanknodes.containsKey(rs)) {
-                    blanknodes.put(rs, bnodes);
+                    bnodes++;
+                    blanknodes.put(rs, -bnodes);
                 }
             } else if (r.isResource()) {
-                numresources++;
                 rs = r.toString();
                 if (!resources.containsKey(rs)) {
+                    numresources++;
                     resources.put(rs, 1);
                 }
             } else {
