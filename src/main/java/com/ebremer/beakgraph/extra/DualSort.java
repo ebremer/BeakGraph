@@ -1,7 +1,7 @@
-package com.ebremer.beakgraph.rdf;
+package com.ebremer.beakgraph.extra;
 
-import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.OS;
-import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.SO;
+import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.OS;
+import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.SO;
 import java.util.stream.IntStream;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.GeneralOutOfPlaceVectorSorter;

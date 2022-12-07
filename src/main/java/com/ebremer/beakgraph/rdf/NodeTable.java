@@ -24,6 +24,7 @@ public class NodeTable {
     private final Dictionary dict;
     private final VectorValueComparator<LargeVarCharVector> comparator;
     private long hits = 0;
+    private HashMap<String,Integer> blanknodes;
     
     public NodeTable(Dictionary v) {
         this.dict = v;
@@ -40,6 +41,10 @@ public class NodeTable {
         return dict;
     }
     
+    public void setBlankNodes(HashMap<String,Integer> blanknodes) {
+        this.blanknodes = blanknodes;
+    }
+    
     public void close() {
         dictionary.close();
     }
@@ -47,6 +52,8 @@ public class NodeTable {
     public int getID(String s) {
         if (map.containsKey(s)) {
             return map.get(s);
+        } else if (s.startsWith("_:h")) {
+            return -Integer.parseInt(s.substring(3));
         }
         try (
             BufferAllocator allocator = new RootAllocator();
@@ -70,6 +77,7 @@ public class NodeTable {
     }
     
     public NodeId getNodeIdForNode(Node n) {
+        System.out.println("---->>>>> "+n+" "+n.isBlank());
         if (n.isURI()) {
             return new NodeId(map.get(n.getURI()));
         }
@@ -79,24 +87,31 @@ public class NodeTable {
         throw new Error("UGH");
     }
     
-    public String getStringforID(int id) {
-        return new String(dictionary.get(id));
-    }
+    //public String getStringforID(int id) {
+      //  return new String(dictionary.get(id));
+    //}
 
     public Node getNodeForNodeId(NodeId id) {
-       //System.out.println("getNodeForNodeId() : "+id+" "+id.getType());
+      // System.out.println("getNodeForNodeId() : "+id+" "+id.getType());
         if (id.getType() == NodeType.RESOURCE) {
-            String ha = new String(dictionary.get(id.getID()));
-            if (ha.startsWith("_:")) {
+            if (id.getID()<0) {
+                System.out.println("Creating blank node "+id.getID());
+                Node wow = NodeFactory.createBlankNode("_:h"+(-id.getID()));
+                System.out.println("WOW : "+wow);
+                return wow;
+            }
+           // String ha = new String(dictionary.get(id.getID()));
+            //if (ha.startsWith("_:")) {
+           // if (ha.startsWith("_:")) {
                 //System.out.println("push BLANK NODE "+ha+"  ==== "+id.getID());
-                Node bn = NodeFactory.createBlankNode(ha);
+             //   Node bn = NodeFactory.createBlankNode(ha);
                 //System.out.println("is bnode? "+bn.isBlank());
-                return bn;
-            } else {
+               // return bn;
+           // } else {
                 String gen = new String(dictionary.get(id.getID()));
                 //System.out.println("GEN "+gen);
                 return NodeFactory.createURI(gen);
-            }
+           // }
         } else if (id.getType() == NodeType.LITERAL) {
             Object x = id.getValue();
             if (x instanceof Float) {

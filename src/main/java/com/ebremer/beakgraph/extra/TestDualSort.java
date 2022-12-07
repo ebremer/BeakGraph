@@ -1,4 +1,4 @@
-package com.ebremer.beakgraph.rdf;
+package com.ebremer.beakgraph.extra;
 
 import java.util.stream.IntStream;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;

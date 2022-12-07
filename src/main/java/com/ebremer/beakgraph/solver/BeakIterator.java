@@ -92,6 +92,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                         if (args.size()==2) {
                             if (args.get(0).isVariable()) {
                                 long tar = args.get(1).getConstant().getInteger().longValueExact();
+                              //  System.out.println("PA : "+datatype+" "+triple);
                                 BigIntVector s = (BigIntVector) pa.getChild("o");
                                 try (BigIntVector search = new BigIntVector("search", dual.getAllocator())) {
                                     search.allocateNew(1);

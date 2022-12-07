@@ -1,12 +1,13 @@
 package com.ebremer.beakgraph.rdf;
 
+import com.ebremer.beakgraph.extra.DualSort;
 import static com.ebremer.beakgraph.rdf.DataType.FLOAT;
 import static com.ebremer.beakgraph.rdf.DataType.INTEGER;
 import static com.ebremer.beakgraph.rdf.DataType.LONG;
 import static com.ebremer.beakgraph.rdf.DataType.RESOURCE;
 import static com.ebremer.beakgraph.rdf.DataType.STRING;
-import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.OS;
-import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.SO;
+import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.OS;
+import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.SO;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -60,6 +61,7 @@ public class PAW {
         counts.put(datatype, c);
     }
     
+    /*
     private StructVector cloneVector(StructVector vector) {
         final FieldType fieldType = vector.getField().getFieldType();
         StructVector cloned = (StructVector) fieldType.createNewSingleVector(vector.getField().getName(), allocator, null);
@@ -67,7 +69,7 @@ public class PAW {
         cloned.loadFieldBuffers(fieldNode, vector.getFieldBuffers());
         cloned.setValueCount(vector.getValueCount());
         return cloned;
-    }
+    }*/
     
     public void buildblank(StructVector src, StructVector destVector) {
         IntVector subject = destVector.addOrGet("s", src.getChild("s").getField().getFieldType(), IntVector.class);
