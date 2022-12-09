@@ -10,6 +10,7 @@ import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.OS;
 import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.SO;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Semaphore;
 import java.util.stream.IntStream;
@@ -24,7 +25,6 @@ import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.complex.AbstractStructVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.complex.impl.NullableStructWriter;
-import org.apache.arrow.vector.ipc.message.ArrowFieldNode;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -59,6 +59,17 @@ public class PAW {
         int c = counts.remove(datatype);
         c++;
         counts.put(datatype, c);
+    }
+    
+    public long getSize() {
+        long x = 0;
+        for (int i=0; i<cs.size(); i++) {
+            StructVector sv = cs.get(i);
+            StructVector so = (StructVector) sv.getChild("so");
+            ValueVector vv = so.getChild("s");
+            x = x + vv.getValueCount();
+        }
+        return x;
     }
     
     /*
@@ -119,7 +130,7 @@ public class PAW {
         }
     }
     
-    public StructVector upgrade(DataType datatype, StructVector src) {
+    public StructVector upgrade(DataType datatype, StructVector src, Job job) {
         String type;
         switch (datatype) {
             case INTEGER: type = "I"; break;
@@ -133,14 +144,18 @@ public class PAW {
         top.setValueCount(src.valueCount);
         StructVector so = top.addOrGet("so", new FieldType(false, Types.MinorType.STRUCT.getType(), null, null), StructVector.class);
         StructVector os = top.addOrGet("os", new FieldType(false, Types.MinorType.STRUCT.getType(), null, null), StructVector.class);
+        job.status = "BUILD BLANK";
         buildblank(src, so);
         buildblank(src, os);
         //Semaphore semaphore = new Semaphore(2);
         //DualSort ds = new DualSort();
         //System.out.println("LAUNCH ZECTOR IS : "+src);
+        job.status = "SORT 1";
         DualSort.Sort(src, so, SO);
+        job.status = "SORT 2";
         DualSort.Sort(src, os, OS);
         System.out.println("Vector : "+p+" has length "+src.getValueCount());
+        job.status = "SET INDEX";
         IntStream.range(0, src.getValueCount()).forEach(r->{
             top.setIndexDefined(r);
         });
@@ -171,7 +186,7 @@ public class PAW {
         }
     }
     
-    public void Finish(CopyOnWriteArrayList<Field> fields, CopyOnWriteArrayList<FieldVector> vectors) {
+    public void Finish(CopyOnWriteArrayList<Field> fields, CopyOnWriteArrayList<FieldVector> vectors, Job job) {
         //System.out.println("Finishing : "+p+" "+cs.size());
         cs.forEach((k,v)->{
             v.getWriter().setValueCount(counts.get(k));
@@ -179,7 +194,7 @@ public class PAW {
             //System.out.println(p+" ZAM ===> "+v);
             //DisplayVector(v.getChild("s"));
             //DisplayVector(v.getChild("o"));
-            StructVector z = upgrade(k,v);
+            StructVector z = upgrade(k,v,job);
             //System.out.println(p+" ["+k+"] XXX >>> "+z.getValueCount()+"  "+z);
             //System.out.println("BF/V : "+fields.size()+" "+vectors.size());
             fields.add(z.getField());

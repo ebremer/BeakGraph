@@ -51,7 +51,11 @@ public class NodeTable {
         if (map.containsKey(s)) {
             return map.get(s);
         } else if (s.startsWith("_:")) {
-            return blanknodes.get(s);
+            if (blanknodes.containsKey(s)) {
+                return blanknodes.get(s);
+            } else {
+                throw new Error("Missing blank node in dictionary : "+s);
+            }
         }
         try (
             BufferAllocator allocator = new RootAllocator();
@@ -75,20 +79,19 @@ public class NodeTable {
         System.out.println("---->>>>> "+n+" "+n.isBlank());
         if (n.isURI()) {
             return new NodeId(map.get(n.getURI()));
-        }
-        if (n.isLiteral()) {
+        } else if (n.isLiteral()) {
             return new NodeId(n.getLiteralValue());
         }
         throw new Error("UGH");
     }
 
     public Node getNodeForNodeId(NodeId id) {
-     //  System.out.println("getNodeForNodeId() : "+id+" "+id.getType());
+      // System.out.println("getNodeForNodeId() : "+id+" "+id.getType()+" ---> "+id.getID());
         if (id.getType() == NodeType.RESOURCE) {
             if (id.getID()<0) {
                 String k = "_:h"+String.valueOf(-id.getID());
                 Node wow = NodeFactory.createBlankNode(k);
-                blanknodes.put(k, id.getID());
+                blanknodes.put(k, -id.getID());
                 return wow;
             }
             String gen = new String(dictionary.get(id.getID()));

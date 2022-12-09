@@ -35,18 +35,19 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final NodeTable nodeTable;
     
     public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
-       // System.out.println("BeakIterator =========================\n"
-         //       +bnid+"\n===[ "+triple.getSubject().isVariable()
-           //     +" ]==== Triple : \n"+triple+"\n F ---> "+filter+"\n=== END ======");
+     //   System.out.println("BeakIterator =========================\n"
+       //         +bnid+"\n===[ "+triple.getSubject().isVariable()
+         //       +" ]==== Triple : \n"+triple+"\n F ---> "+filter+"\n=== END ======");
        // if (triple.getSubject().isVariable()) System.out.println("Subject : "+triple.getSubject().getName());
        // if (triple.getObject().isVariable()) System.out.println("Object : "+triple.getObject().getName());
         this.nodeTable = nodeTable;
         boolean v = false;
+        //if ("https://www.ebremer.com/halcyon/ns/hasRange/0".equals(triple.getPredicate().getURI())) {
         if ("http://www.w3.org/ns/oa#hasSelector".equals(triple.getPredicate().getURI())) {
             v = true;
         }
         if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
-         //   System.out.println("Setting index to SO");
+          //  System.out.println("Setting index to SO");
             this.pa = (StructVector) dual.getChild("so");
             int skey = bnid.get(Var.alloc(triple.getSubject())).getID();
             IntVector s = (IntVector) pa.getChild("s");
@@ -78,9 +79,12 @@ public class BeakIterator implements Iterator<BindingNodeId> {
             } else if (bnid.containsKey(Var.alloc(triple.getObject().getName()))) {
                 int tar = bnid.get(Var.alloc(triple.getObject().getName())).getID();
                 IntVector s = (IntVector) pa.getChild("o");
+                IntVector x = (IntVector) pa.getChild("s");
                 if (v) {
+                    Var va = Var.alloc(triple.getObject().getName());
+                    int xtar = bnid.get(Var.alloc(triple.getObject().getName())).getID();
                     IntStream.range(0, s.getValueCount()).forEach(g->{
-                        System.out.println(tar+" "+g+" = "+s.get(g));
+                        System.out.println(tar+" "+g+" = "+s.get(g)+"  "+x.get(g));
                     });
                     int zz = 0;
                 }

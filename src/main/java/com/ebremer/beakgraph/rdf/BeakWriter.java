@@ -5,7 +5,6 @@ import com.ebremer.rocrate4j.StopWatch;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -13,8 +12,8 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -23,9 +22,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.xml.bind.DatatypeConverter;
-import net.lingala.zip4j.io.outputstream.CountingOutputStream;
-import net.lingala.zip4j.io.outputstream.ZipOutputStream;
-import net.lingala.zip4j.model.FileHeader;
 import net.lingala.zip4j.model.enums.CompressionMethod;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -38,19 +34,12 @@ import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.jena.query.ParameterizedSparqlString;
-import org.apache.jena.query.QueryExecution;
-import org.apache.jena.query.QueryExecutionFactory;
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
-import org.apache.jena.rdf.model.NodeIterator;
-import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.RDFNode;
-import org.apache.jena.rdf.model.ResIterator;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
+import org.apache.jena.rdf.model.Statement;
+import org.apache.jena.rdf.model.StmtIterator;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.SchemaDO;
 
@@ -65,13 +54,12 @@ public final class BeakWriter {
     private final Model m;
     private final CopyOnWriteArrayList<Field> fields = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<FieldVector> vectors = new CopyOnWriteArrayList<>();
-    private int bnodes = 0;
-    private int numresources = 0;
     private final NodeTable nt;
     private LargeVarCharVector dict;
     private final Resource metairi;
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
-    private HashMap<String,Integer> blanknodes;
+    private final HashMap<String,Integer> blanknodes;
+    private final ConcurrentHashMap<String,Job> Jobs = new ConcurrentHashMap<>();
     
     public BeakWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
         this.m = m;
@@ -108,62 +96,38 @@ public final class BeakWriter {
     }
     
     private void CreateDictionary() {
-        HashMap<String,Integer> resources = new HashMap<>(2500000);
-        System.out.println("Scanning Subjects...");
-        ResIterator ri = m.listSubjects();
-        System.out.println("Have iterator...");
-        while (ri.hasNext()) {
-            Resource r = ri.next();
+        HashMap<String,Integer> resources = new HashMap<>();
+        StmtIterator si = m.listStatements();
+        while (si.hasNext()) {
+            Statement sx = si.next();
+            Resource r = sx.getSubject();
             String rs;
             if (r.isAnon()) {
                 rs = "_:"+r.toString();
                 if (!blanknodes.containsKey(rs)) {
-                   bnodes++;
-                   blanknodes.put(rs, bnodes);
+                   blanknodes.put(rs, -(blanknodes.size()+1));
                 }
             } else if (r.isResource()) {
                 rs = r.toString();
                 if (!resources.containsKey(rs)) {
-                    numresources++;
                     resources.put(rs, 1);
                 }
-            } else  {
-                throw new Error("What is this?");
             }
-            if (rs==null) {
-                throw new Error("ack");
-            }
-        }
-        System.out.println("# of resources so far : "+resources.size());
-        System.out.println("Scanning Objects...");
-        NodeIterator ni = m.listObjects();
-        System.out.println("Have iterator...");
-        int count=0;
-        while (ni.hasNext()) {
-            count++;
-            if ((count%10000)==0) {
-                System.out.println("# of resources so far : "+resources.size());
-            }
-            RDFNode r = ni.next();
-            String rs;
-            if (r.isAnon()) {
-                rs = "_:"+r.toString();
+            RDFNode node = sx.getObject();
+            if (node.isAnon()) {
+                rs = "_:"+node.toString();
                 if (!blanknodes.containsKey(rs)) {
-                    bnodes++;
-                    blanknodes.put(rs, -bnodes);
+                    blanknodes.put(rs, -(blanknodes.size()+1));
                 }
-            } else if (r.isResource()) {
-                rs = r.toString();
+            } else if (node.isResource()) {
+                rs = node.asResource().toString();
                 if (!resources.containsKey(rs)) {
-                    numresources++;
                     resources.put(rs, 1);
                 }
-            } else {
-                // is literal
             }
         }
-        System.out.println("# of blank nodes    : " + bnodes);
-        System.out.println("# of resources      : "+numresources);
+        System.out.println("# of blank nodes    : " + blanknodes.size());
+        System.out.println("# of resources      : " + resources.size());
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
         dict = new LargeVarCharVector("Resource Dictionary", allocator);
         dict.allocateNewSafe();
@@ -290,29 +254,158 @@ public final class BeakWriter {
         return target;
     }
     
-    public static Model genData() {
-        Random random = new Random(1701);    
-        Model y = ModelFactory.createDefaultModel();
-        for (int c = 0; c<10000; c++) {
-            Resource ss = y.createResource("https://www.ebremer.com/ns/id/"+c);
-            Property low = y.createProperty("https://www.ebremer.com/ns/low");
-            Property high = y.createProperty("https://www.ebremer.com/ns/high");
-            y.addLiteral(ss,low,random.nextLong(0,1000L));
-            y.addLiteral(ss,high,random.nextLong(0,1000L));
-        }
-        return y;
-    }
-    
     public void ProcessTriples() {
         System.out.println("# of triples to be processed : "+m.size());
-        ParameterizedSparqlString pss = new ParameterizedSparqlString("select ?s ?p ?o where {?s ?p ?o} #limit 500000");
-        QueryExecution qe = QueryExecutionFactory.create(pss.toString(),m);
-        ResultSet rs = qe.execSelect();
-        while (rs.hasNext()) {
-            QuerySolution qs = rs.next();
-            ProcessTriple(qs);
+        StmtIterator si = m.listStatements();
+        while (si.hasNext()) {
+            ProcessTriple2(si.next());
         }
     }
+    
+    public void ProcessTriple2(Statement stmt) {
+        //Resource res = qs.get("s").asResource();
+        Resource res = stmt.getSubject();
+        String s;
+        if (res.isAnon()) {
+            s = "_:"+res.toString();
+        } else if (res.isResource()) {
+            s = res.getURI();
+        } else {
+            throw new Error("ack");
+        }
+        String p = stmt.getPredicate().asResource().getURI();
+        Class cc;
+        RDFNode o = stmt.getObject();
+        if (o.isResource()) {
+            cc = o.asResource().getClass();
+        } else if (o.isAnon()) {
+            cc = o.asResource().getClass();
+        } else if (o.isLiteral()) {
+            cc = o.asLiteral().getDatatype().getJavaClass();
+        } else {
+            Resource r = o.asResource();
+            throw new Error(r.isResource()+" Don't know how to deal with "+o.toString());
+        }
+        String ct = cc.getCanonicalName();
+        if (null == ct) {
+            System.out.println("Can't handle ["+ct+"]");
+            System.out.println(s+" "+p+" "+o);
+        } else switch (ct) {
+            case "org.apache.jena.rdf.model.impl.ResourceImpl": {
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAW(allocator, nt, p));
+                }
+                byPredicate.get(p).set(s, o.asResource());
+                break;
+            }
+            case "java.math.BigInteger": {
+                long oo = o.asLiteral().getLong();
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAW(allocator, nt, p));
+                }
+                byPredicate.get(p).set(s, oo);
+                break;
+            }
+            case "java.lang.Integer": {
+                int oo = o.asLiteral().getInt();
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAW(allocator, nt, p));
+                }
+                byPredicate.get(p).set(s, oo);
+                break;
+            }
+            case "java.lang.Long": {
+                long oo = o.asLiteral().getLong();
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAW(allocator, nt, p));
+                }
+                byPredicate.get(p).set(s, oo);
+                break;
+            }
+            case "java.lang.Float": {
+                float oo = o.asLiteral().getFloat();
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAW(allocator, nt, p));
+                }
+                byPredicate.get(p).set(s, oo);
+                break;
+            }
+            case "java.lang.String": {
+                String oo = o.asLiteral().toString();
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAW(allocator, nt, p));
+                }
+                byPredicate.get(p).set(s, oo);
+                break;
+            }
+            default:
+                System.out.println("Can't handle ["+ct+"]");
+                System.out.println(s+" "+p+" "+o);
+                throw new Error("BAMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM");
+                //break;
+        }
+    }
+    
+    public void Create(Model src) throws IOException {
+        System.out.println("Creating..."); 
+        ProcessTriples();
+        //System.out.println("Closing Source Graph...");
+       // m.close();
+        int cores = Runtime.getRuntime().availableProcessors();
+        System.out.println(cores+" cores available");
+        ThreadPoolExecutor engine = new ThreadPoolExecutor(cores,cores,0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+        CopyOnWriteArrayList<Future<Model>> list = new CopyOnWriteArrayList<>();
+        byPredicate.forEach((k,v)->{
+            System.out.println("Submitting -> "+k);
+            Callable<Model> worker = new PredicateProcessor(v, fields, vectors);
+            list.add(engine.submit(worker));
+            Jobs.put(k, new Job(k,worker,"WAITING"));
+        });
+        System.out.println("All jobs submitted --> "+list.size());
+        engine.prestartAllCoreThreads();
+        int t = 0;
+        while ((engine.getQueue().size()+engine.getActiveCount())>0) {
+            t++;
+            if ((t%500000000)==0) {
+                t=0;
+                int c = engine.getQueue().size()+engine.getActiveCount();
+                long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
+                System.out.println("===============================================\njobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
+                Jobs.forEach((k,v)->{
+                    if (!"DONE".equals(v.status)) {
+                        System.out.println(v.predicate+" ---> "+v.status);
+                    }
+                });
+            }
+        }
+        System.out.println("Engine shutdown");
+        engine.shutdown();
+        System.out.println("engine jobs : "+list.size());
+    }
+        
+    class PredicateProcessor implements Callable<Model> {
+        private final PAW pa;
+        private final CopyOnWriteArrayList f;
+        private final CopyOnWriteArrayList v;
+        
+        public PredicateProcessor(PAW pa, CopyOnWriteArrayList f, CopyOnWriteArrayList v) {
+            this.pa = pa;
+            this.v = v;
+            this.f = f;
+        }
+
+        @Override
+        public Model call() {
+            Job job = Jobs.get(pa.getPredicate());
+            job.status = "START";
+            pa.Finish(f,v,job);
+            job.status = "DONE";
+            return null;
+        }
+    }
+}
+
+    /*
     
     public void ProcessTriple(QuerySolution qs) {
         Resource res = qs.get("s").asResource();
@@ -396,53 +489,13 @@ public final class BeakWriter {
                 //break;
         }
     }
-        
-    public void Create(Model src) throws IOException {
-        System.out.println("Creating..."); 
-        ProcessTriples();
-        //System.out.println("Closing Source Graph...");
-        int cores = Runtime.getRuntime().availableProcessors();
-        System.out.println(cores+" cores available");
-        ThreadPoolExecutor engine = new ThreadPoolExecutor(cores,cores,0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
-        engine.prestartAllCoreThreads();
-        CopyOnWriteArrayList<Future<Model>> list = new CopyOnWriteArrayList<>();
-        byPredicate.forEach((k,v)->{
-            System.out.println("Submitting -> "+k);
-            Callable<Model> worker = new PredicateProcessor(v, fields, vectors);
-            list.add(engine.submit(worker));
-        });
-        System.out.println("All jobs submitted --> "+list.size());
-        while ((engine.getQueue().size()+engine.getActiveCount())>0) {
-            int c = engine.getQueue().size()+engine.getActiveCount();
-            long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
-            System.out.println("jobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-            }
-        }
-        System.out.println("Engine shutdown");
-        engine.shutdown();
-        System.out.println("engine jobs : "+list.size());
-    }
-        
-    class PredicateProcessor implements Callable<Model> {
-        private final PAW pa;
-        private final CopyOnWriteArrayList f;
-        private final CopyOnWriteArrayList v;
-        
-        public PredicateProcessor(PAW pa, CopyOnWriteArrayList f, CopyOnWriteArrayList v) {
-            this.pa = pa;
-            this.v = v;
-            this.f = f;
-        }
+        */
 
-        @Override
-        public Model call() {
-            pa.Finish(f,v);
-            //System.out.println("PP COMPLETE "+pa.getPredicate()+" "+f.size()+" "+v.size());
-            return null;
-        }
-    }
-}
+        /*
+        ParameterizedSparqlString pss = new ParameterizedSparqlString("select ?s ?p ?o where {?s ?p ?o} #limit 500000");
+        QueryExecution qe = QueryExecutionFactory.create(pss.toString(),m);
+        ResultSet rs = qe.execSelect();
+        while (rs.hasNext()) {
+            QuerySolution qs = rs.next();
+            ProcessTriple(qs);
+        }*/
