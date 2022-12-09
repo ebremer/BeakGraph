@@ -26,7 +26,6 @@ import java.util.logging.Logger;
 import javax.xml.bind.DatatypeConverter;
 import net.lingala.zip4j.model.enums.CompressionMethod;
 import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -62,8 +61,7 @@ public final class BeakWriter {
     private final HashMap<String,Integer> blanknodes;
     private final ConcurrentHashMap<String,Job> Jobs = new ConcurrentHashMap<>();
     
-    public BeakWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
-        try (BufferAllocator allocator = new RootAllocator()) {
+    public BeakWriter(BufferAllocator allocator, Model m, ROCrate.Builder roc, String base) throws IOException {
         this.m = m;
         StopWatch sw = new StopWatch();
         sw.LapStart("Create Dictionary");
@@ -84,7 +82,6 @@ public final class BeakWriter {
         WriteDataToFile(base, roc);
         //DisplayMeta();
         sw.Lapse("BeakGraph Completed");
-        }
     }
     
     public Resource getMetaIRI() {
@@ -167,14 +164,13 @@ public final class BeakWriter {
         Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
         vectors.forEach(v->{
             System.out.println("Writing --> "+v.getName());
-            VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
-            root.setRowCount(v.getValueCount());
-            
-            try (                   
+            try (
+                VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out));
             )
             {
+                root.setRowCount(v.getValueCount());
              //   OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
               //  CountingOutputStream cos = new CountingOutputStream(zos);
             //    ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
@@ -212,9 +208,9 @@ public final class BeakWriter {
         System.out.println("================== WRITING Dictionary to File =====================================");
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
-        LargeVarCharVector v = (LargeVarCharVector) provider.lookup(0).getVector();
-        VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
         try (
+            LargeVarCharVector v = (LargeVarCharVector) provider.lookup(0).getVector();
+            VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out))
           //  ZipOutputStream zos = roc.getDestination().GetOutputStream("dictionary", CompressionMethod.STORE);
@@ -367,7 +363,7 @@ public final class BeakWriter {
         System.out.println("All jobs submitted --> "+list.size());
         engine.prestartAllCoreThreads();
         Timer timer = new Timer();
-        timer.schedule(new TimerTask() {
+        timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
                 int c = engine.getQueue().size()+engine.getActiveCount();
@@ -379,7 +375,7 @@ public final class BeakWriter {
                     }
                 });
             }
-        }, 10000);
+        }, 0, 10000);
         while ((engine.getQueue().size()+engine.getActiveCount())>0) {
 //            int c = engine.getQueue().size()+engine.getActiveCount();
   //          long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
