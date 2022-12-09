@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.extra;
 
 import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.OS;
 import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.SO;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.IntStream;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.GeneralOutOfPlaceVectorSorter;
@@ -202,15 +203,26 @@ public class DualSort {
 
     public static void main(String[] args) {
         BufferAllocator allocator = new RootAllocator();
-        final int vectorLength = 7;
+        final int vectorLength = 17453987;
         StructVector src = StructVector.empty("src struct", allocator);
         IntVector srcChild0 = src.addOrGet("s", FieldType.nullable(new ArrowType.Int(32, true)), IntVector.class);
         IntVector srcChild1 = src.addOrGet("o", FieldType.nullable(new ArrowType.Int(32, true)), IntVector.class);
-        ValueVectorDataPopulator.setVector(srcChild0, 2, 3, 2, 2, 7, 3, 6);
-        ValueVectorDataPopulator.setVector(srcChild1, 9, 4, 4, 3, 9, 4, 6);
+        System.out.println("Initialize Vectors");
+        IntStream.range(0, vectorLength).forEach(i->{
+            srcChild0.setSafe(i, ThreadLocalRandom.current().nextInt(Integer.MIN_VALUE, Integer.MAX_VALUE));
+            srcChild1.setSafe(i, ThreadLocalRandom.current().nextInt(Integer.MIN_VALUE, Integer.MAX_VALUE));
+        });
+        srcChild0.setValueCount(vectorLength);
+        srcChild1.setValueCount(vectorLength);
+        //ValueVectorDataPopulator.setVector(srcChild0, 2, 3, 2, 2, 7, 3, 6);
+        //ValueVectorDataPopulator.setVector(srcChild1, 9, 4, 4, 3, 9, 4, 6);
+        
+        
+        
+        
         IntStream.range(0, vectorLength).forEach(i -> src.setIndexDefined(i));
         src.setValueCount(vectorLength);
-      
+
         StructVector top = StructVector.empty("dst", src.getAllocator());
         StructVector so = top.addOrGet("so", new FieldType(false, Types.MinorType.STRUCT.getType(), null, null), StructVector.class);
         IntVector s = so.addOrGet("s", src.getChild("s").getField().getFieldType(), IntVector.class);
@@ -220,6 +232,7 @@ public class DualSort {
         top.setValueCount(vectorLength);
         //StructVector os = top.addOrGet("os", new FieldType(false, Types.MinorType.STRUCT.getType(), null, null), StructVector.class);
         System.out.println("LEN : "+src.getValueCount()+" "+so.getValueCount()+" "+so.getValueCapacity());
+              System.out.println("Sort Vectors");
         Sort(src, so, OS);
         System.out.println("ORG -> "+src);
         System.out.println("FWD -> "+so);

@@ -12,6 +12,8 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -48,7 +50,6 @@ import org.apache.jena.vocabulary.SchemaDO;
  * @author erich
  */
 public final class BeakWriter {
-    private final BufferAllocator allocator = new RootAllocator();
     private final MapDictionaryProvider provider = new MapDictionaryProvider();
     private Dictionary dictionary;
     private final Model m;
@@ -62,16 +63,17 @@ public final class BeakWriter {
     private final ConcurrentHashMap<String,Job> Jobs = new ConcurrentHashMap<>();
     
     public BeakWriter(Model m, ROCrate.Builder roc, String base) throws IOException {
+        try (BufferAllocator allocator = new RootAllocator()) {
         this.m = m;
         StopWatch sw = new StopWatch();
         sw.LapStart("Create Dictionary");
         blanknodes = new HashMap<>(2500000);
-        CreateDictionary();
+        CreateDictionary(allocator);
         nt = new NodeTable(dictionary);
         nt.setBlankNodes(blanknodes);
         sw.Lap("Dictionary Created");
         sw.LapStart("Create Predicate Vectors");
-        Create(m);
+        Create(allocator);
         System.out.println("# of vectors : "+vectors.size());
         sw.Lap("Predicate Vectors Created");
         metairi = WriteDictionaryToFile(base, roc);
@@ -82,6 +84,7 @@ public final class BeakWriter {
         WriteDataToFile(base, roc);
         //DisplayMeta();
         sw.Lapse("BeakGraph Completed");
+        }
     }
     
     public Resource getMetaIRI() {
@@ -95,7 +98,7 @@ public final class BeakWriter {
         });
     }
     
-    private void CreateDictionary() {
+    private void CreateDictionary(BufferAllocator allocator) {
         HashMap<String,Integer> resources = new HashMap<>();
         StmtIterator si = m.listStatements();
         while (si.hasNext()) {
@@ -254,15 +257,15 @@ public final class BeakWriter {
         return target;
     }
     
-    public void ProcessTriples() {
+    public void ProcessTriples(BufferAllocator allocator) {
         System.out.println("# of triples to be processed : "+m.size());
         StmtIterator si = m.listStatements();
         while (si.hasNext()) {
-            ProcessTriple2(si.next());
+            ProcessTriple2(allocator, si.next());
         }
     }
     
-    public void ProcessTriple2(Statement stmt) {
+    public void ProcessTriple2(BufferAllocator allocator, Statement stmt) {
         //Resource res = qs.get("s").asResource();
         Resource res = stmt.getSubject();
         String s;
@@ -346,10 +349,10 @@ public final class BeakWriter {
         }
     }
     
-    public void Create(Model src) throws IOException {
+    public void Create(BufferAllocator allocator) throws IOException {
         System.out.println("Creating..."); 
-        ProcessTriples();
-        //System.out.println("Closing Source Graph...");
+        ProcessTriples(allocator);
+       // System.out.println("Closing Source Graph...");
        // m.close();
         int cores = Runtime.getRuntime().availableProcessors();
         System.out.println(cores+" cores available");
@@ -363,11 +366,10 @@ public final class BeakWriter {
         });
         System.out.println("All jobs submitted --> "+list.size());
         engine.prestartAllCoreThreads();
-        int t = 0;
-        while ((engine.getQueue().size()+engine.getActiveCount())>0) {
-            t++;
-            if ((t%500000000)==0) {
-                t=0;
+        Timer timer = new Timer();
+        timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
                 int c = engine.getQueue().size()+engine.getActiveCount();
                 long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
                 System.out.println("===============================================\njobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
@@ -377,7 +379,23 @@ public final class BeakWriter {
                     }
                 });
             }
+        }, 10000);
+        while ((engine.getQueue().size()+engine.getActiveCount())>0) {
+//            int c = engine.getQueue().size()+engine.getActiveCount();
+  //          long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
+    //        System.out.println("===============================================\njobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
+      //      Jobs.forEach((k,v)->{
+        //        if (!"DONE".equals(v.status)) {
+          //          System.out.println(v.predicate+" ---> "+v.status);
+            //    }
+            //});
+            //try {
+//                Thread.sleep(10000);
+           // } catch (InterruptedException ex) {
+             //   Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+            //}
         }
+        timer.cancel();
         System.out.println("Engine shutdown");
         engine.shutdown();
         System.out.println("engine jobs : "+list.size());

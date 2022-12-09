@@ -61,17 +61,6 @@ public class PAW {
         counts.put(datatype, c);
     }
     
-    public long getSize() {
-        long x = 0;
-        for (int i=0; i<cs.size(); i++) {
-            StructVector sv = cs.get(i);
-            StructVector so = (StructVector) sv.getChild("so");
-            ValueVector vv = so.getChild("s");
-            x = x + vv.getValueCount();
-        }
-        return x;
-    }
-    
     /*
     private StructVector cloneVector(StructVector vector) {
         final FieldType fieldType = vector.getField().getFieldType();
@@ -150,11 +139,11 @@ public class PAW {
         //Semaphore semaphore = new Semaphore(2);
         //DualSort ds = new DualSort();
         //System.out.println("LAUNCH ZECTOR IS : "+src);
+        System.out.println("Vector : "+p+" has length "+src.getValueCount());
         job.status = "SORT 1";
         DualSort.Sort(src, so, SO);
         job.status = "SORT 2";
         DualSort.Sort(src, os, OS);
-        System.out.println("Vector : "+p+" has length "+src.getValueCount());
         job.status = "SET INDEX";
         IntStream.range(0, src.getValueCount()).forEach(r->{
             top.setIndexDefined(r);
