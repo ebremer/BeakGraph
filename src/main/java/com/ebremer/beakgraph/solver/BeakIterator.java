@@ -80,6 +80,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                 int tar = bnid.get(Var.alloc(triple.getObject().getName())).getID();
                 IntVector s = (IntVector) pa.getChild("o");
                 IntVector x = (IntVector) pa.getChild("s");
+                /*
                 if (v) {
                     Var va = Var.alloc(triple.getObject().getName());
                     int xtar = bnid.get(Var.alloc(triple.getObject().getName())).getID();
@@ -87,7 +88,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                         System.out.println(tar+" "+g+" = "+s.get(g)+"  "+x.get(g));
                     });
                     int zz = 0;
-                }
+                }*/
                 try (IntVector search = new IntVector("search", dual.getAllocator())) {
                     search.allocateNew(1);
                     search.set(0, tar);

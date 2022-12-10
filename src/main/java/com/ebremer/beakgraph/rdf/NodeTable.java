@@ -47,7 +47,7 @@ public class NodeTable {
     }
 
     public int getID(String s) {
-       // System.out.println("getID(): "+s);
+        System.out.println("getID(): "+s);
         if (map.containsKey(s)) {
             return map.get(s);
         } else if (s.startsWith("_:")) {
@@ -90,9 +90,10 @@ public class NodeTable {
         if (id.getType() == NodeType.RESOURCE) {
             if (id.getID()<0) {
                 String k = "_:h"+String.valueOf(-id.getID());
-                Node wow = NodeFactory.createBlankNode(k);
-                blanknodes.put(k, -id.getID());
-                return wow;
+                //Node wow = NodeFactory.createBlankNode(k);
+                //blanknodes.put(k, -id.getID());
+               // return wow;
+                return NodeFactory.createURI(k);
             }
             String gen = new String(dictionary.get(id.getID()));
             return NodeFactory.createURI(gen);

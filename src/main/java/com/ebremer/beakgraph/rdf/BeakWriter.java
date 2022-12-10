@@ -129,7 +129,7 @@ public final class BeakWriter {
         System.out.println("# of blank nodes    : " + blanknodes.size());
         System.out.println("# of resources      : " + resources.size());
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        System.out.println("fix Blank Node order hack");
+        System.out.println("fix Blank Node order hack : "+blanknodes.size());
         blanknodes.forEach((k,v)->{
             blanknodes.put(k, v-blanknodes.size());
         });
