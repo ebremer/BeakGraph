@@ -105,7 +105,7 @@ public final class BeakWriter {
             if (r.isAnon()) {
                 rs = "_:"+r.toString();
                 if (!blanknodes.containsKey(rs)) {
-                   blanknodes.put(rs, -(blanknodes.size()+1));
+                   blanknodes.put(rs, blanknodes.size());
                 }
             } else if (r.isResource()) {
                 rs = r.toString();
@@ -117,7 +117,7 @@ public final class BeakWriter {
             if (node.isAnon()) {
                 rs = "_:"+node.toString();
                 if (!blanknodes.containsKey(rs)) {
-                    blanknodes.put(rs, -(blanknodes.size()+1));
+                    blanknodes.put(rs, blanknodes.size());
                 }
             } else if (node.isResource()) {
                 rs = node.asResource().toString();
@@ -129,6 +129,10 @@ public final class BeakWriter {
         System.out.println("# of blank nodes    : " + blanknodes.size());
         System.out.println("# of resources      : " + resources.size());
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
+        System.out.println("fix Blank Node order hack");
+        blanknodes.forEach((k,v)->{
+            blanknodes.put(k, v-blanknodes.size());
+        });
         dict = new LargeVarCharVector("Resource Dictionary", allocator);
         dict.allocateNewSafe();
         String[] rrr = resources.keySet().toArray(new String[resources.size()]);

@@ -1,13 +1,12 @@
 package com.ebremer.beakgraph.rdf;
 
-import com.ebremer.beakgraph.extra.DualSort;
 import static com.ebremer.beakgraph.rdf.DataType.FLOAT;
 import static com.ebremer.beakgraph.rdf.DataType.INTEGER;
 import static com.ebremer.beakgraph.rdf.DataType.LONG;
 import static com.ebremer.beakgraph.rdf.DataType.RESOURCE;
 import static com.ebremer.beakgraph.rdf.DataType.STRING;
-import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.OS;
-import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.SO;
+import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.OS;
+import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.SO;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -114,7 +113,8 @@ public class PAW {
             System.out.println("CHILD : "+c);
             });
             System.out.println((src.getChild("s")==null)+" VECTOR IS : "+src);
-            DualSort.Sort(src, dest, SO);
+            DualSort dualSort = new DualSort();
+            dualSort.Sort(src, dest, SO);
             semaphore.release();
         }
     }
@@ -140,10 +140,19 @@ public class PAW {
         //DualSort ds = new DualSort();
         //System.out.println("LAUNCH ZECTOR IS : "+src);
         System.out.println("Vector : "+p+" has length "+src.getValueCount());
+        /*
+        if ("https://www.ebremer.com/halcyon/ns/hasRange/1".equals(p)) {
+            IntStream.range(0, src.valueCount).forEach(i->{
+                IntVector s = (IntVector) src.getChild("s");
+                IntVector o = (IntVector) src.getChild("o");
+                System.out.println(i+" : "+s.get(i)+" --> "+o.get(i));
+            });
+        }*/
+        DualSort dualSort = new DualSort();
         job.status = "SORT 1";
-        DualSort.Sort(src, so, SO);
+        dualSort.Sort(src, so, SO);
         job.status = "SORT 2";
-        DualSort.Sort(src, os, OS);
+        dualSort.Sort(src, os, OS);
         job.status = "SET INDEX";
         IntStream.range(0, src.getValueCount()).forEach(r->{
             top.setIndexDefined(r);

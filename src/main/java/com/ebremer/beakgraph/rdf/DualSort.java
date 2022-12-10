@@ -1,7 +1,7 @@
-package com.ebremer.beakgraph.extra;
+package com.ebremer.beakgraph.rdf;
 
-import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.OS;
-import static com.ebremer.beakgraph.extra.DualSort.ColumnOrder.SO;
+import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.OS;
+import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.SO;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.IntStream;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
@@ -14,7 +14,6 @@ import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.complex.StructVector;
-import org.apache.arrow.vector.testing.ValueVectorDataPopulator;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.FieldType;
@@ -23,7 +22,7 @@ public class DualSort {
     
     public static enum ColumnOrder {SO,OS};
 
-    public static VectorValueComparator<StructVector> getIIComparator(StructVector structVector, ColumnOrder order) {
+    public VectorValueComparator<StructVector> getIIComparator(StructVector structVector, ColumnOrder order) {
         IntVector child0 = structVector.getChild("s", IntVector.class);
         VectorValueComparator<IntVector> childComp0 = DefaultVectorComparators.createDefaultComparator(child0);
         childComp0.attachVector(child0);
@@ -32,6 +31,11 @@ public class DualSort {
         childComp1.attachVector(child1);
         VectorValueComparator<StructVector> comp = new VectorValueComparator<StructVector>() {
             @Override
+            public int compare(int index1, int index2) {
+                return compareNotNull(index1, index2);
+            }
+            
+            @Override
             public int compareNotNull(int index1, int index2) {
                 if (order == SO) {
                     int result0 = childComp0.compare(index1, index2);
@@ -56,7 +60,7 @@ public class DualSort {
         return comp;
     }
 
-    public static VectorValueComparator<StructVector> getILComparator(StructVector structVector, ColumnOrder order) {
+    public VectorValueComparator<StructVector> getILComparator(StructVector structVector, ColumnOrder order) {
         IntVector child0 = structVector.getChild("s", IntVector.class);
         VectorValueComparator<IntVector> childComp0 = DefaultVectorComparators.createDefaultComparator(child0);
         childComp0.attachVector(child0);
@@ -65,6 +69,11 @@ public class DualSort {
         childComp1.attachVector(child1);
         VectorValueComparator<StructVector> comp = new VectorValueComparator<StructVector>() {
             @Override
+            public int compare(int index1, int index2) {
+                return compareNotNull(index1, index2);
+            }
+            
+            @Override
             public int compareNotNull(int index1, int index2) {
                 if (order == SO) {
                     int result0 = childComp0.compare(index1, index2);
@@ -89,7 +98,7 @@ public class DualSort {
         return comp;
     }
 
-    public static VectorValueComparator<StructVector> getIFComparator(StructVector structVector, ColumnOrder order) {
+    public VectorValueComparator<StructVector> getIFComparator(StructVector structVector, ColumnOrder order) {
         IntVector child0 = structVector.getChild("s", IntVector.class);
         VectorValueComparator<IntVector> childComp0 = DefaultVectorComparators.createDefaultComparator(child0);
         childComp0.attachVector(child0);
@@ -97,6 +106,11 @@ public class DualSort {
         VectorValueComparator<Float4Vector> childComp1 = DefaultVectorComparators.createDefaultComparator(child1);
         childComp1.attachVector(child1);
         VectorValueComparator<StructVector> comp = new VectorValueComparator<StructVector>() {
+            @Override
+            public int compare(int index1, int index2) {
+                return compareNotNull(index1, index2);
+            }
+            
             @Override
             public int compareNotNull(int index1, int index2) {
                 if (order == SO) {
@@ -122,7 +136,7 @@ public class DualSort {
         return comp;
     }
 
-    public static VectorValueComparator<StructVector> getISComparator(StructVector structVector, ColumnOrder order) {
+    public VectorValueComparator<StructVector> getISComparator(StructVector structVector, ColumnOrder order) {
         IntVector child0 = structVector.getChild("s", IntVector.class);
         VectorValueComparator<IntVector> childComp0 = DefaultVectorComparators.createDefaultComparator(child0);
         childComp0.attachVector(child0);
@@ -131,6 +145,11 @@ public class DualSort {
         childComp1.attachVector(child1);
         VectorValueComparator<StructVector> comp = new VectorValueComparator<StructVector>() {
             @Override
+            public int compare(int index1, int index2) {
+                return compareNotNull(index1, index2);
+            }
+            
+            @Override
             public int compareNotNull(int index1, int index2) {
                 if (order == SO) {
                     int result0 = childComp0.compare(index1, index2);
@@ -155,7 +174,7 @@ public class DualSort {
         return comp;
     }
 
-    public static VectorValueComparator<StructVector> getIRComparator(StructVector structVector, ColumnOrder order) {
+    public VectorValueComparator<StructVector> getIRComparator(StructVector structVector, ColumnOrder order) {
         IntVector child0 = structVector.getChild("s", IntVector.class);
         VectorValueComparator<IntVector> childComp0 = DefaultVectorComparators.createDefaultComparator(child0);
         childComp0.attachVector(child0);
@@ -164,6 +183,11 @@ public class DualSort {
         childComp1.attachVector(child1);
         VectorValueComparator<StructVector> comp = new VectorValueComparator<StructVector>() {
             @Override
+            public int compare(int index1, int index2) {
+                return compareNotNull(index1, index2);
+            }
+            
+            @Override
             public int compareNotNull(int index1, int index2) {
                 if (order == SO) {
                     int result0 = childComp0.compare(index1, index2);
@@ -188,7 +212,7 @@ public class DualSort {
         return comp;
     }
 
-    public static void Sort(StructVector srcVector, StructVector destVector, ColumnOrder order) {
+    public void Sort(StructVector srcVector, StructVector destVector, ColumnOrder order) {
         GeneralOutOfPlaceVectorSorter<StructVector> sorter = new GeneralOutOfPlaceVectorSorter<>();
         VectorValueComparator<StructVector> comp =
             switch (srcVector.getChild("o")) {
@@ -203,13 +227,13 @@ public class DualSort {
 
     public static void main(String[] args) {
         BufferAllocator allocator = new RootAllocator();
-        final int vectorLength = 17453987;
+        final int vectorLength = 339979;
         StructVector src = StructVector.empty("src struct", allocator);
-        IntVector srcChild0 = src.addOrGet("s", FieldType.nullable(new ArrowType.Int(32, true)), IntVector.class);
-        IntVector srcChild1 = src.addOrGet("o", FieldType.nullable(new ArrowType.Int(32, true)), IntVector.class);
+        IntVector srcChild0 = src.addOrGet("s", FieldType.notNullable(new ArrowType.Int(32, true)), IntVector.class);
+        IntVector srcChild1 = src.addOrGet("o", FieldType.notNullable(new ArrowType.Int(32, true)), IntVector.class);
         System.out.println("Initialize Vectors");
         IntStream.range(0, vectorLength).forEach(i->{
-            srcChild0.setSafe(i, ThreadLocalRandom.current().nextInt(Integer.MIN_VALUE, Integer.MAX_VALUE));
+            srcChild0.setSafe(i, vectorLength-i);
             srcChild1.setSafe(i, ThreadLocalRandom.current().nextInt(Integer.MIN_VALUE, Integer.MAX_VALUE));
         });
         srcChild0.setValueCount(vectorLength);
@@ -218,7 +242,7 @@ public class DualSort {
         //ValueVectorDataPopulator.setVector(srcChild1, 9, 4, 4, 3, 9, 4, 6);
         
         
-        
+        DualSort dualsort = new DualSort();
         
         IntStream.range(0, vectorLength).forEach(i -> src.setIndexDefined(i));
         src.setValueCount(vectorLength);
@@ -233,10 +257,14 @@ public class DualSort {
         //StructVector os = top.addOrGet("os", new FieldType(false, Types.MinorType.STRUCT.getType(), null, null), StructVector.class);
         System.out.println("LEN : "+src.getValueCount()+" "+so.getValueCount()+" "+so.getValueCapacity());
               System.out.println("Sort Vectors");
-        Sort(src, so, OS);
+        long x1 = System.nanoTime();
+        dualsort.Sort(src, so, OS);
+        System.out.println(System.nanoTime()-x1);
         System.out.println("ORG -> "+src);
         System.out.println("FWD -> "+so);
-        //Sort(src, os, OS);
-        //System.out.println("RVR -> "+os);
+        x1 = System.nanoTime();
+        dualsort.Sort(src, so, SO);
+        System.out.println(System.nanoTime()-x1);
+        System.out.println("RVR -> "+so);
     }
 }
