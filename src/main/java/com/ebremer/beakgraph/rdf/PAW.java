@@ -302,7 +302,6 @@ public class PAW {
     
     public void set(String s, Resource object) {
         StructVector sv;
-        //System.out.println("set : "+object.getClass().toGenericString());
         if (!cs.containsKey(RESOURCE)) {
             cs.put(RESOURCE, build(RESOURCE));
         }

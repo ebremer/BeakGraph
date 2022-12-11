@@ -47,7 +47,7 @@ public class NodeTable {
     }
 
     public int getID(String s) {
-        System.out.println("getID(): "+s);
+        //System.out.println("getID(): "+s);
         if (map.containsKey(s)) {
             return map.get(s);
         } else if (s.startsWith("_:")) {
@@ -88,6 +88,9 @@ public class NodeTable {
     public Node getNodeForNodeId(NodeId id) {
       // System.out.println("getNodeForNodeId() : "+id+" "+id.getType()+" ---> "+id.getID());
         if (id.getType() == NodeType.RESOURCE) {
+            if (id.getID()==-34488169) {
+                throw new Error("HERE!!!!!!!!!!=========================================");
+            }
             if (id.getID()<0) {
                 String k = "_:h"+String.valueOf(-id.getID());
                 //Node wow = NodeFactory.createBlankNode(k);
