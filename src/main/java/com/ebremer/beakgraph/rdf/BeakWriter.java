@@ -5,6 +5,7 @@ import com.ebremer.rocrate4j.StopWatch;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -24,6 +25,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.xml.bind.DatatypeConverter;
+import net.lingala.zip4j.io.outputstream.CountingOutputStream;
+import net.lingala.zip4j.io.outputstream.ZipOutputStream;
+import net.lingala.zip4j.model.FileHeader;
 import net.lingala.zip4j.model.enums.CompressionMethod;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
@@ -74,12 +78,12 @@ public final class BeakWriter {
         Create(allocator);
         System.out.println("# of vectors : "+vectors.size());
         sw.Lap("Predicate Vectors Created");
-        metairi = WriteDictionaryToFile(base, roc);
+        metairi = WriteDictionaryToFile2(base, roc);
         sw.LapStart("Generate VoID Data");
         Model VoID = BGVoID.GenerateVoID(metairi, m);
         metairi.getModel().add(VoID);
         sw.Lap("VoID Data Generated");
-        WriteDataToFile(base, roc);
+        WriteDataToFile2(base, roc);
         //DisplayMeta();
         sw.Lapse("BeakGraph Completed");
     }
@@ -161,6 +165,85 @@ public final class BeakWriter {
         }
         return null;
     }
+    
+    public Resource WriteDictionaryToFile2(String base, ROCrate.Builder roc) {
+        System.out.println("================== WRITING Dictionary to File =====================================");
+        Resource rde = roc.getRDE();
+        Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
+        try (
+            LargeVarCharVector v = (LargeVarCharVector) provider.lookup(0).getVector();
+            VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
+        ) {
+            try {
+                OutputStream zos = roc.getDestination().GetOutputStream(base+"/dictionary", CompressionMethod.STORE);
+                CountingOutputStream cos = new CountingOutputStream(zos);
+                ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
+                writer.start();
+                writer.writeBatch();
+                writer.end();
+                long numbytes = cos.getNumberOfBytesWritten();
+                if (zos instanceof ZipOutputStream zz) {
+                    FileHeader fh = zz.closeEntry();
+                    fh.setUncompressedSize(numbytes);
+                }
+                roc
+                    .Add(target, base, "dictionary", CompressionMethod.STORE, true)
+                    .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                    .addLiteral(SchemaDO.contentSize, numbytes)
+                    .addProperty(RDF.type, SchemaDO.MediaObject)
+                    .addProperty(RDF.type, BG.Dictionary);
+            /*
+                        roc
+                .Add(target, base, "dictionary", out.toByteArray(), CompressionMethod.STORE, true)
+                .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                .addLiteral(SchemaDO.contentSize, out.size())
+                .addProperty(RDF.type, SchemaDO.MediaObject)
+                .addProperty(RDF.type, BG.Dictionary);
+            */
+           //writer.close();
+        } catch (IOException ex) {
+            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        System.out.println("================== Dictionary WRITTEN =====================================");
+        return target;
+        }
+    }
+    
+    public Resource WriteDataToFile2(String base, ROCrate.Builder roc) {
+        System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
+        Resource rde = roc.getRDE();
+        Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
+        vectors.forEach(v->{
+            System.out.println("Writing --> "+v.getName());
+            try (VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v))) {
+                root.setRowCount(v.getValueCount());
+                OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
+                CountingOutputStream cos = new CountingOutputStream(zos);
+                ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
+                writer.start();
+                writer.writeBatch();
+                writer.end();
+                long numbytes = cos.getNumberOfBytesWritten();
+                if (zos instanceof ZipOutputStream zz) {
+                    FileHeader fh = zz.closeEntry();
+                    fh.setUncompressedSize(numbytes);
+                }
+                roc
+                    .Add(target, base, MD5(v.getField().getName().getBytes()), CompressionMethod.STORE, true)
+                    .addProperty(SchemaDO.name, v.getField().getName().substring(1))
+                    .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
+                    .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                    .addLiteral(SchemaDO.contentSize, numbytes)
+                    .addProperty(RDF.type, SchemaDO.MediaObject)
+                    .addLiteral(BG.triples, v.getValueCount())
+                    .addProperty(RDF.type, BG.PredicateVector);
+                } catch (IOException ex) {
+                    Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+                }
+        });
+        System.out.println("================== FILE WRITTEN =====================================");
+        return target;
+    }
 
     public Resource WriteDataToFile(String base, ROCrate.Builder roc) {
         System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
@@ -175,9 +258,9 @@ public final class BeakWriter {
             )
             {
                 root.setRowCount(v.getValueCount());
-             //   OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
-              //  CountingOutputStream cos = new CountingOutputStream(zos);
-            //    ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
+               // OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
+               // CountingOutputStream cos = new CountingOutputStream(zos);
+              //  ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
                 writer.start();
                 writer.writeBatch();
                 writer.end();
