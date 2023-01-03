@@ -76,7 +76,7 @@ public class NodeTable {
     }
     
     public NodeId getNodeIdForNode(Node n) {
-        System.out.println("---->>>>> "+n+" "+n.isBlank());
+        //System.out.println("---->>>>> "+n+" "+n.isBlank());
         if (n.isURI()) {
             return new NodeId(map.get(n.getURI()));
         } else if (n.isLiteral()) {
@@ -111,7 +111,7 @@ public class NodeTable {
             } else if (x instanceof org.apache.arrow.vector.util.Text) {
                 return NodeFactory.createLiteral(x.toString());
             } else if (x instanceof org.apache.jena.rdf.model.impl.ResourceImpl xxx) {
-                System.out.println("THIS NODE ID VALUE IS : "+id.getID());
+                //System.out.println("THIS NODE ID VALUE IS : "+id.getID());
                 return xxx.asNode();
             }             
             throw new Error("I cannot deal with this : "+x.getClass().toGenericString());
