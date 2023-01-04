@@ -48,7 +48,7 @@ public class OpExecutorBeak extends OpExecutor {
         
 //       if (opFilter instanceof OpFilter) throw new Error("BAM");
        Op what = opFilter.getSubOp();
-        boolean whatisthis = OpBGP.isBGP(what);
+       // boolean whatisthis = OpBGP.isBGP(what);
         if (OpBGP.isBGP(opFilter.getSubOp())) {
             BeakGraph graph = (BeakGraph)execCxt.getActiveGraph();
             OpBGP opBGP = (OpBGP)opFilter.getSubOp();

@@ -103,6 +103,10 @@ public final class BeakReader {
      //   DisplayAll();
     }
     
+    public Model getManifest() {
+        return manifest;
+    }
+    
     public void close() {
         byPredicate.forEach((k,v)->{
             v.close();
