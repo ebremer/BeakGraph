@@ -26,7 +26,7 @@ import org.apache.jena.util.iterator.ExtendedIterator;
 public class BeakGraph extends GraphBase {
     
     static {
-	QC.setFactory(ARQ.getContext(), OpExecutorBeak.opExecFactoryRaptor);
+	QC.setFactory(ARQ.getContext(), OpExecutorBeak.opExecFactoryBeak);
 	QueryEngineBeak.register();
     }
 

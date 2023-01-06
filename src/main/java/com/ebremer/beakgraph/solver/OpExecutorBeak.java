@@ -28,7 +28,7 @@ import org.apache.jena.sparql.mgt.Explain;
  */
 public class OpExecutorBeak extends OpExecutor {
     
-    public final static OpExecutorFactory opExecFactoryRaptor = new OpExecutorFactory() {
+    public final static OpExecutorFactory opExecFactoryBeak = new OpExecutorFactory() {
         @Override
         public OpExecutor create(ExecutionContext execCxt) { 
             return new OpExecutorBeak(execCxt) ; 
