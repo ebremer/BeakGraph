@@ -3,7 +3,6 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.rocrate4j.ROCrate;
 import com.ebremer.rocrate4j.StopWatch;
 import java.io.ByteArrayOutputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.channels.Channels;
@@ -44,7 +43,6 @@ import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.rdf.model.Statement;
-import org.apache.jena.rdf.model.StmtIterator;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.SchemaDO;
 
@@ -55,43 +53,51 @@ import org.apache.jena.vocabulary.SchemaDO;
 public final class BeakWriter {
     private final MapDictionaryProvider provider = new MapDictionaryProvider();
     private Dictionary dictionary;
-    private final Model m;
     private final CopyOnWriteArrayList<Field> fields = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<FieldVector> vectors = new CopyOnWriteArrayList<>();
-    private final NodeTable nt;
+    private NodeTable nt;
     private LargeVarCharVector dict;
-    private final Resource metairi;
+    private Resource metairi;
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
     private final HashMap<String,Integer> blanknodes;
     private final ConcurrentHashMap<String,Job> Jobs = new ConcurrentHashMap<>();
+    private final HashMap<String,Integer> resources = new HashMap<>();
+    private boolean locked = false;
+    private String base;
+    private ROCrate.Builder roc;
+    private BufferAllocator allocator;
+    private final BGVoID VoID = new BGVoID();
     
-    public BeakWriter(BufferAllocator allocator, Model m, ROCrate.Builder roc, String base) throws IOException {
-        this.m = m;
-        StopWatch sw = new StopWatch();
-        sw.LapStart("Create Dictionary");
+    public BeakWriter(BufferAllocator allocator, ROCrate.Builder roc, String base) throws IOException {
+        //this.m = m;
+        this.allocator = allocator;
+        this.base = base;
+        this.roc = roc;
+        //StopWatch sw = new StopWatch();
+        //sw.LapStart("Create Dictionary");
         blanknodes = new HashMap<>(2500000);
-        CreateDictionary(allocator);
-        nt = new NodeTable(dictionary);
-        nt.setBlankNodes(blanknodes);
-        sw.Lap("Dictionary Created");
-        sw.LapStart("Create Predicate Vectors");
-        Create(allocator);
-        System.out.println("# of vectors : "+vectors.size());
-        sw.Lap("Predicate Vectors Created");
-        metairi = WriteDictionaryToFile2(base, roc);
-        sw.LapStart("Generate VoID Data");
-        Model VoID = BGVoID.GenerateVoID(metairi, m);
-        metairi.getModel().add(VoID);
-        sw.Lap("VoID Data Generated");
-        WriteDataToFile2(base, roc);
+        //CreateDictionary(allocator);
+        //nt = new NodeTable(dictionary);
+        //nt.setBlankNodes(blanknodes);
+        //sw.Lap("Dictionary Created");
+        //sw.LapStart("Create Predicate Vectors");
+        
+        //System.out.println("# of vectors : "+vectors.size());
+        //sw.Lap("Predicate Vectors Created");
+        
+        //sw.LapStart("Generate VoID Data");
+        //Model VoID = BGVoID.GenerateVoID(metairi, m);
+        //metairi.getModel().add(VoID);
+        //sw.Lap("VoID Data Generated");
+        
         //DisplayMeta();
-        sw.Lapse("BeakGraph Completed");
+        //sw.Lapse("BeakGraph Completed");
     }
     
     public Resource getMetaIRI() {
         return metairi;
     }
-        
+    
     public void DisplayMeta() {
         System.out.println("Displaying Metadata...");    
         vectors.forEach(v->{
@@ -99,57 +105,64 @@ public final class BeakWriter {
         });
     }
     
-    private void CreateDictionary(BufferAllocator allocator) {
-        HashMap<String,Integer> resources = new HashMap<>();
-        StmtIterator si = m.listStatements();
-        while (si.hasNext()) {
-            Statement sx = si.next();
-            Resource r = sx.getSubject();
-            String rs;
-            if (r.isAnon()) {
-                rs = "_:"+r.toString();
-                if (!blanknodes.containsKey(rs)) {
-                   blanknodes.put(rs, blanknodes.size());
-                }
-            } else if (r.isResource()) {
-                rs = r.toString();
-                if (!resources.containsKey(rs)) {
-                    resources.put(rs, 1);
-                }
-            }
-            RDFNode node = sx.getObject();
-            if (node.isAnon()) {
-                rs = "_:"+node.toString();
-                if (!blanknodes.containsKey(rs)) {
-                    blanknodes.put(rs, blanknodes.size());
-                }
-            } else if (node.isResource()) {
-                rs = node.asResource().toString();
-                if (!resources.containsKey(rs)) {
-                    resources.put(rs, 1);
-                }
-            }
+    public void AddResource(Statement sx) {
+        Resource r = sx.getSubject();
+        AddResource(r);
+        AddResource(sx.getObject());
+    }
+    
+    public void AddResource(RDFNode node) {
+        if (node.isResource()) {
+            AddResource(node.asResource());
         }
-        System.out.println("# of blank nodes    : " + blanknodes.size());
-        System.out.println("# of resources      : " + resources.size());
-        DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        System.out.println("fix Blank Node order hack : "+blanknodes.size());
-        blanknodes.forEach((k,v)->{
-            blanknodes.put(k, v-blanknodes.size());
+    }    
+    
+    public void AddResource(Resource r) {
+        String rs;
+        if (r.isAnon()) {
+            rs = r.toString();
+            if (!blanknodes.containsKey(rs)) {
+                blanknodes.put(rs, blanknodes.size());
+            }
+        } else if (r.isResource()) {
+            rs = r.toString();
+            if (!resources.containsKey(rs)) {
+                resources.put(rs, 1);
+            }
+        } 
+    }
+    
+    public void Register(Model m) {
+        m.listStatements().forEach(s->{
+            AddResource(s);
         });
+    }
+    
+    public void Add(Model m) {
+        m.listStatements().forEach(s->{
+            ProcessTriple(allocator, s);
+        });
+    }
+    
+    public void CreateDictionary(BufferAllocator allocator) {
+        System.out.println("Creating Dictionary...");
+        DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
         dict = new LargeVarCharVector("Resource Dictionary", allocator);
         dict.allocateNewSafe();
         String[] rrr = resources.keySet().toArray(new String[resources.size()]);
-        System.out.println("Sorting Dictionary...");
+        //System.out.println("Sorting Dictionary...");
         Arrays.sort(rrr);
         for (int i=0; i<resources.size(); i++) {
             dict.setSafe(i, rrr[i].getBytes(StandardCharsets.UTF_8));
         }
         dict.setValueCount(resources.size());
-        System.out.println("FINAL # : "+resources.size());
+        System.out.println("RESOURCES  # : "+resources.size());
+        System.out.println("BNODES     # : "+blanknodes.size());
         dictionary = new Dictionary(dict, dictionaryEncoding);
-        System.out.println(dictionary.getEncoding());
         provider.put(dictionary);
+        locked = true;
+        nt = new NodeTable(dictionary);
+        nt.setBlankNodes(blanknodes);
         System.out.println("Creating Dictionary...Done");
     }
     
@@ -192,15 +205,6 @@ public final class BeakWriter {
                     .addLiteral(SchemaDO.contentSize, numbytes)
                     .addProperty(RDF.type, SchemaDO.MediaObject)
                     .addProperty(RDF.type, BG.Dictionary);
-            /*
-                        roc
-                .Add(target, base, "dictionary", out.toByteArray(), CompressionMethod.STORE, true)
-                .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
-                .addLiteral(SchemaDO.contentSize, out.size())
-                .addProperty(RDF.type, SchemaDO.MediaObject)
-                .addProperty(RDF.type, BG.Dictionary);
-            */
-           //writer.close();
         } catch (IOException ex) {
             Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
@@ -240,52 +244,6 @@ public final class BeakWriter {
                 } catch (IOException ex) {
                     Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
                 }
-        });
-        System.out.println("================== FILE WRITTEN =====================================");
-        return target;
-    }
-
-    public Resource WriteDataToFile(String base, ROCrate.Builder roc) {
-        System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
-        Resource rde = roc.getRDE();
-        Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
-        vectors.forEach(v->{
-            System.out.println("Writing --> "+v.getName());
-            try (
-                VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out));
-            )
-            {
-                root.setRowCount(v.getValueCount());
-               // OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
-               // CountingOutputStream cos = new CountingOutputStream(zos);
-              //  ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
-                writer.start();
-                writer.writeBatch();
-                writer.end();
-            //    long numbytes = cos.getNumberOfBytesWritten();
-//                if (zos instanceof ZipOutputStream zz) {
-  //                  FileHeader fh = zz.closeEntry();
-    //                fh.setUncompressedSize(numbytes);
-      //          }
-                roc
-                    .Add(target, base, MD5(v.getField().getName().getBytes()), out.toByteArray(), CompressionMethod.STORE, true)
-                    //.Add(target, base, MD5(v.getField().getName().getBytes()), CompressionMethod.STORE, true)
-                    .addProperty(SchemaDO.name, v.getField().getName().substring(1))
-                    .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
-                    .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
-                    //.addLiteral(SchemaDO.contentSize, numbytes)
-                    .addLiteral(SchemaDO.contentSize, out.size())
-                    .addProperty(RDF.type, SchemaDO.MediaObject)
-                    .addLiteral(BG.triples, v.getValueCount())
-                    .addProperty(RDF.type, BG.PredicateVector);
-             //   writer.close();
-            } catch (FileNotFoundException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-            } catch (IOException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-            }        
         });
         System.out.println("================== FILE WRITTEN =====================================");
         return target;
@@ -340,20 +298,15 @@ public final class BeakWriter {
         return target;
     }
     
-    public void ProcessTriples(BufferAllocator allocator) {
-        System.out.println("# of triples to be processed : "+m.size());
-        StmtIterator si = m.listStatements();
-        while (si.hasNext()) {
-            ProcessTriple2(allocator, si.next());
-        }
-    }
-    
-    public void ProcessTriple2(BufferAllocator allocator, Statement stmt) {
-        //Resource res = qs.get("s").asResource();
+    public void ProcessTriple(BufferAllocator allocator, Statement stmt) {
+        VoID.Add(stmt);
         Resource res = stmt.getSubject();
         String s;
         if (res.isAnon()) {
-            s = "_:"+res.toString();
+            s = res.toString();
+            if (!nt.getBlankNodes().containsKey(s)) {
+                nt.getBlankNodes().put(s, nt.getBlankNodes().size());
+            }
         } else if (res.isResource()) {
             s = res.getURI();
         } else {
@@ -364,8 +317,11 @@ public final class BeakWriter {
         RDFNode o = stmt.getObject();
         if (o.isResource()) {
             cc = o.asResource().getClass();
-        } else if (o.isAnon()) {
-            cc = o.asResource().getClass();
+            if (o.isAnon()) {
+                if (!nt.getBlankNodes().containsKey(o.toString())) {
+                    nt.getBlankNodes().put(o.toString(), nt.getBlankNodes().size());
+                }
+            }
         } else if (o.isLiteral()) {
             cc = o.asLiteral().getDatatype().getJavaClass();
         } else {
@@ -381,7 +337,7 @@ public final class BeakWriter {
                 if (!byPredicate.containsKey(p)) {
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
-                byPredicate.get(p).set(s, o.asResource());
+                byPredicate.get(p).set(res, o.asResource());
                 break;
             }
             case "java.math.BigInteger": {
@@ -389,7 +345,7 @@ public final class BeakWriter {
                 if (!byPredicate.containsKey(p)) {
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
-                byPredicate.get(p).set(s, oo);
+                byPredicate.get(p).set(res, oo);
                 break;
             }
             case "java.lang.Integer": {
@@ -397,7 +353,7 @@ public final class BeakWriter {
                 if (!byPredicate.containsKey(p)) {
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
-                byPredicate.get(p).set(s, oo);
+                byPredicate.get(p).set(res, oo);
                 break;
             }
             case "java.lang.Long": {
@@ -405,7 +361,7 @@ public final class BeakWriter {
                 if (!byPredicate.containsKey(p)) {
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
-                byPredicate.get(p).set(s, oo);
+                byPredicate.get(p).set(res, oo);
                 break;
             }
             case "java.lang.Float": {
@@ -413,7 +369,7 @@ public final class BeakWriter {
                 if (!byPredicate.containsKey(p)) {
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
-                byPredicate.get(p).set(s, oo);
+                byPredicate.get(p).set(res, oo);
                 break;
             }
             case "java.lang.String": {
@@ -421,7 +377,7 @@ public final class BeakWriter {
                 if (!byPredicate.containsKey(p)) {
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
-                byPredicate.get(p).set(s, oo);
+                byPredicate.get(p).set(res, oo);
                 break;
             }
             default:
@@ -433,10 +389,7 @@ public final class BeakWriter {
     }
     
     public void Create(BufferAllocator allocator) throws IOException {
-        System.out.println("Creating..."); 
-        ProcessTriples(allocator);
-       // System.out.println("Closing Source Graph...");
-       // m.close();
+        System.out.println("Creating BeakGraph..."); 
         int cores = Runtime.getRuntime().availableProcessors();
         System.out.println(cores+" cores available");
         ThreadPoolExecutor engine = new ThreadPoolExecutor(cores,cores,0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -464,24 +417,14 @@ public final class BeakWriter {
             }
         }, 0, 10000);
         while ((engine.getQueue().size()+engine.getActiveCount())>0) {
-//            int c = engine.getQueue().size()+engine.getActiveCount();
-  //          long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
-    //        System.out.println("===============================================\njobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
-      //      Jobs.forEach((k,v)->{
-        //        if (!"DONE".equals(v.status)) {
-          //          System.out.println(v.predicate+" ---> "+v.status);
-            //    }
-            //});
-            //try {
-//                Thread.sleep(10000);
-           // } catch (InterruptedException ex) {
-             //   Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-            //}
         }
         timer.cancel();
         System.out.println("Engine shutdown");
         engine.shutdown();
         System.out.println("engine jobs : "+list.size());
+        //Create(allocator);
+        metairi = WriteDictionaryToFile2(base, roc);
+        WriteDataToFile2(base, roc);
     }
         
     class PredicateProcessor implements Callable<Model> {
@@ -505,98 +448,3 @@ public final class BeakWriter {
         }
     }
 }
-
-    /*
-    
-    public void ProcessTriple(QuerySolution qs) {
-        Resource res = qs.get("s").asResource();
-        String s;
-        if (res.isAnon()) {
-            s = "_:"+res.toString();
-        } else if (res.isResource()) {
-            s = res.getURI();
-        } else {
-            throw new Error("ack");
-        }
-        String p = qs.get("p").asResource().getURI();
-        Class cc;
-        RDFNode o = qs.get("o");
-        if (o.isResource()) {
-            cc = o.asResource().getClass();
-        } else if (o.isAnon()) {
-            cc = o.asResource().getClass();
-        } else if (o.isLiteral()) {
-            cc = o.asLiteral().getDatatype().getJavaClass();
-        } else {
-            Resource r = o.asResource();
-            throw new Error(r.isResource()+" Don't know how to deal with "+o.toString());
-        }
-        String ct = cc.getCanonicalName();
-        if (null == ct) {
-            System.out.println("Can't handle ["+ct+"]");
-            System.out.println(s+" "+p+" "+o);
-        } else switch (ct) {
-            case "org.apache.jena.rdf.model.impl.ResourceImpl": {
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
-                }
-                byPredicate.get(p).set(s, o.asResource());
-                break;
-            }
-            case "java.math.BigInteger": {
-                long oo = o.asLiteral().getLong();
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
-                }
-                byPredicate.get(p).set(s, oo);
-                break;
-            }
-            case "java.lang.Integer": {
-                int oo = o.asLiteral().getInt();
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
-                }
-                byPredicate.get(p).set(s, oo);
-                break;
-            }
-            case "java.lang.Long": {
-                long oo = o.asLiteral().getLong();
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
-                }
-                byPredicate.get(p).set(s, oo);
-                break;
-            }
-            case "java.lang.Float": {
-                float oo = o.asLiteral().getFloat();
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
-                }
-                byPredicate.get(p).set(s, oo);
-                break;
-            }
-            case "java.lang.String": {
-                String oo = o.asLiteral().toString();
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
-                }
-                byPredicate.get(p).set(s, oo);
-                break;
-            }
-            default:
-                System.out.println("Can't handle ["+ct+"]");
-                System.out.println(s+" "+p+" "+o);
-                throw new Error("BAMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM");
-                //break;
-        }
-    }
-        */
-
-        /*
-        ParameterizedSparqlString pss = new ParameterizedSparqlString("select ?s ?p ?o where {?s ?p ?o} #limit 500000");
-        QueryExecution qe = QueryExecutionFactory.create(pss.toString(),m);
-        ResultSet rs = qe.execSelect();
-        while (rs.hasNext()) {
-            QuerySolution qs = rs.next();
-            ProcessTriple(qs);
-        }*/

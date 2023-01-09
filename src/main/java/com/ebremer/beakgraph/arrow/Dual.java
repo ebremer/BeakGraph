@@ -131,14 +131,17 @@ public class Dual {
     
     public void set(int subject, Resource object, NodeTable nt) {
         IntVector x = (IntVector) o;
+        
+        /*
         String os;
         if (object.isAnon()) {
             os = "_:"+object.toString();
         } else {
             os = object.toString();
         }
+*/
         //System.out.println("setting "+object);
-        x.setSafe(count, nt.getID(os));
+        x.setSafe(count, nt.getID(object));
         s.setSafe(count, subject);
         count++;
     }

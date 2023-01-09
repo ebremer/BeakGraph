@@ -15,6 +15,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.jena.graph.Triple;
+import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.ExprList;
@@ -64,7 +65,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
         } else {
             this.pa = (StructVector) dual.getChild("os");
             if (!triple.getObject().isVariable()) {
-                int tar = nodeTable.getID(triple.getObject().getURI());
+                int tar = nodeTable.getID(ResourceFactory.createResource(triple.getObject().getURI()));
                 IntVector s = (IntVector) pa.getChild("o");
                 try (IntVector search = new IntVector("search", dual.getAllocator())) {
                     search.allocateNew(1);

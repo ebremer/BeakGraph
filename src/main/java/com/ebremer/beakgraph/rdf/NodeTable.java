@@ -12,6 +12,7 @@ import org.apache.arrow.vector.dictionary.Dictionary;
 import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
+import org.apache.jena.rdf.model.Resource;
 
 /**
  *
@@ -45,14 +46,18 @@ public class NodeTable {
     public void close() {
         dictionary.close();
     }
-
-    public int getID(String s) {
+    
+    public HashMap<String,Integer> getBlankNodes() {
+        return blanknodes;
+    }
+    
+    public int getID(Resource s) {
         //System.out.println("getID(): "+s);
-        if (map.containsKey(s)) {
-            return map.get(s);
-        } else if (s.startsWith("_:")) {
-            if (blanknodes.containsKey(s)) {
-                return blanknodes.get(s);
+        if (map.containsKey(s.toString())) {
+            return map.get(s.toString());
+        } else if (s.isAnon()) {
+            if (blanknodes.containsKey(s.toString())) {
+                return blanknodes.get(s.toString());
             } else {
                 throw new Error("Missing blank node in dictionary : "+s);
             }
@@ -63,7 +68,7 @@ public class NodeTable {
         ) {
             key.allocateNew(1);
             key.setValueCount(1);
-            key.set(0, s.getBytes());
+            key.set(0, s.toString().getBytes());
             int result = VectorSearcher.binarySearch(dictionary, comparator, key, 0);
             if (result!=VectorSearcher.SEARCH_FAIL_RESULT) {
                 hits++;

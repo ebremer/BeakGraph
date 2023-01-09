@@ -241,7 +241,7 @@ public class PAW {
         return ss;
     }
     
-    public void set(String s, int o) {
+    public void set(Resource s, int o) {
         StructVector sv;
         if (!cs.containsKey(INTEGER)) {
             cs.put(INTEGER, build(INTEGER));
@@ -255,7 +255,7 @@ public class PAW {
         writer.end();
     }
     
-    public void set(String s, long o) {
+    public void set(Resource s, long o) {
         StructVector sv;
         if (!cs.containsKey(LONG)) {
             cs.put(LONG, build(LONG));
@@ -269,7 +269,7 @@ public class PAW {
         writer.end();
     }
     
-    public void set(String s, float o) {
+    public void set(Resource s, float o) {
         StructVector sv;
         if (!cs.containsKey(FLOAT)) {
             cs.put(FLOAT, build(FLOAT));
@@ -283,7 +283,7 @@ public class PAW {
         writer.end();
     }
     
-    public void set(String s, String o) {
+    public void set(Resource s, String o) {
         StructVector sv;
         if (!cs.containsKey(STRING)) {
             cs.put(STRING, build(STRING));
@@ -300,23 +300,23 @@ public class PAW {
         writer.end();
     }
     
-    public void set(String s, Resource object) {
+    public void set(Resource s, Resource object) {
         StructVector sv;
         if (!cs.containsKey(RESOURCE)) {
             cs.put(RESOURCE, build(RESOURCE));
         }
         sv = cs.get(RESOURCE);
         Count(RESOURCE);
-        String os;
-        if (object.isAnon()) {
-            os = "_:"+object.toString();
-        } else {
-            os = object.toString();
-        }
+        //String os;
+        //if (object.isAnon()) {
+//            os = "_:"+object.toString();
+//        } else {
+  //          os = object.toString();
+    //    }
         NullableStructWriter writer = sv.getWriter();
         writer.start();
         writer.integer("s").writeInt(nt.getID(s));
-        writer.integer("o").writeInt(nt.getID(os));
+        writer.integer("o").writeInt(nt.getID(object));
         writer.end();
     }
 }
