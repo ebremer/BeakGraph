@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.rdf;
 
+import java.util.HashSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import org.apache.commons.codec.digest.DigestUtils;
@@ -20,7 +21,7 @@ import org.apache.jena.vocabulary.VOID;
 public class BGVoID {
     private long numtriples = 0;
     private long numclasses = 0;
-    private final ConcurrentLinkedQueue<String> triples = new ConcurrentLinkedQueue<>();
+    //private final HashSet<String> triples = new HashSet<>();
     private final ConcurrentHashMap<String,Long> predicatecounts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String,Long> classcounts = new ConcurrentHashMap<>();
     
@@ -50,17 +51,20 @@ public class BGVoID {
     }
     
     public void CountTriple(Statement stmt) {
+        numtriples++;
+        /*
         StringBuilder sb = new StringBuilder();
         sb.append(stmt.getSubject().toString())
           .append("/")
           .append(stmt.getPredicate().toString())
           .append("/")
           .append(stmt.getObject().toString());
-        String hash = DigestUtils.md5Hex(sb.toString()).toUpperCase();
+        String hash = DigestUtils.md5Hex(sb.toString());
         if (!triples.contains(hash)) {
             triples.add(hash);
             numtriples++;
         }
+*/
     }
     
     public Model getVoid(Resource ng) {

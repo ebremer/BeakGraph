@@ -98,6 +98,10 @@ public final class BeakWriter {
         return metairi;
     }
     
+    public Model getVoID(Resource r) {
+        return VoID.getVoid(r);
+    }
+    
     public void DisplayMeta() {
         System.out.println("Displaying Metadata...");    
         vectors.forEach(v->{
