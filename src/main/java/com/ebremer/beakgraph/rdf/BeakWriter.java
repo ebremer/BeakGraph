@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.rdf;
 
 import com.ebremer.rocrate4j.ROCrate;
-import com.ebremer.rocrate4j.StopWatch;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;

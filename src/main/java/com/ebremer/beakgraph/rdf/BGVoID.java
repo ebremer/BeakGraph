@@ -1,9 +1,6 @@
 package com.ebremer.beakgraph.rdf;
 
-import java.util.HashSet;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.jena.query.ParameterizedSparqlString;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
