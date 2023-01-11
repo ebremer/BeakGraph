@@ -125,7 +125,7 @@ public final class BeakWriter {
         if (r.isAnon()) {
             rs = r.toString();
             if (!blanknodes.containsKey(rs)) {
-                blanknodes.put(rs, -(blanknodes.size()+1));
+                blanknodes.put(rs, blanknodes.size());
             }
         } else if (r.isResource()) {
             rs = r.toString();
@@ -165,6 +165,9 @@ public final class BeakWriter {
         provider.put(dictionary);
         locked = true;
         nt = new NodeTable(dictionary);
+        blanknodes.forEach((k,v)->{
+            blanknodes.put(k,v-blanknodes.size());
+        });
         nt.setBlankNodes(blanknodes);
         System.out.println("Creating Dictionary...Done");
     }
@@ -253,7 +256,7 @@ public final class BeakWriter {
     }
     
     public void ProcessTriple(BufferAllocator allocator, Statement stmt) {
-        System.out.println("ProcessTriple : "+stmt);
+        //System.out.println("ProcessTriple : "+stmt);
         VoID.Add(stmt);
         Resource res = stmt.getSubject();
         String s;
@@ -314,7 +317,6 @@ public final class BeakWriter {
             case "java.lang.Long": {
                 long oo = o.asLiteral().getLong();
                 if (!byPredicate.containsKey(p)) {
-                    System.out.println("CREATING PA FOR : "+p);
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
                 byPredicate.get(p).set(res, oo);

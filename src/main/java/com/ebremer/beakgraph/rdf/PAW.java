@@ -9,7 +9,6 @@ import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.OS;
 import static com.ebremer.beakgraph.rdf.DualSort.ColumnOrder.SO;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Semaphore;
 import java.util.stream.IntStream;
@@ -256,7 +255,7 @@ public class PAW {
     }
     
     public void set(Resource s, long o) {
-        System.out.println(s.toString()+"  "+o);
+        //System.out.println(s.toString()+"  "+o);
         StructVector sv;
         if (!cs.containsKey(LONG)) {
             cs.put(LONG, build(LONG));
@@ -266,7 +265,7 @@ public class PAW {
         NullableStructWriter writer = sv.getWriter();
         writer.start();
         int cc = nt.getID(s);
-        System.out.println("CC : "+cc);
+        //System.out.println("CC : "+cc);
         writer.integer("s").writeInt(cc);
         writer.bigInt("o").writeBigInt(o);
         writer.end();

@@ -34,10 +34,8 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final DataType datatype;
     private final boolean scan;
     private final NodeTable nodeTable;
-    private final String pred;
     
     public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
-        this.pred = dual.getName();
      //   System.out.println("BeakIterator =========================\n"
        //         +bnid+"\n===[ "+triple.getSubject().isVariable()
          //       +" ]==== Triple : \n"+triple+"\n F ---> "+filter+"\n=== END ======");
