@@ -107,7 +107,8 @@ public class BeakGraph extends GraphBase {
     
     public static void main(String[] args) throws IOException {
         //JenaSystem.init();
-        File f = new File("D:\\HalcyonStorage\\heatmaps\\j3.zip");
+        //File f = new File("D:\\HalcyonStorage\\heatmaps\\j3.zip");
+        File f = new File("D:\\HalcyonStorage\\segmentation\\zzz.zip");
         URI uri = f.toURI();
         BeakGraph g = new BeakGraph(uri);
         ParameterizedSparqlString pss = new ParameterizedSparqlString(

@@ -93,7 +93,14 @@ public final class BeakReader {
             }
         }
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        SeekableByteChannel d = reader.getSeekableByteChannel("file:///D:/HalcyonStorage/heatmaps/j3.zip/halcyon/dictionary");
+        String cha = uri.toString();
+        if (cha.startsWith("file:/")) {
+            if (!cha.startsWith("file://")) {
+                cha = "file:///"+cha.substring("file:/".length());
+            }
+        }
+        //System.out.println("FIX : "+cha);
+        SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/dictionary");
         ArrowFileReader afr = new ArrowFileReader(d, root);
         VectorSchemaRoot za = afr.getVectorSchemaRoot();
         afr.loadNextBatch();
