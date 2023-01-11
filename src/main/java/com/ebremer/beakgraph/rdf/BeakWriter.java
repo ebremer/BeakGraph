@@ -185,7 +185,7 @@ public final class BeakWriter {
         return null;
     }
     
-    public Resource WriteDictionaryToFile2(String base, ROCrate.Builder roc) {
+    public Resource WriteDictionaryToFile(String base, ROCrate.Builder roc) {
         System.out.println("================== WRITING Dictionary to File =====================================");
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
@@ -380,7 +380,7 @@ public final class BeakWriter {
         System.out.println("Engine shutdown");
         engine.shutdown();
         System.out.println("engine jobs : "+list.size());       
-        metairi = WriteDictionaryToFile2(base, roc);
+        metairi = WriteDictionaryToFile(base, roc);
         WriteDataToFile(base, roc);
     }
         
