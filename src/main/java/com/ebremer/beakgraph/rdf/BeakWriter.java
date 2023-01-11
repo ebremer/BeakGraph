@@ -125,7 +125,7 @@ public final class BeakWriter {
         if (r.isAnon()) {
             rs = r.toString();
             if (!blanknodes.containsKey(rs)) {
-                blanknodes.put(rs, blanknodes.size());
+                blanknodes.put(rs, blanknodes.size()-Integer.MIN_VALUE);
             }
         } else if (r.isResource()) {
             rs = r.toString();
@@ -165,9 +165,9 @@ public final class BeakWriter {
         provider.put(dictionary);
         locked = true;
         nt = new NodeTable(dictionary);
-        blanknodes.forEach((k,v)->{
-            blanknodes.put(k,v-blanknodes.size());
-        });
+        //blanknodes.forEach((k,v)->{
+          //  blanknodes.put(k,v-blanknodes.size());
+        //});
         nt.setBlankNodes(blanknodes);
         System.out.println("Creating Dictionary...Done");
     }
@@ -263,7 +263,7 @@ public final class BeakWriter {
         if (res.isAnon()) {
             s = res.toString();
             if (!nt.getBlankNodes().containsKey(s)) {
-                nt.getBlankNodes().put(s, -(nt.getBlankNodes().size()+1));
+                nt.getBlankNodes().put(s, blanknodes.size()-Integer.MIN_VALUE);
             }
         } else if (res.isResource()) {
             s = res.getURI();
@@ -277,7 +277,7 @@ public final class BeakWriter {
             cc = o.asResource().getClass();
             if (o.isAnon()) {
                 if (!nt.getBlankNodes().containsKey(o.toString())) {
-                    nt.getBlankNodes().put(o.toString(), -(nt.getBlankNodes().size()+1));
+                    nt.getBlankNodes().put(o.toString(), blanknodes.size()-Integer.MIN_VALUE);
                 }
             }
         } else if (o.isLiteral()) {
