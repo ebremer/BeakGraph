@@ -125,7 +125,7 @@ public final class BeakWriter {
         if (r.isAnon()) {
             rs = r.toString();
             if (!blanknodes.containsKey(rs)) {
-                blanknodes.put(rs, blanknodes.size());
+                blanknodes.put(rs, -(blanknodes.size()+1));
             }
         } else if (r.isResource()) {
             rs = r.toString();
@@ -216,7 +216,7 @@ public final class BeakWriter {
         }
     }
     
-    public Resource WriteDataToFile2(String base, ROCrate.Builder roc) {
+    public Resource WriteDataToFile(String base, ROCrate.Builder roc) {
         System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
@@ -252,63 +252,15 @@ public final class BeakWriter {
         return target;
     }
     
-    public Resource WriteDictionaryToFile(String base, ROCrate.Builder roc) {
-        System.out.println("================== WRITING Dictionary to File =====================================");
-        Resource rde = roc.getRDE();
-        Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
-        try (
-            LargeVarCharVector v = (LargeVarCharVector) provider.lookup(0).getVector();
-            VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(out))
-          //  ZipOutputStream zos = roc.getDestination().GetOutputStream("dictionary", CompressionMethod.STORE);
-           // CountingOutputStream cos = new CountingOutputStream(zos);
-           // ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos))
-        ) {
-        //try {
-          //  OutputStream zos = roc.getDestination().GetOutputStream(base+"/dictionary", CompressionMethod.STORE);
-           // CountingOutputStream cos = new CountingOutputStream(zos);
-     //       ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
-            writer.start();
-            writer.writeBatch();
-            writer.end();
-            //long numbytes = cos.getNumberOfBytesWritten();
-            //if (zos instanceof ZipOutputStream zz) {
-              //      FileHeader fh = zz.closeEntry();
-//                    fh.setUncompressedSize(numbytes);
-  //              }
-            roc
-                .Add(target, base, "dictionary", out.toByteArray(), CompressionMethod.STORE, true)
-                //.Add(target, base, "dictionary", CompressionMethod.STORE, true)
-                .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
-                //.addLiteral(SchemaDO.contentSize, numbytes)
-                .addLiteral(SchemaDO.contentSize, out.size())    
-                .addProperty(RDF.type, SchemaDO.MediaObject)
-                .addProperty(RDF.type, BG.Dictionary);
-            /*
-                        roc
-                .Add(target, base, "dictionary", out.toByteArray(), CompressionMethod.STORE, true)
-                .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
-                .addLiteral(SchemaDO.contentSize, out.size())
-                .addProperty(RDF.type, SchemaDO.MediaObject)
-                .addProperty(RDF.type, BG.Dictionary);
-            */
-           //writer.close();
-        } catch (IOException ex) {
-            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        System.out.println("================== Dictionary WRITTEN =====================================");
-        return target;
-    }
-    
     public void ProcessTriple(BufferAllocator allocator, Statement stmt) {
+        System.out.println("ProcessTriple : "+stmt);
         VoID.Add(stmt);
         Resource res = stmt.getSubject();
         String s;
         if (res.isAnon()) {
             s = res.toString();
             if (!nt.getBlankNodes().containsKey(s)) {
-                nt.getBlankNodes().put(s, nt.getBlankNodes().size());
+                nt.getBlankNodes().put(s, -(nt.getBlankNodes().size()+1));
             }
         } else if (res.isResource()) {
             s = res.getURI();
@@ -322,7 +274,7 @@ public final class BeakWriter {
             cc = o.asResource().getClass();
             if (o.isAnon()) {
                 if (!nt.getBlankNodes().containsKey(o.toString())) {
-                    nt.getBlankNodes().put(o.toString(), nt.getBlankNodes().size());
+                    nt.getBlankNodes().put(o.toString(), -(nt.getBlankNodes().size()+1));
                 }
             }
         } else if (o.isLiteral()) {
@@ -362,6 +314,7 @@ public final class BeakWriter {
             case "java.lang.Long": {
                 long oo = o.asLiteral().getLong();
                 if (!byPredicate.containsKey(p)) {
+                    System.out.println("CREATING PA FOR : "+p);
                     byPredicate.put(p, new PAW(allocator, nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
@@ -424,10 +377,9 @@ public final class BeakWriter {
         timer.cancel();
         System.out.println("Engine shutdown");
         engine.shutdown();
-        System.out.println("engine jobs : "+list.size());
-        //Create(allocator);
+        System.out.println("engine jobs : "+list.size());       
         metairi = WriteDictionaryToFile2(base, roc);
-        WriteDataToFile2(base, roc);
+        WriteDataToFile(base, roc);
     }
         
     class PredicateProcessor implements Callable<Model> {

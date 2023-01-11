@@ -188,16 +188,16 @@ public class PAW {
         //System.out.println("Finishing : "+p+" "+cs.size());
         cs.forEach((k,v)->{
             v.getWriter().setValueCount(counts.get(k));
-            //System.out.println(p+" ["+k+"] AAA >>> "+counts.get(k)+ " XYXYXYXY "+v.getValueCount()+" === this finish ---> "+v.getChild("o").getValueCount());
-            //System.out.println(p+" ZAM ===> "+v);
-            //DisplayVector(v.getChild("s"));
-            //DisplayVector(v.getChild("o"));
+          //  System.out.println(p+" ["+k+"] AAA >>> "+counts.get(k)+ " XYXYXYXY "+v.getValueCount()+" === this finish ---> "+v.getChild("o").getValueCount());
+//            System.out.println(p+" ZAM ===> "+v);
+  //          DisplayVector(v.getChild("s"));
+    //        DisplayVector(v.getChild("o"));
             StructVector z = upgrade(k,v,job);
-            //System.out.println(p+" ["+k+"] XXX >>> "+z.getValueCount()+"  "+z);
-            //System.out.println("BF/V : "+fields.size()+" "+vectors.size());
+      //      System.out.println(p+" ["+k+"] XXX >>> "+z.getValueCount()+"  "+z);
+        //    System.out.println("BF/V : "+fields.size()+" "+vectors.size());
             fields.add(z.getField());
             vectors.add(z);
-            //System.out.println("AF/V : "+fields.size()+" "+vectors.size());
+          //  System.out.println("AF/V : "+fields.size()+" "+vectors.size());
         });
     }
     
@@ -256,6 +256,7 @@ public class PAW {
     }
     
     public void set(Resource s, long o) {
+        System.out.println(s.toString()+"  "+o);
         StructVector sv;
         if (!cs.containsKey(LONG)) {
             cs.put(LONG, build(LONG));
@@ -264,7 +265,9 @@ public class PAW {
         Count(LONG);
         NullableStructWriter writer = sv.getWriter();
         writer.start();
-        writer.integer("s").writeInt(nt.getID(s));
+        int cc = nt.getID(s);
+        System.out.println("CC : "+cc);
+        writer.integer("s").writeInt(cc);
         writer.bigInt("o").writeBigInt(o);
         writer.end();
     }
@@ -307,12 +310,6 @@ public class PAW {
         }
         sv = cs.get(RESOURCE);
         Count(RESOURCE);
-        //String os;
-        //if (object.isAnon()) {
-//            os = "_:"+object.toString();
-//        } else {
-  //          os = object.toString();
-    //    }
         NullableStructWriter writer = sv.getWriter();
         writer.start();
         writer.integer("s").writeInt(nt.getID(s));

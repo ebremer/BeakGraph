@@ -91,16 +91,11 @@ public class NodeTable {
     }
 
     public Node getNodeForNodeId(NodeId id) {
-      // System.out.println("getNodeForNodeId() : "+id+" "+id.getType()+" ---> "+id.getID());
+       //System.out.println("getNodeForNodeId() : "+id+" "+id.getType()+" ---> "+id.getID());
         if (id.getType() == NodeType.RESOURCE) {
-            if (id.getID()==-34488169) {
-                throw new Error("HERE!!!!!!!!!!=========================================");
-            }
+            //System.out.println("ID : "+id.getID());
             if (id.getID()<0) {
                 String k = "_:h"+String.valueOf(-id.getID());
-                //Node wow = NodeFactory.createBlankNode(k);
-                //blanknodes.put(k, -id.getID());
-               // return wow;
                 return NodeFactory.createURI(k);
             }
             String gen = new String(dictionary.get(id.getID()));

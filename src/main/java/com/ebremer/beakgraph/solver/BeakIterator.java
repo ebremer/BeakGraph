@@ -7,11 +7,11 @@ import com.ebremer.beakgraph.rdf.VectorSearch;
 import com.ebremer.beakgraph.store.NodeId;
 import java.util.Iterator;
 import java.util.List;
-import java.util.stream.IntStream;
 import org.apache.arrow.algorithm.search.VectorRangeSearcher;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.jena.graph.Triple;
@@ -34,8 +34,10 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final DataType datatype;
     private final boolean scan;
     private final NodeTable nodeTable;
+    private final String pred;
     
     public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
+        this.pred = dual.getName();
      //   System.out.println("BeakIterator =========================\n"
        //         +bnid+"\n===[ "+triple.getSubject().isVariable()
          //       +" ]==== Triple : \n"+triple+"\n F ---> "+filter+"\n=== END ======");
@@ -80,7 +82,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
             } else if (bnid.containsKey(Var.alloc(triple.getObject().getName()))) {
                 int tar = bnid.get(Var.alloc(triple.getObject().getName())).getID();
                 IntVector s = (IntVector) pa.getChild("o");
-                IntVector x = (IntVector) pa.getChild("s");
+                //IntVector x = (IntVector) pa.getChild("s");
                 /*
                 if (v) {
                     Var va = Var.alloc(triple.getObject().getName());
@@ -161,32 +163,32 @@ public class BeakIterator implements Iterator<BindingNodeId> {
 
     @Override
     public boolean hasNext() {
-        //System.out.println("hasNext() "+ i+" "+low+"  "+high+" "+triple);
+        //System.out.println("hasNext() "+i+" ==> "+low+"  "+high+" "+triple);
         return (scan&&(i<=high));
     }
 
     @Override
     public BindingNodeId next() {
-       // System.out.println(bnid+" NEXT ["+i+","+low+"->"+high+"] =-=-=-=> "+triple+" NEXT "+i+" "+hasNext());
-        /*
-        Binding pb = bnid.getParentBinding();
-        pb.forEach((v,n)->{
-            System.out.println("analysis : "+v+" "+n);
-        
-        });*/
         BindingNodeId neo = new BindingNodeId(bnid);
         if (triple.getObject().isVariable()) {
             Var c = Var.alloc(triple.getObject().getName());
             if (datatype == RESOURCE) {
                 int rr = (int) pa.getChild("o").getObject(i);
+                //System.out.println("next() : "+rr);
                 neo.put(c, new NodeId(rr));
             } else {
-                neo.put(c, new NodeId(pa.getChild("o").getObject(i)));
+                //System.out.println("III : "+i+"  "+pred);
+                //System.out.println("PA : "+pa);
+                FieldVector fv = pa.getChild("o");
+                //System.out.println("HA : "+fv.toString());
+                Object ss = fv.getObject(i);
+                neo.put(c, new NodeId(ss));
             }
         } else { }
         if (triple.getSubject().isVariable()) {
             Var ss = Var.alloc(triple.getSubject().getName());
             if (!neo.containsKey(ss)) {
+                //System.out.println("IV : "+i+"  "+pred);
                 int rr2 = (int) pa.getChild("s").getObject(i);
                 neo.put(ss, new NodeId(rr2));
             }

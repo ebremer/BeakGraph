@@ -93,7 +93,7 @@ public final class BeakReader {
             }
         }
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        SeekableByteChannel d = reader.getSeekableByteChannel(uri.toString()+"/halcyon/dictionary");
+        SeekableByteChannel d = reader.getSeekableByteChannel("file:///D:/HalcyonStorage/heatmaps/j3.zip/halcyon/dictionary");
         ArrowFileReader afr = new ArrowFileReader(d, root);
         VectorSchemaRoot za = afr.getVectorSchemaRoot();
         afr.loadNextBatch();

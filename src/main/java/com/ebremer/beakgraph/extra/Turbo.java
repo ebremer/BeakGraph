@@ -36,6 +36,7 @@ public class Turbo {
           //  System.out.println(triple);
         //});
         LinkedList<Triple> list = new LinkedList<>();
+        /*
         try (Stream<Triple> stream = AsyncParser.of(f)
             .setQueueSize(2)
             .setChunkSize(100)
@@ -45,6 +46,7 @@ public class Turbo {
                     System.out.println(triple);
                 });       
             }
+*/
         //System.out.println(list.size());
     }
     

@@ -3,13 +3,23 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.solver.OpExecutorBeak;
 import com.ebremer.beakgraph.solver.QueryEngineBeak;
 import com.ebremer.beakgraph.solver.StageGeneratorDirectorBeak;
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.util.stream.Stream;
+import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.graph.impl.GraphBase;
 import org.apache.jena.query.ARQ;
+import org.apache.jena.query.ParameterizedSparqlString;
+import org.apache.jena.query.QueryExecution;
+import org.apache.jena.query.QueryExecutionFactory;
+import org.apache.jena.query.QuerySolution;
+import org.apache.jena.query.ResultSet;
+import org.apache.jena.query.ResultSetFormatter;
+import org.apache.jena.rdf.model.Model;
+import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.shared.AddDeniedException;
 import org.apache.jena.shared.DeleteDeniedException;
 import org.apache.jena.sparql.engine.main.QC;
@@ -18,6 +28,8 @@ import org.apache.jena.sparql.engine.main.StageGenerator;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.util.iterator.ExtendedIterator;
+import org.apache.jena.vocabulary.OA;
+import org.apache.jena.vocabulary.SchemaDO;
 
 /**
  *
@@ -91,5 +103,55 @@ public class BeakGraph extends GraphBase {
 
     public ReorderTransformation getReorderTransform() {
         return null;
+    }
+    
+    public static void main(String[] args) throws IOException {
+        //JenaSystem.init();
+        File f = new File("D:\\HalcyonStorage\\heatmaps\\j3.zip");
+        URI uri = f.toURI();
+        BeakGraph g = new BeakGraph(uri);
+        ParameterizedSparqlString pss = new ParameterizedSparqlString(
+            """
+            select * {
+            #select distinct ?polygon ?low ?high ?class ?certainty where {
+                {
+                    select * {
+                    #select ?polygon ?low ?high ?class ?certainty where {
+                        ?range hal:low ?low .
+                        ?range hal:high ?high .
+                        ?polygon ?p ?range .
+                        ?annotation oa:hasSelector ?polygon .
+                        ?annotation oa:hasBody ?body .
+                        ?body hal:assertedClass ?class .
+                        ?body hal:hasCertainty ?certainty .
+                        filter(?low>=?rlow)
+                        filter(?low<=?rhigh)
+                    }
+                } union {
+                    select * {
+                    #select ?polygon ?low ?high ?class ?certainty where {
+                        ?range hal:low ?low .
+                        ?range hal:high ?high .
+                        ?polygon ?p ?range .
+                        ?annotation oa:hasSelector ?polygon .
+                        ?annotation oa:hasBody ?body .
+                        ?body hal:assertedClass ?class .
+                        ?body hal:hasCertainty ?certainty .
+                        filter(?high>=?rlow)
+                        filter(?high<=?rhigh)
+                    }
+                }
+            } limit 30
+            """);
+        pss.setNsPrefix("so", SchemaDO.NS);
+        pss.setIri("p", "https://www.ebremer.com/halcyon/ns/"+"hasRange/"+1);
+        pss.setNsPrefix("oa", OA.NS);
+        pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
+        pss.setLiteral("rlow", 0);
+        pss.setLiteral("rhigh", Long.MAX_VALUE);
+        Model m = ModelFactory.createModelForGraph(g);
+        QueryExecution qe = QueryExecutionFactory.create(pss.toString(), m);
+        ResultSet rs = qe.execSelect();
+        ResultSetFormatter.out(System.out,rs);
     }
 }
