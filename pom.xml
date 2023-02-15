@@ -95,4 +95,10 @@
             <url>http://cursus.bmi.stonybrookmedicine.edu/releases</url>
         </repository>
     </repositories>
+    <distributionManagement>
+        <repository>
+            <id>halcyon</id>
+            <url>http://cursus.bmi.stonybrookmedicine.edu/releases</url>
+        </repository>
+    </distributionManagement>
 </project>
