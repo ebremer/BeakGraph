@@ -3,14 +3,14 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
-    <version>0.0.0</version>
+    <version>0.1.0</version>
     <packaging>jar</packaging>
     <build>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.10.1</version>
+                <version>3.11.0</version>
                 <configuration>
                     <compilerArgs>
                         <arg>--enable-preview</arg>
@@ -25,13 +25,14 @@
         <maven.compiler.target>17</maven.compiler.target>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
         <jena.ver>4.6.1</jena.ver>
-        <arrow.version>11.0.0</arrow.version>        
+        <arrow.version>11.0.0</arrow.version>
+        <zip4j.version>2.11.5</zip4j.version>
     </properties>
     <dependencies>
         <dependency>
             <groupId>com.ebremer</groupId>
             <artifactId>RO-Crate4J</artifactId>
-            <version>0.0.0</version>
+            <version>0.1.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.jena</groupId>
@@ -50,6 +51,11 @@
             <artifactId>jena-querybuilder</artifactId>
             <version>${jena.ver}</version>
             <type>jar</type>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>arrow-memory-core</artifactId>
+            <version>${arrow.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.arrow</groupId>
@@ -84,7 +90,7 @@
         <dependency>
             <groupId>net.lingala.zip4j</groupId>
             <artifactId>zip4j</artifactId>
-            <version>2.11.2</version>
+            <version>${zip4j.version}</version>
             <type>jar</type>
         </dependency>
     </dependencies>

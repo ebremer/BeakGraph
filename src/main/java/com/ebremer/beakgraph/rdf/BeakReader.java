@@ -71,19 +71,20 @@ public final class BeakReader {
             String x = qs.get("file").asResource().getURI();  
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
-                ArrowFileReader afr = new ArrowFileReader(xxx, root);
-                VectorSchemaRoot za = afr.getVectorSchemaRoot();
-                afr.loadNextBatch();
-                StructVector v = (StructVector) za.getVector(0);
-                String p = v.getName();                
-                String dt = p.substring(0, 1);
-                numtriples = numtriples + v.getValueCount();
-                p = p.substring(1);
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAR(p));
+                try (ArrowFileReader afr = new ArrowFileReader(xxx, root)) {
+                    VectorSchemaRoot za = afr.getVectorSchemaRoot();
+                    afr.loadNextBatch();
+                    StructVector v = (StructVector) za.getVector(0);
+                    String p = v.getName();
+                    String dt = p.substring(0, 1);
+                    numtriples = numtriples + v.getValueCount();
+                    p = p.substring(1);
+                    if (!byPredicate.containsKey(p)) {
+                        byPredicate.put(p, new PAR(p));
+                    }
+                    PAR par = byPredicate.get(p);
+                    par.put(dt, v);
                 }
-                PAR par = byPredicate.get(p);
-                par.put(dt, v);
             } catch (FileNotFoundException ex) {
                 Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
             } catch (IOException ex) {
