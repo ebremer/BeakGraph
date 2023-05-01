@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.rdf;
 
 import com.ebremer.rocrate4j.ROCrate;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.channels.Channels;
@@ -28,9 +27,11 @@ import net.lingala.zip4j.io.outputstream.ZipOutputStream;
 import net.lingala.zip4j.model.FileHeader;
 import net.lingala.zip4j.model.enums.CompressionMethod;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider;
 import org.apache.arrow.vector.ipc.ArrowFileWriter;
@@ -49,48 +50,25 @@ import org.apache.jena.vocabulary.SchemaDO;
  *
  * @author erich
  */
-public final class BeakWriter {
+public final class BeakWriter implements AutoCloseable {
+    private NodeTable nt;
+    private final BufferAllocator allocator;
     private final MapDictionaryProvider provider = new MapDictionaryProvider();
-    private Dictionary dictionary;
     private final CopyOnWriteArrayList<Field> fields = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<FieldVector> vectors = new CopyOnWriteArrayList<>();
-    private NodeTable nt;
-    private LargeVarCharVector dict;
     private Resource metairi;
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
     private final HashMap<String,Integer> blanknodes;
     private final ConcurrentHashMap<String,Job> Jobs = new ConcurrentHashMap<>();
     private final HashMap<String,Integer> resources = new HashMap<>();
-    private boolean locked = false;
-    private String base;
-    private ROCrate.ROCrateBuilder roc;
-    private BufferAllocator allocator;
+    private final String base;
     private final BGVoID VoID = new BGVoID();
+    private LargeVarCharVector dict;
     
-    public BeakWriter(BufferAllocator allocator, ROCrate.ROCrateBuilder roc, String base) throws IOException {
-        //this.m = m;
-        this.allocator = allocator;
+    public BeakWriter(ROCrate.ROCrateBuilder roc, String base) {
+        this.allocator = new RootAllocator();
         this.base = base;
-        this.roc = roc;
-        //StopWatch sw = new StopWatch();
-        //sw.LapStart("Create Dictionary");
         blanknodes = new HashMap<>(2500000);
-        //CreateDictionary(allocator);
-        //nt = new NodeTable(dictionary);
-        //nt.setBlankNodes(blanknodes);
-        //sw.Lap("Dictionary Created");
-        //sw.LapStart("Create Predicate Vectors");
-        
-        //System.out.println("# of vectors : "+vectors.size());
-        //sw.Lap("Predicate Vectors Created");
-        
-        //sw.LapStart("Generate VoID Data");
-        //Model VoID = BGVoID.GenerateVoID(metairi, m);
-        //metairi.getModel().add(VoID);
-        //sw.Lap("VoID Data Generated");
-        
-        //DisplayMeta();
-        //sw.Lapse("BeakGraph Completed");
     }
     
     public Resource getMetaIRI() {
@@ -143,11 +121,11 @@ public final class BeakWriter {
     
     public void Add(Model m) {
         m.listStatements().forEach(s->{
-            ProcessTriple(allocator, s);
+            ProcessTriple(s);
         });
     }
     
-    public void CreateDictionary(BufferAllocator allocator) {
+    public void CreateDictionary() {
         System.out.println("Creating Dictionary...");
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
         dict = new LargeVarCharVector("Resource Dictionary", allocator);
@@ -161,9 +139,9 @@ public final class BeakWriter {
         dict.setValueCount(resources.size());
         System.out.println("RESOURCES  # : "+resources.size());
         System.out.println("BNODES     # : "+blanknodes.size());
-        dictionary = new Dictionary(dict, dictionaryEncoding);
+        Dictionary dictionary = new Dictionary(dict, dictionaryEncoding);
         provider.put(dictionary);
-        locked = true;
+        //locked = true;
         nt = new NodeTable(dictionary);
         //blanknodes.forEach((k,v)->{
           //  blanknodes.put(k,v-blanknodes.size());
@@ -229,34 +207,35 @@ public final class BeakWriter {
                 root.setRowCount(v.getValueCount());
                 OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
                 CountingOutputStream cos = new CountingOutputStream(zos);
-                ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
-                writer.start();
-                writer.writeBatch();
-                writer.end();
-                long numbytes = cos.getNumberOfBytesWritten();
-                if (zos instanceof ZipOutputStream zz) {
-                    FileHeader fh = zz.closeEntry();
-                    fh.setUncompressedSize(numbytes);
+                try (SpecialArrowFileWriter writer = new SpecialArrowFileWriter(root, null, Channels.newChannel(cos))) {
+                    writer.start();
+                    writer.writeBatch();
+                    writer.end();
+                    long numbytes = cos.getNumberOfBytesWritten();
+                    if (zos instanceof ZipOutputStream zz) {
+                        FileHeader fh = zz.closeEntry();
+                        fh.setUncompressedSize(numbytes);
+                    }
+                    roc
+                            .Add(target, base, MD5(v.getField().getName().getBytes()), CompressionMethod.STORE, true)
+                            .addProperty(SchemaDO.name, v.getField().getName().substring(1))
+                            .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
+                            .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                            .addLiteral(SchemaDO.contentSize, numbytes)
+                            .addProperty(RDF.type, SchemaDO.MediaObject)
+                            .addLiteral(BG.triples, v.getValueCount())
+                            .addProperty(RDF.type, BG.PredicateVector);
                 }
-                roc
-                    .Add(target, base, MD5(v.getField().getName().getBytes()), CompressionMethod.STORE, true)
-                    .addProperty(SchemaDO.name, v.getField().getName().substring(1))
-                    .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
-                    .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
-                    .addLiteral(SchemaDO.contentSize, numbytes)
-                    .addProperty(RDF.type, SchemaDO.MediaObject)
-                    .addLiteral(BG.triples, v.getValueCount())
-                    .addProperty(RDF.type, BG.PredicateVector);
                 } catch (IOException ex) {
                     Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
                 }
+            v.close();
         });
         System.out.println("================== FILE WRITTEN =====================================");
         return target;
     }
     
-    public void ProcessTriple(BufferAllocator allocator, Statement stmt) {
-        //System.out.println("ProcessTriple : "+stmt);
+    public void ProcessTriple(Statement stmt) {
         VoID.Add(stmt);
         Resource res = stmt.getSubject();
         String s;
@@ -293,7 +272,7 @@ public final class BeakWriter {
         } else switch (ct) {
             case "org.apache.jena.rdf.model.impl.ResourceImpl": {
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
                 }
                 byPredicate.get(p).set(res, o.asResource());
                 break;
@@ -301,7 +280,7 @@ public final class BeakWriter {
             case "java.math.BigInteger": {
                 long oo = o.asLiteral().getLong();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -309,7 +288,7 @@ public final class BeakWriter {
             case "java.lang.Integer": {
                 int oo = o.asLiteral().getInt();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -317,7 +296,7 @@ public final class BeakWriter {
             case "java.lang.Long": {
                 long oo = o.asLiteral().getLong();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -325,7 +304,7 @@ public final class BeakWriter {
             case "java.lang.Float": {
                 float oo = o.asLiteral().getFloat();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -333,7 +312,7 @@ public final class BeakWriter {
             case "java.lang.String": {
                 String oo = o.asLiteral().toString();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator, nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -346,7 +325,7 @@ public final class BeakWriter {
         }
     }
     
-    public void Create(BufferAllocator allocator) throws IOException {
+    public void Create(ROCrate.ROCrateBuilder roc) throws IOException {
         System.out.println("Creating BeakGraph..."); 
         int cores = Runtime.getRuntime().availableProcessors();
         System.out.println(cores+" cores available");
@@ -382,6 +361,19 @@ public final class BeakWriter {
         System.out.println("engine jobs : "+list.size());       
         metairi = WriteDictionaryToFile(base, roc);
         WriteDataToFile(base, roc);
+    }
+
+    @Override
+    public void close() {
+        vectors.forEach(v->{
+            v.close();
+        });
+        byPredicate.forEach((k,paw)->{
+            paw.close();
+        });
+        nt.close();
+        dict.close();
+        allocator.close();
     }
         
     class PredicateProcessor implements Callable<Model> {

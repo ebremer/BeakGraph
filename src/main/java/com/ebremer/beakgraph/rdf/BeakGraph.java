@@ -106,6 +106,7 @@ public class BeakGraph extends GraphBase {
         return null;
     }
     
+    /*
     public static void main(String[] args) throws IOException {
         //JenaSystem.init();
         //File f = new File("D:\\HalcyonStorage\\heatmaps\\j3.zip");
@@ -155,5 +156,5 @@ public class BeakGraph extends GraphBase {
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(), m);
         ResultSet rs = qe.execSelect();
         ResultSetFormatter.out(System.out,rs);
-    }
+    }*/
 }

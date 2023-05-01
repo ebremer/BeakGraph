@@ -33,7 +33,7 @@ import org.apache.jena.rdf.model.Resource;
  *
  * @author erich
  */
-public class PAW {
+public class PAW implements AutoCloseable {
     private final HashMap<DataType,StructVector> cs = new HashMap<>();
     private final HashMap<DataType,Integer> counts = new HashMap<>();
     private final BufferAllocator allocator;
@@ -187,17 +187,16 @@ public class PAW {
         //System.out.println("Finishing : "+p+" "+cs.size());
         cs.forEach((k,v)->{
             v.getWriter().setValueCount(counts.get(k));
-          //  System.out.println(p+" ["+k+"] AAA >>> "+counts.get(k)+ " XYXYXYXY "+v.getValueCount()+" === this finish ---> "+v.getChild("o").getValueCount());
-//            System.out.println(p+" ZAM ===> "+v);
-  //          DisplayVector(v.getChild("s"));
-    //        DisplayVector(v.getChild("o"));
             StructVector z = upgrade(k,v,job);
-      //      System.out.println(p+" ["+k+"] XXX >>> "+z.getValueCount()+"  "+z);
-        //    System.out.println("BF/V : "+fields.size()+" "+vectors.size());
+            v.close();
             fields.add(z.getField());
             vectors.add(z);
-          //  System.out.println("AF/V : "+fields.size()+" "+vectors.size());
         });
+    }
+    
+    @Override
+    public void close() {
+        allocator.close();
     }
     
     public StructVector build(DataType datatype) {
@@ -241,13 +240,11 @@ public class PAW {
     }
     
     public void set(Resource s, int o) {
-        StructVector sv;
         if (!cs.containsKey(INTEGER)) {
             cs.put(INTEGER, build(INTEGER));
         }
-        sv = cs.get(INTEGER);
         Count(INTEGER);
-        NullableStructWriter writer = sv.getWriter();
+        NullableStructWriter writer = cs.get(INTEGER).getWriter();
         writer.start();
         writer.integer("s").writeInt(nt.getID(s));
         writer.integer("o").writeInt(o);
@@ -255,30 +252,24 @@ public class PAW {
     }
     
     public void set(Resource s, long o) {
-        //System.out.println(s.toString()+"  "+o);
-        StructVector sv;
         if (!cs.containsKey(LONG)) {
             cs.put(LONG, build(LONG));
         }
-        sv = cs.get(LONG);
         Count(LONG);
-        NullableStructWriter writer = sv.getWriter();
+        NullableStructWriter writer = cs.get(LONG).getWriter();
         writer.start();
         int cc = nt.getID(s);
-        //System.out.println("CC : "+cc);
         writer.integer("s").writeInt(cc);
         writer.bigInt("o").writeBigInt(o);
         writer.end();
     }
     
     public void set(Resource s, float o) {
-        StructVector sv;
         if (!cs.containsKey(FLOAT)) {
             cs.put(FLOAT, build(FLOAT));
         }
-        sv = cs.get(FLOAT);
         Count(FLOAT);
-        NullableStructWriter writer = sv.getWriter();
+        NullableStructWriter writer = cs.get(FLOAT).getWriter();
         writer.start();
         writer.integer("s").writeInt(nt.getID(s));
         writer.float4("o").writeFloat4(o);
@@ -286,30 +277,27 @@ public class PAW {
     }
     
     public void set(Resource s, String o) {
-        StructVector sv;
         if (!cs.containsKey(STRING)) {
             cs.put(STRING, build(STRING));
         }
-        sv = cs.get(STRING);
         Count(STRING);
-        NullableStructWriter writer = sv.getWriter();
+        NullableStructWriter writer = cs.get(STRING).getWriter();
         writer.start();
         writer.integer("s").writeInt(nt.getID(s));
         byte[] bytes = o.getBytes();
-        ArrowBuf tempBuf = allocator.buffer(bytes.length);
-        tempBuf.setBytes(0, bytes);
-        writer.varChar("o").writeVarChar(0, bytes.length, tempBuf);
-        writer.end();
+        try (ArrowBuf tempBuf = allocator.buffer(bytes.length)) {
+            tempBuf.setBytes(0, bytes);
+            writer.varChar("o").writeVarChar(0, bytes.length, tempBuf);
+            writer.end();
+        }
     }
     
     public void set(Resource s, Resource object) {
-        StructVector sv;
         if (!cs.containsKey(RESOURCE)) {
             cs.put(RESOURCE, build(RESOURCE));
         }
-        sv = cs.get(RESOURCE);
         Count(RESOURCE);
-        NullableStructWriter writer = sv.getWriter();
+        NullableStructWriter writer = cs.get(RESOURCE).getWriter();
         writer.start();
         writer.integer("s").writeInt(nt.getID(s));
         writer.integer("o").writeInt(nt.getID(object));
