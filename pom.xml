@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <packaging>jar</packaging>
     <build>
         <plugins>
@@ -24,42 +24,48 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
-        <jena.ver>4.6.1</jena.ver>
-        <arrow.version>11.0.0</arrow.version>
+        <jena.version>4.8.0</jena.version>
+        <arrow.version>12.0.0</arrow.version>
         <zip4j.version>2.11.5</zip4j.version>
+        <rocrate4j.version>0.2.0</rocrate4j.version>
     </properties>
     <dependencies>
         <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-collections4</artifactId>
+            <version>4.4</version>
+        </dependency>
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.4.0-b180830.0359</version>
+        </dependency>
+        <dependency>
             <groupId>com.ebremer</groupId>
             <artifactId>RO-Crate4J</artifactId>
-            <version>0.1.0</version>
+            <version>${rocrate4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.jena</groupId>
             <artifactId>jena-core</artifactId>
             <type>pom</type>
-            <version>${jena.ver}</version>
+            <version>${jena.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.jena</groupId>
             <artifactId>jena-arq</artifactId>
             <type>pom</type>
-            <version>${jena.ver}</version>
+            <version>${jena.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.jena</groupId>
             <artifactId>jena-querybuilder</artifactId>
-            <version>${jena.ver}</version>
+            <version>${jena.version}</version>
             <type>jar</type>
         </dependency>
         <dependency>
             <groupId>org.apache.arrow</groupId>
             <artifactId>arrow-memory-core</artifactId>
-            <version>${arrow.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.arrow</groupId>
-            <artifactId>arrow-vector</artifactId>
             <version>${arrow.version}</version>
         </dependency>
         <dependency>
@@ -77,22 +83,13 @@
             <artifactId>arrow-format</artifactId>
             <version>${arrow.version}</version>
         </dependency>
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-collections4</artifactId>
-            <version>4.4</version>
-        </dependency>
-        <dependency>
-            <groupId>javax.xml.bind</groupId>
-            <artifactId>jaxb-api</artifactId>
-            <version>2.4.0-b180830.0359</version>
-        </dependency>
+        <!--
         <dependency>
             <groupId>net.lingala.zip4j</groupId>
             <artifactId>zip4j</artifactId>
             <version>${zip4j.version}</version>
             <type>jar</type>
-        </dependency>
+        </dependency>-->
     </dependencies>
     <repositories>
         <repository>

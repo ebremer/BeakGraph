@@ -33,7 +33,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final StructVector pa;
     private final DataType datatype;
     private final boolean scan;
-    private final NodeTable nodeTable;
+    //private final NodeTable nodeTable;
     
     public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
      //   System.out.println("BeakIterator =========================\n"
@@ -41,12 +41,12 @@ public class BeakIterator implements Iterator<BindingNodeId> {
          //       +" ]==== Triple : \n"+triple+"\n F ---> "+filter+"\n=== END ======");
        // if (triple.getSubject().isVariable()) System.out.println("Subject : "+triple.getSubject().getName());
        // if (triple.getObject().isVariable()) System.out.println("Object : "+triple.getObject().getName());
-        this.nodeTable = nodeTable;
-        boolean v = false;
+       // this.nodeTable = nodeTable;
+        //boolean v = false;
         //if ("https://www.ebremer.com/halcyon/ns/hasRange/0".equals(triple.getPredicate().getURI())) {
-        if ("http://www.w3.org/ns/oa#hasSelector".equals(triple.getPredicate().getURI())) {
-            v = true;
-        }
+        //if ("http://www.w3.org/ns/oa#hasSelector".equals(triple.getPredicate().getURI())) {
+          //  v = true;
+        //}
         if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
           //  System.out.println("Setting index to SO");
             this.pa = (StructVector) dual.getChild("so");
