@@ -3,23 +3,13 @@ package com.ebremer.beakgraph.rdf;
 import com.ebremer.beakgraph.solver.OpExecutorBeak;
 import com.ebremer.beakgraph.solver.QueryEngineBeak;
 import com.ebremer.beakgraph.solver.StageGeneratorDirectorBeak;
-import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.util.stream.Stream;
-import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.graph.impl.GraphBase;
 import org.apache.jena.query.ARQ;
-import org.apache.jena.query.ParameterizedSparqlString;
-import org.apache.jena.query.QueryExecution;
-import org.apache.jena.query.QueryExecutionFactory;
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
-import org.apache.jena.query.ResultSetFormatter;
-import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.shared.AddDeniedException;
 import org.apache.jena.shared.DeleteDeniedException;
 import org.apache.jena.sparql.engine.main.QC;
@@ -27,9 +17,8 @@ import org.apache.jena.sparql.engine.main.StageBuilder;
 import org.apache.jena.sparql.engine.main.StageGenerator;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.util.Context;
+import org.apache.jena.sys.JenaSystem;
 import org.apache.jena.util.iterator.ExtendedIterator;
-import org.apache.jena.vocabulary.OA;
-import org.apache.jena.vocabulary.SchemaDO;
 
 /**
  *

@@ -41,7 +41,7 @@ import org.apache.jena.vocabulary.SchemaDO;
  *
  * @author erich
  */
-public final class BeakReader {
+public final class BeakReader implements AutoCloseable {
     private final NodeTable nodeTable;
     private HashMap<String,PAR> byPredicate;
     private BufferAllocator root;
@@ -71,20 +71,19 @@ public final class BeakReader {
             String x = qs.get("file").asResource().getURI();  
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
-                try (ArrowFileReader afr = new ArrowFileReader(xxx, root)) {
-                    VectorSchemaRoot za = afr.getVectorSchemaRoot();
-                    afr.loadNextBatch();
-                    StructVector v = (StructVector) za.getVector(0);
-                    String p = v.getName();
-                    String dt = p.substring(0, 1);
-                    numtriples = numtriples + v.getValueCount();
-                    p = p.substring(1);
-                    if (!byPredicate.containsKey(p)) {
-                        byPredicate.put(p, new PAR(p));
-                    }
-                    PAR par = byPredicate.get(p);
-                    par.put(dt, v);
+                ArrowFileReader afr = new ArrowFileReader(xxx, root);
+                VectorSchemaRoot za = afr.getVectorSchemaRoot();
+                afr.loadNextBatch();
+                StructVector v = (StructVector) za.getVector(0);
+                String p = v.getName();
+                String dt = p.substring(0, 1);
+                numtriples = numtriples + v.getValueCount();
+                p = p.substring(1);
+                if (!byPredicate.containsKey(p)) {
+                    byPredicate.put(p, new PAR(p));
                 }
+                PAR par = byPredicate.get(p);
+                par.put(dt, v);
             } catch (FileNotFoundException ex) {
                 Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
             } catch (IOException ex) {
@@ -112,6 +111,7 @@ public final class BeakReader {
         return manifest;
     }
     
+    @Override
     public void close() {
         byPredicate.forEach((k,v)->{
             v.close();
