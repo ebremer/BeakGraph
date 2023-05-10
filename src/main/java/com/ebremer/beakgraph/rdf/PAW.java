@@ -14,11 +14,11 @@ import java.util.concurrent.Semaphore;
 import java.util.stream.IntStream;
 import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.OutOfMemoryException;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.complex.AbstractStructVector;
 import org.apache.arrow.vector.complex.StructVector;
@@ -59,37 +59,24 @@ public class PAW implements AutoCloseable {
         counts.put(datatype, c);
     }
     
-    /*
-    private StructVector cloneVector(StructVector vector) {
-        final FieldType fieldType = vector.getField().getFieldType();
-        StructVector cloned = (StructVector) fieldType.createNewSingleVector(vector.getField().getName(), allocator, null);
-        final ArrowFieldNode fieldNode = new ArrowFieldNode(vector.getValueCount(), vector.getNullCount());
-        cloned.loadFieldBuffers(fieldNode, vector.getFieldBuffers());
-        cloned.setValueCount(vector.getValueCount());
-        return cloned;
-    }*/
-    
     public void buildblank(StructVector src, StructVector destVector) {
         IntVector subject = destVector.addOrGet("s", src.getChild("s").getField().getFieldType(), IntVector.class);
         subject.allocateNew(src.valueCount);
-        switch (src.getChild("o")) {
-            case IntVector o -> {
-                IntVector object = destVector.addOrGet("o", o.getField().getFieldType(), IntVector.class);
-                object.allocateNew(src.valueCount);
-            }
-            case BigIntVector o -> {
-                BigIntVector object = destVector.addOrGet("o", o.getField().getFieldType(), BigIntVector.class);
-                object.allocateNew(src.valueCount);
-            }
-            case Float4Vector o -> {
-                Float4Vector object = destVector.addOrGet("o", o.getField().getFieldType(), Float4Vector.class);
-                object.allocateNew(src.valueCount);
-            }
-            case VarCharVector o -> {
-                VarCharVector object = destVector.addOrGet("o", o.getField().getFieldType(), VarCharVector.class);
-                object.allocateNew(src.valueCount);
-            }
-            case default -> throw new Error("can't handle this");
+        Object aa = src.getChild("o");
+        if (aa instanceof IntVector o) {
+            IntVector object = destVector.addOrGet("o", o.getField().getFieldType(), IntVector.class);
+            object.allocateNew(src.valueCount);
+        } else if (aa instanceof BigIntVector o) {
+            BigIntVector object = destVector.addOrGet("o", o.getField().getFieldType(), BigIntVector.class);
+            object.allocateNew(src.valueCount);
+        } else if (aa instanceof Float4Vector o) {
+            Float4Vector object = destVector.addOrGet("o", o.getField().getFieldType(), Float4Vector.class);
+            object.allocateNew(src.valueCount);
+        } else if (aa instanceof VarCharVector o) {
+            VarCharVector object = destVector.addOrGet("o", o.getField().getFieldType(), VarCharVector.class);
+            object.allocateNew(src.valueCount);
+        } else {
+            throw new Error("can't handle this");
         }
         destVector.setValueCount(src.valueCount);
     }
@@ -109,7 +96,7 @@ public class PAW implements AutoCloseable {
         public void run() {
             semaphore.tryAcquire();
             src.getChildFieldNames().forEach(c->{
-            System.out.println("CHILD : "+c);
+                System.out.println("CHILD : "+c);
             });
             System.out.println((src.getChild("s")==null)+" VECTOR IS : "+src);
             DualSort dualSort = new DualSort();
@@ -136,17 +123,7 @@ public class PAW implements AutoCloseable {
         buildblank(src, so);
         buildblank(src, os);
         //Semaphore semaphore = new Semaphore(2);
-        //DualSort ds = new DualSort();
-        //System.out.println("LAUNCH ZECTOR IS : "+src);
         System.out.println("Vector : "+p+" has length "+src.getValueCount());
-        /*
-        if ("https://www.ebremer.com/halcyon/ns/hasRange/1".equals(p)) {
-            IntStream.range(0, src.valueCount).forEach(i->{
-                IntVector s = (IntVector) src.getChild("s");
-                IntVector o = (IntVector) src.getChild("o");
-                System.out.println(i+" : "+s.get(i)+" --> "+o.get(i));
-            });
-        }*/
         DualSort dualSort = new DualSort();
         job.status = "SORT 1";
         dualSort.Sort(src, so, SO);
@@ -156,39 +133,20 @@ public class PAW implements AutoCloseable {
         IntStream.range(0, src.getValueCount()).forEach(r->{
             top.setIndexDefined(r);
         });
-        
         //new Thread(new HalfSort(semaphore,src,so)).start();
         //new Thread(new HalfSort(semaphore,src,os)).start();
         //while (semaphore.availablePermits()!=2) {}
         //src.close();
-        /*
-        System.out.println("UPGRADE :=======================================\n"+
-                src+"\n-----------------------------------\n"+
-                so+"\n-----------------------------------\n"+
-                os+"\n--------------- SO --------------------\n"+
-                top.getChild("so")+"\n-------------- OS --------------------\n"+
-                top.getChild("os")+"\n------------- TOP --------------------\n"+
-                top+"\n"+top.getValueCount()+" ================================================");
-        */
         return top;
     }
     
-    public void DisplayVector(ValueVector v) {
-        switch (v) {
-            case IntVector x -> {System.out.println("IntVector ["+x.getValueCount()+"]: "+x);}
-            case BigIntVector x -> {System.out.println("BigIntVector ["+x.getValueCount()+"]: "+x);}
-            case VarCharVector x -> {System.out.println("VarCharVector ["+x.getValueCount()+"]: "+x);}
-            case Float4Vector x -> {System.out.println("Float4Vector ["+x.getValueCount()+"]: "+x);}
-            default -> {throw new Error("can't handle "+v.getClass().toGenericString());}
-        }
-    }
-    
     public void Finish(CopyOnWriteArrayList<Field> fields, CopyOnWriteArrayList<FieldVector> vectors, Job job) {
-        //System.out.println("Finishing : "+p+" "+cs.size());
         cs.forEach((k,v)->{
-            v.getWriter().setValueCount(counts.get(k));
-            StructVector z = upgrade(k,v,job);
-            v.close();
+            StructVector z;
+            try (v) {
+                v.getWriter().setValueCount(counts.get(k));
+                z = upgrade(k,v,job);
+            }
             fields.add(z.getField());
             vectors.add(z);
         });
@@ -196,7 +154,16 @@ public class PAW implements AutoCloseable {
     
     @Override
     public void close() {
-        allocator.close();
+        cs.forEach((k,v)->{
+            v.close();
+        });
+        try {
+            allocator.close();
+        } catch (OutOfMemoryException ex) {
+            System.out.println("Inside PAW : "+p+" "+ex.getMessage());
+        } catch (IllegalStateException ex) {
+            System.out.println("Inside PAW : "+p+" "+ex.getMessage());
+        }
     }
     
     public StructVector build(DataType datatype) {
@@ -206,7 +173,6 @@ public class PAW implements AutoCloseable {
         Map<String, String> ometa = new HashMap<>();
         FieldType fieldType = new FieldType(false, ArrowType.Struct.INSTANCE, null, null);
         StructVector ss = new StructVector("STRUCTME", allocator, fieldType, null, AbstractStructVector.ConflictPolicy.CONFLICT_APPEND, true);
-        //ss.addOrGet("s", new FieldType(false, Types.MinorType.INT.getType(), nt.getDictionary().getEncoding(), smeta), IntVector.class);  commented out to break out dictionary.
         ss.addOrGet("s", new FieldType(false, Types.MinorType.INT.getType(), null, smeta), IntVector.class);
         switch (datatype) {
             case INTEGER:
@@ -285,7 +251,9 @@ public class PAW implements AutoCloseable {
         writer.start();
         writer.integer("s").writeInt(nt.getID(s));
         byte[] bytes = o.getBytes();
-        try (ArrowBuf tempBuf = allocator.buffer(bytes.length)) {
+        try (
+            ArrowBuf tempBuf = allocator.buffer(bytes.length);    
+        ) {
             tempBuf.setBytes(0, bytes);
             writer.varChar("o").writeVarChar(0, bytes.length, tempBuf);
             writer.end();

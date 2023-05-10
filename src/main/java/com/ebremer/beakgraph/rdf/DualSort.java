@@ -214,14 +214,19 @@ public class DualSort {
 
     public void Sort(StructVector srcVector, StructVector destVector, ColumnOrder order) {
         GeneralOutOfPlaceVectorSorter<StructVector> sorter = new GeneralOutOfPlaceVectorSorter<>();
-        VectorValueComparator<StructVector> comp =
-            switch (srcVector.getChild("o")) {
-                case IntVector o -> getIIComparator(srcVector, order);
-                case BigIntVector o -> getILComparator(srcVector, order);
-                case Float4Vector o -> getIFComparator(srcVector, order);
-                case VarCharVector o -> getISComparator(srcVector, order);
-                default -> throw new Error("can't handle this");
-            };
+        VectorValueComparator<StructVector> comp;
+        Object aa= srcVector.getChild("o");
+        if (aa instanceof IntVector) {
+            comp = getIIComparator(srcVector, order);
+        } else if (aa instanceof BigIntVector) {
+            comp = getILComparator(srcVector, order);
+        } else if (aa instanceof Float4Vector) {
+            comp = getIFComparator(srcVector, order);
+        } else if (aa instanceof VarCharVector o) {
+            comp = getISComparator(srcVector, order);
+        } else {
+            throw new Error("can't handle this");
+        }
         sorter.sortOutOfPlace(srcVector, destVector, comp);  
     }
 
