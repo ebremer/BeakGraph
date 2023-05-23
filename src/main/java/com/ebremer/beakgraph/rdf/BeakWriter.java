@@ -124,7 +124,6 @@ public final class BeakWriter implements AutoCloseable {
     }
     
     public void CreateDictionary() {
-        System.out.println("Creating Dictionary...");
         DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
         dict = new LargeVarCharVector("Resource Dictionary", allocator);
         dict.allocateNewSafe();
@@ -192,7 +191,6 @@ public final class BeakWriter implements AutoCloseable {
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
         //CommonsCompressionFactory ha;
-
         vectors.forEach(v->{
             System.out.println("Writing --> "+v.getName());
             try (VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v))) {
@@ -263,7 +261,7 @@ public final class BeakWriter implements AutoCloseable {
         } else switch (ct) {
             case "org.apache.jena.rdf.model.impl.ResourceImpl": {
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
                 }
                 byPredicate.get(p).set(res, o.asResource());
                 break;
@@ -271,7 +269,7 @@ public final class BeakWriter implements AutoCloseable {
             case "java.math.BigInteger": {
                 long oo = o.asLiteral().getLong();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -279,7 +277,7 @@ public final class BeakWriter implements AutoCloseable {
             case "java.lang.Integer": {
                 int oo = o.asLiteral().getInt();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -287,7 +285,7 @@ public final class BeakWriter implements AutoCloseable {
             case "java.lang.Long": {
                 long oo = o.asLiteral().getLong();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -295,7 +293,7 @@ public final class BeakWriter implements AutoCloseable {
             case "java.lang.Float": {
                 float oo = o.asLiteral().getFloat();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
@@ -303,22 +301,20 @@ public final class BeakWriter implements AutoCloseable {
             case "java.lang.String": {
                 String oo = o.asLiteral().toString();
                 if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, 1024*1024*1024), nt, p));
+                    byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
                 }
                 byPredicate.get(p).set(res, oo);
                 break;
             }
             default:
-                System.out.println("Can't handle ["+ct+"]");
-                System.out.println(s+" "+p+" "+o);
-                throw new Error("BAMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM");
+                throw new Error("Can't handle ["+ct+"]  "+s+" "+p+" "+o);
         }
     }
     
     public void Create(ROCrate.ROCrateBuilder roc) throws IOException {
-        System.out.println("Creating BeakGraph..."); 
+        //System.out.println("Creating BeakGraph..."); 
         int cores = Runtime.getRuntime().availableProcessors();
-        System.out.println(cores+" cores available");
+        //System.out.println(cores+" cores available");
         ThreadPoolExecutor engine = new ThreadPoolExecutor(cores,cores,0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
         engine.prestartAllCoreThreads();
         CopyOnWriteArrayList<Future<Model>> list = new CopyOnWriteArrayList<>();
@@ -328,7 +324,7 @@ public final class BeakWriter implements AutoCloseable {
             list.add(engine.submit(worker));
             Jobs.put(k, new Job(k,worker,"WAITING"));
         });
-        System.out.println("All jobs submitted --> "+list.size());
+        //System.out.println("All jobs submitted --> "+list.size());
         engine.shutdown();
         while (!engine.isTerminated()) {
             int c = engine.getQueue().size()+engine.getActiveCount();
@@ -346,15 +342,15 @@ public final class BeakWriter implements AutoCloseable {
             }
         }
         //timer.cancel();
-        System.out.println("Engine shutdown");
-        System.out.println("engine jobs : "+list.size());       
+        //System.out.println("Engine shutdown");
+        //System.out.println("engine jobs : "+list.size());       
         metairi = WriteDictionaryToFile(base, roc);
         WriteDataToFile(base, roc);
     }
 
     @Override
     public void close() {
-        System.out.println("Close Vectors");
+        //System.out.println("Close Vectors");
         vectors.forEach(v->{
             v.close();
         });
@@ -367,14 +363,18 @@ public final class BeakWriter implements AutoCloseable {
                 System.out.println("OVERWATCH : "+k+" "+ex.getMessage());
             }
         });
-        //System.out.println("Close Node Table");
         nt.close();
-        //System.out.println("Close Dictionary");
-        dict.close();
-        try (allocator) {
-            System.out.println("Close Allocator");
+        try {
+            dict.close();
+            //System.out.println("Close Dictionary");
         } catch (OutOfMemoryException ex) {
-            System.out.println("FINAL OVERWATCH : "+ex.getMessage());
+            System.out.println("Dictionary OVERWATCH : "+ex.getMessage());
+            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        try (allocator) {
+            //System.out.println("Close Allocator");
+        } catch (OutOfMemoryException ex) {
+            System.out.println("Allocator OVERWATCH : "+ex.getMessage());
             Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
     }

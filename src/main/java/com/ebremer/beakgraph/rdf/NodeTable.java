@@ -18,7 +18,7 @@ import org.apache.jena.rdf.model.Resource;
  *
  * @author erich
  */
-public class NodeTable {
+public class NodeTable implements AutoCloseable {
     
     private final LargeVarCharVector dictionary;
     private final HashMap<String, Integer> map;
@@ -43,8 +43,9 @@ public class NodeTable {
         this.blanknodes = blanknodes;
     }
     
+    @Override
     public void close() {
-        dictionary.close();
+
     }
     
     public HashMap<String,Integer> getBlankNodes() {
