@@ -7,6 +7,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.zip.GZIPInputStream;
+import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.riot.Lang;
@@ -39,5 +40,7 @@ public class Test {
     
     public static void main(String[] args) throws FileNotFoundException, IOException {
         (new Test()).yah();
+        
+        ArrowFileReader ha;
     }
 }

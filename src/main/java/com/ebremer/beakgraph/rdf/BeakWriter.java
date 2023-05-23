@@ -10,8 +10,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -27,11 +25,11 @@ import net.lingala.zip4j.io.outputstream.ZipOutputStream;
 import net.lingala.zip4j.model.FileHeader;
 import net.lingala.zip4j.model.enums.CompressionMethod;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.OutOfMemoryException;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
 import org.apache.arrow.vector.dictionary.DictionaryProvider.MapDictionaryProvider;
 import org.apache.arrow.vector.ipc.ArrowFileWriter;
@@ -131,7 +129,6 @@ public final class BeakWriter implements AutoCloseable {
         dict = new LargeVarCharVector("Resource Dictionary", allocator);
         dict.allocateNewSafe();
         String[] rrr = resources.keySet().toArray(new String[resources.size()]);
-        //System.out.println("Sorting Dictionary...");
         Arrays.sort(rrr);
         for (int i=0; i<resources.size(); i++) {
             dict.setSafe(i, rrr[i].getBytes(StandardCharsets.UTF_8));
@@ -141,13 +138,8 @@ public final class BeakWriter implements AutoCloseable {
         System.out.println("BNODES     # : "+blanknodes.size());
         Dictionary dictionary = new Dictionary(dict, dictionaryEncoding);
         provider.put(dictionary);
-        //locked = true;
         nt = new NodeTable(dictionary);
-        //blanknodes.forEach((k,v)->{
-          //  blanknodes.put(k,v-blanknodes.size());
-        //});
         nt.setBlankNodes(blanknodes);
-        System.out.println("Creating Dictionary...Done");
     }
     
     public String MD5(byte[] buffer) {      
@@ -164,7 +156,6 @@ public final class BeakWriter implements AutoCloseable {
     }
     
     public Resource WriteDictionaryToFile(String base, ROCrate.ROCrateBuilder roc) {
-        System.out.println("================== WRITING Dictionary to File =====================================");
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, SchemaDO.Dataset);
         try (
@@ -192,7 +183,6 @@ public final class BeakWriter implements AutoCloseable {
         } catch (IOException ex) {
             Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
         }
-        System.out.println("================== Dictionary WRITTEN =====================================");
         return target;
         }
     }
@@ -201,11 +191,13 @@ public final class BeakWriter implements AutoCloseable {
         System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
+        //CommonsCompressionFactory ha;
+
         vectors.forEach(v->{
             System.out.println("Writing --> "+v.getName());
             try (VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v))) {
                 root.setRowCount(v.getValueCount());
-                OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes()), CompressionMethod.STORE);
+                OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes())+".arrow", CompressionMethod.STORE);
                 CountingOutputStream cos = new CountingOutputStream(zos);
                 try (SpecialArrowFileWriter writer = new SpecialArrowFileWriter(root, null, Channels.newChannel(cos))) {
                     writer.start();
@@ -231,7 +223,6 @@ public final class BeakWriter implements AutoCloseable {
                 }
             v.close();
         });
-        System.out.println("================== FILE WRITTEN =====================================");
         return target;
     }
     
@@ -321,7 +312,6 @@ public final class BeakWriter implements AutoCloseable {
                 System.out.println("Can't handle ["+ct+"]");
                 System.out.println(s+" "+p+" "+o);
                 throw new Error("BAMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM");
-                //break;
         }
     }
     
@@ -330,6 +320,7 @@ public final class BeakWriter implements AutoCloseable {
         int cores = Runtime.getRuntime().availableProcessors();
         System.out.println(cores+" cores available");
         ThreadPoolExecutor engine = new ThreadPoolExecutor(cores,cores,0L,TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+        engine.prestartAllCoreThreads();
         CopyOnWriteArrayList<Future<Model>> list = new CopyOnWriteArrayList<>();
         byPredicate.forEach((k,v)->{
             System.out.println("Submitting -> "+k);
@@ -338,26 +329,24 @@ public final class BeakWriter implements AutoCloseable {
             Jobs.put(k, new Job(k,worker,"WAITING"));
         });
         System.out.println("All jobs submitted --> "+list.size());
-        engine.prestartAllCoreThreads();
-        Timer timer = new Timer();
-        timer.scheduleAtFixedRate(new TimerTask() {
-            @Override
-            public void run() {
-                int c = engine.getQueue().size()+engine.getActiveCount();
-                long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
-                System.out.println("===============================================\njobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
-                Jobs.forEach((k,v)->{
-                    if (!"DONE".equals(v.status)) {
-                        System.out.println(v.predicate+" ---> "+v.status);
-                    }
-                });
-            }
-        }, 0, 10000);
-        while ((engine.getQueue().size()+engine.getActiveCount())>0) {
-        }
-        timer.cancel();
-        System.out.println("Engine shutdown");
         engine.shutdown();
+        while (!engine.isTerminated()) {
+            int c = engine.getQueue().size()+engine.getActiveCount();
+            long ram = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())/1024L/1024L;
+            System.out.println("==============================================\njobs completed : "+(list.size()-c)+" remaining jobs: "+c+"  Total RAM used : "+ram+"MB  Maximum RAM : "+(Runtime.getRuntime().maxMemory()/1024L/1024L)+"MB");
+            Jobs.forEach((k,v)->{
+                if (!"DONE".equals(v.status)) {
+                    System.out.println(v.predicate+" ---> "+v.status);
+                }
+            });
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException ex) {
+                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+        //timer.cancel();
+        System.out.println("Engine shutdown");
         System.out.println("engine jobs : "+list.size());       
         metairi = WriteDictionaryToFile(base, roc);
         WriteDataToFile(base, roc);
@@ -365,15 +354,29 @@ public final class BeakWriter implements AutoCloseable {
 
     @Override
     public void close() {
+        System.out.println("Close Vectors");
         vectors.forEach(v->{
             v.close();
         });
         byPredicate.forEach((k,paw)->{
-            paw.close();
+            try (paw) {
+                //System.out.println("Close PAW: "+k+" ---> "+paw.getPredicate());
+            } catch (OutOfMemoryException ex) {
+                System.out.println("OVERWATCH : "+k+" "+ex.getMessage());
+            } catch (IllegalStateException ex) {
+                System.out.println("OVERWATCH : "+k+" "+ex.getMessage());
+            }
         });
+        //System.out.println("Close Node Table");
         nt.close();
+        //System.out.println("Close Dictionary");
         dict.close();
-        allocator.close();
+        try (allocator) {
+            System.out.println("Close Allocator");
+        } catch (OutOfMemoryException ex) {
+            System.out.println("FINAL OVERWATCH : "+ex.getMessage());
+            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+        }
     }
         
     class PredicateProcessor implements Callable<Model> {
