@@ -50,61 +50,60 @@ public final class BeakReader implements AutoCloseable {
     private int numtriples = 0;
     
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
-        ROCrateReader reader = new ROCrateReader(uri);
-        byPredicate = new HashMap<>();
-        root = new RootAllocator();
-        manifest = reader.getManifest();
-        ParameterizedSparqlString pss = new ParameterizedSparqlString(
-            """
-            select ?file where {
-                ?s a bg:BeakGraph; so:hasPart ?file .
-                ?file a bg:PredicateVector .
-            }
-            """);
-        pss.setNsPrefix("bg", BG.NS);
-        pss.setNsPrefix("rdfs", RDFS.uri);
-        pss.setNsPrefix("so", SchemaDO.NS);
-        QueryExecution qe = QueryExecutionFactory.create(pss.toString(), manifest);
-        ResultSet rs = qe.execSelect();
-        while (rs.hasNext()) {
-            QuerySolution qs = rs.next();
-            String x = qs.get("file").asResource().getURI();  
-            try {
-                SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
-                ArrowFileReader afr = new ArrowFileReader(xxx, root);
-                VectorSchemaRoot za = afr.getVectorSchemaRoot();
-                afr.loadNextBatch();
-                StructVector v = (StructVector) za.getVector(0);
-                String p = v.getName();
-                String dt = p.substring(0, 1);
-                numtriples = numtriples + v.getValueCount();
-                p = p.substring(1);
-                if (!byPredicate.containsKey(p)) {
-                    byPredicate.put(p, new PAR(p));
+        try (ROCrateReader reader = new ROCrateReader(uri)) {
+            byPredicate = new HashMap<>();
+            root = new RootAllocator();
+            manifest = reader.getManifest();
+            ParameterizedSparqlString pss = new ParameterizedSparqlString(
+                """
+                select ?file where {
+                    ?s a bg:BeakGraph; so:hasPart ?file .
+                    ?file a bg:PredicateVector .
                 }
-                PAR par = byPredicate.get(p);
-                par.put(dt, v);
-            } catch (FileNotFoundException ex) {
-                Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
-            } catch (IOException ex) {
-                Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
+                """);
+            pss.setNsPrefix("bg", BG.NS);
+            pss.setNsPrefix("rdfs", RDFS.uri);
+            pss.setNsPrefix("so", SchemaDO.NS);
+            QueryExecution qe = QueryExecutionFactory.create(pss.toString(), manifest);
+            ResultSet rs = qe.execSelect();
+            while (rs.hasNext()) {
+                QuerySolution qs = rs.next();
+                String x = qs.get("file").asResource().getURI();  
+                try {
+                    SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
+                    ArrowFileReader afr = new ArrowFileReader(xxx, root);
+                    VectorSchemaRoot za = afr.getVectorSchemaRoot();
+                    afr.loadNextBatch();
+                    StructVector v = (StructVector) za.getVector(0);
+                    String p = v.getName();
+                    String dt = p.substring(0, 1);
+                    numtriples = numtriples + v.getValueCount();
+                    p = p.substring(1);
+                    if (!byPredicate.containsKey(p)) {
+                        byPredicate.put(p, new PAR(p));
+                    }
+                    PAR par = byPredicate.get(p);
+                    par.put(dt, v);
+                } catch (FileNotFoundException ex) {
+                    Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (IOException ex) {
+                    Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
+                }
             }
-        }
-        DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
-        String cha = uri.toString();
-        if (cha.startsWith("file:/")) {
-            if (!cha.startsWith("file://")) {
-                cha = "file:///"+cha.substring("file:/".length());
+            DictionaryEncoding dictionaryEncoding = new DictionaryEncoding(0, true, new ArrowType.Int(32, true));
+            String cha = uri.toString();
+            if (cha.startsWith("file:/")) {
+                if (!cha.startsWith("file://")) {
+                    cha = "file:///"+cha.substring("file:/".length());
+                }
             }
+            SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/dictionary.arrow");
+            ArrowFileReader afr = new ArrowFileReader(d, root);
+            VectorSchemaRoot za = afr.getVectorSchemaRoot();
+            afr.loadNextBatch();
+            dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
+            nodeTable = new NodeTable(dictionary);
         }
-        SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/dictionary");
-        ArrowFileReader afr = new ArrowFileReader(d, root);
-        VectorSchemaRoot za = afr.getVectorSchemaRoot();
-        afr.loadNextBatch();
-        dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
-        nodeTable = new NodeTable(dictionary);
-        reader.close();
-     //   DisplayAll();
     }
     
     public Model getManifest() {
@@ -117,6 +116,7 @@ public final class BeakReader implements AutoCloseable {
             v.close();
         });
         nodeTable.close();
+        dictionary.getVector().close();
         root.close();
     }
     
