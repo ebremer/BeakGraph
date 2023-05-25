@@ -162,7 +162,7 @@ public final class BeakWriter implements AutoCloseable {
             VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v));
         ) {
             try {
-                OutputStream zos = roc.getDestination().GetOutputStream(base+"/dictionary", CompressionMethod.STORE);
+                OutputStream zos = roc.getDestination().GetOutputStream(base+"/dictionary.arrow", CompressionMethod.STORE);
                 CountingOutputStream cos = new CountingOutputStream(zos);
                 ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
                 writer.start();
@@ -174,7 +174,7 @@ public final class BeakWriter implements AutoCloseable {
                     fh.setUncompressedSize(numbytes);
                 }
                 roc
-                    .Add(target, base, "dictionary", CompressionMethod.STORE, true)
+                    .Add(target, base, "dictionary.arrow", CompressionMethod.STORE, true)
                     .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
                     .addLiteral(SchemaDO.contentSize, numbytes)
                     .addProperty(RDF.type, SchemaDO.MediaObject)
@@ -207,7 +207,7 @@ public final class BeakWriter implements AutoCloseable {
                         fh.setUncompressedSize(numbytes);
                     }
                     roc
-                            .Add(target, base, MD5(v.getField().getName().getBytes()), CompressionMethod.STORE, true)
+                            .Add(target, base, MD5(v.getField().getName().getBytes())+".arrow", CompressionMethod.STORE, true)
                             .addProperty(SchemaDO.name, v.getField().getName().substring(1))
                             .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
                             .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
