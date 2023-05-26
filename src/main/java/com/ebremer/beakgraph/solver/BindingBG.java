@@ -11,12 +11,12 @@ import org.apache.jena.sparql.engine.binding.BindingBase;
  *
  * @author erich
  */
-public class BindingRaptor extends BindingBase {
+public class BindingBG extends BindingBase {
     
     private final NodeTable nodeTable;
     private final BindingNodeId idBinding;
     
-    public BindingRaptor(BindingNodeId idBinding, NodeTable nodeTable) {
+    public BindingBG(BindingNodeId idBinding, NodeTable nodeTable) {
         super(idBinding.getParentBinding());
         this.idBinding = idBinding;
         this.nodeTable = nodeTable;

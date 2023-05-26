@@ -33,7 +33,6 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final StructVector pa;
     private final DataType datatype;
     private final boolean scan;
-    //private final NodeTable nodeTable;
     
     public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
      //   System.out.println("BeakIterator =========================\n"

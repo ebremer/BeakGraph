@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.apache.arrow.memory.BufferAllocator;
@@ -48,9 +49,10 @@ public final class BeakReader implements AutoCloseable {
     private final Dictionary dictionary;
     private final Model manifest;
     private int numtriples = 0;
+    private ROCrateReader reader;
     
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
-        try (ROCrateReader reader = new ROCrateReader(uri)) {
+        reader = new ROCrateReader(uri);
             byPredicate = new HashMap<>();
             root = new RootAllocator();
             manifest = reader.getManifest();
@@ -73,17 +75,18 @@ public final class BeakReader implements AutoCloseable {
                     SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
                     ArrowFileReader afr = new ArrowFileReader(xxx, root);
                     VectorSchemaRoot za = afr.getVectorSchemaRoot();
-                    afr.loadNextBatch();
+                    //afr.loadNextBatch();
                     StructVector v = (StructVector) za.getVector(0);
+                    Map<String,String> meta = afr.getMetaData();
                     String p = v.getName();
                     String dt = p.substring(0, 1);
-                    numtriples = numtriples + v.getValueCount();
+                    numtriples = numtriples + Integer.parseInt(meta.get("triples"));
                     p = p.substring(1);
                     if (!byPredicate.containsKey(p)) {
                         byPredicate.put(p, new PAR(p));
                     }
                     PAR par = byPredicate.get(p);
-                    par.put(dt, v);
+                    par.put(dt, afr);
                 } catch (FileNotFoundException ex) {
                     Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
                 } catch (IOException ex) {
@@ -103,7 +106,6 @@ public final class BeakReader implements AutoCloseable {
             afr.loadNextBatch();
             dictionary = new Dictionary(za.getVector(0), dictionaryEncoding);
             nodeTable = new NodeTable(dictionary);
-        }
     }
     
     public Model getManifest() {
@@ -118,6 +120,7 @@ public final class BeakReader implements AutoCloseable {
         nodeTable.close();
         dictionary.getVector().close();
         root.close();
+        reader.close();
     }
     
     public HashMap<String,PAR> getPredicates() {
