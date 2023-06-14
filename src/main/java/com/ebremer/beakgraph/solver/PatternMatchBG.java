@@ -22,16 +22,14 @@ import static org.apache.jena.sparql.engine.main.solver.SolverLib.makeAbortable;
  *
  * @author erich
  */
-public class PatternMatchBeak {
+public class PatternMatchBG {
 
     public static QueryIterator execute(BeakGraph g, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
-        //System.out.println("$$$$$$$$$$$$$$$$$$$$$$$$ QueryIterator execute : "+bgp+" FFF--->>>  "+filter);
         List<Triple> triples = bgp.getList();
         List<Abortable> killList = new ArrayList<>();
         NodeTable nodeTable = g.getReader().getNodeTable();
         Iterator<BindingNodeId> chain = Iter.map(input, SolverLibBeak.convFromBinding(nodeTable));
         for ( Triple triple : triples ) {
-            //System.out.println("Triple List "+triple);
             chain = solve(g, triple, filter, chain, execCxt);
             chain = makeAbortable(chain, killList);
         }
@@ -41,14 +39,11 @@ public class PatternMatchBeak {
     }
 
     private static Iterator<BindingNodeId> solve(BeakGraph graph, Triple triple, ExprList filter, Iterator<BindingNodeId> chain, ExecutionContext execCxt) {     
-        //System.out.println("SOLVE!");
         Function<BindingNodeId, Iterator<BindingNodeId>> step = bnid -> find(graph, bnid, triple, filter, execCxt);
         return Iter.flatMap(chain, step);
-        
     }
     
     private static Iterator<BindingNodeId> find(BeakGraph graph, BindingNodeId bnid, Triple xPattern, ExprList filter, ExecutionContext execCxt) {
-        //System.out.println("PatternMatchRaptor "+bnid);
         NodeTable nodeTable = graph.getReader().getNodeTable();
         BeakReader r = graph.getReader();
         return r.Read(bnid, xPattern, filter, nodeTable);

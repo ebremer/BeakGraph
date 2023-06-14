@@ -28,7 +28,7 @@ public class SolverLibBeak {
     }
 
     public static Binding convToBinding(BindingNodeId bindingNodeIds, NodeTable nodeTable) {
-        return new BindingRaptor(bindingNodeIds, nodeTable);
+        return new BindingBG(bindingNodeIds, nodeTable);
     }
 
     public static Function<Binding, BindingNodeId> convFromBinding(final NodeTable nodeTable) {
@@ -36,7 +36,7 @@ public class SolverLibBeak {
     }
 
     public static BindingNodeId convert(Binding binding, NodeTable nodeTable) {
-        if ( binding instanceof BindingRaptor bindingRaptor )
+        if ( binding instanceof BindingBG bindingRaptor )
             return bindingRaptor.getBindingId();
         BindingNodeId b = new BindingNodeId(binding);
         // and copy over, getting NodeIds.

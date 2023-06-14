@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
-    <version>0.3.2</version>
+    <version>0.4.0</version>
     <packaging>jar</packaging>
     <build>
         <plugins>
@@ -24,12 +24,12 @@
     </build>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.source>20</maven.compiler.source>
+        <maven.compiler.target>20</maven.compiler.target>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
         <jena.version>4.8.0</jena.version>
-        <arrow.version>12.0.0</arrow.version>
-        <rocrate4j.version>0.3.1</rocrate4j.version>
+        <arrow.version>12.0.1</arrow.version>
+        <rocrate4j.version>0.3.2</rocrate4j.version>
     </properties>
     <dependencies>
         <dependency>

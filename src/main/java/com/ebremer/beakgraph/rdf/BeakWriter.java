@@ -10,6 +10,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -164,6 +165,7 @@ public final class BeakWriter implements AutoCloseable {
             try {
                 OutputStream zos = roc.getDestination().GetOutputStream(base+"/dictionary.arrow", CompressionMethod.STORE);
                 CountingOutputStream cos = new CountingOutputStream(zos);
+
                 ArrowFileWriter writer = new ArrowFileWriter(root, null, Channels.newChannel(cos));
                 writer.start();
                 writer.writeBatch();
@@ -190,14 +192,18 @@ public final class BeakWriter implements AutoCloseable {
         System.out.println("================== WRITING VECTORS ["+vectors.size()+"] ===================================== ");
         Resource rde = roc.getRDE();
         Resource target = roc.AddFolder(rde, base, BG.BeakGraph);
-        //CommonsCompressionFactory ha;
         vectors.forEach(v->{
             System.out.println("Writing --> "+v.getName());
             try (VectorSchemaRoot root = new VectorSchemaRoot(List.of(v.getField()), List.of(v))) {
                 root.setRowCount(v.getValueCount());
                 OutputStream zos = roc.getDestination().GetOutputStream(base+"/"+MD5(v.getName().getBytes())+".arrow", CompressionMethod.STORE);
                 CountingOutputStream cos = new CountingOutputStream(zos);
-                try (SpecialArrowFileWriter writer = new SpecialArrowFileWriter(root, null, Channels.newChannel(cos))) {
+                //try (SpecialArrowFileWriter writer = new SpecialArrowFileWriter(root, null, Channels.newChannel(cos), new HashMap<>(), IpcOption.DEFAULT, CommonsCompressionFactory.INSTANCE, CompressionUtil.CodecType.LZ4_FRAME)) {               
+                Map<String, String> meta = new HashMap<>();
+                meta.put("predicate", v.getName().substring(1,v.getName().length()));
+                meta.put("datatype", v.getName().substring(0,1));
+                meta.put("triples", String.valueOf(v.getValueCount()));
+                try (SpecialArrowFileWriter writer = new SpecialArrowFileWriter(root, null, Channels.newChannel(cos), meta)) {
                     writer.start();
                     writer.writeBatch();
                     writer.end();
@@ -207,18 +213,18 @@ public final class BeakWriter implements AutoCloseable {
                         fh.setUncompressedSize(numbytes);
                     }
                     roc
-                            .Add(target, base, MD5(v.getField().getName().getBytes())+".arrow", CompressionMethod.STORE, true)
-                            .addProperty(SchemaDO.name, v.getField().getName().substring(1))
-                            .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
-                            .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
-                            .addLiteral(SchemaDO.contentSize, numbytes)
-                            .addProperty(RDF.type, SchemaDO.MediaObject)
-                            .addLiteral(BG.triples, v.getValueCount())
-                            .addProperty(RDF.type, BG.PredicateVector);
+                        .Add(target, base, MD5(v.getField().getName().getBytes())+".arrow", CompressionMethod.STORE, true)
+                        .addProperty(SchemaDO.name, v.getField().getName().substring(1))
+                        .addProperty(BG.property, ResourceFactory.createResource(v.getName().substring(1,v.getName().length())))
+                        .addProperty(SchemaDO.encodingFormat, "application/vnd.apache.arrow.file")
+                        .addLiteral(SchemaDO.contentSize, numbytes)
+                        .addProperty(RDF.type, SchemaDO.MediaObject)
+                        .addLiteral(BG.triples, v.getValueCount())
+                        .addProperty(RDF.type, BG.PredicateVector);
                 }
-                } catch (IOException ex) {
-                    Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
-                }
+            } catch (IOException ex) {
+                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+            }
             v.close();
         });
         return target;

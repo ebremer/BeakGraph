@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.solver;
 
 import com.ebremer.beakgraph.rdf.BeakGraph;
-import org.apache.jena.atlas.logging.Log;
 import org.apache.jena.graph.Graph;
 import org.apache.jena.sparql.ARQInternalErrorException;
 import org.apache.jena.sparql.algebra.Op;
@@ -17,38 +16,36 @@ import org.apache.jena.sparql.engine.QueryIterator;
 import org.apache.jena.sparql.engine.iterator.QueryIterPeek;
 import org.apache.jena.sparql.engine.main.OpExecutor;
 import org.apache.jena.sparql.engine.main.OpExecutorFactory;
+import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderProc;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.expr.ExprList;
-import org.apache.jena.sparql.mgt.Explain;
 
 /**
  *
  * @author erich
  */
-public class OpExecutorBeak extends OpExecutor {
-    
-    public final static OpExecutorFactory opExecFactoryBeak = new OpExecutorFactory() {
+public class OpExecutorBG extends OpExecutor {
+       
+    public final static OpExecutorFactory opExecFactoryBG = new OpExecutorFactory() {
         @Override
-        public OpExecutor create(ExecutionContext execCxt) { 
-            return new OpExecutorBeak(execCxt) ; 
+        public OpExecutor create(ExecutionContext execCxt) {
+            return new OpExecutorBG(execCxt);
         }
     };
-    
-    private final boolean isForRaptor;
 
-    protected OpExecutorBeak(ExecutionContext execCtx) {
+    private final boolean isForBeakGraph;
+
+    public OpExecutorBG(ExecutionContext execCtx) {
 	super(execCtx);
-	isForRaptor = execCtx.getActiveGraph() instanceof BeakGraph;
+	isForBeakGraph = execCtx.getActiveGraph() instanceof BeakGraph;
     }
     
     @Override
     protected QueryIterator execute(OpFilter opFilter, QueryIterator input) {
-        if (!isForRaptor) return super.execute(opFilter, input);
-        
-//       if (opFilter instanceof OpFilter) throw new Error("BAM");
-      // Op what = opFilter.getSubOp();
-       // boolean whatisthis = OpBGP.isBGP(what);
+        if (!isForBeakGraph) {
+            return super.execute(opFilter, input);
+        }
         if (OpBGP.isBGP(opFilter.getSubOp())) {
             BeakGraph graph = (BeakGraph)execCxt.getActiveGraph();
             OpBGP opBGP = (OpBGP)opFilter.getSubOp();
@@ -69,8 +66,9 @@ public class OpExecutorBeak extends OpExecutor {
 
     @Override
     protected QueryIterator execute(OpBGP opBGP, QueryIterator input) {
-        if ( !isForRaptor )
+        if ( !isForBeakGraph ) {
             return super.execute(opBGP, input);
+        }
         BeakGraph graph = (BeakGraph)execCxt.getActiveGraph() ;
         return executeBGP(graph, opBGP, input, null, execCxt);
     }
@@ -80,8 +78,9 @@ public class OpExecutorBeak extends OpExecutor {
     }
     
     private static QueryIterator optimizeExecuteTriples(BeakGraph graph, QueryIterator input, BasicPattern pattern, ExprList exprs, ExecutionContext execCxt) {
-       // System.out.println("optimizeExecuteTriples "+pattern);
-        if (!input.hasNext()) return input;
+        if (!input.hasNext()) {
+            return input;
+        }
         if ( pattern.size() >= 2 ) {
 	    ReorderTransformation transform = graph.getReorderTransform();
 	    if ( transform != null ) {
@@ -91,10 +90,8 @@ public class OpExecutorBeak extends OpExecutor {
             }
         }
         if ( exprs == null ) {
-            Explain.explain("Execute", pattern, execCxt.getContext());
-           // Predicate<Tuple<NodeId>> filter = QC2.getFilter(execCxt.getContext());
             BeakGraph g = (BeakGraph) execCxt.getActiveGraph();
-            return PatternMatchBeak.execute(g, pattern, input, exprs, execCxt);
+            return PatternMatchBG.execute(g, pattern, input, exprs, execCxt);
         }
         Op op = TransformFilterPlacement.transform(exprs, pattern);
         return plainExecute(op, input, execCxt) ;
@@ -102,8 +99,9 @@ public class OpExecutorBeak extends OpExecutor {
     
     private static BasicPattern reorder(BasicPattern pattern, QueryIterPeek peek, ReorderTransformation transform) {
         if (transform!=null) {     
-            if (!peek.hasNext())
-                throw new ARQInternalErrorException("Peek iterator is already empty") ;
+            if (!peek.hasNext()) {
+                throw new ARQInternalErrorException("Peek iterator is already empty");
+            }
             BasicPattern pattern2 = Substitute.substitute(pattern, peek.peek());
             ReorderProc proc = transform.reorderIndexes(pattern2);
             pattern = proc.reorder(pattern);
@@ -112,32 +110,31 @@ public class OpExecutorBeak extends OpExecutor {
     }
     
     private static QueryIterator plainExecute(Op op, QueryIterator input, ExecutionContext execCxt) {
-        ExecutionContextBeak ec2 = new ExecutionContextBeak(execCxt, op);
-        ec2.setExecutor(plainFactory);
-        return QC2.execute(op, input, ec2) ;
+        ExecutionContextBG ec = new ExecutionContextBG(execCxt, op);
+        ec.setExecutor(plainFactory);
+        return QC.execute(op, input, ec) ;
     }
     
-    private static final OpExecutorFactory plainFactory = new OpExecutorPlainFactoryRaptor();
+    private static final OpExecutorFactory plainFactory = new OpExecutorPlainFactoryBeak();
     
-    private static class OpExecutorPlainFactoryRaptor implements OpExecutorFactory {
+    private static class OpExecutorPlainFactoryBeak implements OpExecutorFactory {
         
         @Override
         public OpExecutor create(ExecutionContext execCxt) {
-            return new OpExecutorPlainRaptor(execCxt) ;
+            return new OpExecutorPlainBeak(execCxt) ;
         }
         
         public OpExecutor create(ExecutionContext execCxt, OpFilter op) {
-            return new OpExecutorPlainRaptor(execCxt);
+            return new OpExecutorPlainBeak(execCxt);
         }
     }
     
-    private static class OpExecutorPlainRaptor extends OpExecutor {
+    private static class OpExecutorPlainBeak extends OpExecutor {
         final ExprList filter;
         
-        @SuppressWarnings("unchecked")
-        public OpExecutorPlainRaptor(ExecutionContext execCxt) {
+        public OpExecutorPlainBeak(ExecutionContext execCxt) {
             super(execCxt);
-            ExecutionContextBeak ecr = (ExecutionContextBeak) execCxt;
+            ExecutionContextBG ecr = (ExecutionContextBG) execCxt;
             filter = ecr.getFilter();
         }
         
@@ -146,17 +143,8 @@ public class OpExecutorBeak extends OpExecutor {
             Graph g = execCxt.getActiveGraph();
             if ( g instanceof BeakGraph graphRaptor ) {
                 BasicPattern bgp = opBGP.getPattern() ;
-                //System.out.println("OPE bgp -> "+bgp);
-              //  bgp.forEach(t->{
-                //    System.out.println("each - > "+t.getSubject()+" "+t.getPredicate()+" "+t.getObject());
-               // });
-                Explain.explain("Execute", bgp, execCxt.getContext()) ;
-                if (filter!=null) {
-                    return PatternMatchBeak.execute(graphRaptor, bgp, input, filter, execCxt);
-                }
-                return PatternMatchBeak.execute(graphRaptor, bgp, input, filter, execCxt);
+                return PatternMatchBG.execute(graphRaptor, bgp, input, filter, execCxt);
             }
-            Log.warn(this, "Non-RaptorGraph passed to OpExecutorPlainRaptor");
             return super.execute(opBGP, input) ;
         }
     }

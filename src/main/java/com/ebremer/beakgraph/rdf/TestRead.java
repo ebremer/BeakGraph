@@ -27,7 +27,10 @@ public class TestRead {
         //ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
         //root.setLevel(ch.qos.logback.classic.Level.OFF);
         //URI uri = new URI("file:///D:/HalcyonStorage/nuclearsegmentation2019/coad/TCGA-AA-3872-01Z-00-DX1.eb3732ee-40e3-4ff0-a42b-d6a85cfbab6a.zip");
-        URI uri = new URI("file:///D:/HalcyonStorage/nuclearsegmentation2019/coad/TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
+        //URI uri = new URI("file:///D:/HalcyonStorage/nuclearsegmentation2019/coad/TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
+        //URI uri = new URI("file:///D:/HalcyonStorage/squish/TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
+        //URI uri = new URI("file:///D:/halcyon/features/dest0/TCGA-A6-5656-01Z-00-DX1.8a8ebf52-8217-4288-8886-7eefa6cdfdca.zip");
+        URI uri = new URI("file:///D:/halcyon/features/dest0/TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
         BeakGraph g = new BeakGraph(uri);
         Model m = ModelFactory.createModelForGraph(g);
         System.out.println("SIZE : "+m.size());
@@ -47,6 +50,8 @@ public class TestRead {
             }
             //ResultSetFormatter.out(System.out, results, query);
         }
+        g.close();
     }
     
 }
+
