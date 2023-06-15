@@ -1,7 +1,3 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package com.ebremer.beakgraph.extra;
 
 import org.apache.arrow.algorithm.search.VectorSearcher;
@@ -10,6 +6,7 @@ import org.apache.arrow.algorithm.sort.VectorValueComparator;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel;
 
 /**
  *
@@ -32,5 +29,6 @@ public class BLAM {
 
             System.out.println(result);
         }
+        ByteArrayReadableSeekableByteChannel ha;
     }
 }
