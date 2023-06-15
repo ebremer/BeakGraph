@@ -3,10 +3,43 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
-    <version>0.4.0</version>
+    <name>BeakGraph</name>
+    <version>0.7.0</version>
     <packaging>jar</packaging>
+    
+    <description>Library for creating Apache Jena Graphs and Datasets backed by Apache Arrow</description>
+    
+    <licenses>
+        <license>
+            <name>The Apache Software License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
+    </licenses>
+    
+    <issueManagement>
+        <system>github</system>
+        <url>https://github.com/ebremer/BeakGraph/issues</url>
+    </issueManagement>
+    
+    <developers>
+        <developer>
+          <id>ebremer</id>
+          <name>Erich Bremer</name>
+          <email>erich.bremer@stonybrook.edu</email>
+          <roles>
+              <role>author</role>
+          </roles>
+        </developer>
+    </developers>
+    
+    <inceptionYear>2021</inceptionYear>
+    
     <build>
         <plugins>
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.6.0</version>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -16,20 +49,18 @@
                     </compilerArgs>
                 </configuration>
             </plugin>
-            <plugin>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.5.0</version>
-            </plugin>
         </plugins>
     </build>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>20</maven.compiler.source>
-        <maven.compiler.target>20</maven.compiler.target>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
-        <jena.version>4.8.0</jena.version>
-        <arrow.version>12.0.1</arrow.version>
-        <rocrate4j.version>0.3.2</rocrate4j.version>
+        <jena.version>4.10.0</jena.version>
+        <arrow.version>14.0.1</arrow.version>
+        <rocrate4j.version>0.3.5</rocrate4j.version>
+        <commons-compress.version>1.24.0</commons-compress.version>
+        <log4j.version>2.21.1</log4j.version>
     </properties>
     <dependencies>
         <dependency>
@@ -49,21 +80,9 @@
         </dependency>
         <dependency>
             <groupId>org.apache.jena</groupId>
-            <artifactId>jena-core</artifactId>
+            <artifactId>apache-jena-libs</artifactId>
             <type>pom</type>
             <version>${jena.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.jena</groupId>
-            <artifactId>jena-arq</artifactId>
-            <type>pom</type>
-            <version>${jena.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.jena</groupId>
-            <artifactId>jena-querybuilder</artifactId>
-            <version>${jena.version}</version>
-            <type>jar</type>
         </dependency>
         <dependency>
             <groupId>org.apache.arrow</groupId>
@@ -89,6 +108,26 @@
             <groupId>org.apache.arrow</groupId>
             <artifactId>arrow-compression</artifactId>
             <version>${arrow.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>${commons-compress.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+            <version>${log4j.version}</version>
         </dependency>
     </dependencies>
     <repositories>

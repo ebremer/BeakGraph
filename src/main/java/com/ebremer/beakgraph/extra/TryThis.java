@@ -1,7 +1,3 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package com.ebremer.beakgraph.extra;
 
 import org.apache.arrow.memory.BufferAllocator;
@@ -19,8 +15,12 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.stream.IntStream;
+import org.apache.arrow.vector.VectorLoader;
+import org.apache.arrow.vector.VectorUnloader;
 import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.arrow.vector.ipc.message.ArrowBlock;
+import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
 
 /**
  *
@@ -82,6 +82,8 @@ try (BufferAllocator allocator = new RootAllocator()) {
     }
 }
 
+VectorSchemaRoot[] yay = new VectorSchemaRoot[5];
+int c = 0;
 
 File file = new File("random.arrow");
 try(
@@ -93,15 +95,34 @@ try(
     for (ArrowBlock arrowBlock : reader.getRecordBlocks()) {
         System.out.println("OFFSET ---> "+arrowBlock.getOffset()+"  "+arrowBlock.getBodyLength());
         reader.loadRecordBatch(arrowBlock);
-        VectorSchemaRoot vectorSchemaRootRecover = reader.getVectorSchemaRoot();
-        System.out.print(vectorSchemaRootRecover.contentToTSVString());
+        VectorSchemaRoot vbr = reader.getVectorSchemaRoot();
+        System.out.print(vbr.contentToTSVString());
+        yay[c] = cloneRoot(vbr, rootAllocator);
+        c++;
     }
+    
+        System.out.println("============================================================================================");
+    
+    IntStream.range(0, c).forEach(y->{
+        System.out.println(yay[y].contentToTSVString());
+        yay[y].close();
+    });
+    
 } catch (IOException e) {
     e.printStackTrace();
 }
 
 
-
     }
+    
+    private static VectorSchemaRoot cloneRoot(VectorSchemaRoot originalRoot, BufferAllocator allocator) {
+        VectorSchemaRoot theRoot = VectorSchemaRoot.create(originalRoot.getSchema(), allocator);
+        VectorLoader loader = new VectorLoader(theRoot);
+        VectorUnloader unloader = new VectorUnloader(originalRoot);
+        try (ArrowRecordBatch recordBatch = unloader.getRecordBatch()) {
+            loader.load(recordBatch);
+        }
+        return theRoot;
+    }  
     
 }
