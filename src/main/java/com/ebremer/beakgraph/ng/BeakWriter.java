@@ -2,6 +2,8 @@ package com.ebremer.beakgraph.ng;
 
 import static com.ebremer.beakgraph.ng.BeakGraph.DICTIONARY;
 import static com.ebremer.beakgraph.ng.BeakGraph.NAMEDGRAPHS;
+import static com.ebremer.beakgraph.ng.DataType.FLOAT;
+import static com.ebremer.beakgraph.ng.DataType.LONG;
 import static com.ebremer.beakgraph.ng.DataType.STRING;
 import com.ebremer.rocrate4j.ROCrate.ROCrateBuilder;
 import java.io.ByteArrayOutputStream;
@@ -18,8 +20,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import net.lingala.zip4j.model.enums.CompressionMethod;
 import org.apache.arrow.compression.CommonsCompressionFactory;
 import org.apache.arrow.memory.BufferAllocator;
@@ -50,6 +50,8 @@ import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.impl.ResourceImpl;
 import org.apache.jena.vocabulary.SchemaDO;
 import org.apache.jena.vocabulary.VOID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -71,7 +73,8 @@ public final class BeakWriter implements AutoCloseable {
     private IntVector id2ng;
     private IntVector ng2id;
     private List<SpecialProcess> specials;
-    private final Resource target;
+    private final Resource target;    
+    private static final Logger logger = LoggerFactory.getLogger(BeakWriter.class);
     
     public BeakWriter(ROCrateBuilder roc, String base) {
         this.allocator = new RootAllocator();
@@ -160,6 +163,7 @@ public final class BeakWriter implements AutoCloseable {
                     case FLOAT -> ProcessTriple(mk.createLiteralStatement(b, pk, 1.0f),false);
                     case INTEGER -> ProcessTriple(mk.createLiteralStatement(b, pk, 1),false);
                     case LONG -> ProcessTriple(mk.createLiteralStatement(b, pk, 1L),false);
+                    case DOUBLE -> ProcessTriple(mk.createLiteralStatement(b, pk, 1.0d),false);
                 }
             });
             paw.Finish(this);
@@ -199,15 +203,18 @@ public final class BeakWriter implements AutoCloseable {
     }
     
     public void Add(Resource ng, Model m) {
+        logger.debug("Add Named Graph");
         StopWatch sw = StopWatch.getInstance();
         specials.forEach(sp->{
             sp.Execute(this, ng, m);
         });
-        sw.Lapse("Time for specials").reset();
+        logger.debug(sw.Lapse("Time for specials"));        
+        sw.reset();
         m.listStatements().forEach(s->{
             ProcessTriple(s);
         });
-        sw.Lapse("Time to Process Triples").reset();
+        logger.debug(sw.Lapse("Time to Process Triples"));          
+        sw.reset();
         AddModel();
     }
 
@@ -304,10 +311,10 @@ public final class BeakWriter implements AutoCloseable {
                         //.addProperty(RDF.type, BG.NamedGraphs);
                     }
             } catch (IOException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+                logger.error(ex.getMessage());
             }
         }   catch (IOException ex) {
-            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+            logger.error(ex.getMessage());
         }
     }
     
@@ -332,10 +339,10 @@ public final class BeakWriter implements AutoCloseable {
                         //.addProperty(RDF.type, BG.Dictionary);
                     }
             } catch (IOException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+                logger.error(ex.getMessage());
             }
         } catch (IOException ex) {
-            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+            logger.error(ex.getMessage());
         }
     }
     
@@ -346,14 +353,16 @@ public final class BeakWriter implements AutoCloseable {
         return writers.get(v);
     }
     
-    public void AddModel() {
+    public void AddModel() {        
         StopWatch sw = StopWatch.getInstance();
         try (ExecutorService engine = Executors.newVirtualThreadPerTaskExecutor()) {
             byPredicate.forEach((p,paw)->{
+                logger.trace("submit PredicateProcessor -> "+p);
                 engine.submit(new PredicateProcessor(paw, this));
             });
         }
-        sw.Lapse("Time to Finalized Model").reset();
+        logger.debug(sw.Lapse("Time to Finalized Model"));
+        sw.reset();
         try (ExecutorService engine = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int w=0; w<vectors.size(); w++) {
                 FieldVector v = vectors.get(w);
@@ -362,13 +371,13 @@ public final class BeakWriter implements AutoCloseable {
                 engine.submit(new WB(block));
             }
         }
-        sw.Lapse("Time for Writers");
+        logger.debug(sw.Lapse("Time for Writers"));
     }
 
     private class WB implements Runnable {
         private final Writer block;
         
-        WB(Writer block) {
+        public WB(Writer block) {
             this.block = block;
         }
 
@@ -377,17 +386,17 @@ public final class BeakWriter implements AutoCloseable {
             try {
                 block.getWriter().writeBatch();
             } catch (IOException ex) {
-                Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+                logger.error(ex.getMessage());
             }
         }
     }
     
     public void ProcessTriple(Statement stmt) {
+        logger.trace("ProcessTriple : "+stmt.toString());
         ProcessTriple(stmt, true);
     }
     
     public void ProcessTriple(Statement stmt, boolean track) {
-      //  System.out.println(stmt);
         if (track) VoID.Add(stmt);
         Resource res = stmt.getSubject();
        if (res.isAnon()) {
@@ -424,6 +433,8 @@ public final class BeakWriter implements AutoCloseable {
             byPredicate.get(p).set(res, o.asLiteral().getLong());
         } else if (cc.equals(Float.class)) {
             byPredicate.get(p).set(res, o.asLiteral().getFloat());
+        } else if (cc.equals(Double.class)) {
+            byPredicate.get(p).set(res, o.asLiteral().getDouble());
         } else if (cc.equals(String.class)) {
             byPredicate.get(p).set(res, o.asLiteral().toString());
         }  else if (cc.equals(XSDDateTime.class)) {
@@ -440,7 +451,7 @@ public final class BeakWriter implements AutoCloseable {
         if (id2IRI!=null) id2IRI.close();
         if (id2ng!=null) id2ng.close();
         if (ng2id!=null) ng2id.close();
-        String bx = roc.getRDE().toString()+"/void";
+        String bx = roc.getRDE().toString()+"void";
         Resource voidmeta = roc.getRDE().getModel().createResource(bx);
         VoID.generateVoid(voidmeta);
         voidmeta.addProperty(VOID.subset, target);
@@ -454,17 +465,16 @@ public final class BeakWriter implements AutoCloseable {
             try (paw) {
                 
             } catch (OutOfMemoryException ex) {
-                System.out.println("OVERWATCH : "+k+" "+ex.getMessage());
+                logger.error("OVERWATCH : "+k+" "+ex.getMessage());
             } catch (IllegalStateException ex) {
-                System.out.println("OVERWATCH : "+k+" "+ex.getMessage());
+                logger.error("OVERWATCH : "+k+" "+ex.getMessage());
             }
         });
         roc.build();
         try (nt) {}
         try (allocator) {
         } catch (OutOfMemoryException ex) {
-            System.out.println("Allocator OVERWATCH : "+ex.getMessage());
-            Logger.getLogger(BeakWriter.class.getName()).log(Level.SEVERE, null, ex);
+            logger.error("Allocator OVERWATCH : "+ex.getMessage());
         }
         vectors.forEach(v->{            
             v.close();

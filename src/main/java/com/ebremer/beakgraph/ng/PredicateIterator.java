@@ -10,6 +10,8 @@ import java.util.function.Predicate;
 import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.util.iterator.ExtendedIterator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -19,8 +21,10 @@ public class PredicateIterator implements ExtendedIterator {
     private final HashMap<String, PAR> pred;
     private final NodeTable nt;
     private final IteratorChain<Triple> ic;
+    private static final Logger logger = LoggerFactory.getLogger(PredicateIterator.class);
     
     public PredicateIterator(int ng, BeakReader reader, Triple triple) {
+        logger.trace(triple.toString());
         this.nt = reader.getNodeTable();
         this.pred = reader.getPredicates();
         ArrayList<Iterator<Triple>> list = new ArrayList<>();

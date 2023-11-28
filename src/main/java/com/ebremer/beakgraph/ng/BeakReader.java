@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.ng;
 
+import com.ebremer.beakgraph.control.AllocatorCore;
 import static com.ebremer.beakgraph.ng.BeakGraph.DICTIONARY;
 import static com.ebremer.beakgraph.ng.BeakGraph.NAMEDGRAPHS;
 import com.ebremer.rocrate4j.ROCrateReader;
@@ -11,11 +12,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.apache.arrow.compression.CommonsCompressionFactory;
 import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -41,16 +42,17 @@ import org.apache.jena.vocabulary.SchemaDO;
 public final class BeakReader implements AutoCloseable {
     private final NodeTable nodeTable;
     private final HashMap<String,PAR> byPredicate;
-    private final BufferAllocator root;
     private final Model manifest;
     private int numtriples = 0;
     private final ROCrateReader reader;
-    private int currentGraph = 0;
+    private final URI uri;
     
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
+        StopWatch sw = StopWatch.getInstance();
+        this.uri = uri;
         reader = new ROCrateReader(uri);
         byPredicate = new HashMap<>();
-        root = new RootAllocator();
+        BufferAllocator allocator = AllocatorCore.getInstance().getChildAllocator(uri);
         manifest = reader.getManifest();
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
@@ -70,7 +72,7 @@ public final class BeakReader implements AutoCloseable {
             String x = qs.get("file").asResource().getURI();  
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
-                ArrowFileReader afr = new ArrowFileReader(xxx, root, CommonsCompressionFactory.INSTANCE);
+                ArrowFileReader afr = new ArrowFileReader(xxx, allocator, CommonsCompressionFactory.INSTANCE);
                 VectorSchemaRoot za = afr.getVectorSchemaRoot();
                 StructVector v = (StructVector) za.getVector(0);
                 Map<String,String> meta = afr.getMetaData();
@@ -97,23 +99,30 @@ public final class BeakReader implements AutoCloseable {
         }
         nodeTable = new NodeTable();
         try (SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/"+DICTIONARY)) {
-            ArrowFileReader afr = new ArrowFileReader(d, root, CommonsCompressionFactory.INSTANCE);
+            ArrowFileReader afr = new ArrowFileReader(d, allocator, CommonsCompressionFactory.INSTANCE);
             VectorSchemaRoot za = afr.getVectorSchemaRoot();
             afr.loadNextBatch();
             nodeTable.setDictionaryVectors((VarCharVector) za.getVector(0), (IntVector) za.getVector(1), (VarCharVector) za.getVector(2), (IntVector) za.getVector(3));
         }
         try (SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/"+NAMEDGRAPHS)) {
-            ArrowFileReader afr = new ArrowFileReader(d, root, CommonsCompressionFactory.INSTANCE);
+            ArrowFileReader afr = new ArrowFileReader(d, allocator, CommonsCompressionFactory.INSTANCE);
             VectorSchemaRoot za = afr.getVectorSchemaRoot();
             afr.loadNextBatch();
             nodeTable.setNamedGraphVector((IntVector) za.getVector(0));
         }
+        sw.Lapse("Manifest Loaded");
     }
     
-    public BufferAllocator getBufferAllocator() {
-        return root;
+    public URI getURI() {
+        return uri;
     }
-        
+     
+    public void warm(String predicate, int ng) {
+        if (byPredicate.containsKey(predicate)) {
+            byPredicate.get(predicate).getAllTypes(ng);
+        }
+    }
+    
     public Iterator<Node> listGraphNodes() {
         return nodeTable.listGraphNodes();
     }
@@ -132,8 +141,8 @@ public final class BeakReader implements AutoCloseable {
             v.close();
         });
         try (nodeTable) {}
-        root.close();
         reader.close();
+        byPredicate.clear();
     }
     
     public HashMap<String,PAR> getPredicates() {
@@ -159,18 +168,24 @@ public final class BeakReader implements AutoCloseable {
         }
         return new IteratorChain(new ArrayList<>());
     }
-}
-
-/*
-    public Iterator<BindingNodeId> Read(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
-        if (byPredicate.containsKey(triple.getPredicate().getURI())) {
-            ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
-            byPredicate.get(triple.getPredicate().getURI()).getAllTypes().forEach((k,dual)->{
-                Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable);
-                its.add(i);
-            });
-            return new IteratorChain(its);
-        }
-        return new IteratorChain(new ArrayList<>());
+    
+    @Override
+    public int hashCode() {
+        return uri.hashCode();
     }
-*/
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null) {
+            return false;
+        }
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
+        final BeakReader other = (BeakReader) obj;
+        return Objects.equals(this.uri, other.uri);
+    }
+}

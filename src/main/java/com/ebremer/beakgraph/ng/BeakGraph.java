@@ -16,6 +16,8 @@ import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.sys.JenaSystem;
 import org.apache.jena.util.iterator.ExtendedIterator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -28,16 +30,23 @@ public class BeakGraph extends GraphBase {
     public static String NAMEDGRAPHS = "namedgraphs.arrow";
     private final int namedgraph;
     private final BeakReader reader;
+    private static final Logger logger = LoggerFactory.getLogger(BeakGraph.class);
     
     static { JenaSystem.init(); }
 
     public BeakGraph(URI uri) throws IOException {
+        logger.trace("Create a BeakGraph -> "+uri.toString());
         init();
         this.reader = new BeakReader(uri);
         this.namedgraph = 0;
     }
     
+    public void warm(String predicate) {
+        reader.warm(predicate, namedgraph);
+    }
+    
     public BeakGraph(int namedgraph, BeakReader reader) throws IOException {
+        logger.trace("Create a SubBeakGraph -> "+reader.getURI().toString());
         init();
         this.reader = reader;
         this.namedgraph = namedgraph;

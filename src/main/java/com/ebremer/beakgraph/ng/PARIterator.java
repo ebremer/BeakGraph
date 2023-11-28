@@ -4,6 +4,8 @@ import java.util.Iterator;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -19,8 +21,10 @@ public class PARIterator implements Iterator {
     private final boolean hasData;
     private DataType datatype;
     private final int namedgraph;
+    private static final Logger logger = LoggerFactory.getLogger(PARIterator.class);
     
     public PARIterator(int ng, PAR par, NodeTable nt) {
+        logger.trace("Create PARIterator : "+par.getPredicateNode());
         this.namedgraph = ng;
         this.par = par;
         this.dt = par.getAllTypes(ng).keySet().iterator();

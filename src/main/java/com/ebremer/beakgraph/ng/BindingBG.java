@@ -26,8 +26,11 @@ public class BindingBG extends BindingBase {
     
     @Override
     protected Node get1(Var var) {
-        NodeId i = idBinding.get(var);
-        return nodeTable.getNodeForNodeId(i);
+        if (idBinding.containsKey(var)) {
+            NodeId i = idBinding.get(var);
+            return nodeTable.getNodeForNodeId(i);
+        }
+        throw new Error("No binding for "+var);
     }   
 
     @Override

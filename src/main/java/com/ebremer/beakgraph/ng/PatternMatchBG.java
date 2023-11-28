@@ -3,7 +3,9 @@ package com.ebremer.beakgraph.ng;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.core.BasicPattern;
@@ -22,6 +24,10 @@ import static org.apache.jena.sparql.engine.main.solver.SolverLib.makeAbortable;
 public class PatternMatchBG {
 
     public static QueryIterator execute(BeakGraph g, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
+        Set<String> list = bgp.getList().stream().map(triple -> triple.getPredicate().toString()).collect(Collectors.toSet());
+        list.parallelStream().forEach(p->{
+            g.warm(p);
+        });
         List<Triple> triples = bgp.getList();
         List<Abortable> killList = new ArrayList<>();
         NodeTable nodeTable = g.getReader().getNodeTable();

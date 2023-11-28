@@ -29,6 +29,8 @@ import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.XSD;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -41,6 +43,7 @@ public class PAW implements AutoCloseable {
     private final BufferAllocator allocator;
     private final NodeTable nt;
     private final String p;
+    private static final Logger logger = LoggerFactory.getLogger(PAW.class);
     
     public PAW(BufferAllocator allocator, NodeTable nt, String p) {
         this.allocator = allocator;
@@ -96,9 +99,9 @@ public class PAW implements AutoCloseable {
         });
         try (allocator) {
         } catch (OutOfMemoryException ex) {
-            System.out.println("Inside PAW OutOfMemoryException : "+p+" "+ex.getMessage());
+            logger.error("Inside PAW OutOfMemoryException : "+p+" "+ex.getMessage());
         } catch (IllegalStateException ex) {
-            System.out.println("Inside PAW IllegalStateException : "+p+" "+ex.getMessage());
+            logger.error("Inside PAW IllegalStateException : "+p+" "+ex.getMessage());
         }
         cs.clear();
         counts.clear();
@@ -133,6 +136,9 @@ public class PAW implements AutoCloseable {
         } else if (aa instanceof Float4Vector o) {
             Float4Vector object = dest.addOrGet("o", new FieldType(false, Types.MinorType.FLOAT4.getType(), null, o.getField().getMetadata()), Float4Vector.class);
             object.allocateNew(count);  
+        } else if (aa instanceof Float8Vector o) {
+            Float8Vector object = dest.addOrGet("o", new FieldType(false, Types.MinorType.FLOAT8.getType(), null, o.getField().getMetadata()), Float8Vector.class);
+            object.allocateNew(count);  
         } else if (aa instanceof VarCharVector o) {
             VarCharVector object = dest.addOrGet("o", new FieldType(false, Types.MinorType.VARCHAR.getType(), null, o.getField().getMetadata()), VarCharVector.class);
             object.allocateNew(count);
@@ -143,13 +149,14 @@ public class PAW implements AutoCloseable {
     }
     
     private StructVector upgrade(DataType datatype, StructVector src, StructVector dest, int count) {
+        StopWatch sw = StopWatch.getInstance();
         StructVector so;
         StructVector os;
         if (dest==null) {
-            dest = StructVector.emptyWithDuplicates(p, src.getAllocator());
+            dest = new StructVector(p, src.getAllocator(), FieldType.notNullable(ArrowType.Struct.INSTANCE), null, AbstractStructVector.ConflictPolicy.CONFLICT_REPLACE, true);
             dest.setValueCount(src.getValueCount());
-            so = dest.addOrGet("so", new FieldType(false, Types.MinorType.STRUCT.getType(), null, null), StructVector.class);
-            os = dest.addOrGet("os", new FieldType(false, Types.MinorType.STRUCT.getType(), null, null), StructVector.class);
+            so = dest.addOrGet("so", FieldType.notNullable(Types.MinorType.STRUCT.getType()), StructVector.class);
+            os = dest.addOrGet("os", FieldType.notNullable(Types.MinorType.STRUCT.getType()), StructVector.class);
             buildblank(src, so, count);
             buildblank(src, os, count);
         } else {
@@ -158,19 +165,28 @@ public class PAW implements AutoCloseable {
             so = (StructVector) dest.getChild("so");
             os = (StructVector) dest.getChild("os");
         }
+        logger.trace(sw.Lapse("Upgraded Vector : "+p+" "+datatype+"  "+src.valueCount));
+        sw.reset();
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            logger.trace(sw.Lapse("Submit Sort : "+p+" "+datatype+" SO"));
             executor.submit(() -> {
                 DualSort dualSort = new DualSort();
                 dualSort.Sort(src, so, SO);
+                logger.trace(sw.Lapse("Sorted : "+p+" "+datatype+" SO"));
             });
+            logger.trace(sw.Lapse("Submit Sort : "+p+" "+datatype+" OS"));
             executor.submit(() -> {
                 DualSort dualSort = new DualSort();
                 dualSort.Sort(src, os, OS);
+                logger.trace(sw.Lapse("Sorted : "+p+" "+datatype+" OS"));
             });
         }
-        for (int i=0; i<src.getValueCount(); i++) {
-            dest.setIndexDefined(i);
-        }
+//        if (src.getValueCount()>1000000) {
+          // if ("http://www.w3.org/1999/02/22-rdf-syntax-ns#type".equals(p)) {
+            //System.out.println("CRACK =================> "+p+"  "+datatype+"  "+dest.getValueCount());
+            //Tools.DisplayDual(dest);
+        //}
+        logger.trace(sw.Lapse("trace : "+p+" "+datatype));
         return dest;
     }
     
@@ -218,6 +234,11 @@ public class PAW implements AutoCloseable {
                 ometa.put(RDFS.range.getURI(), XSD.xfloat.getURI());
                 ss.addOrGet("o", new FieldType(false, Types.MinorType.FLOAT4.getType(), null, ometa), Float4Vector.class);
                 break;
+            case DOUBLE:
+                ometa.put(RDF.type.getURI(),RDFS.Literal.getURI());
+                ometa.put(RDFS.range.getURI(), XSD.xdouble.getURI());
+                ss.addOrGet("o", new FieldType(false, Types.MinorType.FLOAT8.getType(), null, ometa), Float8Vector.class);
+                break;
             case STRING:
                 ometa.put(RDF.type.getURI(),RDFS.Literal.getURI());
                 ometa.put(RDFS.range.getURI(), XSD.xstring.getURI());
@@ -249,6 +270,10 @@ public class PAW implements AutoCloseable {
             if (!cs.containsKey(FLOAT)) {
                 cs.put(FLOAT, build(p,FLOAT));
             }
+        } else if (dt.equals(XSD.xdouble)) {
+            if (!cs.containsKey(DOUBLE)) {
+                cs.put(DOUBLE, build(p,DOUBLE));
+            }    
         } else if (dt.equals(XSD.xint)) {
             if (!cs.containsKey(INTEGER)) {
                 cs.put(INTEGER, build(p,INTEGER));
@@ -286,7 +311,7 @@ public class PAW implements AutoCloseable {
         oo.setSafe(index, o);
         Count(LONG);}
         catch (NullPointerException ex) {
-            System.out.println("CRUNCH ---> "+s+" "+p+" "+o);
+            logger.error("CRUNCH ---> "+s+" "+p+" "+o);
         }
     }
     

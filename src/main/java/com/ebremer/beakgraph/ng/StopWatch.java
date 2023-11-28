@@ -20,10 +20,9 @@ public class StopWatch {
         return this;
     }
     
-    public StopWatch Lapse(String msg) {
+    public String Lapse(String msg) {
         double end = System.nanoTime() - begin;
         end = end / 1000000d;
-        System.out.println(msg+" --> "+end);
-        return this;
+        return msg+" --> "+end;
     }
 }
