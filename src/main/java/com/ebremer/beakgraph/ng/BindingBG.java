@@ -30,7 +30,7 @@ public class BindingBG extends BindingBase {
             NodeId i = idBinding.get(var);
             return nodeTable.getNodeForNodeId(i);
         }
-        throw new Error("No binding for "+var);
+        return null;
     }   
 
     @Override

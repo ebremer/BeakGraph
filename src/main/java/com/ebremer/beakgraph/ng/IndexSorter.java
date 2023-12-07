@@ -32,14 +32,12 @@ public class IndexSorter<V extends ValueVector> {
             this.low = low;
             this.high = high;
             this.indices = indices;
-          //  System.out.println(depth+"  "+low+", "+high);
             
         }
 
         @Override
         protected Void compute() {
             if (isSorted(indices, low, high, comparator)) {
-               // System.out.println(depth+"  "+low+", "+high+" Aleady sorted. Done.");
                 return null;           
             } else if (low < high) {
                 if ((high - low) < CHANGE_ALGORITHM_THRESHOLD_LARGE_DATA) {
@@ -51,7 +49,6 @@ public class IndexSorter<V extends ValueVector> {
                     invokeAll(left,right);
                 }
             }
-          //  System.out.println(depth+"  "+low+", "+high+" Done.");
             return null;
         }
     }

@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.7.0</version>
+    <version>0.8.0</version>
     <packaging>jar</packaging>
     
     <description>Library for creating Apache Jena Graphs and Datasets backed by Apache Arrow</description>
@@ -85,6 +85,16 @@
             <version>${jena.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-server</artifactId>
+            <version>11.0.18</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-servlet</artifactId>
+            <version>11.0.18</version>
+        </dependency>
+        <dependency>
             <groupId>org.apache.arrow</groupId>
             <artifactId>arrow-memory-core</artifactId>
             <version>${arrow.version}</version>
@@ -131,6 +141,11 @@
         </dependency>
     </dependencies>
     <repositories>
+        <repository>
+            <id>central</id>
+            <name>Maven Central</name>
+            <url>https://repo1.maven.org/maven2</url>
+        </repository>
         <repository>
             <id>halcyon</id>
             <name>Halcyon</name>

@@ -11,10 +11,11 @@ import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.ExprList;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -29,9 +30,24 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final StructVector pa;
     private final DataType datatype;
     private final boolean scan;
+    private static final Logger logger = LoggerFactory.getLogger(BeakIterator.class);
     
     public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
-        if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
+        if (!triple.getSubject().isVariable()) {
+            this.pa = (StructVector) dual.getChild("so");
+            int skey = nodeTable.getID(triple.getSubject());
+            IntVector s = (IntVector) pa.getChild("s");
+            try (IntVector search = new IntVector("search", dual.getAllocator())) {
+                search.allocateNew(1);
+                search.set(0, skey);
+                search.setValueCount(1);
+                VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
+                low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0 );
+                high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );
+                scan = !((low<0)||(high<0));
+                search.close();
+            }
+        } else if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
             this.pa = (StructVector) dual.getChild("so");
             int skey = bnid.get(Var.alloc(triple.getSubject())).getID();
             IntVector s = (IntVector) pa.getChild("s");
@@ -48,7 +64,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
         } else {
             this.pa = (StructVector) dual.getChild("os");
             if (!triple.getObject().isVariable()) {
-                int tar = nodeTable.getID(ResourceFactory.createResource(triple.getObject().getURI()));
+                int tar = nodeTable.getID(triple.getObject());
                 IntVector s = (IntVector) pa.getChild("o");
                 try (IntVector search = new IntVector("search", dual.getAllocator())) {
                     search.allocateNew(1);

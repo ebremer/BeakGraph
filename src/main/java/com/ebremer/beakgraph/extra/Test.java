@@ -40,6 +40,16 @@ public class Test {
         ha.setNsPrefix("so", "https://schema.org/");
           */     
         sw.Lapse("Default Graph Loaded");
+        /*
+        ParameterizedSparqlString pss = new ParameterizedSparqlString(
+            """
+            select *
+            where {
+                ?s ?p ?o
+            }
+            """
+        );*/
+        
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select *

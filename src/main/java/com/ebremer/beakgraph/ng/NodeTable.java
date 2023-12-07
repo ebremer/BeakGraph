@@ -5,8 +5,10 @@ import java.util.Iterator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.jena.datatypes.xsd.XSDDatatype;
+import org.apache.jena.graph.BlankNodeId;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
+import org.apache.jena.rdf.model.AnonId;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.slf4j.Logger;
@@ -18,9 +20,10 @@ import org.slf4j.LoggerFactory;
  */
 public class NodeTable implements AutoCloseable {
     private final HashMap<String, Integer> map;
-    private final HashMap<Resource,Integer> namedgraphs;
-    private HashMap<Resource,Integer> blanknodes;
-    private final HashMap<Resource,Integer> resources;
+    private final HashMap<Node,Integer> namedgraphs;
+    private HashMap<Node,Integer> blanknodes;
+    private HashMap<Integer,Node> int2blanknodes;
+    private final HashMap<Node,Integer> resources;
     private VarCharVector IRI2idx = null;
     private IntVector idx2id = null;
     private VarCharVector id2IRI = null;
@@ -31,6 +34,7 @@ public class NodeTable implements AutoCloseable {
     public NodeTable() {
         blanknodes = new HashMap<>(25000000);
         namedgraphs = new HashMap<>(5000000);
+        int2blanknodes = new HashMap<>(5000000);
         resources = new HashMap<>();
         map = new HashMap<>();
     }
@@ -78,7 +82,7 @@ public class NodeTable implements AutoCloseable {
         resources.clear();
         for (int k=0; k<id2IRI.getValueCount(); k++) {
             Resource r = ResourceFactory.createResource(new String(id2IRI.get(k)));
-            resources.put(r, k);
+            resources.put(r.asNode(), k);
             map.put(new String(id2IRI.get(k)), k);
         }
     }
@@ -87,7 +91,7 @@ public class NodeTable implements AutoCloseable {
         this.ngid = ngid;
     }    
 
-    public void setBlankNodes(HashMap<Resource,Integer> blanknodes) {
+    public void setBlankNodes(HashMap<Node,Integer> blanknodes) {
         this.blanknodes = blanknodes;
     }
     
@@ -95,7 +99,7 @@ public class NodeTable implements AutoCloseable {
         return new NGIterator(ngid, this);
     }
     
-    public HashMap<Resource,Integer> getNGResources() {
+    public HashMap<Node,Integer> getNGResources() {
         return namedgraphs;
     }
     
@@ -103,15 +107,15 @@ public class NodeTable implements AutoCloseable {
         return NodeFactory.createURI(new String(id2IRI.get(id)));
     }
     
-    public HashMap<Resource,Integer> getResources() {
+    public HashMap<Node,Integer> getResources() {
         return resources;
     }
     
-    public int AddResource(Resource r) {
+    public int AddResource(Node r) {
         return getID(r);
     }
 
-    public int AddNamedGraph(Resource r) {
+    public int AddNamedGraph(Node r) {
         if (namedgraphs.containsKey(r)) {
             return namedgraphs.get(r);
         }
@@ -119,24 +123,27 @@ public class NodeTable implements AutoCloseable {
         return getID(r);
     }
     
-    public HashMap<Resource,Integer> getBlankNodes() {
+    public HashMap<Node,Integer> getBlankNodes() {
         return blanknodes;
     }
     
-    public int getID(Resource s) {
-        if (s.isURIResource()) {
+    public int getID(Node s) {
+        if (s.isURI()) {
             if (resources.containsKey(s)) {
                 return resources.get(s);
             } else {
                 resources.put(s, resources.size());
+                
                 return resources.get(s);
             }
-        } else if (s.isAnon()) {
+        } else if (s.isBlank()) {
             if (blanknodes.containsKey(s)) {
                 return blanknodes.get(s);
             } else {
-                blanknodes.put(s, blanknodes.size());
-                return blanknodes.get(s);
+                int size = blanknodes.size()+1;
+                blanknodes.put(s, size);
+                int2blanknodes.putIfAbsent(-size, s);
+                return size; //blanknodes.get(s);
             }        
         } else {
             throw new Error("What is this : "+s);
@@ -157,8 +164,18 @@ public class NodeTable implements AutoCloseable {
         if (id.getType() == NodeType.RESOURCE) {
             logger.trace("ID : "+id.getID());
             if (id.getID()<0) {
-                String k = "_:h"+String.valueOf(-id.getID());
-                return NodeFactory.createURI(k);
+                Node bn = int2blanknodes.get(id.getID());
+                if (bn!=null) {
+                    return bn;
+                }
+                //String k = "_:h"+String.valueOf(-id.getID());
+                String k = "h"+String.valueOf(-id.getID());
+                //Node ha = NodeFactory.createURI(k);
+                BlankNodeId bid = BlankNodeId.create(k);
+                Node ha = NodeFactory.createBlankNode(bid);
+                //System.out.println(ha.toString());
+                int2blanknodes.putIfAbsent(id.getID(), ha);
+                return ha;
             }
             return NodeFactory.createURI(new String(id2IRI.get(id.getID())));
         } else if (id.getType() == NodeType.LITERAL) {

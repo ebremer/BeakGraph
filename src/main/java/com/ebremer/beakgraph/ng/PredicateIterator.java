@@ -8,16 +8,17 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import org.apache.commons.collections4.iterators.IteratorChain;
-import org.apache.jena.graph.Triple;
 import org.apache.jena.util.iterator.ExtendedIterator;
+import org.apache.jena.util.iterator.WrappedIterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author erich
+ * @param <Triple>
  */
-public class PredicateIterator implements ExtendedIterator {
+public class PredicateIterator<Triple> implements ExtendedIterator<Triple> {
     private final HashMap<String, PAR> pred;
     private final NodeTable nt;
     private final IteratorChain<Triple> ic;
@@ -28,8 +29,8 @@ public class PredicateIterator implements ExtendedIterator {
         this.nt = reader.getNodeTable();
         this.pred = reader.getPredicates();
         ArrayList<Iterator<Triple>> list = new ArrayList<>();
-        pred.keySet().iterator().forEachRemaining(s->{
-            list.add(new PARIterator(ng, pred.get(s),nt));
+        pred.keySet().iterator().forEachRemaining(s->{        
+            list.add(new PARIterator(ng, pred.get(s), nt));
         });
         ic = new IteratorChain(list);
     }
@@ -44,10 +45,6 @@ public class PredicateIterator implements ExtendedIterator {
         return ic.next();
     }
 
-    @Override
-    public Object removeNext() {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
 
     @Override
     public ExtendedIterator andThen(Iterator itrtr) {
@@ -65,11 +62,6 @@ public class PredicateIterator implements ExtendedIterator {
     }
 
     @Override
-    public ExtendedIterator mapWith(Function fnctn) {
-        throw new UnsupportedOperationException("Not supported yet. -----> "+fnctn);
-    }
-
-    @Override
     public List toList() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
@@ -81,4 +73,26 @@ public class PredicateIterator implements ExtendedIterator {
 
     @Override
     public void close() {}
+
+    @Override
+    public Triple removeNext() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public <U> ExtendedIterator<U> mapWith(Function<Triple, U> function) {
+        Iterator<U> mappedIterator = new Iterator<U>() {
+            @Override
+            public boolean hasNext() {
+                return PredicateIterator.this.hasNext();
+            }
+
+            @Override
+            public U next() {
+                Triple t = PredicateIterator.this.next();
+                return function.apply(t);
+            }
+        };
+        return WrappedIterator.create(mappedIterator);
+    }
 }

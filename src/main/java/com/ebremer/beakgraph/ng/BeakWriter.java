@@ -41,6 +41,7 @@ import org.apache.jena.rdf.model.Statement;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.util.Text;
 import org.apache.jena.datatypes.xsd.XSDDateTime;
+import org.apache.jena.graph.Node;
 import org.apache.jena.query.ParameterizedSparqlString;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
@@ -62,7 +63,7 @@ public final class BeakWriter implements AutoCloseable {
     private final BufferAllocator allocator;
     private final CopyOnWriteArrayList<FieldVector> vectors = new CopyOnWriteArrayList<>();
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
-    private final HashMap<Resource,Integer> blanknodes;
+    private final HashMap<Node,Integer> blanknodes;
     private final String base;
     private final BGVoID VoID = new BGVoID();
     private final ConcurrentHashMap<String,Writer> writers;
@@ -191,7 +192,7 @@ public final class BeakWriter implements AutoCloseable {
                 paw.resetCounts();
                 paw.resetVectors();
             });
-            nt.AddNamedGraph(ng);
+            nt.AddNamedGraph(ng.asNode());
             Add(ng,ds.getNamedModel(ng));
             c--;
             sw.Lapse(ng+" "+c);
@@ -199,7 +200,7 @@ public final class BeakWriter implements AutoCloseable {
     }
     
     public void RegisterNamedGraph(Resource ng) {
-        nt.AddNamedGraph(ng);
+        nt.AddNamedGraph(ng.asNode());
     }
     
     public void Add(Resource ng, Model m) {
@@ -219,7 +220,7 @@ public final class BeakWriter implements AutoCloseable {
     }
 
     private VectorSchemaRoot CreateNGDictionary() {
-        HashMap<Resource,Integer> ha = nt.getNGResources();
+        HashMap<Node,Integer> ha = nt.getNGResources();
         record Pair(int ng, int id) {}
         int size = ha.size();
         ArrayList<Pair> d = new ArrayList<>(size);
@@ -244,7 +245,7 @@ public final class BeakWriter implements AutoCloseable {
     }
     
     private VectorSchemaRoot CreateDictionary() {
-        HashMap<Resource,Integer> ha = nt.getResources();
+        HashMap<Node,Integer> ha = nt.getResources();
         record Trio(String iri, int index, Integer ng) {}
         ArrayList<Trio> d = new ArrayList<>(ha.size());
         ha.forEach((k,v)->{
@@ -400,8 +401,8 @@ public final class BeakWriter implements AutoCloseable {
         if (track) VoID.Add(stmt);
         Resource res = stmt.getSubject();
        if (res.isAnon()) {
-            if (!nt.getBlankNodes().containsKey(res)) {
-                nt.getBlankNodes().put(res, blanknodes.size()-Integer.MIN_VALUE);
+            if (!nt.getBlankNodes().containsKey(res.asNode())) {
+                nt.getBlankNodes().put(res.asNode(), blanknodes.size()-Integer.MIN_VALUE);
             }
         } else if (res.isResource()) {           
         } else {
@@ -413,8 +414,8 @@ public final class BeakWriter implements AutoCloseable {
         if (o.isResource()) {
             cc = o.asResource().getClass();
             if (o.isAnon()) {
-                if (!nt.getBlankNodes().containsKey(o.asResource())) {
-                    nt.getBlankNodes().put(o.asResource(), blanknodes.size()-Integer.MIN_VALUE);
+                if (!nt.getBlankNodes().containsKey(o.asResource().asNode())) {
+                    nt.getBlankNodes().put(o.asResource().asNode(), blanknodes.size()-Integer.MIN_VALUE);
                 }
             }
         } else if (o.isLiteral()) {

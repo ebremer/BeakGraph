@@ -158,15 +158,26 @@ public final class BeakReader implements AutoCloseable {
     }
 
     public Iterator<BindingNodeId> Read(int ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
-        if (byPredicate.containsKey(triple.getPredicate().getURI())) {
-            ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
-            byPredicate.get(triple.getPredicate().getURI()).getAllTypes(ng).forEach((k,dual)->{
+        //System.out.println("TRIPLE : "+triple);
+        if (!triple.getPredicate().isVariable()) {            
+            if (byPredicate.containsKey(triple.getPredicate().getURI())) {
+                ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
+                byPredicate.get(triple.getPredicate().getURI()).getAllTypes(ng).forEach((k,dual)->{
+                    Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable);
+                    its.add(i);
+                });
+                return new IteratorChain(its);
+            }
+            return new IteratorChain(new ArrayList<>());
+        }
+        ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
+        byPredicate.forEach((s,par)->{
+            par.getAllTypes(ng).forEach((k,dual)->{
                 Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable);
                 its.add(i);
             });
-            return new IteratorChain(its);
-        }
-        return new IteratorChain(new ArrayList<>());
+        });
+        return new IteratorChain(its);
     }
     
     @Override
