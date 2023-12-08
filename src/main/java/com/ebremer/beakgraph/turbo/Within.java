@@ -8,8 +8,10 @@ import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
 import org.apache.jena.query.ResultSet;
 import org.apache.jena.query.ResultSetFormatter;
+import org.apache.jena.rdf.model.AnonId;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
+import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.sparql.engine.ExecutionContext;
 import org.apache.jena.sparql.engine.QueryIterator;
@@ -26,10 +28,9 @@ import org.apache.jena.vocabulary.RDF;
 public class Within extends PFuncSimple {
 
     @Override
-    public QueryIterator execEvaluated(Binding binding, Node subject, Node predicate, Node object, ExecutionContext execCxt) {
-        System.out.println("YAY =============================");        
+    public QueryIterator execEvaluated(Binding binding, Node subject, Node predicate, Node object, ExecutionContext execCxt) {    
         Model m = ModelFactory.createModelForGraph(execCxt.getActiveGraph());      
-        Resource s = m.asRDFNode(subject).asResource();
+        //Resource s = m.asRDFNode(subject).asResource();
         //s.listProperties().forEach(st->{
           //  System.out.println("===> "+st);
         //});
@@ -37,17 +38,18 @@ public class Within extends PFuncSimple {
             """
             select *           
             where {
-                ?s ?p ?o
+                ?s geo:hasGeometry ?geometry .
+                ?geometry hal:asHilbert/hal:hasRange ?range .
+                ?range hal:low ?low; hal:high ?high
             }
             """
         );
-        pss.setIri("s", subject.toString());
-        System.out.println("THIS ==>\n"+pss.toString());
+        pss.setParam("s", subject);
+        pss.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+        pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(),m);
         ResultSet rs = qe.execSelect();
-        rs.forEachRemaining(qs->{
-            System.out.println("KHAN ==> "+qs.get("p"));
-        });
+        ResultSetFormatter.out(System.out, rs);
         
         
         List<Binding> results = new ArrayList<>();

@@ -22,7 +22,7 @@ public class NodeTable implements AutoCloseable {
     private final HashMap<String, Integer> map;
     private final HashMap<Node,Integer> namedgraphs;
     private HashMap<Node,Integer> blanknodes;
-    private HashMap<Integer,Node> int2blanknodes;
+    private final HashMap<Integer,Node> int2blanknodes;
     private final HashMap<Node,Integer> resources;
     private VarCharVector IRI2idx = null;
     private IntVector idx2id = null;

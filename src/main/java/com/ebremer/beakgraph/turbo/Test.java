@@ -94,12 +94,15 @@ public class Test {
             select *           
             where {
                # service ?se {
-                graph ?g {
+                graph <https://www.ebremer.com/halcyon/ns/grid/0/26/105> {
                     ?feature geo:hasGeometry ?geometry .
+                    #?geometry hal:asHilbert ?hilbert . #; geo:asWKT ?wkt .
+                    #?hilbert hal:hasRange ?range .
+                    #?range hal:low ?low; hal:high ?high
                     ?geometry spc:sfWithin ?o
                 }
                 #values (?se) { (<http://localhost:8080/hello>) (<http://localhost:8080/hello>) (<http://localhost:8080/hello>) (<http://localhost:8080/hello>) (<http://localhost:8080/hello>)}
-            } limit 10
+            } order by ?low ?high
             """
         );
         pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
