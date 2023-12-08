@@ -30,10 +30,6 @@ public class Within extends PFuncSimple {
     @Override
     public QueryIterator execEvaluated(Binding binding, Node subject, Node predicate, Node object, ExecutionContext execCxt) {    
         Model m = ModelFactory.createModelForGraph(execCxt.getActiveGraph());      
-        //Resource s = m.asRDFNode(subject).asResource();
-        //s.listProperties().forEach(st->{
-          //  System.out.println("===> "+st);
-        //});
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select *           

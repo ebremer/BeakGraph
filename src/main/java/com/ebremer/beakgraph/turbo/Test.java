@@ -68,15 +68,18 @@ public class Test {
             Logger.getLogger(Test.class.getName()).log(Level.SEVERE, null, ex);
         }
         //Dataset ds = DatasetFactory.create();
-        /*
+        
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
         """
-            select ?gridType ?width ?height ?tileSizeX ?tileSizeY
-            where { ?grid a ?gridType; exif:height ?height; exif:width ?width; hal:tileSizeX ?tileSizeX; hal:tileSizeY ?tileSizeY }
-            limit 10
+            select ?feature ?area
+            where {
+                ?feature geo:hasGeometry ?geometry .
+                ?geometry geo:asWKT ?wkt
+                bind(hal:area(?wkt) as ?area
+            } limit 100
         """
         );
-        */
+        
         /*
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
         """
@@ -89,6 +92,7 @@ public class Test {
         """
         );*/
         
+        /*
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select *           
@@ -105,6 +109,7 @@ public class Test {
             } order by ?low ?high
             """
         );
+*/
         pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
         pss.setNsPrefix("spc", "https://www.ebremer.com/space/ns/");
         pss.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");

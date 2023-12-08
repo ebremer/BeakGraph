@@ -64,7 +64,7 @@ public class Test {
             } limit 10
             """
         );
-        pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
+        pss.setNsPrefix("hal", "https://halcyon.is/ns/");
         pss.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
         pss.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
         pss.setNsPrefix("xmls", "http://www.w3.org/2001/XMLSchema#");
