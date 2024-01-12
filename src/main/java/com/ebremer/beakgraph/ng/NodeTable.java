@@ -171,8 +171,9 @@ public class NodeTable implements AutoCloseable {
                 //String k = "_:h"+String.valueOf(-id.getID());
                 String k = "h"+String.valueOf(-id.getID());
                 //Node ha = NodeFactory.createURI(k);
-                BlankNodeId bid = BlankNodeId.create(k);
-                Node ha = NodeFactory.createBlankNode(bid);
+                //BlankNodeId bid = BlankNodeId.create(k);
+                //Node ha = NodeFactory.createBlankNode(bid);
+                Node ha = NodeFactory.createBlankNode(k);
                 //System.out.println(ha.toString());
                 int2blanknodes.putIfAbsent(id.getID(), ha);
                 return ha;
