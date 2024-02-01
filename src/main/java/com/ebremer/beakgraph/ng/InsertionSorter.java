@@ -1,7 +1,5 @@
 package com.ebremer.beakgraph.ng;
 
-
-
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
 import org.apache.arrow.vector.BaseFixedWidthVector;
 import org.apache.arrow.vector.IntVector;

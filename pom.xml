@@ -74,11 +74,6 @@
             <version>2.4.0-b180830.0359</version>
         </dependency>
         <dependency>
-            <groupId>com.ebremer</groupId>
-            <artifactId>RO-Crate4J</artifactId>
-            <version>${rocrate4j.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.apache.jena</groupId>
             <artifactId>apache-jena-libs</artifactId>
             <type>pom</type>
@@ -139,6 +134,11 @@
             <artifactId>log4j-slf4j-impl</artifactId>
             <version>${log4j.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.ebremer</groupId>
+            <artifactId>RO-Crate4J</artifactId>
+            <version>${rocrate4j.version}</version>
+        </dependency>
     </dependencies>
     <repositories>
         <repository>
@@ -150,6 +150,11 @@
             <id>halcyon</id>
             <name>Halcyon</name>
             <url>https://cursus.bmi.stonybrookmedicine.edu/releases</url>
+        </repository>
+        <repository>
+            <id>apache</id>
+            <name>apache</name>
+            <url>https://repository.apache.org/snapshots</url>
         </repository>
     </repositories>
     <distributionManagement>
