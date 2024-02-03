@@ -39,6 +39,10 @@ public class NodeTable implements AutoCloseable {
         map = new HashMap<>();
     }
     
+    public VarCharVector getid2IRI() {
+        return id2IRI;
+    }
+    
     @Override
     public void close() {
         if (IRI2idx!=null) {
@@ -81,9 +85,11 @@ public class NodeTable implements AutoCloseable {
         this.id2ng = id2ng;
         resources.clear();
         for (int k=0; k<id2IRI.getValueCount(); k++) {
-            Resource r = ResourceFactory.createResource(new String(id2IRI.get(k)));
+            String hold = new String(id2IRI.get(k));
+            System.out.println(k+"   "+hold);
+            Resource r = ResourceFactory.createResource(hold);
             resources.put(r.asNode(), k);
-            map.put(new String(id2IRI.get(k)), k);
+            map.put(hold, k);
         }
     }
 
@@ -104,7 +110,17 @@ public class NodeTable implements AutoCloseable {
     }
     
     public Node getURINode(int id) {
-        return NodeFactory.createURI(new String(id2IRI.get(id)));
+        if (id<id2IRI.getValueCount()) {
+            return NodeFactory.createURI(new String(id2IRI.get(id)));
+        }
+        return NodeFactory.createURI(BG.NS+"UNKNOWNERROR");
+        /*
+                    int ff = id2IRI.getValueCount();
+            for (int v=0; v<ff; v++) {
+                String yay = new String(id2IRI.get(v));
+                System.out.println(v+"  "+yay);
+            }
+        */
     }
     
     public HashMap<Node,Integer> getResources() {
@@ -132,8 +148,7 @@ public class NodeTable implements AutoCloseable {
             if (resources.containsKey(s)) {
                 return resources.get(s);
             } else {
-                resources.put(s, resources.size());
-                
+                resources.put(s, resources.size());                
                 return resources.get(s);
             }
         } else if (s.isBlank()) {
@@ -143,7 +158,7 @@ public class NodeTable implements AutoCloseable {
                 int size = blanknodes.size()+1;
                 blanknodes.put(s, size);
                 int2blanknodes.putIfAbsent(-size, s);
-                return size; //blanknodes.get(s);
+                return size;
             }        
         } else {
             throw new Error("What is this : "+s);
@@ -168,13 +183,8 @@ public class NodeTable implements AutoCloseable {
                 if (bn!=null) {
                     return bn;
                 }
-                //String k = "_:h"+String.valueOf(-id.getID());
                 String k = "h"+String.valueOf(-id.getID());
-                //Node ha = NodeFactory.createURI(k);
-                //BlankNodeId bid = BlankNodeId.create(k);
-                //Node ha = NodeFactory.createBlankNode(bid);
                 Node ha = NodeFactory.createBlankNode(k);
-                //System.out.println(ha.toString());
                 int2blanknodes.putIfAbsent(id.getID(), ha);
                 return ha;
             }

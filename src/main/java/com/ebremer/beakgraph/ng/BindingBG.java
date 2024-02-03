@@ -4,15 +4,17 @@ import java.util.Iterator;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.BindingBase;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author erich
  */
-public class BindingBG extends BindingBase {
-    
+public class BindingBG extends BindingBase {    
     private final NodeTable nodeTable;
     private final BindingNodeId idBinding;
+    private static final Logger logger = LoggerFactory.getLogger(BindingBG.class);
     
     public BindingBG(BindingNodeId idBinding, NodeTable nodeTable) {
         super(idBinding.getParentBinding());

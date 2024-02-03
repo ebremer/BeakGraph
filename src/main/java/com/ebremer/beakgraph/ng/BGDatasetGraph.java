@@ -21,36 +21,36 @@ import org.apache.jena.sparql.core.Quad;
  * @author erich
  */
 public class BGDatasetGraph extends DatasetGraphBase {
-    private final BeakGraph g;
+    private final BeakGraph bg;
     private final Node DEFAULTGRAPH = NodeFactory.createBlankNode("urn:halcyon:defaultgraph");
     
     public BGDatasetGraph(BeakGraph g) {
-        this.g = g;
+        this.bg = g;
     }
     
     @Override
     public void close() {
-        g.close();
+        bg.close();
     }
     
     public BeakGraph getBeakGraph() {
-        return g;
+        return bg;
     }
 
     @Override
     public Graph getDefaultGraph() {
-        return g;
+        return bg;
     }
 
     @Override
     public Graph getGraph(Node node) {
-        int s = g.getReader().getNodeTable().getNGID(node);
+        int s = bg.getReader().getNodeTable().getNGID(node);
         if (s<0) {
             return Graph.emptyGraph;
         }
         BeakGraph bg;
         try {
-            bg = new BeakGraph(s, g.getReader());
+            bg = new BeakGraph(s, this.bg.getReader());
             return bg;
         } catch (IOException ex) {
             Logger.getLogger(BGDatasetGraph.class.getName()).log(Level.SEVERE, null, ex);
@@ -70,12 +70,12 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public Iterator<Node> listGraphNodes() {
-        return g.getReader().listGraphNodes();
+        return bg.getReader().listGraphNodes();
     }
 
     @Override
-    public Iterator<Quad> find(Node ng, Node s, Node p, Node o) {
-        return IteratorUtils.transformedIterator(g.find(s, p, o), new Triple2Quad(ng));
+    public Iterator<Quad> find(Node g, Node s, Node p, Node o) {
+        return IteratorUtils.transformedIterator(bg.find(s, p, o), new Triple2Quad(g));
     }
     
     private class Triple2Quad implements Transformer<Triple, Quad> {

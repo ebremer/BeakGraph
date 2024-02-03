@@ -10,6 +10,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.complex.StructVector;
+import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.Expr;
@@ -30,9 +31,13 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final StructVector pa;
     private final DataType datatype;
     private final boolean scan;
+    private final Node predicate;
+    private final NodeTable nodeTable;
     private static final Logger logger = LoggerFactory.getLogger(BeakIterator.class);
     
-    public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
+    public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable, Node predicate) {
+        this.nodeTable = nodeTable;
+        this.predicate = predicate;
         if (!triple.getSubject().isVariable()) {
             this.pa = (StructVector) dual.getChild("so");
             int skey = nodeTable.getID(triple.getSubject());
@@ -164,15 +169,25 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                 Object ss = fv.getObject(i);
                 neo.put(c, new NodeId(ss));
             }
-        } else { }
+        }
         if (triple.getSubject().isVariable()) {
             Var ss = Var.alloc(triple.getSubject().getName());
             if (!neo.containsKey(ss)) {
                 int rr2 = (int) pa.getChild("s").getObject(i);
                 neo.put(ss, new NodeId(rr2));
             }
-        } else {
-            System.out.println("NOT A VARIABLE");
+        }
+        if (triple.getPredicate().isVariable()) {
+            Var pp = Var.alloc(triple.getPredicate().getName());
+            if (!neo.containsKey(pp)) {
+                int ee = nodeTable.getID(predicate);
+                if (ee<nodeTable.getid2IRI().getValueCount()) {
+                    Node xx = nodeTable.getURINode(ee);
+                    neo.put(pp, new NodeId(ee));
+                } else {
+                    System.out.println("PREDICATE MISSING : "+predicate);
+                }
+            }
         }
         i++;
         return neo;

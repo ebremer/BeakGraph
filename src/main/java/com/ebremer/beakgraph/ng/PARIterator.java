@@ -38,11 +38,13 @@ public class PARIterator implements Iterator {
 
     @Override
     public boolean hasNext() {
+        logger.trace("hasNext()");
         return hasData&&(dt.hasNext()||(curr<pa.getValueCount()));
     }
 
     @Override
     public Triple next() {
+        logger.trace("next()");
         try {
             Node snode = nt.getNodeForNodeId(new NodeId((int) pa.getChild("s").getObject(curr)));
             Node onode;

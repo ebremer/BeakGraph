@@ -137,6 +137,7 @@ public final class BeakWriter implements AutoCloseable {
         rs.forEachRemaining(qs->{
             String p = qs.get("p").asResource().getURI();
             if (!byPredicate.containsKey(p)) {
+                System.out.println(p+"  "+nt.getID(qs.get("p").asResource().asNode()));
                 byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
             }
             PAW paw = byPredicate.get(p);
