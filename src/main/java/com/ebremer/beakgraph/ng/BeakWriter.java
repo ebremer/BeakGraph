@@ -42,6 +42,7 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.util.Text;
 import org.apache.jena.datatypes.xsd.XSDDateTime;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.query.ParameterizedSparqlString;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
@@ -103,6 +104,7 @@ public final class BeakWriter implements AutoCloseable {
     public void HandleThese(List<BG.PropertyAndDataType> pairs) {
         pairs.forEach(pair -> {
             if (!byPredicate.containsKey(pair.predicate())) {
+                System.out.println(pair.predicate()+"  "+nt.getID(NodeFactory.createURI(pair.predicate())));
                 byPredicate.put(pair.predicate(), new PAW(allocator.newChildAllocator("PAW -> "+pair.predicate(), 0, Long.MAX_VALUE), nt, pair.predicate()));
             }
             PAW paw = byPredicate.get(pair.predicate());
