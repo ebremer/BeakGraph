@@ -26,8 +26,7 @@ public class Test {
         Configurator.setLevel("com.ebremer.beakgraph.ng", Level.ERROR);
         //Configurator.setRootLevel(Level.ALL);        
         StopWatch sw = StopWatch.getInstance();
-        //File file = new File("D:\\HalcyonStorage\\nuclearsegmentation2019\\coad\\TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
-        File file = new File("D:\\tcga\\cvpr-data\\zip\\brca\\TCGA-E2-A1B1-01Z-00-DX1.7C8DF153-B09B-44C7-87B8-14591E319354.zip");
+        File file = new File("D:\\HalcyonStorage\\nuclearsegmentation2019\\coad\\TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
         BeakGraph bg = new BeakGraph(file.toURI());
         Dataset ds = DatasetFactory.wrap(new BGDatasetGraph(bg));
         /*
@@ -49,7 +48,7 @@ public class Test {
             }
             """
         );*/
-        
+        /*
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select *
@@ -62,6 +61,12 @@ public class Test {
                     ?range hal:low ?low; hal:high ?high
                 }
             } limit 10
+            """
+        );*/
+        ParameterizedSparqlString pss = new ParameterizedSparqlString(
+            """
+            select *
+            where { ?s a ?o}
             """
         );
         pss.setNsPrefix("hal", "https://halcyon.is/ns/");

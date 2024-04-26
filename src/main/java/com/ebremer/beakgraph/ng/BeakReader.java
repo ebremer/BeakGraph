@@ -46,11 +46,17 @@ public final class BeakReader implements AutoCloseable {
     private int numtriples = 0;
     private final ROCrateReader reader;
     private final URI uri;
+    private final URI base;
     
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
+        this(uri, uri);
+    }
+    
+    public BeakReader(URI uri, URI base) throws FileNotFoundException, IOException {
         StopWatch sw = StopWatch.getInstance();
         this.uri = uri;
-        reader = new ROCrateReader(uri);
+        this.base = base;
+        reader = new ROCrateReader(uri, base);
         byPredicate = new HashMap<>();
         BufferAllocator allocator = AllocatorCore.getInstance().getChildAllocator(uri);
         manifest = reader.getManifest();
