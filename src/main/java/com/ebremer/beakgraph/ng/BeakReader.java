@@ -7,6 +7,7 @@ import com.ebremer.rocrate4j.ROCrateReader;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.channels.SeekableByteChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -47,6 +48,8 @@ public final class BeakReader implements AutoCloseable {
     private final ROCrateReader reader;
     private final URI uri;
     private final URI base;
+    private Mapper mapper = null;
+    private boolean usemapper;
     
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
         this(uri, uri);
@@ -55,7 +58,11 @@ public final class BeakReader implements AutoCloseable {
     public BeakReader(URI uri, URI base) throws FileNotFoundException, IOException {
         StopWatch sw = StopWatch.getInstance();
         this.uri = uri;
-        this.base = base;
+        this.base = base;        
+        this.usemapper = !uri.equals(base);
+        if (usemapper) {
+            this.mapper = new Mapper(uri, base);
+        }
         reader = new ROCrateReader(uri, base);
         byPredicate = new HashMap<>();
         BufferAllocator allocator = AllocatorCore.getInstance().getChildAllocator(uri);
@@ -75,7 +82,14 @@ public final class BeakReader implements AutoCloseable {
         ResultSet rs = qe.execSelect();
         while (rs.hasNext()) {
             QuerySolution qs = rs.next();
-            String x = qs.get("file").asResource().getURI();  
+            String x = qs.get("file").asResource().getURI();
+            if (usemapper) {
+                try {
+                    x = mapper.Base2Src(new URI(x));
+                } catch (URISyntaxException ex) {
+                    Logger.getLogger(BeakReader.class.getName()).log(Level.SEVERE, null, ex);
+                }
+            }
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
                 ArrowFileReader afr = new ArrowFileReader(xxx, allocator, CommonsCompressionFactory.INSTANCE);
@@ -97,20 +111,14 @@ public final class BeakReader implements AutoCloseable {
                 Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
             }
         }
-        String cha = uri.toString();
-        if (cha.startsWith("file:/")) {
-            if (!cha.startsWith("file://")) {
-                cha = "file:///"+cha.substring("file:/".length());
-            }
-        }
         nodeTable = new NodeTable();
-        try (SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/"+DICTIONARY)) {
+        try (SeekableByteChannel d = reader.getSeekableByteChannel(uri.getPath()+"/halcyon/"+DICTIONARY)) {
             ArrowFileReader afr = new ArrowFileReader(d, allocator, CommonsCompressionFactory.INSTANCE);
             VectorSchemaRoot za = afr.getVectorSchemaRoot();
             afr.loadNextBatch();
             nodeTable.setDictionaryVectors((VarCharVector) za.getVector(0), (IntVector) za.getVector(1), (VarCharVector) za.getVector(2), (IntVector) za.getVector(3));
         }
-        try (SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/"+NAMEDGRAPHS)) {
+        try (SeekableByteChannel d = reader.getSeekableByteChannel(uri.getPath()+"/halcyon/"+NAMEDGRAPHS)) {
             ArrowFileReader afr = new ArrowFileReader(d, allocator, CommonsCompressionFactory.INSTANCE);
             VectorSchemaRoot za = afr.getVectorSchemaRoot();
             afr.loadNextBatch();
