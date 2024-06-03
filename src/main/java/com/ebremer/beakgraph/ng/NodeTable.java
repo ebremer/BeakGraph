@@ -86,7 +86,7 @@ public class NodeTable implements AutoCloseable {
         resources.clear();
         for (int k=0; k<id2IRI.getValueCount(); k++) {
             String hold = new String(id2IRI.get(k));
-            System.out.println(k+"   "+hold);
+            //System.out.println(k+"   "+hold);
             Resource r = ResourceFactory.createResource(hold);
             resources.put(r.asNode(), k);
             map.put(hold, k);

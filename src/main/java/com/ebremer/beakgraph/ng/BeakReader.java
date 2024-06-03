@@ -83,12 +83,16 @@ public final class BeakReader implements AutoCloseable {
         while (rs.hasNext()) {
             QuerySolution qs = rs.next();
             String x = qs.get("file").asResource().getURI();
+            URI urix;
+            try {
+                urix = new URI(x);
+            } catch (URISyntaxException ex) {
+                throw new Error("BAD URI : "+x);
+            }
             if (usemapper) {
-                try {
-                    x = mapper.Base2Src(new URI(x));
-                } catch (URISyntaxException ex) {
-                    Logger.getLogger(BeakReader.class.getName()).log(Level.SEVERE, null, ex);
-                }
+                x = mapper.Base2Src(urix);
+            } else {
+                x = urix.getPath();
             }
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);

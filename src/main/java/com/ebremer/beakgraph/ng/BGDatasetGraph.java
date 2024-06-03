@@ -10,6 +10,7 @@ import org.apache.jena.graph.Graph;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
+import org.apache.jena.query.DatasetFactory;
 import org.apache.jena.query.ReadWrite;
 import org.apache.jena.query.TxnType;
 import org.apache.jena.riot.system.PrefixMap;
@@ -96,8 +97,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public PrefixMap prefixes() {
+        return DatasetFactory.createGeneral().asDatasetGraph().prefixes();
         //return new BGPrefixMap();
-        throw new UnsupportedOperationException("Not supported yet.");
+        //throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
