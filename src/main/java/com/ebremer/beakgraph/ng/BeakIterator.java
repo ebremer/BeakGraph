@@ -6,6 +6,7 @@ import java.util.List;
 import org.apache.arrow.algorithm.search.VectorRangeSearcher;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
+import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
@@ -68,6 +69,9 @@ public class BeakIterator implements Iterator<BindingNodeId> {
             }
         } else {
             this.pa = (StructVector) dual.getChild("os");
+            if (pa==null) {
+                System.out.println("HOLD");
+            }
             if (!triple.getObject().isVariable()) {
                 int tar = nodeTable.getID(triple.getObject());
                 IntVector s = (IntVector) pa.getChild("o");
@@ -170,11 +174,16 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                 neo.put(c, new NodeId(ss));
             }
         }
+        ArrowBuf ha;
         if (triple.getSubject().isVariable()) {
             Var ss = Var.alloc(triple.getSubject().getName());
             if (!neo.containsKey(ss)) {
+                try {
                 int rr2 = (int) pa.getChild("s").getObject(i);
                 neo.put(ss, new NodeId(rr2));
+                } catch (IndexOutOfBoundsException ex) {
+                    System.out.println("hold 2");
+                }
             }
         }
         if (triple.getPredicate().isVariable()) {

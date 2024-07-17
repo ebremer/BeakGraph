@@ -101,7 +101,7 @@ public class PAR {
         return new ConcurrentHashMap<>();
     }
     
-    /*public VectorSchemaRoot cloneRoot(VectorSchemaRoot srcRoot) {
+    public VectorSchemaRoot cloneRoot(VectorSchemaRoot srcRoot) {
         VectorSchemaRoot cloneRoot = VectorSchemaRoot.create(srcRoot.getSchema(), AllocatorCore.getInstance().getChildAllocator(reader.getURI(),name));
         VectorLoader loader = new VectorLoader(cloneRoot);
         VectorUnloader unloader = new VectorUnloader(srcRoot);
@@ -109,7 +109,7 @@ public class PAR {
             loader.load(recordBatch);
         }
         return cloneRoot;
-    }*/
+    }
     
     class Loader implements Callable<ConcurrentHashMap<DataType,StructVector>> {
         private final int ng;
@@ -128,8 +128,8 @@ public class PAR {
                         try {
                             ArrowBlock block = afr.getRecordBlocks().get(ng);
                             afr.loadRecordBatch(block);
-                            // StructVector v = (StructVector) cloneRoot(afr.getVectorSchemaRoot()).getVector(0);
-                            StructVector v = (StructVector) (afr.getVectorSchemaRoot()).getVector(0);
+                            StructVector v = (StructVector) cloneRoot(afr.getVectorSchemaRoot()).getVector(0);
+                            //StructVector v = (StructVector) (afr.getVectorSchemaRoot()).getVector(0);
                             ha.put(dt, v);
                         } catch (IOException ex) {
                             logger.error(ex.toString());

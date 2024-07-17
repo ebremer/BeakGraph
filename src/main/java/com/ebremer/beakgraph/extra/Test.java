@@ -65,8 +65,11 @@ public class Test {
         );*/
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
-            select *
-            where { ?s a ?o}
+            select distinct ?g
+            where { 
+                graph ?g {?s geo:hasGeometry ?o }
+                filter (strstarts(str(?g),"https://halcyon.is/ns/grid/7/"))
+            } limit 100
             """
         );
         pss.setNsPrefix("hal", "https://halcyon.is/ns/");
