@@ -38,12 +38,12 @@
         <plugins>
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.7.0</version>
+                <version>3.8.1</version>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
+                <version>3.13.0</version>
                 <configuration>
                     <compilerArgs>
                     </compilerArgs>
@@ -53,11 +53,10 @@
     </build>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.release>21</maven.compiler.release>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
-        <jena.version>5.1.0</jena.version>
-        <arrow.version>17.0.0</arrow.version>
+        <jena.version>5.3.0</jena.version>
+        <arrow.version>18.1.0</arrow.version>
         <rocrate4j.version>0.5.0</rocrate4j.version>
         <commons-compress.version>1.24.0</commons-compress.version>
         <log4j.version>2.21.1</log4j.version>
@@ -82,12 +81,12 @@
         <dependency>
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-server</artifactId>
-            <version>11.0.18</version>
+            <version>11.0.24</version>
         </dependency>
         <dependency>
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-servlet</artifactId>
-            <version>11.0.18</version>
+            <version>11.0.24</version>
         </dependency>
         <dependency>
             <groupId>org.apache.arrow</groupId>

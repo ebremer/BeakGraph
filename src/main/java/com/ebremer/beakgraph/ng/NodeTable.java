@@ -200,7 +200,7 @@ public class NodeTable implements AutoCloseable {
             } else if (x instanceof Integer) {
                 return NodeFactory.createLiteralByValue(x, XSDDatatype.XSDint);
             } else if (x instanceof org.apache.arrow.vector.util.Text) {
-                return NodeFactory.createLiteral(x.toString());
+                return NodeFactory.createLiteralString(x.toString());
             } else if (x instanceof org.apache.jena.rdf.model.impl.ResourceImpl xxx) {
                 return xxx.asNode();
             }             
