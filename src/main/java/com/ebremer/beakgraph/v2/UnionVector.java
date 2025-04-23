@@ -120,8 +120,7 @@ public class UnionVector {
         DataType type = getType(index);
         int start = offsets.get(index);
         byte[] dataArray = dataStream.toByteArray();
-        ByteBuffer buffer = ByteBuffer.wrap(dataArray).position(start);
-        
+        ByteBuffer buffer = ByteBuffer.wrap(dataArray).position(start);        
         switch (type) {
             case STRING -> {
                 int len = buffer.getInt();
@@ -185,12 +184,10 @@ public class UnionVector {
         vector.addString("Hello");
         vector.addInt(42);
         vector.addDouble(3.14);
-
         System.out.println("Size: " + vector.size());
         for (int i = 0; i < vector.size(); i++) {
             System.out.println("Element " + i + ": Type=" + vector.getType(i) + ", Value=" + vector.getValue(i));
         }
-
         int[] offsets = vector.getOffsetBuffer();
         byte[] types = vector.getTypeBuffer();
         byte[] data = vector.getDataBuffer();
