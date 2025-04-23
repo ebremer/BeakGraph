@@ -138,6 +138,11 @@
             <artifactId>RO-Crate4J</artifactId>
             <version>${rocrate4j.version}</version>
         </dependency>
+        <dependency>
+            <groupId>io.jhdf</groupId>
+            <artifactId>jhdf</artifactId>
+            <version>0.9.2</version>
+        </dependency>
     </dependencies>
     <repositories>
         <repository>

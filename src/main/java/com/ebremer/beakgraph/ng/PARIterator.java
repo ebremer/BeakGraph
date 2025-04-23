@@ -48,10 +48,10 @@ public class PARIterator implements Iterator {
         try {
             Node snode = nt.getNodeForNodeId(new NodeId((int) pa.getChild("s").getObject(curr)));
             Node onode;
-            switch (datatype) {
-                case RESOURCE: onode = nt.getNodeForNodeId(new NodeId((int) pa.getChild("o").getObject(curr))); break;
-                default: onode = nt.getNodeForNodeId(new NodeId(pa.getChild("o").getObject(curr)));
-            }
+            onode = switch (datatype) {
+                case RESOURCE -> nt.getNodeForNodeId(new NodeId((int) pa.getChild("o").getObject(curr)));
+                default -> nt.getNodeForNodeId(new NodeId(pa.getChild("o").getObject(curr)));
+            };
             curr++;
             if (curr==pa.getValueCount()) {
                 if (dt.hasNext()) {
