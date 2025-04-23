@@ -1,9 +1,11 @@
 package com.ebremer.beakgraph.v2;
 
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -41,6 +43,8 @@ public class NeoDictionary {
                     Node s = qs.get("s").asResource().asNode();
                     Node p = qs.get("p").asResource().asNode();
                     Node o = qs.get("o").asNode();
+                     //System.out.println(s+" "+p+" "+o);
+                    //ByteBuffer buf;
                     predicates.add(p);
                     if (!both.contains(s)) {
                         if (objects.contains(s)) {
