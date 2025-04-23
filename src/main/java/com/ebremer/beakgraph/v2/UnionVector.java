@@ -13,19 +13,8 @@ public class UnionVector {
     private ByteArrayOutputStream dataStream = new ByteArrayOutputStream();
     private DataOutputStream data = new DataOutputStream(dataStream);
 
-    // Enum to represent supported data types with implicit ordinal values matching the requirement
-    public enum DataType {
-        STRING,  // 0
-        INT,     // 1
-        LONG,    // 2
-        FLOAT,   // 3
-        DOUBLE,  // 4
-        SHORT    // 5
-    }
+    public enum DataType { STRING, INT, LONG, FLOAT, DOUBLE, SHORT }
 
-    // Methods to add elements of each supported type
-
-    /** Adds a String element to the union vector */
     public void addString(String value) {
         offsets.add(dataStream.size());
         try {
@@ -38,7 +27,6 @@ public class UnionVector {
         types.add((byte) DataType.STRING.ordinal());
     }
 
-    /** Adds an int element to the union vector */
     public void addInt(int value) {
         offsets.add(dataStream.size());
         try {
@@ -49,8 +37,6 @@ public class UnionVector {
         types.add((byte) DataType.INT.ordinal());
     }
 
-    /** Adds a long element to the union vector
-     * @param value */
     public void addLong(long value) {
         offsets.add(dataStream.size());
         try {
@@ -61,7 +47,6 @@ public class UnionVector {
         types.add((byte) DataType.LONG.ordinal());
     }
 
-    /** Adds a float element to the union vector */
     public void addFloat(float value) {
         offsets.add(dataStream.size());
         try {
@@ -72,7 +57,6 @@ public class UnionVector {
         types.add((byte) DataType.FLOAT.ordinal());
     }
 
-    /** Adds a double element to the union vector */
     public void addDouble(double value) {
         offsets.add(dataStream.size());
         try {
@@ -83,7 +67,6 @@ public class UnionVector {
         types.add((byte) DataType.DOUBLE.ordinal());
     }
 
-    /** Adds a short element to the union vector */
     public void addShort(short value) {
         offsets.add(dataStream.size());
         try {
@@ -94,17 +77,10 @@ public class UnionVector {
         types.add((byte) DataType.SHORT.ordinal());
     }
 
-    // Accessor methods
-
-    /** Returns the number of elements in the union vector
-     * @return  */
     public int size() {
         return types.size();
     }
 
-    /** Returns the type of the element at the specified index
-     * @param index
-     * @return  */
     public DataType getType(int index) {
         if (index < 0 || index >= size()) {
             throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size());
@@ -112,7 +88,6 @@ public class UnionVector {
         return DataType.values()[types.get(index)];
     }
 
-    /** Returns the value at the specified index as an Object, based on its type */
     public Object getValue(int index) {
         if (index < 0 || index >= size()) {
             throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size());
@@ -151,8 +126,6 @@ public class UnionVector {
         }
     }
 
-    /** Returns the offset buffer as an int array with size n+1, where n is the number of elements
-     * @return  */
     public int[] getOffsetBuffer() {
         int[] offsetArray = new int[offsets.size() + 1];
         for (int i = 0; i < offsets.size(); i++) {
@@ -162,8 +135,6 @@ public class UnionVector {
         return offsetArray;
     }
 
-    /** Returns the datatype buffer as a byte array
-     * @return  */
     public byte[] getTypeBuffer() {
         byte[] typeArray = new byte[types.size()];
         for (int i = 0; i < types.size(); i++) {
@@ -172,13 +143,10 @@ public class UnionVector {
         return typeArray;
     }
 
-    /** Returns the data buffer as a byte array
-     * @return  */
     public byte[] getDataBuffer() {
         return dataStream.toByteArray();
     }
 
-    // Optional: Example usage
     public static void main(String[] args) {
         UnionVector vector = new UnionVector();
         vector.addString("Hello");
