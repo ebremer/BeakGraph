@@ -21,7 +21,7 @@ import org.apache.jena.riot.RDFDataMgr;
  *
  * @author Erich Bremer
  */
-public class NewClass {
+public class NeoDictionary {
     
     
     public static void main(String[] args) {
@@ -69,9 +69,9 @@ public class NewClass {
                 .filter(n->!n.toString().startsWith("\"POLYGON"))
                 .forEach(n->System.out.println(n));
         } catch (FileNotFoundException ex) {
-            Logger.getLogger(NewClass.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(NeoDictionary.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
-            Logger.getLogger(NewClass.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(NeoDictionary.class.getName()).log(Level.SEVERE, null, ex);
         }
         
     }
