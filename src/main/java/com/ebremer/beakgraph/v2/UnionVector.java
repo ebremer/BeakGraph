@@ -123,7 +123,7 @@ public class UnionVector {
         ByteBuffer buffer = ByteBuffer.wrap(dataArray).position(start);
         
         switch (type) {
-            case STRING:
+            case STRING -> {
                 int len = buffer.getInt();
                 byte[] bytes = new byte[len];
                 buffer.get(bytes);
@@ -132,22 +132,28 @@ public class UnionVector {
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to decode string at index " + index, e);
                 }
-            case INT:
+            }
+            case INT -> {
                 return buffer.getInt();
-            case LONG:
+            }
+            case LONG -> {
                 return buffer.getLong();
-            case FLOAT:
+            }
+            case FLOAT -> {
                 return buffer.getFloat();
-            case DOUBLE:
+            }
+            case DOUBLE -> {
                 return buffer.getDouble();
-            case SHORT:
+            }
+            case SHORT -> {
                 return buffer.getShort();
-            default:
-                throw new IllegalStateException("Unknown data type at index " + index);
+            }
+            default -> throw new IllegalStateException("Unknown data type at index " + index);
         }
     }
 
-    /** Returns the offset buffer as an int array with size n+1, where n is the number of elements */
+    /** Returns the offset buffer as an int array with size n+1, where n is the number of elements
+     * @return  */
     public int[] getOffsetBuffer() {
         int[] offsetArray = new int[offsets.size() + 1];
         for (int i = 0; i < offsets.size(); i++) {
@@ -157,7 +163,8 @@ public class UnionVector {
         return offsetArray;
     }
 
-    /** Returns the datatype buffer as a byte array */
+    /** Returns the datatype buffer as a byte array
+     * @return  */
     public byte[] getTypeBuffer() {
         byte[] typeArray = new byte[types.size()];
         for (int i = 0; i < types.size(); i++) {
@@ -166,7 +173,8 @@ public class UnionVector {
         return typeArray;
     }
 
-    /** Returns the data buffer as a byte array */
+    /** Returns the data buffer as a byte array
+     * @return  */
     public byte[] getDataBuffer() {
         return dataStream.toByteArray();
     }
