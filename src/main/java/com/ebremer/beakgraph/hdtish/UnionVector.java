@@ -8,10 +8,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class UnionVector {
-    private List<Integer> offsets = new ArrayList<>();
-    private List<Byte> types = new ArrayList<>();
-    private ByteArrayOutputStream dataStream = new ByteArrayOutputStream();
-    private DataOutputStream data = new DataOutputStream(dataStream);
+    private final List<Integer> offsets = new ArrayList<>();
+    private final List<Byte> types = new ArrayList<>();
+    private final ByteArrayOutputStream dataStream = new ByteArrayOutputStream();
+    private final DataOutputStream data = new DataOutputStream(dataStream);
 
     public enum DataType { STRING, INT, LONG, FLOAT, DOUBLE, SHORT }
 
