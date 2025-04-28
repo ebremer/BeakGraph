@@ -55,7 +55,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>21</maven.compiler.release>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
-        <jena.version>5.3.0</jena.version>
+        <jena.version>5.4.0</jena.version>
         <arrow.version>18.2.0</arrow.version>
         <rocrate4j.version>0.5.0</rocrate4j.version>
         <commons-compress.version>1.27.1</commons-compress.version>
