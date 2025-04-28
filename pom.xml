@@ -46,6 +46,7 @@
                 <version>3.13.0</version>
                 <configuration>
                     <compilerArgs>
+                        <arg>--enable-preview</arg>
                     </compilerArgs>
                 </configuration>
             </plugin>
@@ -53,7 +54,7 @@
     </build>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.release>24</maven.compiler.release>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
         <jena.version>5.4.0</jena.version>
         <arrow.version>18.2.0</arrow.version>

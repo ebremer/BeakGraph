@@ -27,6 +27,7 @@ public class NeoDictionary {
     
     
     public static void main(String[] args) {
+        LinkedHashSet<Node> namedgraphs = new LinkedHashSet<>();
         LinkedHashSet<Node> subjects = new LinkedHashSet<>();
         LinkedHashSet<Node> both = new LinkedHashSet<>();
         LinkedHashSet<Node> objects = new LinkedHashSet<>();
