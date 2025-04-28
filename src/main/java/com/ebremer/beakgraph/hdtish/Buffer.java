@@ -22,7 +22,7 @@ public class Buffer {
         entries.add(new EntryMetadata(startPosition, DataType.STRING));
     }
 
-    public void add(Float f) {
+    public void add(float f) {
         int startPosition = buffer.size();
         ByteBuffer buffer = ByteBuffer.allocate(Float.BYTES);
         buffer.putFloat(f);
@@ -30,7 +30,7 @@ public class Buffer {
         entries.add(new EntryMetadata(startPosition, DataType.FLOAT));
     }
 
-    public void add(Double d) {
+    public void add(double d) {
         int startPosition = buffer.size();
         ByteBuffer buffer = ByteBuffer.allocate(Double.BYTES);
         buffer.putDouble(d);
