@@ -20,6 +20,7 @@ public class FrontCodedBuffer {
     private String currentBlockFirstString;
 
     public FrontCodedBuffer(int blockSize) {
+        
         if (blockSize < 1) {
             throw new IllegalArgumentException("blockSize must be at least 1");
         }
