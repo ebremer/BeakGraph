@@ -7,7 +7,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 
 public class BitPackedReader {
-    private ByteBuffer buffer;
+    private final ByteBuffer buffer;
     private final int b;
 
     public BitPackedReader(ByteBuffer buffer, int b) {
