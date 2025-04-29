@@ -7,55 +7,55 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Buffer {
-    private ByteArrayOutputStream buffer;
+    private ByteArrayOutputStream mainbuffer;
     private List<EntryMetadata> entries;
 
     public Buffer() {
-        buffer = new ByteArrayOutputStream();
+        mainbuffer = new ByteArrayOutputStream();
         entries = new ArrayList<>();
     }
 
-    public void add(String string) {
-        int startPosition = buffer.size();
-        byte[] bytes = string.getBytes(StandardCharsets.UTF_8);
-        buffer.write(bytes, 0, bytes.length);
+    public void add(String element) {
+        int startPosition = mainbuffer.size();
+        byte[] bytes = element.getBytes(StandardCharsets.UTF_8);
+        mainbuffer.write(bytes, 0, bytes.length);
         entries.add(new EntryMetadata(startPosition, DataType.STRING));
     }
 
     public void add(float f) {
-        int startPosition = buffer.size();
+        int startPosition = mainbuffer.size();
         ByteBuffer buffer = ByteBuffer.allocate(Float.BYTES);
         buffer.putFloat(f);
-        this.buffer.write(buffer.array(), 0, Float.BYTES);
+        mainbuffer.write(buffer.array(), 0, Float.BYTES);
         entries.add(new EntryMetadata(startPosition, DataType.FLOAT));
     }
 
     public void add(double d) {
-        int startPosition = buffer.size();
+        int startPosition = mainbuffer.size();
         ByteBuffer buffer = ByteBuffer.allocate(Double.BYTES);
         buffer.putDouble(d);
-        this.buffer.write(buffer.array(), 0, Double.BYTES);
+        mainbuffer.write(buffer.array(), 0, Double.BYTES);
         entries.add(new EntryMetadata(startPosition, DataType.DOUBLE));
     }
 
     public void add(int n) {
-        int startPosition = buffer.size();
+        int startPosition = mainbuffer.size();
         ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES);
         buffer.putInt(n);
-        this.buffer.write(buffer.array(), 0, Integer.BYTES);
+        mainbuffer.write(buffer.array(), 0, Integer.BYTES);
         entries.add(new EntryMetadata(startPosition, DataType.INTEGER));
     }
 
     public void add(long n) {
-        int startPosition = buffer.size();
+        int startPosition = mainbuffer.size();
         ByteBuffer buffer = ByteBuffer.allocate(Long.BYTES);
         buffer.putLong(n);
-        this.buffer.write(buffer.array(), 0, Long.BYTES);
+        mainbuffer.write(buffer.array(), 0, Long.BYTES);
         entries.add(new EntryMetadata(startPosition, DataType.LONG));
     }
 
     public int size() {
-        return buffer.size();
+        return mainbuffer.size();
     }
 
     private enum DataType {
