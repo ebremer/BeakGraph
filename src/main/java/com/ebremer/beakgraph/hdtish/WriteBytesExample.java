@@ -4,9 +4,12 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import io.jhdf.object.datatype.BitField;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Paths;
 import java.util.BitSet;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class WriteBytesExample {
     public static void main(String[] args) {
@@ -31,6 +34,12 @@ public class WriteBytesExample {
          //   group.putDataset("smushier", bf); 
         } catch (Exception e) {
             e.printStackTrace();
+        }
+        try (HdfFile h = new HdfFile(Paths.get("/tcga/rdf.hdf5"))) {
+            System.out.println(h.getHdfBackingStorage().getFileChannel().size());
+            //System.out.println(h.getDatasetByPath("YAY").);
+        } catch (IOException ex) {
+            Logger.getLogger(WriteBytesExample.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
 }
