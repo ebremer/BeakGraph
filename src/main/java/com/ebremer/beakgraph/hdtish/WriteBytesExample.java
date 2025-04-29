@@ -2,7 +2,9 @@ package com.ebremer.beakgraph.hdtish;
 
 import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
+import io.jhdf.api.Dataset;
 import io.jhdf.api.WritableGroup;
+import io.jhdf.api.dataset.ContiguousDataset;
 import io.jhdf.object.datatype.BitField;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -28,7 +30,8 @@ public class WriteBytesExample {
             bitSet.set(1);
             bitSet.set(1023);
             byte[] bitSetBytes = bitSet.toByteArray();   
-            group.putDataset("smush", bitSetBytes);   
+            group.putDataset("smush", bitSetBytes);  
+            
             
             BitField bf = new BitField(ByteBuffer.wrap(bitSetBytes));           
          //   group.putDataset("smushier", bf); 
@@ -37,6 +40,9 @@ public class WriteBytesExample {
         }
         try (HdfFile h = new HdfFile(Paths.get("/tcga/rdf.hdf5"))) {
             System.out.println(h.getHdfBackingStorage().getFileChannel().size());
+            ContiguousDataset ds = (ContiguousDataset) h.getDatasetByPath("/byte_group/byte_dataset");
+            ds.getBuffer();
+            System.out.println("Dataset : "+ds.getClass().toGenericString());
             //System.out.println(h.getDatasetByPath("YAY").);
         } catch (IOException ex) {
             Logger.getLogger(WriteBytesExample.class.getName()).log(Level.SEVERE, null, ex);
