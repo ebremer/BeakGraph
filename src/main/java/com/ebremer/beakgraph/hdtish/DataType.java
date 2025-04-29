@@ -3,8 +3,10 @@ package com.ebremer.beakgraph.hdtish;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 
-public enum NumericType {
+public enum DataType {
+    STRING(String.class, -1),
     BYTE(Byte.class, 1),
+    BOOLEAN(Boolean.class, 1),
     SHORT(Short.class, 2),
     INT(Integer.class, 4),
     LONG(Long.class, 8),
@@ -16,7 +18,7 @@ public enum NumericType {
     private final Class<?> clazz;
     private final int sizeInBytes;
 
-    NumericType(Class<?> clazz, int sizeInBytes) {
+    DataType(Class<?> clazz, int sizeInBytes) {
         this.clazz = clazz;
         this.sizeInBytes = sizeInBytes;
     }

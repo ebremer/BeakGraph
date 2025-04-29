@@ -8,5 +8,5 @@ import org.apache.jena.graph.Node;
  */
 public interface Dictionary {
     public int locate(Node element);
-    public Node extract(int id);
+    public Object extract(int id);
 }
