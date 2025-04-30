@@ -1,8 +1,12 @@
 package com.ebremer.beakgraph.hdtish;
 
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
@@ -22,25 +26,43 @@ import org.apache.jena.vocabulary.XSD;
  */
 public class PlainDictionary implements Dictionary {
     
-    private final ByteArrayOutputStream longbaos = new ByteArrayOutputStream();
-    private final DataOutputStream longdos = new DataOutputStream(longbaos);
-    private final ByteArrayOutputStream intbaos = new ByteArrayOutputStream();
-    private final DataOutputStream intdos = new DataOutputStream(intbaos);
-    private final ByteArrayOutputStream stringbaos = new ByteArrayOutputStream();
-    private final DataOutputStream stringdos = new DataOutputStream(stringbaos);
+    private final BufferedOutputStream longbaos;
+    private final DataOutputStream longdos;
+    private final BufferedOutputStream doublebaos;
+    private final DataOutputStream doubledos;
+    private final BufferedOutputStream floatbaos;
+    private final DataOutputStream floatdos;
+    private final BufferedOutputStream intbaos;
+    private final DataOutputStream intdos;
+    private final BufferedOutputStream stringbaos;
+    private final DataOutputStream stringdos;
     private final ArrayList<Integer> offsets = new ArrayList<>();
     private final ArrayList<DataType> dt = new ArrayList<>();
     
+    public PlainDictionary() throws FileNotFoundException {
+        stringbaos = new BufferedOutputStream( new FileOutputStream(new File("/tcga/strings")));
+        stringdos = new DataOutputStream(stringbaos);
+        longbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/longs")));
+        longdos = new DataOutputStream(longbaos);
+        doublebaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/doubles")));
+        doubledos = new DataOutputStream(doublebaos);
+        floatbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/floats")));
+        floatdos = new DataOutputStream(floatbaos);
+        intbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/ints")));
+        intdos = new DataOutputStream(intbaos);        
+    }
+    
     public int size() {
-        return longbaos.size();
+        return 0;
     }
     
    
     public void Add(Node node) {
         if (node.isURI()||node.isBlank()) {
-            offsets.add(stringbaos.size());
+            offsets.add(node.toString().getBytes().length);
+            dt.add(DataType.STRING);
             try {
-                stringdos.writeChars(node.getURI());
+                stringdos.writeUTF(node.toString());
             } catch (UnsupportedEncodingException ex) {
                 Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
             } catch (IOException ex) {
@@ -68,8 +90,38 @@ public class PlainDictionary implements Dictionary {
                         Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
+            } else if (datatype.equals(XSD.xdouble.getURI())) {
+                offsets.add(Double.BYTES);
+                dt.add(DataType.DOUBLE);
+                if (node.getLiteralValue() instanceof Integer x) {
+                    try {
+                        doubledos.writeDouble(x);
+                    } catch (IOException ex) {
+                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+            } else if (datatype.equals(XSD.xfloat.getURI())) {
+                offsets.add(Float.BYTES);
+                dt.add(DataType.FLOAT);
+                if (node.getLiteralValue() instanceof Integer x) {
+                    try {
+                        floatdos.writeFloat(x);
+                    } catch (IOException ex) {
+                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+            } else if (datatype.equals(XSD.xstring.getURI())) {                
+                dt.add(DataType.STRING);
+                if (node.getLiteralValue() instanceof String x) {
+                    offsets.add(x.getBytes().length);
+                    try {
+                        stringdos.writeUTF(node.toString());
+                    } catch (IOException ex) {
+                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
             } else {
-                throw new Error("What is : "+node);
+                throw new Error("What is : "+node+" "+node.getLiteralDatatypeURI());
             }
         } else {
             throw new Error("WTF : "+node);
@@ -78,7 +130,12 @@ public class PlainDictionary implements Dictionary {
 
     @Override
     public int locate(Node element) {
-        throw new UnsupportedOperationException("Not supported yet.");
+        if (element.isLiteral()) {
+            // look at literal tables
+        } else if (element.isURI()) {
+            
+        }
+        return -1;
     }
     
     public static String readCString(byte[] data, int offset) {
@@ -93,17 +150,17 @@ public class PlainDictionary implements Dictionary {
     public Object extract(int id) {
         switch (dt.get(id)) {
             case DataType.LONG -> {
-                LongBuffer buf = ByteBuffer.wrap(longbaos.toByteArray()).asLongBuffer();
-                return buf.get(offsets.get(id)/Long.BYTES);
+            //    LongBuffer buf = ByteBuffer.wrap(longbaos.toByteArray()).asLongBuffer();
+            //    return buf.get(offsets.get(id)/Long.BYTES);
             }
             case DataType.INT -> {
-                IntBuffer buf = ByteBuffer.wrap(intbaos.toByteArray()).asIntBuffer();
-                return buf.get(offsets.get(id)/Integer.BYTES);
+             //   IntBuffer buf = ByteBuffer.wrap(intbaos.toByteArray()).asIntBuffer();
+             //   return buf.get(offsets.get(id)/Integer.BYTES);
             }
             case DataType.STRING -> {
-                ByteBuffer buf = ByteBuffer.wrap(stringbaos.toByteArray());
-                int offset = buf.get(offsets.get(id));
-                return readCString(stringbaos.toByteArray(), offset);
+                //ByteBuffer buf = ByteBuffer.wrap(stringbaos.toByteArray());
+                //int offset = buf.get(offsets.get(id));
+               // return readCString(stringbaos.toByteArray(), offset);
             }
         }
         return null;
