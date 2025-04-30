@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdtish;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import org.apache.commons.codec.binary.Hex;
 
 // Interface to abstract byte writing, allowing flexibility for files or ByteBuffers
 interface ByteWriter {
@@ -60,6 +61,21 @@ public class BitPackedWriter {
         };
         return new BitPackedWriter(fileWriter);
     }
+    
+    public static String toBinaryString(ByteBuffer buffer, String delimiter) {
+        buffer.mark();
+        StringBuilder binary = new StringBuilder();
+        while (buffer.hasRemaining()) {
+            byte b = buffer.get();
+            String binaryByte = String.format("%8s", Integer.toBinaryString(b & 0xFF)).replace(' ', '0');
+            binary.append(binaryByte);
+            if (buffer.hasRemaining()) {
+                binary.append(delimiter);
+            }
+        }
+        buffer.reset();
+        return binary.toString();
+    }
 
     // Static factory method to create a BitPackedWriter for a ByteBuffer
     public static BitPackedWriter forByteBuffer(ByteBuffer buffer) {
@@ -95,9 +111,7 @@ public class BitPackedWriter {
         bufferWriter.writeInteger(7, 3);
         bufferWriter.close();
 
-        // Access the packed bytes
-        buffer.flip();
-        byte[] packedBytes = new byte[buffer.remaining()];
-        buffer.get(packedBytes);
+        buffer.rewind();
+        System.out.println(toBinaryString(buffer, " "));
     }
 }

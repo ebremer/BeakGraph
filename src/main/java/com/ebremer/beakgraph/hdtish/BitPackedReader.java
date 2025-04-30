@@ -44,7 +44,7 @@ public class BitPackedReader {
     }
 
     public static void main(String[] args) throws IOException {
-        byte[] data = {(byte) 0b10101111, (byte) 0b10000000}; // 10101111 10000000
+       // byte[] data = {(byte) 0b10101111, (byte) 0b10000000}; // 10101111 10000000
   
         BitPackedReader reader = BitPackedReader.fromFile("output.dat", 3);
         System.out.println("n=0: " + reader.readNthValue(0));
