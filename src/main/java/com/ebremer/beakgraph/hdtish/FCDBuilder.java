@@ -1,64 +1,39 @@
 package com.ebremer.beakgraph.hdtish;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
+import java.io.BufferedOutputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 
 public class FCDBuilder {
-    private ByteBuffer buffer;
     private final int blockSize;
     private int stringsInCurrentBlock = 0;
     private String previousString = null;
+    private OutputStream baos;
+    private DataOutputStream dos;
 
-    public FCDBuilder(int blockSize) {
+    public FCDBuilder(int blockSize) throws FileNotFoundException {
         this.blockSize = blockSize;
-        this.buffer = ByteBuffer.allocate(1024); // Initial capacity, e.g., 1KB
+        baos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/strings")));
+        dos = new DataOutputStream(baos); 
     }
 
-    public void add(String item) {
+    public void add(String item) throws IOException {
         if (stringsInCurrentBlock == 0) {
-            // Start of a new block: write plain string
-            writePlainString(item);
+            dos.writeUTF(item);
             previousString = item;
             stringsInCurrentBlock = 1;
         } else {
-            // Write front-coded string
             int prefixLength = commonPrefixLength(previousString, item);
-            writeVByte(prefixLength);
-            writeSuffix(item, prefixLength);
+            //writeVByte(prefixLength);
+            dos.writeUTF(item.substring(prefixLength));
             previousString = item;
             stringsInCurrentBlock++;
             if (stringsInCurrentBlock == blockSize) {
                 stringsInCurrentBlock = 0;
-            }
-        }
-    }
-
-    private void writePlainString(String str) {
-        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-        ensureCapacity(bytes.length + 1);
-        buffer.put(bytes);
-        buffer.put((byte) 0);
-    }
-
-    private void writeSuffix(String str, int prefixLength) {
-        String suffix = str.substring(prefixLength);
-        byte[] bytes = suffix.getBytes(StandardCharsets.UTF_8);
-        ensureCapacity(bytes.length + 1);
-        buffer.put(bytes);
-        buffer.put((byte) 0);
-    }
-
-    private void writeVByte(int value) {
-        while (true) {
-            int byteValue = value & 0x7F;
-            value >>= 7;
-            if (value == 0) {
-                ensureCapacity(1);
-                buffer.put((byte) byteValue);
-                break;
-            } else {
-                ensureCapacity(1);
-                buffer.put((byte) (byteValue | 0x80));
             }
         }
     }
@@ -71,20 +46,5 @@ public class FCDBuilder {
             }
         }
         return minLength;
-    }
-
-    private void ensureCapacity(int required) {
-        if (buffer.remaining() < required) {
-            int newCapacity = Math.max(buffer.capacity() * 2, buffer.capacity() + required);
-            ByteBuffer newBuffer = ByteBuffer.allocate(newCapacity);
-            buffer.flip(); // Prepare for reading
-            newBuffer.put(buffer);
-            buffer = newBuffer;
-        }
-    }
-
-    public ByteBuffer getBuffer() {
-        buffer.flip(); // Prepare for reading
-        return buffer;
     }
 }

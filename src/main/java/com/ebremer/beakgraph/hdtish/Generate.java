@@ -5,6 +5,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IO;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -20,7 +21,7 @@ import org.apache.jena.riot.system.AsyncParser;
 public class Generate {
     
     private File file;
-    private PlainDictionary dict = new PlainDictionary();
+    private PlainDictionary dict;
     
     class Currents {
         Node cg = Node.ANY;
@@ -29,7 +30,8 @@ public class Generate {
         Node co = Node.ANY;   
     }
     
-    public Generate(File file) {
+    public Generate(File file) throws FileNotFoundException {
+        this.dict = new PlainDictionary();
         this.file = file;
     }
     
@@ -48,19 +50,35 @@ public class Generate {
                     Node o = quad.getObject();
                     if (!g.equals(c.cg)) {
                         c.cg = g;
-                        dict.Add(g);
+                        try {
+                            dict.Add(g);
+                        } catch (IOException ex) {
+                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+                        }
                     }
                     if (!s.equals(c.cs)) {
                         c.cs = s;
-                        dict.Add(s);
+                        try {
+                            dict.Add(s);
+                        } catch (IOException ex) {
+                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+                        }
                     }
                     if (!p.equals(c.cp)) {
                         c.cp = p;
-                        dict.Add(p);
+                        try {
+                            dict.Add(p);
+                        } catch (IOException ex) {
+                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+                        }
                     }
                     if (!o.equals(c.co)) {
                         c.co = o;
-                        dict.Add(o);
+                        try {
+                            dict.Add(o);
+                        } catch (IOException ex) {
+                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+                        }
                     }                 
                 });
         } catch (FileNotFoundException ex) {
@@ -71,9 +89,12 @@ public class Generate {
         
         IO.println("Dictionary : "+dict);
         IO.println("quads : "+cc.get());
+        IO.println("diff nodes : "+dict.getNodes().size());
+        ArrayList<Node> list = NodeSorter.sortNodes(dict.getNodes());
+        list.forEach(n->System.out.println(n));
     }
     
-    public static void main(String[] args) {
+    public static void main(String[] args) throws FileNotFoundException {
         File file = new File("/data/sorted.nq.gz");
         Generate gen = new Generate(file);
         gen.build();

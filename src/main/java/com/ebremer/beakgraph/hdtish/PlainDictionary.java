@@ -14,6 +14,7 @@ import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.apache.jena.graph.Node;
@@ -34,44 +35,53 @@ public class PlainDictionary implements Dictionary {
     private final DataOutputStream floatdos;
     private final BufferedOutputStream intbaos;
     private final DataOutputStream intdos;
-    private final BufferedOutputStream stringbaos;
-    private final DataOutputStream stringdos;
+    private final BufferedOutputStream offsetsbaos;
+    private final DataOutputStream offsetsdos;
     private final ArrayList<Integer> offsets = new ArrayList<>();
     private final ArrayList<DataType> dt = new ArrayList<>();
+    private FCDBuilder text = new FCDBuilder(20);
+    private HashSet<Node> nodes = new HashSet<>();
     
     public PlainDictionary() throws FileNotFoundException {
-        stringbaos = new BufferedOutputStream( new FileOutputStream(new File("/tcga/strings")));
-        stringdos = new DataOutputStream(stringbaos);
+        //stringbaos = new BufferedOutputStream( new FileOutputStream(new File("/tcga/strings")));
+        //stringdos = new DataOutputStream(stringbaos);
         longbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/longs")));
         longdos = new DataOutputStream(longbaos);
         doublebaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/doubles")));
         doubledos = new DataOutputStream(doublebaos);
         floatbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/floats")));
         floatdos = new DataOutputStream(floatbaos);
-        intbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/ints")));
-        intdos = new DataOutputStream(intbaos);        
+        intbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/integers")));
+        intdos = new DataOutputStream(intbaos);
+        offsetsbaos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/offsets")));
+        offsetsdos = new DataOutputStream(offsetsbaos);
+        
     }
     
     public int size() {
         return 0;
     }
     
+    public HashSet<Node> getNodes() {
+        return nodes;
+    }
+    
+    public void Add(Node node) throws IOException {
+        nodes.add(node);
+       // System.out.println(nodes.size());
+    }
    
-    public void Add(Node node) {
+    public void Add2(Node node) throws IOException {
         if (node.isURI()||node.isBlank()) {
+            offsetsdos.writeInt(node.toString().getBytes().length);
             offsets.add(node.toString().getBytes().length);
             dt.add(DataType.STRING);
-            try {
-                stringdos.writeUTF(node.toString());
-            } catch (UnsupportedEncodingException ex) {
-                Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
-            } catch (IOException ex) {
-                Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
-            }
+            text.add(node.toString());
         } else if (node.isLiteral()) {
             String datatype = node.getLiteralDatatypeURI();
             if (datatype.equals(XSD.xlong.getURI())) {
                 offsets.add(Long.BYTES);
+                offsetsdos.writeInt(Long.BYTES);
                 dt.add(DataType.LONG);
                 if (node.getLiteralValue() instanceof Long x) {
                     try {
@@ -82,6 +92,7 @@ public class PlainDictionary implements Dictionary {
                 }
             } else if (datatype.equals(XSD.xint.getURI())) {
                 offsets.add(Integer.BYTES);
+                offsetsdos.writeInt(Integer.BYTES);
                 dt.add(DataType.INT);
                 if (node.getLiteralValue() instanceof Integer x) {
                     try {
@@ -92,8 +103,9 @@ public class PlainDictionary implements Dictionary {
                 }
             } else if (datatype.equals(XSD.xdouble.getURI())) {
                 offsets.add(Double.BYTES);
+                offsetsdos.writeInt(Double.BYTES);
                 dt.add(DataType.DOUBLE);
-                if (node.getLiteralValue() instanceof Integer x) {
+                if (node.getLiteralValue() instanceof Double x) {
                     try {
                         doubledos.writeDouble(x);
                     } catch (IOException ex) {
@@ -102,8 +114,9 @@ public class PlainDictionary implements Dictionary {
                 }
             } else if (datatype.equals(XSD.xfloat.getURI())) {
                 offsets.add(Float.BYTES);
+                offsetsdos.writeInt(Float.BYTES);
                 dt.add(DataType.FLOAT);
-                if (node.getLiteralValue() instanceof Integer x) {
+                if (node.getLiteralValue() instanceof Float x) {
                     try {
                         floatdos.writeFloat(x);
                     } catch (IOException ex) {
@@ -111,14 +124,11 @@ public class PlainDictionary implements Dictionary {
                     }
                 }
             } else if (datatype.equals(XSD.xstring.getURI())) {                
-                dt.add(DataType.STRING);
+                dt.add(DataType.STRING);                
                 if (node.getLiteralValue() instanceof String x) {
                     offsets.add(x.getBytes().length);
-                    try {
-                        stringdos.writeUTF(node.toString());
-                    } catch (IOException ex) {
-                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
-                    }
+                    offsetsdos.writeInt(x.getBytes().length);
+                    text.add(node.toString());
                 }
             } else {
                 throw new Error("What is : "+node+" "+node.getLiteralDatatypeURI());
