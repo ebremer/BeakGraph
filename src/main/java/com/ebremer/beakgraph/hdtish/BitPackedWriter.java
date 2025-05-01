@@ -3,24 +3,24 @@ package com.ebremer.beakgraph.hdtish;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 
-// Interface to abstract byte writing, allowing flexibility for files or ByteBuffers
 interface ByteWriter {
     void writeByte(byte b) throws IOException;
 }
 
-// BitPackedWriter class to pack bits into bytes and write to an output
-public class BitPackedWriter {
+public class BitPackedWriter implements AutoCloseable {
     private final ByteWriter byteWriter;
     private final int width;
     private long bitBuffer = 0; // Accumulates bits
     private int bitCount = 0;  // Number of bits currently in the buffer
+    private OutputStream os;
 
-    // Constructor accepting a ByteWriter
-    public BitPackedWriter(ByteWriter byteWriter, int width) {
+    private BitPackedWriter(ByteWriter byteWriter, int width, OutputStream os) {
         this.byteWriter = byteWriter;
         this.width = width;
+        this.os = os;
     }
 
     // Write the least significant n bits of the integer to the buffer
@@ -60,16 +60,17 @@ public class BitPackedWriter {
         }
     }    
 
-    // Flush remaining bits as a padded byte and close
+    @Override
     public void close() throws IOException {
         if (bitCount > 0) {
             // Pad the remaining bits with zeros on the right
             byte b = (byte) (bitBuffer << (8 - bitCount));
             byteWriter.writeByte(b);
         }
+        os.flush();
+        os.close();
     }
 
-    // Static factory method to create a BitPackedWriter for a file
     public static BitPackedWriter forFile(File file, int width) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         ByteWriter fileWriter = new ByteWriter() {
@@ -78,7 +79,7 @@ public class BitPackedWriter {
                 fos.write(b);
             }
         };
-        return new BitPackedWriter(fileWriter, width);
+        return new BitPackedWriter(fileWriter, width, fos);
     }
     
     public static String toBinaryString(ByteBuffer buffer, String delimiter) {
@@ -96,7 +97,7 @@ public class BitPackedWriter {
         return binary.toString();
     }
 
-    // Static factory method to create a BitPackedWriter for a ByteBuffer
+    /*
     public static BitPackedWriter forByteBuffer(ByteBuffer buffer, int width) {
         ByteWriter bufferWriter = new ByteWriter() {
             @Override
@@ -107,11 +108,10 @@ public class BitPackedWriter {
                 buffer.put(b);
             }
         };
-        return new BitPackedWriter(bufferWriter, width);
-    }
+        return new BitPackedWriter(bufferWriter, width, fos);
+    }*/
 
     public static void main(String[] args) throws IOException {
-        // Example 1: Writing to a file
         BitPackedWriter fileWriter = BitPackedWriter.forFile(new File("output.dat"), 3);
         fileWriter.writeInteger(5); // 101
         fileWriter.writeInteger(3); // 011
@@ -122,7 +122,7 @@ public class BitPackedWriter {
         fileWriter.writeInteger(4); // 111
         fileWriter.close();
 
-        // Example 2: Writing to a ByteBuffer
+        /*
         ByteBuffer buffer = ByteBuffer.allocate(10);
         BitPackedWriter bufferWriter = BitPackedWriter.forByteBuffer(buffer,3);
         bufferWriter.writeInteger(5);
@@ -131,6 +131,6 @@ public class BitPackedWriter {
         bufferWriter.close();
 
         buffer.rewind();
-        System.out.println(toBinaryString(buffer, " "));
+        System.out.println(toBinaryString(buffer, " "));*/
     }
 }

@@ -31,7 +31,7 @@ public class Generate {
     }
     
     public Generate(File file) throws FileNotFoundException, IOException {
-        this.dict = new MultiDictionaryWriter();
+        this.dict = null;
         this.file = file;
     }
     
@@ -50,35 +50,19 @@ public class Generate {
                     Node o = quad.getObject();
                     if (!g.equals(c.cg)) {
                         c.cg = g;
-                        try {
-                            dict.Add(g);
-                        } catch (IOException ex) {
-                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
-                        }
+                        //                      dict.Add(g);
                     }
                     if (!s.equals(c.cs)) {
                         c.cs = s;
-                        try {
-                            dict.Add(s);
-                        } catch (IOException ex) {
-                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
-                        }
+                        //                    dict.Add(s);
                     }
                     if (!p.equals(c.cp)) {
                         c.cp = p;
-                        try {
-                            dict.Add(p);
-                        } catch (IOException ex) {
-                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
-                        }
+                        //                  dict.Add(p);
                     }
                     if (!o.equals(c.co)) {
                         c.co = o;
-                        try {
-                            dict.Add(o);
-                        } catch (IOException ex) {
-                            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
-                        }
+                        //                dict.Add(o);
                     }                 
                 });
         } catch (FileNotFoundException ex) {
@@ -89,15 +73,15 @@ public class Generate {
         
         IO.println("Dictionary : "+dict);
         IO.println("quads : "+cc.get());
-        IO.println("diff nodes : "+dict.getNodes().size());
+     //   IO.println("diff nodes : "+dict.getNodes().size());
        // ArrayList<Node> list = NodeSorter.sortNodes(dict.getNodes());
         //list.forEach(n->System.out.println(n));
     }
     
     public static void main(String[] args) throws FileNotFoundException {
         File file = new File("/data/sorted.nq.gz");
-        Generate gen = new Generate(file);
-        gen.build();
+      //  Generate gen = new Generate(file);
+        //gen.build();
     }
     
 }
