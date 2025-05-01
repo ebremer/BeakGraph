@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.vocabulary.XSD;
 
@@ -34,17 +35,22 @@ public class MultiDictionaryWriter {
         integers = BitPackedWriter.forFile(new File("/tcga/integers"), MinBits(builder.getMaxInteger()));
         longs = BitPackedWriter.forFile(new File("/tcga/longs"), MinBits(builder.getMaxLong()));
         datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), DataType.values().length);
+        sorted.forEach(n->Add(n));
     }
     
     private int MinBits(long x) {
         return (int) Math.ceil(Math.log(x)/Math.log(2d));
     }
     
-    private void Add(Node node) throws IOException {
+    private void Add(Node node) {
         if (node.isURI()||node.isBlank()) {           
-            datatype.writeInteger(DataType.STRING.ordinal());
-            text.add(node.toString());
-            offsets.writeInteger(node.toString().length());
+            try {
+                datatype.writeInteger(DataType.STRING.ordinal());
+                text.add(node.toString());
+                offsets.writeInteger(node.toString().length());
+            } catch (IOException ex) {
+                Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+            }
         } else if (node.isLiteral()) {
             String dt = node.getLiteralDatatypeURI();
             if (dt.equals(XSD.xlong.getURI())) {              
@@ -81,7 +87,7 @@ public class MultiDictionaryWriter {
                 if (node.getLiteralValue() instanceof Float x) {
                     try {
                         offsets.writeInteger(Float.BYTES);
-                        doubles.writeDouble(x);
+                        floats.writeDouble(x);
                         datatype.writeInteger(DataType.FLOAT.ordinal());
                     } catch (IOException ex) {
                         Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
@@ -89,9 +95,13 @@ public class MultiDictionaryWriter {
                 }
             } else if (dt.equals(XSD.xstring.getURI())) {                             
                 if (node.getLiteralValue() instanceof String x) {
-                    offsets.writeInteger(x.getBytes().length);
-                    datatype.writeInteger(DataType.STRING.ordinal());
-                    text.add(node.toString());
+                    try {
+                        offsets.writeInteger(x.getBytes().length);
+                        datatype.writeInteger(DataType.STRING.ordinal());
+                        text.add(node.toString());
+                    } catch (IOException ex) {
+                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                    }
                 }
             } else {
                 throw new Error("What is : "+node+" "+node.getLiteralDatatypeURI());
@@ -158,7 +168,7 @@ public class MultiDictionaryWriter {
             return nodes;
         }
         
-        public void Add(Node node) throws IOException {
+        public void Add(Node node) {
            nodes.add(node);
            if (node.isLiteral()) {
                if (node.getLiteralDatatypeURI().equals(XSD.xlong.toString())) {
@@ -171,9 +181,12 @@ public class MultiDictionaryWriter {
            }
         }
         
+        public void Add(Stream<Node> stream) {
+            stream.forEach(n->Add(n));
+        }
+        
         public MultiDictionaryWriter build() throws IOException {                  
             return new MultiDictionaryWriter(this);
         }
-    }
-    
+    }    
 }
