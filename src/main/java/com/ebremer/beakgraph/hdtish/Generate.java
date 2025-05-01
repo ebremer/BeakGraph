@@ -21,7 +21,7 @@ import org.apache.jena.riot.system.AsyncParser;
 public class Generate {
     
     private File file;
-    private PlainDictionary dict;
+    private MultiDictionaryWriter dict;
     
     class Currents {
         Node cg = Node.ANY;
@@ -31,7 +31,7 @@ public class Generate {
     }
     
     public Generate(File file) throws FileNotFoundException, IOException {
-        this.dict = new PlainDictionary();
+        this.dict = new MultiDictionaryWriter();
         this.file = file;
     }
     

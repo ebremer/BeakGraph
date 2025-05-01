@@ -15,7 +15,7 @@ import org.apache.jena.vocabulary.XSD;
  *
  * @author erbre
  */
-public class PlainDictionary implements Dictionary {
+public class MultiDictionaryWriter {
     private final BitPackedWriter offsets;
     private final BitPackedWriter integers;
     private final BitPackedWriter longs;
@@ -25,22 +25,26 @@ public class PlainDictionary implements Dictionary {
     private FCDBuilder text = new FCDBuilder(20);    
     private int width;
     
-    private PlainDictionary(Builder builder) throws FileNotFoundException, IOException {
-        width = (int) Math.ceil(Math.log(builder.getNodes().size())/Math.log(2d));
+    private MultiDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
+        width = MinBits(builder.getNodes().size());
         System.out.print("Sorting nodes...");
         ArrayList<Node> sorted = NodeSorter.sortNodes(builder.getNodes());      
         System.out.println("Done.");
         doubles = new DataBuffer(new File("/tcga/doubles"));
         floats = new DataBuffer(new File("/tcga/floats"));
         offsets = BitPackedWriter.forFile(new File("/tcga/offsets"), width);
-        integers = BitPackedWriter.forFile(new File("/tcga/integers"), width);
-        longs = BitPackedWriter.forFile(new File("/tcga/longs"), width);
-        datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), width);
+        integers = BitPackedWriter.forFile(new File("/tcga/integers"), MinBits(builder.getMaxInteger()));
+        longs = BitPackedWriter.forFile(new File("/tcga/longs"), MinBits(builder.getMaxLong()));
+        datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), DataType.values().length);
+    }
+    
+    private int MinBits(long x) {
+        return (int) Math.ceil(Math.log(x)/Math.log(2d));
     }
     
     private void Add(Node node) throws IOException {
-        if (node.isURI()||node.isBlank()) {
-            datatype.add(DataType.STRING);
+        if (node.isURI()||node.isBlank()) {           
+            datatype.writeInteger(DataType.STRING.ordinal());
             text.add(node.toString());
             offsets.writeInteger(node.toString().length());
         } else if (node.isLiteral()) {
@@ -49,10 +53,10 @@ public class PlainDictionary implements Dictionary {
                 if (node.getLiteralValue() instanceof Long x) {
                     try {
                         offsets.writeInteger(Long.BYTES);
-                        datatype.writeInteger(DataType.LONG);  
+                        datatype.writeInteger(DataType.LONG.ordinal());  
                         longs.writeLong(width);
                     } catch (IOException ex) {
-                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xint.getURI())) {
@@ -60,9 +64,9 @@ public class PlainDictionary implements Dictionary {
                     try {
                         offsets.writeInteger(Integer.BYTES);
                         integers.writeInteger(width);
-                        datatype.writeInteger(DataType.INT);
+                        datatype.writeInteger(DataType.INT.ordinal());
                     } catch (IOException ex) {
-                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xdouble.getURI())) {
@@ -70,9 +74,9 @@ public class PlainDictionary implements Dictionary {
                     try {
                         offsets.writeInteger(Double.BYTES);
                         doubles.writeDouble(x);
-                        datatype.writeInteger(DataType.DOUBLE);
+                        datatype.writeInteger(DataType.DOUBLE.ordinal());
                     } catch (IOException ex) {
-                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xfloat.getURI())) {
@@ -80,15 +84,15 @@ public class PlainDictionary implements Dictionary {
                     try {
                         offsets.writeInteger(Float.BYTES);
                         doubles.writeDouble(x);
-                        datatype.writeInteger(DataType.FLOAT);
+                        datatype.writeInteger(DataType.FLOAT.ordinal());
                     } catch (IOException ex) {
-                        Logger.getLogger(PlainDictionary.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xstring.getURI())) {                             
                 if (node.getLiteralValue() instanceof String x) {
                     offsets.writeInteger(x.getBytes().length);
-                    datatype.writeInteger(DataType.STRING);
+                    datatype.writeInteger(DataType.STRING.ordinal());
                     text.add(node.toString());
                 }
             } else {
@@ -98,7 +102,7 @@ public class PlainDictionary implements Dictionary {
             throw new Error("WTF : "+node);
         }
     }
-
+/*
     @Override
     public int locate(Node element) {
         if (element.isLiteral()) {
@@ -108,7 +112,7 @@ public class PlainDictionary implements Dictionary {
         }
         return -1;
     }
-    
+*/    
     public static String readCString(byte[] data, int offset) {
         int end = offset;
         while (end < data.length && data[end] != 0) {
@@ -117,6 +121,7 @@ public class PlainDictionary implements Dictionary {
         return new String(data, offset, end - offset, Charset.forName("UTF-8"));
     }
 
+  /*
     @Override
     public Object extract(int id) {
         switch (datatype.get(id)) {
@@ -137,9 +142,19 @@ public class PlainDictionary implements Dictionary {
         }
         return null;
     }
-    
+    */
     public static class Builder {
         private HashSet<Node> nodes = new HashSet<>();
+        private long maxLong = Long.MIN_VALUE;
+        private int maxInteger = Integer.MIN_VALUE;
+
+        public long getMaxLong() {
+            return maxLong;
+        }
+        
+        public int getMaxInteger() {
+            return maxInteger;
+        }
         
         public HashSet<Node> getNodes() {
             return nodes;
@@ -147,10 +162,19 @@ public class PlainDictionary implements Dictionary {
         
         public void Add(Node node) throws IOException {
            nodes.add(node);
+           if (node.isLiteral()) {
+               if (node.getLiteralDatatypeURI().equals(XSD.xlong.toString())) {
+                   switch (node.getLiteralValue()) {
+                       case Long x -> maxLong = Math.max(maxLong, x);
+                       case Integer x -> maxInteger = Math.max(maxInteger, x);
+                       default -> {}
+                   }
+               }
+           }
         }
         
-        public PlainDictionary build() throws IOException {                  
-            return new PlainDictionary(this);
+        public MultiDictionaryWriter build() throws IOException {                  
+            return new MultiDictionaryWriter(this);
         }
     }
     
