@@ -30,7 +30,7 @@ public class Generate {
         Node co = Node.ANY;   
     }
     
-    public Generate(File file) throws FileNotFoundException {
+    public Generate(File file) throws FileNotFoundException, IOException {
         this.dict = new PlainDictionary();
         this.file = file;
     }
@@ -90,8 +90,8 @@ public class Generate {
         IO.println("Dictionary : "+dict);
         IO.println("quads : "+cc.get());
         IO.println("diff nodes : "+dict.getNodes().size());
-        ArrayList<Node> list = NodeSorter.sortNodes(dict.getNodes());
-        list.forEach(n->System.out.println(n));
+       // ArrayList<Node> list = NodeSorter.sortNodes(dict.getNodes());
+        //list.forEach(n->System.out.println(n));
     }
     
     public static void main(String[] args) throws FileNotFoundException {

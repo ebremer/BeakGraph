@@ -1,8 +1,9 @@
 package com.ebremer.beakgraph.hdtish;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import org.apache.commons.codec.binary.Hex;
 
 // Interface to abstract byte writing, allowing flexibility for files or ByteBuffers
 interface ByteWriter {
@@ -12,24 +13,26 @@ interface ByteWriter {
 // BitPackedWriter class to pack bits into bytes and write to an output
 public class BitPackedWriter {
     private final ByteWriter byteWriter;
+    private final int width;
     private long bitBuffer = 0; // Accumulates bits
     private int bitCount = 0;  // Number of bits currently in the buffer
 
     // Constructor accepting a ByteWriter
-    public BitPackedWriter(ByteWriter byteWriter) {
+    public BitPackedWriter(ByteWriter byteWriter, int width) {
         this.byteWriter = byteWriter;
+        this.width = width;
     }
 
     // Write the least significant n bits of the integer to the buffer
-    public void writeInteger(int value, int n) throws IOException {
-        if (n < 0 || n > 32) {
+    public void writeInteger(int value) throws IOException {
+        if (width < 0 || width > 32) {
             throw new IllegalArgumentException("n must be between 0 and 32");
         }
         // Extract the least significant n bits
-        long bits = value & ((1L << n) - 1);
+        long bits = value & ((1L << width) - 1);
         // Shift existing bits left and append new bits
-        bitBuffer = (bitBuffer << n) | bits;
-        bitCount += n;
+        bitBuffer = (bitBuffer << width) | bits;
+        bitCount += width;
         // Write full bytes when possible
         while (bitCount >= 8) {
             int shift = bitCount - 8;
@@ -40,6 +43,22 @@ public class BitPackedWriter {
             bitCount -= 8;
         }
     }
+    
+    public void writeLong(long value) throws IOException {
+        if (width < 0 || width > 64) {
+            throw new IllegalArgumentException("width must be between 0 and 64");
+        }
+        long bits = value & ((1L << width) - 1);
+        bitBuffer = (bitBuffer << width) | bits;
+        bitCount += width;
+        while (bitCount >= 8) {
+            int shift = bitCount - 8;
+            byte b = (byte) (bitBuffer >>> shift);
+            byteWriter.writeByte(b);
+            bitBuffer = bitBuffer & ((1L << shift) - 1);
+            bitCount -= 8;
+        }
+    }    
 
     // Flush remaining bits as a padded byte and close
     public void close() throws IOException {
@@ -51,15 +70,15 @@ public class BitPackedWriter {
     }
 
     // Static factory method to create a BitPackedWriter for a file
-    public static BitPackedWriter forFile(String filePath) throws IOException {
-        java.io.FileOutputStream fos = new java.io.FileOutputStream(filePath);
+    public static BitPackedWriter forFile(File file, int width) throws IOException {
+        FileOutputStream fos = new FileOutputStream(file);
         ByteWriter fileWriter = new ByteWriter() {
             @Override
             public void writeByte(byte b) throws IOException {
                 fos.write(b);
             }
         };
-        return new BitPackedWriter(fileWriter);
+        return new BitPackedWriter(fileWriter, width);
     }
     
     public static String toBinaryString(ByteBuffer buffer, String delimiter) {
@@ -78,7 +97,7 @@ public class BitPackedWriter {
     }
 
     // Static factory method to create a BitPackedWriter for a ByteBuffer
-    public static BitPackedWriter forByteBuffer(ByteBuffer buffer) {
+    public static BitPackedWriter forByteBuffer(ByteBuffer buffer, int width) {
         ByteWriter bufferWriter = new ByteWriter() {
             @Override
             public void writeByte(byte b) throws IOException {
@@ -88,27 +107,27 @@ public class BitPackedWriter {
                 buffer.put(b);
             }
         };
-        return new BitPackedWriter(bufferWriter);
+        return new BitPackedWriter(bufferWriter, width);
     }
 
     public static void main(String[] args) throws IOException {
         // Example 1: Writing to a file
-        BitPackedWriter fileWriter = BitPackedWriter.forFile("output.dat");
-        fileWriter.writeInteger(5, 3); // 101
-        fileWriter.writeInteger(3, 3); // 011
-        fileWriter.writeInteger(7, 3); // 111
-        fileWriter.writeInteger(2, 3); // 111
-        fileWriter.writeInteger(1, 3); // 111
-        fileWriter.writeInteger(1, 3); // 111
-        fileWriter.writeInteger(4, 3); // 111
+        BitPackedWriter fileWriter = BitPackedWriter.forFile(new File("output.dat"), 3);
+        fileWriter.writeInteger(5); // 101
+        fileWriter.writeInteger(3); // 011
+        fileWriter.writeInteger(7); // 111
+        fileWriter.writeInteger(2); // 111
+        fileWriter.writeInteger(1); // 111
+        fileWriter.writeInteger(1); // 111
+        fileWriter.writeInteger(4); // 111
         fileWriter.close();
 
         // Example 2: Writing to a ByteBuffer
         ByteBuffer buffer = ByteBuffer.allocate(10);
-        BitPackedWriter bufferWriter = BitPackedWriter.forByteBuffer(buffer);
-        bufferWriter.writeInteger(5, 3);
-        bufferWriter.writeInteger(3, 3);
-        bufferWriter.writeInteger(7, 3);
+        BitPackedWriter bufferWriter = BitPackedWriter.forByteBuffer(buffer,3);
+        bufferWriter.writeInteger(5);
+        bufferWriter.writeInteger(3);
+        bufferWriter.writeInteger(7);
         bufferWriter.close();
 
         buffer.rewind();
