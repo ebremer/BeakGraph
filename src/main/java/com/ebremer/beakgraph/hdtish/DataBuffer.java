@@ -11,7 +11,7 @@ import java.io.IOException;
  *
  * @author Erich Bremer
  */
-public class DataBuffer {
+public class DataBuffer implements AutoCloseable {
     
     private final BufferedOutputStream baos;
     private final DataOutputStream dos;
@@ -36,4 +36,9 @@ public class DataBuffer {
     public void writeDouble(double v) throws IOException {
         dos.writeDouble(v);
     }    
+
+    @Override
+    public void close() throws Exception {
+        baos.close();
+    }
 }

@@ -10,13 +10,14 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
+import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.XSD;
 
 /**
  *
  * @author erbre
  */
-public class MultiDictionaryWriter {
+public class MultiDictionaryWriter implements AutoCloseable {
     private final BitPackedWriter offsets;
     private final BitPackedWriter integers;
     private final BitPackedWriter longs;
@@ -36,6 +37,17 @@ public class MultiDictionaryWriter {
         longs = BitPackedWriter.forFile(new File("/tcga/longs"), MinBits(builder.getMaxLong()));
         datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), DataType.values().length);
         sorted.forEach(n->Add(n));
+    }
+    
+    @Override
+    public void close() throws Exception {
+        offsets.close();
+        integers.close();
+        longs.close();
+        datatype.close();
+        floats.close();
+        doubles.close();
+        text.close();
     }
     
     private int MinBits(long x) {
@@ -168,7 +180,7 @@ public class MultiDictionaryWriter {
             return nodes;
         }
         
-        public void Add(Node node) {
+        public Builder Add(Node node) {
            nodes.add(node);
            if (node.isLiteral()) {
                if (node.getLiteralDatatypeURI().equals(XSD.xlong.toString())) {
@@ -179,10 +191,17 @@ public class MultiDictionaryWriter {
                    }
                }
            }
+           return this;
         }
         
-        public void Add(Stream<Node> stream) {
-            stream.forEach(n->Add(n));
+        public Builder Add(Stream<Quad> stream) {
+            stream.forEach(q->{
+                Add(q.getGraph());
+                Add(q.getSubject());
+                Add(q.getPredicate());
+                Add(q.getObject());
+            });
+            return this;
         }
         
         public MultiDictionaryWriter build() throws IOException {                  

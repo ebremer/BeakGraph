@@ -8,7 +8,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class FCDBuilder {
+public class FCDBuilder implements AutoCloseable {
     private final int blockSize;
     private int stringsInCurrentBlock = 0;
     private String previousString = null;
@@ -19,6 +19,11 @@ public class FCDBuilder {
         this.blockSize = blockSize;
         baos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/strings")));
         dos = new DataOutputStream(baos); 
+    }
+    
+    @Override
+    public void close() throws Exception {
+        baos.close();
     }
 
     public void add(String item) throws IOException {
