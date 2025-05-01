@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdtish;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -72,7 +73,7 @@ public class BitPackedWriter implements AutoCloseable {
     }
 
     public static BitPackedWriter forFile(File file, int width) throws IOException {
-        FileOutputStream fos = new FileOutputStream(file);
+        BufferedOutputStream fos = new BufferedOutputStream( new FileOutputStream(file));
         ByteWriter fileWriter = new ByteWriter() {
             @Override
             public void writeByte(byte b) throws IOException {

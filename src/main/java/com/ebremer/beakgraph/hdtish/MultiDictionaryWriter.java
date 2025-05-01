@@ -28,7 +28,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
     
     private MultiDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         System.out.print("Sorting nodes...");
-        ArrayList<Node> sorted = NodeSorter.sortNodes(builder.getNodes());      
+        ArrayList<Node> sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");
         doubles = new DataBuffer(new File("/tcga/doubles"));
         floats = new DataBuffer(new File("/tcga/floats"));
@@ -180,7 +180,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
             return nodes;
         }
         
-        public Builder Add(Node node) {
+        private Builder Add(Node node) {
            nodes.add(node);
            if (node.isLiteral()) {
                if (node.getLiteralDatatypeURI().equals(XSD.xlong.toString())) {
@@ -195,12 +195,14 @@ public class MultiDictionaryWriter implements AutoCloseable {
         }
         
         public Builder Add(Stream<Quad> stream) {
+            System.out.print("Loading Nodes...");
             stream.forEach(q->{
                 Add(q.getGraph());
                 Add(q.getSubject());
                 Add(q.getPredicate());
                 Add(q.getObject());
             });
+            System.out.println("Done.");
             return this;
         }
         
