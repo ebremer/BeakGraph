@@ -23,16 +23,14 @@ public class MultiDictionaryWriter {
     private DataBuffer floats;
     private DataBuffer doubles;
     private FCDBuilder text = new FCDBuilder(20);    
-    private int width;
     
     private MultiDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
-        width = MinBits(builder.getNodes().size());
         System.out.print("Sorting nodes...");
         ArrayList<Node> sorted = NodeSorter.sortNodes(builder.getNodes());      
         System.out.println("Done.");
         doubles = new DataBuffer(new File("/tcga/doubles"));
         floats = new DataBuffer(new File("/tcga/floats"));
-        offsets = BitPackedWriter.forFile(new File("/tcga/offsets"), width);
+        offsets = BitPackedWriter.forFile(new File("/tcga/offsets"), MinBits(builder.getNodes().size()));
         integers = BitPackedWriter.forFile(new File("/tcga/integers"), MinBits(builder.getMaxInteger()));
         longs = BitPackedWriter.forFile(new File("/tcga/longs"), MinBits(builder.getMaxLong()));
         datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), DataType.values().length);
@@ -54,7 +52,7 @@ public class MultiDictionaryWriter {
                     try {
                         offsets.writeInteger(Long.BYTES);
                         datatype.writeInteger(DataType.LONG.ordinal());  
-                        longs.writeLong(width);
+                        longs.writeLong(x);
                     } catch (IOException ex) {
                         Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
@@ -63,7 +61,7 @@ public class MultiDictionaryWriter {
                 if (node.getLiteralValue() instanceof Integer x) {
                     try {
                         offsets.writeInteger(Integer.BYTES);
-                        integers.writeInteger(width);
+                        integers.writeInteger(x);
                         datatype.writeInteger(DataType.INT.ordinal());
                     } catch (IOException ex) {
                         Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
