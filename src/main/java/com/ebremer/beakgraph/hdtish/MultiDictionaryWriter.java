@@ -99,7 +99,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                 if (node.getLiteralValue() instanceof Float x) {
                     try {
                         offsets.writeInteger(Float.BYTES);
-                        floats.writeDouble(x);
+                        floats.writeFloat(x);
                         datatype.writeInteger(DataType.FLOAT.ordinal());
                     } catch (IOException ex) {
                         Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
