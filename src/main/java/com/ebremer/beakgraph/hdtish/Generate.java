@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.hdtish;
 
 import com.ebremer.beakgraph.hdtish.MultiDictionaryWriter.Builder;
+import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -82,7 +83,7 @@ public class Generate {
         File file = new File("/data/sorted.nq.gz");
         Builder builder = new MultiDictionaryWriter.Builder();
         try (
-            GZIPInputStream fis = new GZIPInputStream(new FileInputStream(file));            
+            GZIPInputStream fis = new GZIPInputStream( new BufferedInputStream( new FileInputStream(file) ) );
         ) {
             MultiDictionaryWriter w = builder.Add(AsyncParser.of(fis, Lang.NQUADS, null).streamQuads()).build();
             w.close();

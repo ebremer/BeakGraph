@@ -24,7 +24,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
     private final BitPackedWriter datatype;
     private DataBuffer floats;
     private DataBuffer doubles;
-    private FCDBuilder text = new FCDBuilder(20);    
+    private FCDBuilder text;    
     
     private MultiDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         System.out.print("Sorting nodes...");
@@ -36,6 +36,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
         integers = BitPackedWriter.forFile(new File("/tcga/integers"), MinBits(builder.getMaxInteger()));
         longs = BitPackedWriter.forFile(new File("/tcga/longs"), MinBits(builder.getMaxLong()));
         datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), DataType.values().length);
+        text = new FCDBuilder(50);
         sorted.forEach(n->Add(n));
     }
     
@@ -164,7 +165,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
     }
     */
     public static class Builder {
-        private HashSet<Node> nodes = new HashSet<>();
+        private HashSet<Node> nodes = new HashSet<>(100000000);
         private long maxLong = Long.MIN_VALUE;
         private int maxInteger = Integer.MIN_VALUE;
 
