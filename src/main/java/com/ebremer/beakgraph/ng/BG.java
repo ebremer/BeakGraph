@@ -3,20 +3,13 @@ package com.ebremer.beakgraph.ng;
 import com.ebremer.rocrate4j.ROCrate;
 import com.ebremer.rocrate4j.writers.ZipWriter;
 import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import org.apache.jena.query.Dataset;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFDataMgr;
 
 public class BG {
     private static final Model m = ModelFactory.createDefaultModel();
@@ -99,16 +92,13 @@ public class BG {
                 bw.setSpecials(specials);
                 bw.HandleThese(pairs);
                 process.Process(bw, ds);
-                try (FileOutputStream fos = new FileOutputStream(new File("/tcga/ultra.nt"))) {
-                    RDFDataMgr.write(fos, ds, Lang.NQUADS);
-                }
                 bw.WriteDictionaryToFile();
                 bw.WriteNGDictionaryToFile();
-            }   catch (FileNotFoundException ex) {
-                    Logger.getLogger(BG.class.getName()).log(Level.SEVERE, null, ex);
-                } catch (IOException ex) {
-                    Logger.getLogger(BG.class.getName()).log(Level.SEVERE, null, ex);
-                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
         }
     }
     
@@ -116,3 +106,8 @@ public class BG {
         return new Builder();
     }
 }
+
+
+                //try (FileOutputStream fos = new FileOutputStream(new File("/tcga/ultra.nt"))) {
+                  //  RDFDataMgr.write(fos, ds, Lang.NQUADS);
+               // }

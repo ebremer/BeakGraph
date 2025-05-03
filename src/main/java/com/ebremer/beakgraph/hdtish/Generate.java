@@ -83,7 +83,7 @@ public class Generate {
         File file = new File("/data/sorted.nq.gz");
         Builder builder = new MultiDictionaryWriter.Builder();
         try (
-            GZIPInputStream fis = new GZIPInputStream( new BufferedInputStream( new FileInputStream(file) ) );
+            GZIPInputStream fis = new GZIPInputStream( new BufferedInputStream( new FileInputStream(file),  32768) );
         ) {
             MultiDictionaryWriter w = builder.Add(AsyncParser.of(fis, Lang.NQUADS, null).streamQuads()).build();
             w.close();

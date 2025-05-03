@@ -286,6 +286,10 @@ public class PAW implements AutoCloseable {
             if (!cs.containsKey(LONG)) {
                 cs.put(LONG, build(p,LONG));
             }    
+        } else if (dt.getURI().equals("http://www.opengis.net/ont/geosparql#wktLiteral")) {
+            if (!cs.containsKey(STRING)) {
+                cs.put(STRING, build(p,STRING));
+            }
         } else {
             throw new Error("WHAT IS THIS "+dt);
         }

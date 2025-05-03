@@ -36,7 +36,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
         integers = BitPackedWriter.forFile(new File("/tcga/integers"), MinBits(builder.getMaxInteger()));
         longs = BitPackedWriter.forFile(new File("/tcga/longs"), MinBits(builder.getMaxLong()));
         datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), DataType.values().length);
-        text = new FCDBuilder(50);
+        text = new FCDBuilder(8);
         sorted.forEach(n->Add(n));
     }
     

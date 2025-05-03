@@ -17,7 +17,7 @@ public class FCDBuilder implements AutoCloseable {
 
     public FCDBuilder(int blockSize) throws FileNotFoundException {
         this.blockSize = blockSize;
-        baos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/strings")));
+        baos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/strings")), 32768);
         dos = new DataOutputStream(baos); 
     }
     

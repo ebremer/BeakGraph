@@ -121,21 +121,19 @@ public final class BeakWriter implements AutoCloseable {
     }
         
     public void Analyze(Dataset ds) {
+        System.out.println("HERE Analyze A");
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select distinct ?p ?datatype
             where {
-                {
-                    ?s ?p ?o
-                } union {
-                    graph ?g {?s ?p ?o}
-                }
+                { ?s ?p ?o } union { graph ?g {?s ?p ?o} }
                 bind(datatype(?o) as ?datatype)
             }
             """
         );
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(),ds);
         ResultSet rs = qe.execSelect();
+        System.out.println("HERE Analyze Ab");
         rs.forEachRemaining(qs->{
             String p = qs.get("p").asResource().getURI();
             if (!byPredicate.containsKey(p)) {
@@ -150,12 +148,14 @@ public final class BeakWriter implements AutoCloseable {
                 paw.Handle(dt.asResource());
             }
         });
+        System.out.println("HERE Analyze Ac");
         byPredicate.forEach((k,paw)->{
             paw.getCS().forEach((dt,sv)->{
                 vectors.add(sv);
             });
             paw.resetCounts();
         });
+        System.out.println("HERE Analyze Ad");
         Model mk = ModelFactory.createDefaultModel();
         Resource b = mk.createResource();
         byPredicate.forEach((k,paw)->{
@@ -412,7 +412,7 @@ public final class BeakWriter implements AutoCloseable {
             throw new Error("ack");
         }
         String p = stmt.getPredicate().asResource().getURI();
-        Class<?> cc;
+        Class<?> cc = null;
         RDFNode o = stmt.getObject();
         if (o.isResource()) {
             cc = o.asResource().getClass();
@@ -422,10 +422,18 @@ public final class BeakWriter implements AutoCloseable {
                 }
             }
         } else if (o.isLiteral()) {
-            cc = o.asLiteral().getDatatype().getJavaClass();
+            if (o.asLiteral().getDatatypeURI().equals("http://www.opengis.net/ont/geosparql#wktLiteral")) {
+                o.asLiteral().getString();
+            } else {
+                cc = o.asLiteral().getDatatype().getJavaClass();
+            }
         } else {
             Resource r = o.asResource();
             throw new Error(r.isResource()+" Don't know how to deal with "+o.toString());
+        }
+        
+        if (cc==null) {
+            cc=String.class;
         }
         if (cc.equals(ResourceImpl.class)) {
             byPredicate.get(p).set(res, o.asResource());
