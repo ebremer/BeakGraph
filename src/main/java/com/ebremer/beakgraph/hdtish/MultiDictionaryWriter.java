@@ -56,7 +56,15 @@ public class MultiDictionaryWriter implements AutoCloseable {
     }
     
     private void Add(Node node) {
-        if (node.isURI()||node.isBlank()) {           
+        if (node.isBlank()) {           
+            try {
+                datatype.writeInteger(DataType.STRING.ordinal());
+                //text.add(node.toString());
+                offsets.writeInteger(node.toString().length());
+            } catch (IOException ex) {
+                Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        } else if (node.isURI()) {           
             try {
                 datatype.writeInteger(DataType.STRING.ordinal());
                 text.add(node.toString());
