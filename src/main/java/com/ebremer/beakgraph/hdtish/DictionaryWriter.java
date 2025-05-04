@@ -17,7 +17,7 @@ import org.apache.jena.vocabulary.XSD;
  *
  * @author erbre
  */
-public class MultiDictionaryWriter implements AutoCloseable {
+public class DictionaryWriter implements AutoCloseable {
     private final BitPackedWriter offsets;
     private final BitPackedWriter integers;
     private final BitPackedWriter longs;
@@ -26,7 +26,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
     private DataBuffer doubles;
     private FCDBuilder text;    
     
-    private MultiDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
+    private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         System.out.print("Sorting nodes...");
         ArrayList<Node> sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");
@@ -62,7 +62,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                 //text.add(node.toString());
                 offsets.writeInteger(node.toString().length());
             } catch (IOException ex) {
-                Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
             }
         } else if (node.isURI()) {           
             try {
@@ -70,7 +70,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                 text.add(node.toString());
                 offsets.writeInteger(node.toString().length());
             } catch (IOException ex) {
-                Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
             }
         } else if (node.isLiteral()) {
             String dt = node.getLiteralDatatypeURI();
@@ -81,7 +81,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                         datatype.writeInteger(DataType.LONG.ordinal());  
                         longs.writeLong(x);
                     } catch (IOException ex) {
-                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xint.getURI())) {
@@ -91,7 +91,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                         integers.writeInteger(x);
                         datatype.writeInteger(DataType.INT.ordinal());
                     } catch (IOException ex) {
-                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xdouble.getURI())) {
@@ -101,7 +101,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                         doubles.writeDouble(x);
                         datatype.writeInteger(DataType.DOUBLE.ordinal());
                     } catch (IOException ex) {
-                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xfloat.getURI())) {
@@ -111,7 +111,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                         floats.writeFloat(x);
                         datatype.writeInteger(DataType.FLOAT.ordinal());
                     } catch (IOException ex) {
-                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else if (dt.equals(XSD.xstring.getURI())) {                             
@@ -121,7 +121,7 @@ public class MultiDictionaryWriter implements AutoCloseable {
                         datatype.writeInteger(DataType.STRING.ordinal());
                         text.add(node.toString());
                     } catch (IOException ex) {
-                        Logger.getLogger(MultiDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
             } else {
@@ -215,8 +215,8 @@ public class MultiDictionaryWriter implements AutoCloseable {
             return this;
         }
         
-        public MultiDictionaryWriter build() throws IOException {                  
-            return new MultiDictionaryWriter(this);
+        public DictionaryWriter build() throws IOException {                  
+            return new DictionaryWriter(this);
         }
     }    
 }

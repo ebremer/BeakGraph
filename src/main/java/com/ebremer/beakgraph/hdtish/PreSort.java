@@ -1,12 +1,14 @@
 package com.ebremer.beakgraph.hdtish;
 
-import com.ebremer.beakgraph.hdtish.MultiDictionaryWriter.Builder;
+import com.ebremer.beakgraph.hdtish.DictionaryWriter.Builder;
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IO;
 import java.io.IOException;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -19,10 +21,15 @@ import org.apache.jena.riot.system.AsyncParser;
  *
  * @author Erich Bremer
  */
-public class Generate {
+public class PreSort {
     
     private File file;
-    private MultiDictionaryWriter dict;
+    private DictionaryWriter dict;
+    private HashSet<Node> shared = new HashSet<>();
+    private LinkedHashSet<Node> graphs = new LinkedHashSet<>();
+    private LinkedHashSet<Node> subjects = new LinkedHashSet<>();
+    private HashSet<Node> predicates = new HashSet<>();
+    private LinkedHashSet<Node> objects = new LinkedHashSet<>();
     
     class Currents {
         Node cg = Node.ANY;
@@ -31,7 +38,7 @@ public class Generate {
         Node co = Node.ANY;   
     }
     
-    public Generate(File file) throws FileNotFoundException, IOException {
+    public PreSort(File file) throws FileNotFoundException, IOException {
         this.dict = null;
         this.file = file;
     }
@@ -51,25 +58,40 @@ public class Generate {
                     Node o = quad.getObject();
                     if (!g.equals(c.cg)) {
                         c.cg = g;
-                        //                      dict.Add(g);
+                        if (graphs.contains(g)) {
+                            graphs.remove(g);
+                            shared.add(g);
+                        } else {
+                            graphs.add(g);
+                        }
                     }
                     if (!s.equals(c.cs)) {
                         c.cs = s;
-                        //                    dict.Add(s);
+                        if (subjects.contains(s)) {
+                            subjects.remove(s);
+                            shared.add(s);
+                        } else {
+                            subjects.add(s);
+                        }
                     }
                     if (!p.equals(c.cp)) {
                         c.cp = p;
-                        //                  dict.Add(p);
+                        predicates.add(p);
                     }
                     if (!o.equals(c.co)) {
                         c.co = o;
-                        //                dict.Add(o);
+                        if (objects.contains(o)) {
+                            objects.remove(o);
+                            shared.add(o);
+                        } else {
+                            objects.add(o);
+                        }
                     }                 
                 });
         } catch (FileNotFoundException ex) {
-            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(PreSort.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
-            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(PreSort.class.getName()).log(Level.SEVERE, null, ex);
         }
         
         IO.println("Dictionary : "+dict);
@@ -81,20 +103,18 @@ public class Generate {
     
     public static void main(String[] args) throws FileNotFoundException {
         File file = new File("/data/sorted.nq.gz");
-        Builder builder = new MultiDictionaryWriter.Builder();
+        Builder builder = new DictionaryWriter.Builder();
         try (
             GZIPInputStream fis = new GZIPInputStream( new BufferedInputStream( new FileInputStream(file),  32768) );
         ) {
-            MultiDictionaryWriter w = builder.Add(AsyncParser.of(fis, Lang.NQUADS, null).streamQuads()).build();
+            DictionaryWriter w = builder.Add(AsyncParser.of(fis, Lang.NQUADS, null).streamQuads()).build();
             w.close();
         } catch (IOException ex) {
-            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(PreSort.class.getName()).log(Level.SEVERE, null, ex);
         } catch (Exception ex) {
-            Logger.getLogger(Generate.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(PreSort.class.getName()).log(Level.SEVERE, null, ex);
         }
 
-      //  Generate gen = new Generate(file);
-        //gen.build();
     }
     
 }
