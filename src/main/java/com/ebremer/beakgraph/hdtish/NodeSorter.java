@@ -2,8 +2,8 @@ package com.ebremer.beakgraph.hdtish;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Set;
 import org.apache.jena.graph.Node;
 
 public class NodeSorter {
@@ -13,7 +13,7 @@ public class NodeSorter {
         return list;
     }
    
-    public static ArrayList<Node> parallelSort( HashSet<Node> nodeSet ) {
+    public static ArrayList<Node> parallelSort( Set<Node> nodeSet ) {
         Node[] array = nodeSet.toArray(new Node[0]);
         Arrays.parallelSort(array, new NodeComparator());
         return new ArrayList<>(Arrays.asList(array));

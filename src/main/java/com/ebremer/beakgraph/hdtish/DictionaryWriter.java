@@ -6,11 +6,10 @@ import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
-import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.XSD;
 
 /**
@@ -149,7 +148,7 @@ public class DictionaryWriter implements AutoCloseable {
         }
         return new String(data, offset, end - offset, Charset.forName("UTF-8"));
     }
-
+    
   /*
     @Override
     public Object extract(int id) {
@@ -173,9 +172,10 @@ public class DictionaryWriter implements AutoCloseable {
     }
     */
     public static class Builder {
-        private HashSet<Node> nodes = new HashSet<>(100000000);
+        private Set<Node> nodes = new HashSet<>();
         private long maxLong = Long.MIN_VALUE;
         private int maxInteger = Integer.MIN_VALUE;
+        //private File hdtish;
 
         public long getMaxLong() {
             return maxLong;
@@ -185,10 +185,16 @@ public class DictionaryWriter implements AutoCloseable {
             return maxInteger;
         }
         
-        public HashSet<Node> getNodes() {
+        public Set<Node> getNodes() {
             return nodes;
         }
         
+        public Builder setFile(Set<Node> nodes) {
+            this.nodes = nodes;
+            return this;
+        }
+        
+        /*
         private Builder Add(Node node) {
            nodes.add(node);
            if (node.isLiteral()) {
@@ -201,19 +207,7 @@ public class DictionaryWriter implements AutoCloseable {
                }
            }
            return this;
-        }
-        
-        public Builder Add(Stream<Quad> stream) {
-            System.out.print("Loading Nodes...");
-            stream.forEach(q->{
-                Add(q.getGraph());
-                Add(q.getSubject());
-                Add(q.getPredicate());
-                Add(q.getObject());
-            });
-            System.out.println("Done.");
-            return this;
-        }
+        }*/
         
         public DictionaryWriter build() throws IOException {                  
             return new DictionaryWriter(this);
