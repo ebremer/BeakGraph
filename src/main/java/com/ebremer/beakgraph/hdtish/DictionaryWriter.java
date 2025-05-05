@@ -22,26 +22,26 @@ public class DictionaryWriter implements AutoCloseable {
     private final BitPackedWriter integers;
     private final BitPackedWriter longs;
     private final BitPackedWriter datatype;
-    private DataBuffer floats;
-    private DataBuffer doubles;
+    private DataOutputBuffer floats;
+    private DataOutputBuffer doubles;
     private FCDBuilder text;    
     
     private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         System.out.print("Sorting nodes...");
         ArrayList<Node> sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");        
-        doubles = new DataBuffer(Path.of(builder.getBase().getPath(),builder.getName(),"doubles"));
-        floats = new DataBuffer(Path.of(builder.getBase().getPath(),builder.getName(),"floats"));
-        offsets = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"offsets"), MinBits(builder.getNodes().size()));
-        integers = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"integers"), MinBits(builder.getMaxInteger()));
-        longs = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"longs"), MinBits(builder.getMaxLong()));
-        datatype = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"datatype"), DataType.values().length);
+        doubles = new DataOutputBuffer( Path.of(builder.getBase().getPath(), builder.getName(), "doubles"));
+        floats = new DataOutputBuffer( Path.of(builder.getBase().getPath(), builder.getName(), "floats"));
+        offsets = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "offsets"), MinBits( builder.getNodes().size()) );
+        integers = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "integers"), MinBits( builder.getMaxInteger()) );
+        longs = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "longs"), MinBits( builder.getMaxLong()) );
+        datatype = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "datatype"), DataType.values().length );
         text = new FCDBuilder(8);
         sorted.forEach(n->Add(n));
     }
     
     @Override
-    public void close() throws Exception {
+    public void close() throws IOException, Exception {
         offsets.close();
         integers.close();
         longs.close();

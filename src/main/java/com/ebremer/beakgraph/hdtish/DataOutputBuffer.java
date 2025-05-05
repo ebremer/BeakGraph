@@ -11,12 +11,12 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-public class DataBuffer implements AutoCloseable {
+public class DataOutputBuffer implements AutoCloseable {
     
     private final BufferedOutputStream baos;
     private final DataOutputStream dos;
     
-    public DataBuffer(Path file) throws FileNotFoundException {
+    public DataOutputBuffer(Path file) throws FileNotFoundException {
         baos = new BufferedOutputStream(new FileOutputStream(file.toFile()));
         dos = new DataOutputStream(baos);
     }

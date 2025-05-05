@@ -114,6 +114,7 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         public FiveSectionDictionaryWriter build() throws IOException {
             final Currents c = new Currents();
             final AtomicLong cc = new AtomicLong();        
+            System.out.print("Create sections...");
             try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {
                 AsyncParser.of(fis, Lang.NQUADS, null)
                     .streamQuads()
@@ -161,15 +162,18 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
             } catch (IOException ex) {
                 Logger.getLogger(FiveSectionDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
             }
+            System.out.println("Done.");
             return new FiveSectionDictionaryWriter(this);
         }
     }
     
     public static void main(String[] args) throws FileNotFoundException, IOException, Exception {
         File file = new File("/data/sorted.nq.gz");
+        File dest = new File("/data/HDT");
         Builder builder = new FiveSectionDictionaryWriter.Builder();
         FiveSectionDictionaryWriter w = builder
             .setSource(file)
+            .setDestination(dest)
             .build();
         w.close();
     }

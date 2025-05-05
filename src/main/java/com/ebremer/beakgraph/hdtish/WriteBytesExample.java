@@ -42,6 +42,7 @@ public class WriteBytesExample {
             System.out.println(h.getHdfBackingStorage().getFileChannel().size());
             ContiguousDataset ds = (ContiguousDataset) h.getDatasetByPath("/byte_group/byte_dataset");
             ds.getBuffer();
+            ByteBuffer buff;
             System.out.println("Dataset : "+ds.getClass().toGenericString());
             //System.out.println(h.getDatasetByPath("YAY").);
         } catch (IOException ex) {
