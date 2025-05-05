@@ -26,13 +26,27 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         DictionaryWriter.Builder subjects = new DictionaryWriter.Builder();
         DictionaryWriter.Builder predicates = new DictionaryWriter.Builder();
         DictionaryWriter.Builder objects = new DictionaryWriter.Builder();
-        DictionaryWriter.Builder graphs = new DictionaryWriter.Builder();
-        
-        DictionaryWriter shareddict = shared.setFile(builder.getShared()).build();
-        DictionaryWriter subjectsdict = shared.setFile(builder.getSubjects()).build();
-        DictionaryWriter predicatesdict = shared.setFile(builder.getPredicates()).build();
-        DictionaryWriter objectsdict = shared.setFile(builder.getObjects()).build();
-        DictionaryWriter graphsdict = shared.setFile(builder.getGraphs()).build();
+        DictionaryWriter.Builder graphs = new DictionaryWriter.Builder();        
+        DictionaryWriter shareddict = shared  
+            .setName("shared")
+            .setNodes(builder.getShared())            
+            .build();
+        DictionaryWriter subjectsdict = subjects
+            .setName("subjects")
+            .setNodes(builder.getSubjects())
+            .build();
+        DictionaryWriter predicatesdict = predicates
+            .setName("predicates")
+            .setNodes(builder.getPredicates())
+            .build();
+        DictionaryWriter objectsdict = objects
+            .setName("objects")
+            .setNodes(builder.getObjects())
+            .build();
+        DictionaryWriter graphsdict = graphs
+            .setName("graphs")
+            .setNodes(builder.getGraphs())
+            .build();
         
     }
 
@@ -62,6 +76,10 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         private LinkedHashSet<Node> subjects = new LinkedHashSet<>();
         private HashSet<Node> predicates = new HashSet<>();
         private LinkedHashSet<Node> objects = new LinkedHashSet<>();
+        
+        public File getDestination() {
+            return dest;
+        }
         
         public Set<Node> getShared() {
             return shared;

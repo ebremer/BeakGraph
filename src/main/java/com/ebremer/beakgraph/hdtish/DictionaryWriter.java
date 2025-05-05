@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
@@ -28,13 +29,13 @@ public class DictionaryWriter implements AutoCloseable {
     private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         System.out.print("Sorting nodes...");
         ArrayList<Node> sorted = NodeSorter.parallelSort(builder.getNodes());      
-        System.out.println("Done.");
-        doubles = new DataBuffer(new File("/tcga/doubles"));
-        floats = new DataBuffer(new File("/tcga/floats"));
-        offsets = BitPackedWriter.forFile(new File("/tcga/offsets"), MinBits(builder.getNodes().size()));
-        integers = BitPackedWriter.forFile(new File("/tcga/integers"), MinBits(builder.getMaxInteger()));
-        longs = BitPackedWriter.forFile(new File("/tcga/longs"), MinBits(builder.getMaxLong()));
-        datatype = BitPackedWriter.forFile(new File("/tcga/datatypes"), DataType.values().length);
+        System.out.println("Done.");        
+        doubles = new DataBuffer(Path.of(builder.getBase().getPath(),builder.getName(),"doubles"));
+        floats = new DataBuffer(Path.of(builder.getBase().getPath(),builder.getName(),"floats"));
+        offsets = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"offsets"), MinBits(builder.getNodes().size()));
+        integers = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"integers"), MinBits(builder.getMaxInteger()));
+        longs = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"longs"), MinBits(builder.getMaxLong()));
+        datatype = BitPackedWriter.forFile(Path.of(builder.getBase().getPath(),builder.getName(),"datatype"), DataType.values().length);
         text = new FCDBuilder(8);
         sorted.forEach(n->Add(n));
     }
@@ -175,6 +176,8 @@ public class DictionaryWriter implements AutoCloseable {
         private Set<Node> nodes = new HashSet<>();
         private long maxLong = Long.MIN_VALUE;
         private int maxInteger = Integer.MIN_VALUE;
+        private String name;
+        private File base;
         //private File hdtish;
 
         public long getMaxLong() {
@@ -189,11 +192,29 @@ public class DictionaryWriter implements AutoCloseable {
             return nodes;
         }
         
-        public Builder setFile(Set<Node> nodes) {
+        public Builder setNodes(Set<Node> nodes) {
             this.nodes = nodes;
             return this;
         }
         
+        public Builder setName(String name) {
+            this.name = name;
+            return this;
+        }
+        
+        public String getName() {
+            return name;
+        }
+        
+        public Builder setBase(File base) {
+            this.base = base;
+            return this;
+        }
+        
+        public File getBase() {
+            return base;
+        }
+
         /*
         private Builder Add(Node node) {
            nodes.add(node);

@@ -2,10 +2,10 @@ package com.ebremer.beakgraph.hdtish;
 
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Path;
 
 /**
  *
@@ -16,8 +16,8 @@ public class DataBuffer implements AutoCloseable {
     private final BufferedOutputStream baos;
     private final DataOutputStream dos;
     
-    public DataBuffer(File file) throws FileNotFoundException {
-        baos = new BufferedOutputStream(new FileOutputStream(file));
+    public DataBuffer(Path file) throws FileNotFoundException {
+        baos = new BufferedOutputStream(new FileOutputStream(file.toFile()));
         dos = new DataOutputStream(baos);
     }
     

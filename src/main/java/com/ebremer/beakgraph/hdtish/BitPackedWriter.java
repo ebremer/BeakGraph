@@ -6,6 +6,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 
 interface ByteWriter {
     void writeByte(byte b) throws IOException;
@@ -72,8 +73,8 @@ public class BitPackedWriter implements AutoCloseable {
         os.close();
     }
 
-    public static BitPackedWriter forFile(File file, int width) throws IOException {
-        BufferedOutputStream fos = new BufferedOutputStream( new FileOutputStream(file));
+    public static BitPackedWriter forFile(Path file, int width) throws IOException {
+        BufferedOutputStream fos = new BufferedOutputStream( new FileOutputStream(file.toFile()));
         ByteWriter fileWriter = new ByteWriter() {
             @Override
             public void writeByte(byte b) throws IOException {
