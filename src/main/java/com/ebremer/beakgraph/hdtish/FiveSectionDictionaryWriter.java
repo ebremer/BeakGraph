@@ -67,11 +67,13 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         }
         try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
             WritableGroup group = null;
-            Path curr = null;
+            Path curr = Path.of("dummy");
             for (HDF5Buffer b : list) {
-                if (curr!=b.getName().getParent()) {
+                if (!curr.equals(b.getName().getParent())) {
+                    curr = b.getName().getParent();
                     System.out.println("Creating new HDF5 group : "+b.getName().getParent().toString());
                     group = hdfFile.putGroup(b.getName().getParent().toString());
+                    group.putAttribute("metadata", "this is really cool --> "+b.getName().getParent().toString());
                 }
                 if (b.getBuffer().length>0) {
                     System.out.println("Adding : "+b.getName().toFile().getName()+" ----> "+b.getBuffer().length);
