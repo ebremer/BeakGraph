@@ -33,18 +33,22 @@ public class DataOutputBuffer implements HDF5Buffer, AutoCloseable {
     }
     
     public void writeInt(int v) throws IOException {
+        numEntries++;
         dos.writeInt(v);
     }
 
     public void writeLong(long v) throws IOException {
+        numEntries++;
         dos.writeLong(v);
     }
     
     public void writeFloat(float v) throws IOException {
+        numEntries++;
         dos.writeFloat(v);
     }
 
     public void writeDouble(double v) throws IOException {
+        numEntries++;
         dos.writeDouble(v);
     }    
 

@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.hdtish;
 
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -19,7 +18,7 @@ import org.apache.jena.vocabulary.XSD;
  *
  * @author erbre
  */
-public class DictionaryWriter implements AutoCloseable {
+public class DictionaryWriter implements Dictionary, AutoCloseable {
     private final BitPackedWriter offsets;
     private final BitPackedWriter integers;
     private final BitPackedWriter longs;
@@ -28,10 +27,11 @@ public class DictionaryWriter implements AutoCloseable {
     private DataOutputBuffer doubles;
     private FCDWriter text;  
     private List<HDF5Buffer> list = new ArrayList<>();
+    private ArrayList<Node> sorted;
     
     private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         System.out.print("Sorting nodes...");
-        ArrayList<Node> sorted = NodeSorter.parallelSort(builder.getNodes());      
+        sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");        
         doubles = new DataOutputBuffer( Path.of(builder.getName(), "doubles"));
         floats = new DataOutputBuffer( Path.of(builder.getName(), "floats"));
@@ -43,6 +43,9 @@ public class DictionaryWriter implements AutoCloseable {
         list.add(text);
         list.add(doubles);
         list.add(floats);
+        list.add(integers);
+        list.add(longs);
+        list.add(offsets);
         sorted.forEach(n->Add(n));
     }
     
@@ -63,6 +66,16 @@ public class DictionaryWriter implements AutoCloseable {
     
     private int MinBits(long x) {
         return (int) Math.ceil(Math.log(x)/Math.log(2d));
+    }
+    
+    @Override
+    public int locate(Node element) {
+        return NodeSearch.findPosition(sorted, element);
+    }
+
+    @Override
+    public Object extract(int id) {
+        return sorted.get(id);
     }
     
     private void Add(Node node) {

@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdtish;
 
 import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
+import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.File;
 import java.io.FileInputStream;
@@ -73,20 +74,17 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                     group.putAttribute("metadata", "this is really cool --> "+b.getName().getParent().toString());
                 }
                 if (b.getBuffer().length>0) {
-                    System.out.println("Adding : "+b.getName().toFile().getName()+" ----> "+b.getBuffer().length);
-                    group.putDataset(b.getName().toFile().getName(), b.getBuffer());
+                    System.out.println("Adding : "+b.getName().toFile().getName()+" ----> "+b.getBuffer().length);                    
+                    WritableDataset ds = group.putDataset(b.getName().toFile().getName(), b.getBuffer());
+                    b.getProperties().forEach((k,v)->{
+                        ds.putAttribute(k, v);
+                    });
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
-
-    //    IO.println("Dictionary : "+dict);
-      //  IO.println("quads : "+cc.get());
-     //   IO.println("diff nodes : "+dict.getNodes().size());
-       // ArrayList<Node> list = NodeSorter.sortNodes(dict.getNodes());
-        //list.forEach(n->System.out.println(n));
 
     @Override
     public void close() {
