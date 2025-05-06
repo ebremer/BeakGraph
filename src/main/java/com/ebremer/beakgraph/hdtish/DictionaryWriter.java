@@ -3,10 +3,12 @@ package com.ebremer.beakgraph.hdtish;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -24,19 +26,23 @@ public class DictionaryWriter implements AutoCloseable {
     private final BitPackedWriter datatype;
     private DataOutputBuffer floats;
     private DataOutputBuffer doubles;
-    private FCDBuilder text;    
+    private FCDWriter text;  
+    private List<HDF5Buffer> list = new ArrayList<>();
     
     private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         System.out.print("Sorting nodes...");
         ArrayList<Node> sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");        
-        doubles = new DataOutputBuffer( Path.of(builder.getBase().getPath(), builder.getName(), "doubles"));
-        floats = new DataOutputBuffer( Path.of(builder.getBase().getPath(), builder.getName(), "floats"));
+        doubles = new DataOutputBuffer( Path.of(builder.getName(), "doubles"));
+        floats = new DataOutputBuffer( Path.of(builder.getName(), "floats"));
         offsets = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "offsets"), MinBits( builder.getNodes().size()) );
         integers = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "integers"), MinBits( builder.getMaxInteger()) );
         longs = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "longs"), MinBits( builder.getMaxLong()) );
         datatype = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "datatype"), DataType.values().length );
-        text = new FCDBuilder(8);
+        text = new FCDWriter(Path.of(builder.getName(), "strings"), 8);
+        list.add(text);
+        list.add(doubles);
+        list.add(floats);
         sorted.forEach(n->Add(n));
     }
     
@@ -177,8 +183,12 @@ public class DictionaryWriter implements AutoCloseable {
         private long maxLong = Long.MIN_VALUE;
         private int maxInteger = Integer.MIN_VALUE;
         private String name;
-        private File base;
+        private OutputStream baos;
         //private File hdtish;
+        
+        public OutputStream getOutputStream() {
+            return baos;
+        }
 
         public long getMaxLong() {
             return maxLong;
@@ -206,8 +216,8 @@ public class DictionaryWriter implements AutoCloseable {
             return name;
         }
         
-        public Builder setBase(File base) {
-            this.base = base;
+        public Builder setOutputStream(OutputStream baos) {
+            this.baos = baos;
             return this;
         }
         

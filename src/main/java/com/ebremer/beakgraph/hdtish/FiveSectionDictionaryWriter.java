@@ -1,9 +1,11 @@
 package com.ebremer.beakgraph.hdtish;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -26,25 +28,35 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         DictionaryWriter.Builder subjects = new DictionaryWriter.Builder();
         DictionaryWriter.Builder predicates = new DictionaryWriter.Builder();
         DictionaryWriter.Builder objects = new DictionaryWriter.Builder();
-        DictionaryWriter.Builder graphs = new DictionaryWriter.Builder();        
+        DictionaryWriter.Builder graphs = new DictionaryWriter.Builder();
+        OutputStream sharedOS = new ByteArrayOutputStream();
+        OutputStream subjectsOS = new ByteArrayOutputStream();
+        OutputStream predicatesOS = new ByteArrayOutputStream();
+        OutputStream objectsOS = new ByteArrayOutputStream();
+        OutputStream graphsOS = new ByteArrayOutputStream();
         DictionaryWriter shareddict = shared  
             .setName("shared")
+            .setOutputStream(sharedOS)
             .setNodes(builder.getShared())            
             .build();
         DictionaryWriter subjectsdict = subjects
             .setName("subjects")
+            .setOutputStream(subjectsOS)    
             .setNodes(builder.getSubjects())
             .build();
         DictionaryWriter predicatesdict = predicates
             .setName("predicates")
+            .setOutputStream(predicatesOS)
             .setNodes(builder.getPredicates())
             .build();
         DictionaryWriter objectsdict = objects
             .setName("objects")
+            .setOutputStream(objectsOS)
             .setNodes(builder.getObjects())
             .build();
         DictionaryWriter graphsdict = graphs
             .setName("graphs")
+            .setOutputStream(graphsOS)    
             .setNodes(builder.getGraphs())
             .build();
         

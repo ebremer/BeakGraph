@@ -1,9 +1,8 @@
 package com.ebremer.beakgraph.hdtish;
 
-import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 
@@ -11,13 +10,15 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-public class DataOutputBuffer implements AutoCloseable {
+public class DataOutputBuffer implements HDF5Buffer, AutoCloseable {
     
-    private final BufferedOutputStream baos;
+    private final ByteArrayOutputStream baos;
     private final DataOutputStream dos;
+    private final Path path;
     
     public DataOutputBuffer(Path file) throws FileNotFoundException {
-        baos = new BufferedOutputStream(new FileOutputStream(file.toFile()));
+        this.path = file;
+        baos = new ByteArrayOutputStream();
         dos = new DataOutputStream(baos);
     }
     
@@ -40,5 +41,15 @@ public class DataOutputBuffer implements AutoCloseable {
     @Override
     public void close() throws Exception {
         baos.close();
+    }
+
+    @Override
+    public Path getName() {
+        return path;
+    }
+
+    @Override
+    public byte[] getBuffer() {
+       return baos.toByteArray();
     }
 }

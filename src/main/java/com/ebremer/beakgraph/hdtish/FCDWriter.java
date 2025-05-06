@@ -1,23 +1,24 @@
 package com.ebremer.beakgraph.hdtish;
 
-import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
-import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.Path;
 
-public class FCDBuilder implements AutoCloseable {
+public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private final int blockSize;
     private int stringsInCurrentBlock = 0;
     private String previousString = null;
-    private OutputStream baos;
+    private ByteArrayOutputStream baos;
     private DataOutputStream dos;
+    private Path path;
 
-    public FCDBuilder(int blockSize) throws FileNotFoundException {
+    public FCDWriter(Path path, int blockSize) throws FileNotFoundException {
+        this.path = path;
         this.blockSize = blockSize;
-        baos = new BufferedOutputStream(new FileOutputStream(new File("/tcga/strings")), 32768);
+        this.baos = new ByteArrayOutputStream(); //new BufferedOutputStream(new FileOutputStream(new File("/tcga/strings")), 32768);
         dos = new DataOutputStream(baos); 
     }
     
@@ -51,5 +52,15 @@ public class FCDBuilder implements AutoCloseable {
             }
         }
         return minLength;
+    }
+
+    @Override
+    public Path getName() {
+        return path;
+    }
+
+    @Override
+    public byte[] getBuffer() {
+        return baos.toByteArray();
     }
 }

@@ -15,7 +15,7 @@ public class DictionaryReader implements Dictionary {
     private final BitPackedWriter datatype;
     private DataInputBuffer floats;
     private DataInputBuffer doubles;
-    private FCDBuilder text;   
+    private FCDWriter text;   
     
     private DictionaryReader(Builder builder) {
         
