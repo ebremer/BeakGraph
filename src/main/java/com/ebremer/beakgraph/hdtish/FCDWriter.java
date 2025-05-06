@@ -4,8 +4,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 
 public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private final int blockSize;
@@ -14,6 +15,8 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private ByteArrayOutputStream baos;
     private DataOutputStream dos;
     private Path path;
+    private long numBlocks = 0;
+    private long numEntries = 0;
 
     public FCDWriter(Path path, int blockSize) throws FileNotFoundException {
         this.path = path;
@@ -23,11 +26,21 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     }
     
     @Override
+    public Map<String, Object> getProperties() {
+        Map<String,Object> meta = new HashMap<>();
+        meta.put("blockSize", blockSize);
+        meta.put("numBlocks", numBlocks);
+        meta.put("numEntries", numEntries);
+        return meta;
+    }
+    
+    @Override
     public void close() throws Exception {
         baos.close();
     }
 
     public void add(String item) throws IOException {
+        numEntries++;
         if (stringsInCurrentBlock == 0) {
             dos.writeUTF(item);
             previousString = item;

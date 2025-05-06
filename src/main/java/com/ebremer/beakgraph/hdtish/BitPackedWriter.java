@@ -1,10 +1,11 @@
 package com.ebremer.beakgraph.hdtish;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 
 interface ByteWriter {
     void writeByte(byte b) throws IOException;
@@ -13,16 +14,25 @@ interface ByteWriter {
 public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
     private final ByteWriter byteWriter;
     private final int width;
-    private long bitBuffer = 0; // Accumulates bits
-    private int bitCount = 0;  // Number of bits currently in the buffer
+    private long bitBuffer = 0;
+    private int bitCount = 0;
     private ByteArrayOutputStream os;
     private Path path;
+    private long entries = 0;
 
     private BitPackedWriter(Path path, ByteWriter byteWriter, int width, ByteArrayOutputStream os) {
         this.path = path;
         this.byteWriter = byteWriter;
         this.width = width;
         this.os = os;
+    }
+    
+    @Override
+    public Map<String, Object> getProperties() {
+        Map<String,Object> meta = new HashMap<>();
+        meta.put("width", width);
+        meta.put("numEntries", entries);
+        return meta;
     }
     
     @Override
@@ -40,6 +50,7 @@ public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
         if (width < 0 || width > 32) {
             throw new IllegalArgumentException("n must be between 0 and 32");
         }
+        entries++;
         // Extract the least significant n bits
         long bits = value & ((1L << width) - 1);
         // Shift existing bits left and append new bits
@@ -60,6 +71,7 @@ public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
         if (width < 0 || width > 64) {
             throw new IllegalArgumentException("width must be between 0 and 64");
         }
+        entries++;
         long bits = value & ((1L << width) - 1);
         bitBuffer = (bitBuffer << width) | bits;
         bitCount += width;
