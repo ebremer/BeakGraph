@@ -74,7 +74,7 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                     group = hdfFile.putGroup(b.getName().getParent().toString());
                 }
                 if (b.getBuffer().length>0) {
-                    System.out.println("Adding : "+b.getName().toFile().getName());
+                    System.out.println("Adding : "+b.getName().toFile().getName()+" ----> "+b.getBuffer().length);
                     group.putDataset(b.getName().toFile().getName(), b.getBuffer());
                 }
             }
