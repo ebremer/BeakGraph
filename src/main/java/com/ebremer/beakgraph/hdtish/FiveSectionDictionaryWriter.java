@@ -162,8 +162,11 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                         Node o = quad.getObject();
                         if (!g.equals(c.cg)) {
                             c.cg = g;
-                            if (graphs.contains(g)) {
+                            if (subjects.contains(g)||predicates.contains(g)||objects.contains(g)) {
                                 graphs.remove(g);
+                                subjects.remove(g);
+                                predicates.remove(g);
+                                objects.remove(g);
                                 shared.add(g);
                             } else {
                                 graphs.add(g);
@@ -171,8 +174,11 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                         }
                         if (!s.equals(c.cs)) {
                             c.cs = s;
-                            if (subjects.contains(s)) {
+                            if (graphs.contains(s)||predicates.contains(s)||objects.contains(s)) {
+                                graphs.remove(s);
                                 subjects.remove(s);
+                                predicates.remove(s);
+                                objects.remove(s);
                                 shared.add(s);
                             } else {
                                 subjects.add(s);
@@ -180,11 +186,22 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                         }
                         if (!p.equals(c.cp)) {
                             c.cp = p;
-                            predicates.add(p);
+                            if (graphs.contains(p)||subjects.contains(p)||objects.contains(p)) {
+                                graphs.remove(p);
+                                subjects.remove(p);
+                                predicates.remove(p);
+                                objects.remove(p);
+                                shared.add(p);
+                            } else {
+                                predicates.add(p);
+                            }
                         }
                         if (!o.equals(c.co)) {
                             c.co = o;
-                            if (objects.contains(o)) {
+                            if (graphs.contains(o)||subjects.contains(o)||predicates.contains(o)) {
+                                graphs.remove(o);
+                                subjects.remove(o);
+                                predicates.remove(o);
                                 objects.remove(o);
                                 shared.add(o);
                             } else {
