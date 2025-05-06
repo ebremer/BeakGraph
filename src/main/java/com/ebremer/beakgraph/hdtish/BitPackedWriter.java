@@ -1,11 +1,8 @@
 package com.ebremer.beakgraph.hdtish;
 
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 
@@ -13,17 +10,29 @@ interface ByteWriter {
     void writeByte(byte b) throws IOException;
 }
 
-public class BitPackedWriter implements AutoCloseable {
+public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
     private final ByteWriter byteWriter;
     private final int width;
     private long bitBuffer = 0; // Accumulates bits
     private int bitCount = 0;  // Number of bits currently in the buffer
-    private OutputStream os;
+    private ByteArrayOutputStream os;
+    private Path path;
 
-    private BitPackedWriter(ByteWriter byteWriter, int width, OutputStream os) {
+    private BitPackedWriter(Path path, ByteWriter byteWriter, int width, ByteArrayOutputStream os) {
+        this.path = path;
         this.byteWriter = byteWriter;
         this.width = width;
         this.os = os;
+    }
+    
+    @Override
+    public Path getName() {
+        return path;
+    }
+
+    @Override
+    public byte[] getBuffer() {
+        return os.toByteArray();
     }
 
     // Write the least significant n bits of the integer to the buffer
@@ -74,16 +83,18 @@ public class BitPackedWriter implements AutoCloseable {
         os.close();
     }
 
-    public static BitPackedWriter forBuffer(ByteArrayOutputStream buffer, int width) throws IOException {
+    public static BitPackedWriter forBuffer(Path path, int width) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         ByteWriter fileWriter = new ByteWriter() {
             @Override
             public void writeByte(byte b) throws IOException {
                 buffer.write(b);
             }
         };
-        return new BitPackedWriter(fileWriter, width, buffer);
+        return new BitPackedWriter(path, fileWriter, width, buffer);
     }
     
+    /*
     public static BitPackedWriter forFile(Path file, int width) throws IOException {
         BufferedOutputStream fos = new BufferedOutputStream( new FileOutputStream(file.toFile()));
         ByteWriter fileWriter = new ByteWriter() {
@@ -93,7 +104,7 @@ public class BitPackedWriter implements AutoCloseable {
             }
         };
         return new BitPackedWriter(fileWriter, width, fos);
-    }
+    }*/
     
     public static String toBinaryString(ByteBuffer buffer, String delimiter) {
         buffer.mark();
@@ -124,6 +135,7 @@ public class BitPackedWriter implements AutoCloseable {
         return new BitPackedWriter(bufferWriter, width, fos);
     }*/
 
+    /*
     public static void main(String[] args) throws IOException {
         BitPackedWriter fileWriter = BitPackedWriter.forFile(new File("output.dat"), 3);
         fileWriter.writeInteger(5); // 101
@@ -135,7 +147,7 @@ public class BitPackedWriter implements AutoCloseable {
         fileWriter.writeInteger(4); // 111
         fileWriter.close();
 
-        /*
+        
         ByteBuffer buffer = ByteBuffer.allocate(10);
         BitPackedWriter bufferWriter = BitPackedWriter.forByteBuffer(buffer,3);
         bufferWriter.writeInteger(5);
@@ -144,6 +156,6 @@ public class BitPackedWriter implements AutoCloseable {
         bufferWriter.close();
 
         buffer.rewind();
-        System.out.println(toBinaryString(buffer, " "));*/
-    }
+        System.out.println(toBinaryString(buffer, " "));
+    }*/
 }

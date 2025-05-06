@@ -1,13 +1,20 @@
 package com.ebremer.beakgraph.hdtish;
 
+import io.jhdf.HdfFile;
+import io.jhdf.WritableHdfFile;
+import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
@@ -29,37 +36,51 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         DictionaryWriter.Builder predicates = new DictionaryWriter.Builder();
         DictionaryWriter.Builder objects = new DictionaryWriter.Builder();
         DictionaryWriter.Builder graphs = new DictionaryWriter.Builder();
-        OutputStream sharedOS = new ByteArrayOutputStream();
-        OutputStream subjectsOS = new ByteArrayOutputStream();
-        OutputStream predicatesOS = new ByteArrayOutputStream();
-        OutputStream objectsOS = new ByteArrayOutputStream();
-        OutputStream graphsOS = new ByteArrayOutputStream();
         DictionaryWriter shareddict = shared  
             .setName("shared")
-            .setOutputStream(sharedOS)
             .setNodes(builder.getShared())            
             .build();
         DictionaryWriter subjectsdict = subjects
             .setName("subjects")
-            .setOutputStream(subjectsOS)    
             .setNodes(builder.getSubjects())
             .build();
         DictionaryWriter predicatesdict = predicates
             .setName("predicates")
-            .setOutputStream(predicatesOS)
             .setNodes(builder.getPredicates())
             .build();
         DictionaryWriter objectsdict = objects
             .setName("objects")
-            .setOutputStream(objectsOS)
             .setNodes(builder.getObjects())
             .build();
         DictionaryWriter graphsdict = graphs
             .setName("graphs")
-            .setOutputStream(graphsOS)    
             .setNodes(builder.getGraphs())
             .build();
-        
+        List<HDF5Buffer> list = new ArrayList<>();
+        list.addAll(shareddict.getBuffers());
+        list.addAll(subjectsdict.getBuffers());
+        list.addAll(predicatesdict.getBuffers());
+        list.addAll(objectsdict.getBuffers());
+        list.addAll(graphsdict.getBuffers());
+        if (!builder.getDestination().getParentFile().exists()) {
+            builder.getDestination().getParentFile().mkdirs();
+        }
+        try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
+            WritableGroup group = null;
+            Path curr = null;
+            for (HDF5Buffer b : list) {
+                if (curr!=b.getName().getParent()) {
+                    System.out.println("Creating new HDF5 group : "+b.getName().getParent().toString());
+                    group = hdfFile.putGroup(b.getName().getParent().toString());
+                }
+                if (b.getBuffer().length>0) {
+                    System.out.println("Adding : "+b.getName().toFile().getName());
+                    group.putDataset(b.getName().toFile().getName(), b.getBuffer());
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     //    IO.println("Dictionary : "+dict);
@@ -181,7 +202,7 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
     
     public static void main(String[] args) throws FileNotFoundException, IOException, Exception {
         File file = new File("/data/sorted.nq.gz");
-        File dest = new File("/data/HDT");
+        File dest = new File("/data/data.hdf5");
         Builder builder = new FiveSectionDictionaryWriter.Builder();
         FiveSectionDictionaryWriter w = builder
             .setSource(file)

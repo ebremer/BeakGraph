@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.9.0</version>
+    <version>0.9.1</version>
     <packaging>jar</packaging>
     
     <description>Library for creating Apache Jena Graphs and Datasets backed by Apache Arrow</description>

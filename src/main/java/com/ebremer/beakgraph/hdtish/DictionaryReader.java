@@ -9,13 +9,13 @@ import org.apache.jena.graph.Node;
  */
 public class DictionaryReader implements Dictionary {
     
-    private final BitPackedReader offsets;
-    private final BitPackedReader integers;
-    private final BitPackedReader longs;
-    private final BitPackedWriter datatype;
-    private DataInputBuffer floats;
-    private DataInputBuffer doubles;
-    private FCDWriter text;   
+ //   private final BitPackedReader offsets;
+  //  private final BitPackedReader integers;
+  //  private final BitPackedReader longs;
+ //   private final BitPackedWriter datatype;
+ //   private DataInputBuffer floats;
+ //   private DataInputBuffer doubles;
+ //   private FCDWriter text;   
     
     private DictionaryReader(Builder builder) {
         

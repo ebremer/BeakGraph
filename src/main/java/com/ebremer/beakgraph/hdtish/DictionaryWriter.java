@@ -35,15 +35,19 @@ public class DictionaryWriter implements AutoCloseable {
         System.out.println("Done.");        
         doubles = new DataOutputBuffer( Path.of(builder.getName(), "doubles"));
         floats = new DataOutputBuffer( Path.of(builder.getName(), "floats"));
-        offsets = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "offsets"), MinBits( builder.getNodes().size()) );
-        integers = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "integers"), MinBits( builder.getMaxInteger()) );
-        longs = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "longs"), MinBits( builder.getMaxLong()) );
-        datatype = BitPackedWriter.forFile( Path.of(builder.getBase().getPath(), builder.getName(), "datatype"), DataType.values().length );
+        offsets = BitPackedWriter.forBuffer( Path.of( builder.getName(), "offsets"), MinBits( builder.getNodes().size()) );
+        integers = BitPackedWriter.forBuffer( Path.of( builder.getName(), "integers"), MinBits( builder.getMaxInteger()) );
+        longs = BitPackedWriter.forBuffer( Path.of( builder.getName(), "longs"), MinBits( builder.getMaxLong()) );
+        datatype = BitPackedWriter.forBuffer( Path.of( builder.getName(), "datatype"), DataType.values().length );
         text = new FCDWriter(Path.of(builder.getName(), "strings"), 8);
         list.add(text);
         list.add(doubles);
         list.add(floats);
         sorted.forEach(n->Add(n));
+    }
+    
+    public List<HDF5Buffer> getBuffers() {
+        return list;
     }
     
     @Override
@@ -219,10 +223,6 @@ public class DictionaryWriter implements AutoCloseable {
         public Builder setOutputStream(OutputStream baos) {
             this.baos = baos;
             return this;
-        }
-        
-        public File getBase() {
-            return base;
         }
 
         /*
