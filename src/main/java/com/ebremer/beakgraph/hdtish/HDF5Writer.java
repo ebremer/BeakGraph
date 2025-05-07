@@ -78,7 +78,7 @@ public class HDF5Writer {
                     if (!p.equals(c.cp)) {
                         c.cp = p;
                         try {
-                            arrayY.writeInteger(w.locateSubject(quad.getPredicate()));
+                            arrayY.writeInteger(w.locatePredicate(quad.getPredicate()));
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
@@ -86,7 +86,7 @@ public class HDF5Writer {
                     if (!o.equals(c.co)) {
                         c.co = o;                    
                         try {
-                            arrayZ.writeInteger(w.locateSubject(quad.getObject()));
+                            arrayZ.writeInteger(w.locateObject(quad.getObject()));
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
