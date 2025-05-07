@@ -47,7 +47,7 @@ public class HDF5Writer {
                 .streamQuads()
                 .limit(10)
                 .forEach(quad->{
-                    
+                    arrayX.writeInteger();
                 });
         }        
         try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
@@ -68,12 +68,24 @@ public class HDF5Writer {
                     });
                 }               
             }
-            hdfFile.putDataset(bitmapX.getName().toString(), bitmapX.getBuffer());
-            hdfFile.putDataset(bitmapY.getName().toString(), bitmapY.getBuffer());
-            hdfFile.putDataset(bitmapZ.getName().toString(), bitmapZ.getBuffer());
-            hdfFile.putDataset(arrayX.getName().toString(), arrayX.getBuffer());
-            hdfFile.putDataset(arrayY.getName().toString(), arrayY.getBuffer());
-            hdfFile.putDataset(arrayZ.getName().toString(), arrayZ.getBuffer());
+            if (bitmapX.getBuffer().length>0) {
+                hdfFile.putDataset(bitmapX.getName().toString(), bitmapX.getBuffer());
+            }
+            if (bitmapY.getBuffer().length>0) {
+                hdfFile.putDataset(bitmapY.getName().toString(), bitmapY.getBuffer());
+            }
+            if (bitmapZ.getBuffer().length>0) {
+                hdfFile.putDataset(bitmapZ.getName().toString(), bitmapZ.getBuffer());
+            }
+            if (arrayX.getBuffer().length>0) {
+                hdfFile.putDataset(arrayX.getName().toString(), arrayX.getBuffer());
+            }
+            if (arrayY.getBuffer().length>0) {
+                hdfFile.putDataset(arrayY.getName().toString(), arrayY.getBuffer());
+            }
+            if (arrayZ.getBuffer().length>0) {
+                hdfFile.putDataset(arrayZ.getName().toString(), arrayZ.getBuffer());
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }

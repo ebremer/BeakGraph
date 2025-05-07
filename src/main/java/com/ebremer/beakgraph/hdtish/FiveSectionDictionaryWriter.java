@@ -21,7 +21,7 @@ import org.apache.jena.riot.system.AsyncParser;
  *
  * @author Erich Bremer
  */
-public class FiveSectionDictionaryWriter implements AutoCloseable {
+public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
     private DictionaryWriter shareddict;
     private DictionaryWriter subjectsdict;
     private DictionaryWriter predicatesdict;
@@ -58,6 +58,85 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         if (!builder.getDestination().getParentFile().exists()) {
             builder.getDestination().getParentFile().mkdirs();
         }
+    }
+    
+    @Override
+    public int locateGraph(Node element) {
+        int c = shareddict.locateGraph(element);
+        if (c > 0) {
+            return c;
+        } else {
+            c = graphsdict.locateGraph(element);
+            if (c > 0) {
+                return c;
+            }
+        }
+        throw new Error("Cannot resolve Graph : "+element);
+    }
+
+    @Override
+    public int locateSubject(Node element) {
+        int c = shareddict.locateGraph(element);
+        if (c > 0) {
+            return c;
+        } else {
+            c = subjectsdict.locateGraph(element);
+            if (c > 0) {
+                return c;
+            }
+        }
+        throw new Error("Cannot resolve Subject : "+element);
+    }
+    
+    @Override
+    public int locatePredicate(Node element) {
+        int c = predicatesdict.locateGraph(element);
+        if (c > 0) {
+            return c;
+        }
+        throw new Error("Cannot resolve Predicate : "+element);
+    }
+
+    @Override
+    public int locateObject(Node element) {
+        int c;
+        if (element.isLiteral()) {
+            c = objectsdict.locateGraph(element);
+            if (c > 0) {
+                return c;
+            }       
+        }
+        c = shareddict.locateGraph(element);
+        if (c > 0) {
+            return c;
+        } else {
+            c = objectsdict.locateGraph(element);
+            if (c > 0) {
+                return c;
+            }
+        }
+        throw new Error("Cannot resolve : "+element);
+    }
+
+    @Override
+    public Object extractGraph(int id) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Object extractSubject(int id) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Object extractPredicate(int id) {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+    
+    
+    @Override
+    public Object extractObject(int id) {
+        throw new UnsupportedOperationException("Not supported yet.");
     }
     
     public List<HDF5Buffer> getBuffers() {
