@@ -154,14 +154,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         
     }
 
-    public static class Builder {
-        class Currents {
-            Node cg = Node.ANY;
-            Node cs = Node.ANY;
-            Node cp = Node.ANY;
-            Node co = Node.ANY;   
-        }
-        
+    public static class Builder {       
         private File src;
         private File dest;
         private HashSet<Node> shared = new HashSet<>();
@@ -205,7 +198,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         }        
         
         public FiveSectionDictionaryWriter build() throws IOException {
-            final Currents c = new Currents();
+            final Current c = new Current();
             final AtomicLong cc = new AtomicLong();        
             System.out.print("Create sections...");
             try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {

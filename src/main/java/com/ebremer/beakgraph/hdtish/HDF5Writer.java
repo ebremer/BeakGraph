@@ -10,7 +10,10 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
+import org.apache.jena.graph.Node;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.system.AsyncParser;
 
@@ -42,12 +45,46 @@ public class HDF5Writer {
         arrayX = BitPackedWriter.forBuffer( Path.of( builder.getName(), "ArrayX"), 1 );
         arrayY = BitPackedWriter.forBuffer( Path.of( builder.getName(), "ArrayY"), 1 );
         arrayZ = BitPackedWriter.forBuffer( Path.of( builder.getName(), "ArrayZ"), 1 );        
+        final Current c = new Current();
         try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {
             AsyncParser.of(fis, Lang.NQUADS, null)
                 .streamQuads()
                 .limit(10)
                 .forEach(quad->{
-                    arrayX.writeInteger();
+                    Node g = quad.getGraph();
+                    Node s = quad.getSubject();
+                    Node p = quad.getPredicate();
+                    Node o = quad.getObject();
+                    System.out.println(quad);
+                    System.out.println(g);
+                    System.out.println(s);
+                    System.out.println(p);
+                    System.out.println(o);
+                    System.exit(0);
+                    if (!s.equals(c.cs)) {
+                        c.cs = s;
+                        try {
+                            arrayX.writeInteger(w.locateSubject(quad.getSubject()));
+                        } catch (IOException ex) {
+                            Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    }
+                    if (!p.equals(c.cp)) {
+                        c.cp = p;
+                        try {
+                            arrayY.writeInteger(w.locateSubject(quad.getPredicate()));
+                        } catch (IOException ex) {
+                            Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    }
+                    if (!o.equals(c.co)) {
+                        c.co = o;                    
+                        try {
+                            arrayZ.writeInteger(w.locateSubject(quad.getObject()));
+                        } catch (IOException ex) {
+                            Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    }
                 });
         }        
         try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
