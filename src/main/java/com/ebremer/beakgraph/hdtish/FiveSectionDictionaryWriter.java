@@ -1,14 +1,9 @@
 package com.ebremer.beakgraph.hdtish;
 
-import io.jhdf.HdfFile;
-import io.jhdf.WritableHdfFile;
-import io.jhdf.api.WritableDataset;
-import io.jhdf.api.WritableGroup;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -27,6 +22,11 @@ import org.apache.jena.riot.system.AsyncParser;
  * @author Erich Bremer
  */
 public class FiveSectionDictionaryWriter implements AutoCloseable {
+    private DictionaryWriter shareddict;
+    private DictionaryWriter subjectsdict;
+    private DictionaryWriter predicatesdict;
+    private DictionaryWriter objectsdict;
+    private DictionaryWriter graphsdict;          
 
     public FiveSectionDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         DictionaryWriter.Builder shared = new DictionaryWriter.Builder();        
@@ -34,56 +34,40 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
         DictionaryWriter.Builder predicates = new DictionaryWriter.Builder();
         DictionaryWriter.Builder objects = new DictionaryWriter.Builder();
         DictionaryWriter.Builder graphs = new DictionaryWriter.Builder();
-        DictionaryWriter shareddict = shared  
+        shareddict = shared  
             .setName("shared")
             .setNodes(builder.getShared())            
             .build();
-        DictionaryWriter subjectsdict = subjects
+        subjectsdict = subjects
             .setName("subjects")
             .setNodes(builder.getSubjects())
             .build();
-        DictionaryWriter predicatesdict = predicates
+        predicatesdict = predicates
             .setName("predicates")
             .setNodes(builder.getPredicates())
             .build();
-        DictionaryWriter objectsdict = objects
+        objectsdict = objects
             .setName("objects")
             .setNodes(builder.getObjects())
             .build();
-        DictionaryWriter graphsdict = graphs
+        graphsdict = graphs
             .setName("graphs")
             .setNodes(builder.getGraphs())
             .build();
+
+        if (!builder.getDestination().getParentFile().exists()) {
+            builder.getDestination().getParentFile().mkdirs();
+        }
+    }
+    
+    public List<HDF5Buffer> getBuffers() {
         List<HDF5Buffer> list = new ArrayList<>();
         list.addAll(shareddict.getBuffers());
         list.addAll(subjectsdict.getBuffers());
         list.addAll(predicatesdict.getBuffers());
         list.addAll(objectsdict.getBuffers());
         list.addAll(graphsdict.getBuffers());
-        if (!builder.getDestination().getParentFile().exists()) {
-            builder.getDestination().getParentFile().mkdirs();
-        }
-        try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
-            WritableGroup group = null;
-            Path curr = Path.of("dummy");
-            for (HDF5Buffer b : list) {
-                if (!curr.equals(b.getName().getParent())) {
-                    curr = b.getName().getParent();
-                    System.out.println("Creating new HDF5 group : "+b.getName().getParent().toString());
-                    group = hdfFile.putGroup(b.getName().getParent().toString());
-                    group.putAttribute("metadata", "this is really cool --> "+b.getName().getParent().toString());
-                }
-                if (b.getBuffer().length>0) {
-                    System.out.println("Adding : "+b.getName().toFile().getName()+" ----> "+b.getBuffer().length);                    
-                    WritableDataset ds = group.putDataset(b.getName().toFile().getName(), b.getBuffer());
-                    b.getProperties().forEach((k,v)->{
-                        ds.putAttribute(k, v);
-                    });
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        return list;
     }
 
     @Override
