@@ -69,14 +69,44 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
     }
     
     @Override
-    public int locate(Node element) {
+    public int locateGraph(Node element) {
         return NodeSearch.findPosition(sorted, element);
     }
 
     @Override
-    public Object extract(int id) {
+    public Object extractGraph(int id) {
         return sorted.get(id);
     }
+    
+    @Override
+    public int locateSubject(Node element) {
+        return NodeSearch.findPosition(sorted, element);
+    }
+
+    @Override
+    public Object extractSubject(int id) {
+        return sorted.get(id);
+    }
+    
+    @Override
+    public int locatePredicate(Node element) {
+        return NodeSearch.findPosition(sorted, element);
+    }
+
+    @Override
+    public Object extractPredicate(int id) {
+        return sorted.get(id);
+    }    
+
+    @Override
+    public int locateObject(Node element) {
+        return NodeSearch.findPosition(sorted, element);
+    }
+
+    @Override
+    public Object extractObject(int id) {
+        return sorted.get(id);
+    }    
     
     private void Add(Node node) {
         if (node.isBlank()) {           

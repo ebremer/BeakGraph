@@ -7,7 +7,7 @@ import org.apache.jena.graph.Node;
  *
  * @author Erich Bremer
  */
-public class DictionaryReader implements Dictionary {
+public class DictionaryReader { //implements Dictionary {
     
  //   private final BitPackedReader offsets;
   //  private final BitPackedReader integers;
@@ -19,16 +19,6 @@ public class DictionaryReader implements Dictionary {
     
     private DictionaryReader(Builder builder) {
         
-    }
-
-    @Override
-    public int locate(Node element) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public Object extract(int id) {
-        throw new UnsupportedOperationException("Not supported yet.");
     }
     
     public static class Builder {

@@ -157,10 +157,9 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                         Node o = quad.getObject();
                         if (!g.equals(c.cg)) {
                             c.cg = g;
-                            if (subjects.contains(g)||predicates.contains(g)||objects.contains(g)) {
+                            if (subjects.contains(g)||objects.contains(g)) {
                                 graphs.remove(g);
                                 subjects.remove(g);
-                                predicates.remove(g);
                                 objects.remove(g);
                                 shared.add(g);
                             } else {
@@ -169,10 +168,9 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                         }
                         if (!s.equals(c.cs)) {
                             c.cs = s;
-                            if (graphs.contains(s)||predicates.contains(s)||objects.contains(s)) {
+                            if (graphs.contains(s)||objects.contains(s)) {
                                 graphs.remove(s);
                                 subjects.remove(s);
-                                predicates.remove(s);
                                 objects.remove(s);
                                 shared.add(s);
                             } else {
@@ -181,22 +179,13 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
                         }
                         if (!p.equals(c.cp)) {
                             c.cp = p;
-                            if (graphs.contains(p)||subjects.contains(p)||objects.contains(p)) {
-                                graphs.remove(p);
-                                subjects.remove(p);
-                                predicates.remove(p);
-                                objects.remove(p);
-                                shared.add(p);
-                            } else {
-                                predicates.add(p);
-                            }
+                            predicates.add(p);
                         }
                         if (!o.equals(c.co)) {
                             c.co = o;
-                            if (graphs.contains(o)||subjects.contains(o)||predicates.contains(o)) {
+                            if (graphs.contains(o)||subjects.contains(o)) {
                                 graphs.remove(o);
                                 subjects.remove(o);
-                                predicates.remove(o);
                                 objects.remove(o);
                                 shared.add(o);
                             } else {
@@ -212,16 +201,5 @@ public class FiveSectionDictionaryWriter implements AutoCloseable {
             System.out.println("Done.");
             return new FiveSectionDictionaryWriter(this);
         }
-    }
-    
-    public static void main(String[] args) throws FileNotFoundException, IOException, Exception {
-        File file = new File("/data/sorted.nq.gz");
-        File dest = new File("/data/data.hdf5");
-        Builder builder = new FiveSectionDictionaryWriter.Builder();
-        FiveSectionDictionaryWriter w = builder
-            .setSource(file)
-            .setDestination(dest)
-            .build();
-        w.close();
     }
 }
