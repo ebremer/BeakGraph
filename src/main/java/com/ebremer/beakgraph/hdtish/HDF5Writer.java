@@ -15,7 +15,9 @@ import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
+import org.apache.jena.riot.system.AsyncParserBuilder;
 
 /**
  *
@@ -47,20 +49,24 @@ public class HDF5Writer {
         arrayZ = BitPackedWriter.forBuffer( Path.of( builder.getName(), "ArrayZ"), 1 );        
         final Current c = new Current();
         try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {
-            AsyncParser.of(fis, Lang.NQUADS, null)
+            AsyncParserBuilder xbuilder = AsyncParser.of(fis, Lang.NQUADS, null);
+            xbuilder.mutateSources(rdfBuilder->
+                rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven())
+            );
+            xbuilder
                 .streamQuads()
-                .limit(10)
+                //.limit(10)
                 .forEach(quad->{
                     Node g = quad.getGraph();
                     Node s = quad.getSubject();
                     Node p = quad.getPredicate();
                     Node o = quad.getObject();
-                    System.out.println(quad);
-                    System.out.println(g);
-                    System.out.println(s);
-                    System.out.println(p);
-                    System.out.println(o);
-                    System.exit(0);
+                    //System.out.println(quad);
+                    //System.out.println(g);
+                    //System.out.println(s);
+                    //System.out.println(p);
+                    //System.out.println(o);
+                    //System.exit(0);
                     if (!s.equals(c.cs)) {
                         c.cs = s;
                         try {

@@ -15,7 +15,9 @@ import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
+import org.apache.jena.riot.system.AsyncParserBuilder;
 
 /**
  *
@@ -202,7 +204,11 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
             final AtomicLong cc = new AtomicLong();        
             System.out.print("Create sections...");
             try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {
-                AsyncParser.of(fis, Lang.NQUADS, null)
+                AsyncParserBuilder builder = AsyncParser.of(fis, Lang.NQUADS, null);
+                builder.mutateSources(rdfBuilder->
+                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven())
+                );
+                builder
                     .streamQuads()
                    // .limit(100)
                     .forEach(quad->{
