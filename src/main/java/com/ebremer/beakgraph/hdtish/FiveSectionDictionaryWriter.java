@@ -65,11 +65,11 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
     @Override
     public int locateGraph(Node element) {
         int c = shareddict.locateGraph(element);
-        if (c > 0) {
+        if (c > -1) {
             return c;
         } else {
             c = graphsdict.locateGraph(element);
-            if (c > 0) {
+            if (c > -1) {
                 return c;
             }
         }
@@ -79,11 +79,11 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
     @Override
     public int locateSubject(Node element) {
         int c = shareddict.locateGraph(element);
-        if (c > 0) {
+        if (c > -1) {
             return c;
         } else {
             c = subjectsdict.locateGraph(element);
-            if (c > 0) {
+            if (c > -1) {
                 return c;
             }
         }
@@ -93,7 +93,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
     @Override
     public int locatePredicate(Node element) {
         int c = predicatesdict.locateGraph(element);
-        if (c > 0) {
+        if (c > -1) {
             return c;
         }
         throw new Error("Cannot resolve Predicate : "+element);
@@ -104,16 +104,16 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         int c;
         if (element.isLiteral()) {
             c = objectsdict.locateGraph(element);
-            if (c > 0) {
+            if (c > -1) {
                 return c;
             }       
         }
         c = shareddict.locateGraph(element);
-        if (c > 0) {
+        if (c > -1) {
             return c;
         } else {
             c = objectsdict.locateGraph(element);
-            if (c > 0) {
+            if (c > -1) {
                 return c;
             }
         }
