@@ -10,7 +10,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -51,6 +50,12 @@ public class HDF5Writer {
             .setSource(src)
             .setDestination(dest)
             .build();
+        System.out.println("# of Quads      -> "+w.getNumberOfQuads());
+        System.out.println("# of Graphs     -> "+w.getNumberOfGraphs());
+        System.out.println("# of Subjects   -> "+w.getNumberOfSubjects());
+        System.out.println("# of Predicates -> "+w.getNumberOfPredicates());
+        System.out.println("# of Objects    -> "+w.getNumberOfObjects());
+     
         Bs = BitPackedWriter.forBuffer( Path.of( "Bs" ), 1 );
         Bp = BitPackedWriter.forBuffer( Path.of( "Bp" ), 1 );
         Bo = BitPackedWriter.forBuffer( Path.of( "Bo" ), 1 );

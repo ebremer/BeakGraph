@@ -18,7 +18,6 @@ import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
-import org.apache.jena.vocabulary.XSD;
 
 /**
  *
@@ -30,8 +29,10 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
     private DictionaryWriter predicatesdict;
     private DictionaryWriter objectsdict;
     private DictionaryWriter graphsdict;
+    private long quads;
 
     public FiveSectionDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
+        quads = builder.getNumberOfQuads();
         DictionaryWriter.Builder shared = new DictionaryWriter.Builder();        
         DictionaryWriter.Builder subjects = new DictionaryWriter.Builder();
         DictionaryWriter.Builder predicates = new DictionaryWriter.Builder();
@@ -63,6 +64,10 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         if (!builder.getDestination().getParentFile().exists()) {
             builder.getDestination().getParentFile().mkdirs();
         }
+    }
+    
+    public long getNumberOfQuads() {
+        return quads;
     }
 
     public int getNumberOfGraphs() {
@@ -185,6 +190,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         private LinkedHashSet<Node> objects = new LinkedHashSet<>();
         private long maxLong = Long.MIN_VALUE;
         private int maxInteger = Integer.MIN_VALUE;
+        private long quads;
         
         public File getDestination() {
             return dest;
@@ -220,6 +226,10 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
             return this;
         }
 
+        public long getNumberOfQuads() {
+            return quads;
+        }
+        
         public long getMaxLong() {
             return maxLong;
         }
@@ -230,7 +240,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         
         public FiveSectionDictionaryWriter build() throws IOException {
             final Current c = new Current();
-            final AtomicLong cc = new AtomicLong();        
+            final AtomicLong quads = new AtomicLong();        
             System.out.print("Create sections...");
             try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {
                 AsyncParserBuilder builder = AsyncParser.of(fis, Lang.NQUADS, null);
@@ -241,7 +251,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                     .streamQuads()
                    // .limit(100)
                     .forEach(quad->{
-                        cc.incrementAndGet();
+                        quads.incrementAndGet();
                         Node g = quad.getGraph();
                         Node s = quad.getSubject();
                         Node p = quad.getPredicate();
@@ -287,7 +297,8 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
             } catch (IOException ex) {
                 Logger.getLogger(FiveSectionDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
             }
-            System.out.println("Done.");
+            System.out.println("Initial sort done.");
+            this.quads = quads.get();
             return new FiveSectionDictionaryWriter(this);
         }
     }
