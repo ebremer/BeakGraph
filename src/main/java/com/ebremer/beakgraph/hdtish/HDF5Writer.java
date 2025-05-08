@@ -133,17 +133,27 @@ public class HDF5Writer {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
                     }
+                    if ((totaltriples.get() % BLOCKSIZE)==0) {
+                        try {
+                            BBs.writeInteger(deltasubjects.get());
+                            BBp.writeInteger(deltapredicates.get());
+                            BBo.writeInteger(deltaobjects.get());
+                        } catch (IOException ex) {
+                            Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    }
                     if ((totaltriples.get() % SUPERBLOCKSIZE)==0) {
                         try {
                             SBs.writeInteger(totalsubjects.get());
                             SBp.writeInteger(totalpredicates.get());
                             SBo.writeInteger(totalobjects.get());
+                            deltatriples.set(0);
+                            deltasubjects.set(0);
+                            deltapredicates.set(0);
+                            deltaobjects.set(0);
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
-                    }
-                    if ((totaltriples.get() % BLOCKSIZE)==0) {
-                        
                     }
                 });
         }        
@@ -184,6 +194,24 @@ public class HDF5Writer {
             if (So.getBuffer().length>0) {
                 ultra.putDataset(So.getName().toString(), So.getBuffer());
             }
+            if (SBs.getBuffer().length>0) {
+                ultra.putDataset(SBs.getName().toString(), SBs.getBuffer());
+            }            
+            if (SBp.getBuffer().length>0) {
+                ultra.putDataset(SBp.getName().toString(), SBp.getBuffer());
+            } 
+            if (SBo.getBuffer().length>0) {
+                ultra.putDataset(SBo.getName().toString(), SBo.getBuffer());
+            }
+            if (BBs.getBuffer().length>0) {
+                ultra.putDataset(Ss.getName().toString(), Ss.getBuffer());
+            }            
+            if (BBp.getBuffer().length>0) {
+                ultra.putDataset(BBp.getName().toString(), BBp.getBuffer());
+            } 
+            if (BBo.getBuffer().length>0) {
+                ultra.putDataset(BBo.getName().toString(), BBo.getBuffer());
+            }              
         } catch (Exception e) {
             e.printStackTrace();
         }
