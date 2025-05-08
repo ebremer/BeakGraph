@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.hdtish;
 
 import static com.ebremer.beakgraph.hdtish.UTIL.MinBits;
+import static com.ebremer.beakgraph.hdtish.UTIL.putAttributes;
 import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableDataset;
@@ -183,40 +184,40 @@ public class HDF5Writer {
                 }               
             }
             if (Bs.getBuffer().length>0) {
-                ultra.putDataset(Bs.getName().toString(), Bs.getBuffer());
+                putAttributes(ultra.putDataset(Bs.getName().toString(), Bs.getBuffer()),Bs.getProperties());
             }
             if (Bp.getBuffer().length>0) {
-                ultra.putDataset(Bp.getName().toString(), Bp.getBuffer());
+                putAttributes(ultra.putDataset(Bp.getName().toString(), Bp.getBuffer()), Bp.getProperties());
             }
             if (Bo.getBuffer().length>0) {
-                ultra.putDataset(Bo.getName().toString(), Bo.getBuffer());
+                putAttributes(ultra.putDataset(Bo.getName().toString(), Bo.getBuffer()), Bo.getProperties());
             }
             if (Ss.getBuffer().length>0) {
-                ultra.putDataset(Ss.getName().toString(), Ss.getBuffer());
+                putAttributes(ultra.putDataset(Ss.getName().toString(), Ss.getBuffer()), Ss.getProperties());
             }
             if (Sp.getBuffer().length>0) {
-                ultra.putDataset(Sp.getName().toString(), Sp.getBuffer());
+                putAttributes(ultra.putDataset(Sp.getName().toString(), Sp.getBuffer()), Sp.getProperties());
             }
             if (So.getBuffer().length>0) {
-                ultra.putDataset(So.getName().toString(), So.getBuffer());
+                putAttributes(ultra.putDataset(So.getName().toString(), So.getBuffer()), So.getProperties());
             }
             if (SBs.getBuffer().length>0) {
-                ultra.putDataset(SBs.getName().toString(), SBs.getBuffer());
+                putAttributes(ultra.putDataset(SBs.getName().toString(), SBs.getBuffer()), SBs.getProperties());
             }            
             if (SBp.getBuffer().length>0) {
-                ultra.putDataset(SBp.getName().toString(), SBp.getBuffer());
+                putAttributes(ultra.putDataset(SBp.getName().toString(), SBp.getBuffer()), SBp.getProperties());
             } 
             if (SBo.getBuffer().length>0) {
-                ultra.putDataset(SBo.getName().toString(), SBo.getBuffer());
+                putAttributes(ultra.putDataset(SBo.getName().toString(), SBo.getBuffer()), SBo.getProperties());
             }
             if (BBs.getBuffer().length>0) {
-                ultra.putDataset(BBs.getName().toString(), BBs.getBuffer());
+                putAttributes(ultra.putDataset(BBs.getName().toString(), BBs.getBuffer()), BBs.getProperties());
             }            
             if (BBp.getBuffer().length>0) {
-                ultra.putDataset(BBp.getName().toString(), BBp.getBuffer());
+                putAttributes(ultra.putDataset(BBp.getName().toString(), BBp.getBuffer()), BBp.getProperties());
             } 
             if (BBo.getBuffer().length>0) {
-                ultra.putDataset(BBo.getName().toString(), BBo.getBuffer());
+                putAttributes(ultra.putDataset(BBo.getName().toString(), BBo.getBuffer()), BBo.getProperties());
             }              
         } catch (Exception e) {
             e.printStackTrace();

@@ -1,10 +1,20 @@
 package com.ebremer.beakgraph.hdtish;
 
+import io.jhdf.api.WritableDataset;
+import java.util.Map;
+
 /**
  *
  * @author Erich Bremer
  */
 public class UTIL {
+    
+    public static WritableDataset putAttributes( WritableDataset ds, Map<String, Object> attributes ) {
+        attributes.forEach((k,v)->{
+            ds.putAttribute(k, v);
+        });
+        return ds;
+    }
     
     public static long MinBits(long x) {
         return (long) Math.ceil(Math.log(x)/Math.log(2d));
