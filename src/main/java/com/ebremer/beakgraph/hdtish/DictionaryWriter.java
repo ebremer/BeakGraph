@@ -30,21 +30,23 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
     private FCDWriter text;  
     private List<HDF5Buffer> list = new ArrayList<>();
     private ArrayList<Node> sorted;
+    private long maxLong = Long.MIN_VALUE;
+    private int maxInteger = Integer.MIN_VALUE;
     
     private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
-        IO.println("Name           : "+builder.getName());
-        IO.println("MaxInteger     : " + builder.getMaxInteger());
-        IO.println("MaxLong        : " + builder.getMaxLong());
-        IO.println("MaxBitsInteger : " + MinBits( builder.getMaxInteger()));
-        IO.println("MaxBitsLong    : " + MinBits( builder.getMaxLong()));
+        IO.println("Name           : " + builder.getName());
+        IO.println("MaxInteger     : " + maxLong);
+        IO.println("MaxLong        : " + maxInteger);
+        IO.println("MaxBitsInteger : " + MinBits( maxInteger ));
+        IO.println("MaxBitsLong    : " + MinBits( maxLong ));
         System.out.print("Sorting nodes...");
         sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");        
         doubles = new DataOutputBuffer( Path.of(builder.getName(), "doubles"));
         floats = new DataOutputBuffer( Path.of(builder.getName(), "floats"));
         offsets = BitPackedWriter.forBuffer( Path.of( builder.getName(), "offsets"), MinBits( builder.getNodes().size()) );
-        integers = BitPackedWriter.forBuffer( Path.of( builder.getName(), "integers"), MinBits( builder.getMaxInteger()) );
-        longs = BitPackedWriter.forBuffer( Path.of( builder.getName(), "longs"), MinBits( builder.getMaxLong()) );
+        integers = BitPackedWriter.forBuffer( Path.of( builder.getName(), "integers"), MinBits( maxInteger ) );
+        longs = BitPackedWriter.forBuffer( Path.of( builder.getName(), "longs"), MinBits( maxLong ) );
         datatype = BitPackedWriter.forBuffer( Path.of( builder.getName(), "datatype"), DataType.values().length );
         text = new FCDWriter(Path.of(builder.getName(), "strings"), 8);
         list.add(text);
@@ -113,7 +115,15 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
     @Override
     public Object extractObject(int id) {
         return sorted.get(id);
-    }    
+    }   
+    
+    public long getMaxLong() {
+        return maxLong;
+    }
+       
+    public int getMaxInteger() {
+        return maxInteger;
+    }
     
     private void Add(Node node) {
         if (node.isBlank()) {           
@@ -139,6 +149,7 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
                     try {
                         offsets.writeInteger(Long.BYTES);
                         datatype.writeInteger(DataType.LONG.ordinal());  
+                        maxLong = Math.max(maxLong, x);
                         longs.writeLong(x);
                     } catch (IOException ex) {
                         Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
@@ -150,6 +161,7 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
                         offsets.writeInteger(Integer.BYTES);
                         integers.writeInteger(x);
                         datatype.writeInteger(DataType.INT.ordinal());
+                        maxInteger = Math.max(maxInteger, x);
                     } catch (IOException ex) {
                         Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
@@ -199,47 +211,14 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         }
         return new String(data, offset, end - offset, Charset.forName("UTF-8"));
     }
-    
-  /*
-    @Override
-    public Object extract(int id) {
-        switch (datatype.get(id)) {
 
-            case DataType.LONG -> {
-            //    LongBuffer buf = ByteBuffer.wrap(longbaos.toByteArray()).asLongBuffer();
-            //    return buf.get(offsets.get(id)/Long.BYTES);
-            }
-            case DataType.INT -> {
-             //   IntBuffer buf = ByteBuffer.wrap(intbaos.toByteArray()).asIntBuffer();
-             //   return buf.get(offsets.get(id)/Integer.BYTES);
-            }
-            case DataType.STRING -> {
-                //ByteBuffer buf = ByteBuffer.wrap(stringbaos.toByteArray());
-                //int offset = buf.get(offsets.get(id));
-               // return readCString(stringbaos.toByteArray(), offset);
-            }
-        }
-        return null;
-    }
-    */
     public static class Builder {
         private Set<Node> nodes = new HashSet<>();
-        private long maxLong = Long.MIN_VALUE;
-        private int maxInteger = Integer.MIN_VALUE;
         private String name;
         private OutputStream baos;
-        //private File hdtish;
         
         public OutputStream getOutputStream() {
             return baos;
-        }
-
-        public long getMaxLong() {
-            return maxLong;
-        }
-        
-        public int getMaxInteger() {
-            return maxInteger;
         }
         
         public Set<Node> getNodes() {
@@ -270,3 +249,28 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         }
     }    
 }
+
+
+    
+  /*
+    @Override
+    public Object extract(int id) {
+        switch (datatype.get(id)) {
+
+            case DataType.LONG -> {
+            //    LongBuffer buf = ByteBuffer.wrap(longbaos.toByteArray()).asLongBuffer();
+            //    return buf.get(offsets.get(id)/Long.BYTES);
+            }
+            case DataType.INT -> {
+             //   IntBuffer buf = ByteBuffer.wrap(intbaos.toByteArray()).asIntBuffer();
+             //   return buf.get(offsets.get(id)/Integer.BYTES);
+            }
+            case DataType.STRING -> {
+                //ByteBuffer buf = ByteBuffer.wrap(stringbaos.toByteArray());
+                //int offset = buf.get(offsets.get(id));
+               // return readCString(stringbaos.toByteArray(), offset);
+            }
+        }
+        return null;
+    }
+    */
