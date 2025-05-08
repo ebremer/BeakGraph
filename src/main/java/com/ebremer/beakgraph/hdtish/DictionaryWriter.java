@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdtish;
 
 import static com.ebremer.beakgraph.hdtish.UTIL.MinBits;
 import java.io.FileNotFoundException;
+import java.io.IO;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
@@ -31,6 +32,11 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
     private ArrayList<Node> sorted;
     
     private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
+        IO.println("Name           : "+builder.getName());
+        IO.println("MaxInteger     : " + builder.getMaxInteger());
+        IO.println("MaxLong        : " + builder.getMaxLong());
+        IO.println("MaxBitsInteger : " + MinBits( builder.getMaxInteger()));
+        IO.println("MaxBitsLong    : " + MinBits( builder.getMaxLong()));
         System.out.print("Sorting nodes...");
         sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");        
