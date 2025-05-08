@@ -18,6 +18,7 @@ import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
+import org.apache.jena.vocabulary.XSD;
 
 /**
  *
@@ -28,7 +29,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
     private DictionaryWriter subjectsdict;
     private DictionaryWriter predicatesdict;
     private DictionaryWriter objectsdict;
-    private DictionaryWriter graphsdict;          
+    private DictionaryWriter graphsdict;
 
     public FiveSectionDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         DictionaryWriter.Builder shared = new DictionaryWriter.Builder();        
@@ -51,6 +52,8 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         objectsdict = objects
             .setName("objects")
             .setNodes(builder.getObjects())
+            .setMaxLong(builder.getMaxLong())
+            .setMaxInteger(builder.getMaxInteger())
             .build();
         graphsdict = graphs
             .setName("graphs")
@@ -180,6 +183,8 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         private LinkedHashSet<Node> subjects = new LinkedHashSet<>();
         private HashSet<Node> predicates = new HashSet<>();
         private LinkedHashSet<Node> objects = new LinkedHashSet<>();
+        private long maxLong = Long.MIN_VALUE;
+        private int maxInteger = Integer.MIN_VALUE;
         
         public File getDestination() {
             return dest;
@@ -213,6 +218,14 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         public Builder setDestination(File dest) {
             this.dest = dest;
             return this;
+        }
+
+        public long getMaxLong() {
+            return maxLong;
+        }
+       
+        public int getMaxInteger() {
+            return maxInteger;
         }        
         
         public FiveSectionDictionaryWriter build() throws IOException {
@@ -253,6 +266,13 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                         }
                         if (!o.equals(c.co)) {
                             c.co = o;
+                            if (o.isLiteral()) {
+                                if (o.getLiteralValue() instanceof Long x) {
+                                    maxLong = Math.max(maxLong, x);
+                                } if (o.getLiteralValue() instanceof Integer x) {
+                                    maxInteger = Math.max(maxInteger, x);
+                                }
+                            }
                             if (subjects.contains(o)) {
                                 subjects.remove(o);
                                 objects.remove(o);

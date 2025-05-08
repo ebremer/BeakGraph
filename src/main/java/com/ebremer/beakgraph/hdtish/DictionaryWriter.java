@@ -30,23 +30,21 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
     private FCDWriter text;  
     private List<HDF5Buffer> list = new ArrayList<>();
     private ArrayList<Node> sorted;
-    private long maxLong = Long.MIN_VALUE;
-    private int maxInteger = Integer.MIN_VALUE;
     
     private DictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         IO.println("Name           : " + builder.getName());
-        IO.println("MaxInteger     : " + maxLong);
-        IO.println("MaxLong        : " + maxInteger);
-        IO.println("MaxBitsInteger : " + MinBits( maxInteger ));
-        IO.println("MaxBitsLong    : " + MinBits( maxLong ));
+        IO.println("MaxInteger     : " + builder.getMaxInteger());
+        IO.println("MaxLong        : " + builder.getMaxLong());
+        IO.println("MaxBitsInteger : " + MinBits( builder.getMaxInteger() ));
+        IO.println("MaxBitsLong    : " + MinBits( builder.getMaxLong() ));
         System.out.print("Sorting nodes...");
         sorted = NodeSorter.parallelSort(builder.getNodes());      
         System.out.println("Done.");        
         doubles = new DataOutputBuffer( Path.of(builder.getName(), "doubles"));
         floats = new DataOutputBuffer( Path.of(builder.getName(), "floats"));
         offsets = BitPackedWriter.forBuffer( Path.of( builder.getName(), "offsets"), MinBits( builder.getNodes().size()) );
-        integers = BitPackedWriter.forBuffer( Path.of( builder.getName(), "integers"), MinBits( maxInteger ) );
-        longs = BitPackedWriter.forBuffer( Path.of( builder.getName(), "longs"), MinBits( maxLong ) );
+        integers = BitPackedWriter.forBuffer( Path.of( builder.getName(), "integers"), MinBits( builder.getMaxInteger() ) );
+        longs = BitPackedWriter.forBuffer( Path.of( builder.getName(), "longs"), MinBits( builder.getMaxLong() ) );
         datatype = BitPackedWriter.forBuffer( Path.of( builder.getName(), "datatype"), DataType.values().length );
         text = new FCDWriter(Path.of(builder.getName(), "strings"), 8);
         list.add(text);
@@ -117,14 +115,6 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         return sorted.get(id);
     }   
     
-    public long getMaxLong() {
-        return maxLong;
-    }
-       
-    public int getMaxInteger() {
-        return maxInteger;
-    }
-    
     private void Add(Node node) {
         if (node.isBlank()) {           
             try {
@@ -149,7 +139,6 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
                     try {
                         offsets.writeInteger(Long.BYTES);
                         datatype.writeInteger(DataType.LONG.ordinal());  
-                        maxLong = Math.max(maxLong, x);
                         longs.writeLong(x);
                     } catch (IOException ex) {
                         Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
@@ -161,7 +150,6 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
                         offsets.writeInteger(Integer.BYTES);
                         integers.writeInteger(x);
                         datatype.writeInteger(DataType.INT.ordinal());
-                        maxInteger = Math.max(maxInteger, x);
                     } catch (IOException ex) {
                         Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
@@ -216,6 +204,8 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         private Set<Node> nodes = new HashSet<>();
         private String name;
         private OutputStream baos;
+        private long maxLong = Long.MIN_VALUE;
+        private int maxInteger = Integer.MIN_VALUE;
         
         public OutputStream getOutputStream() {
             return baos;
@@ -224,7 +214,26 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         public Set<Node> getNodes() {
             return nodes;
         }
+
+        public int getMaxInteger() {
+            return this.maxInteger;
+        }
         
+        public long getMaxLong() {
+            return this.maxLong;
+        }
+        
+        
+        public Builder setMaxInteger(int value) {
+            this.maxInteger = value;
+            return this;
+        }
+        
+        public Builder setMaxLong(long value) {
+            this.maxLong = value;
+            return this;
+        }
+
         public Builder setNodes(Set<Node> nodes) {
             this.nodes = nodes;
             return this;
