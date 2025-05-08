@@ -6,6 +6,10 @@ package com.ebremer.beakgraph.hdtish;
  */
 public class UTIL {
     
+    public static int MinBits(long x) {
+        return (int) Math.ceil(Math.log(x)/Math.log(2d));
+    }
+    
     public static String byteArrayToBinaryString(byte[] bytes) {
         if (bytes == null || bytes.length == 0) {
             return "";

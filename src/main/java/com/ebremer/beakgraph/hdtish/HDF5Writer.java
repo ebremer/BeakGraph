@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdtish;
 
+import static com.ebremer.beakgraph.hdtish.UTIL.MinBits;
 import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableDataset;
@@ -53,15 +54,15 @@ public class HDF5Writer {
         Bs = BitPackedWriter.forBuffer( Path.of( "Bs" ), 1 );
         Bp = BitPackedWriter.forBuffer( Path.of( "Bp" ), 1 );
         Bo = BitPackedWriter.forBuffer( Path.of( "Bo" ), 1 );
-        Ss = BitPackedWriter.forBuffer( Path.of( "Ss" ), w.getNumberOfSubjects() );
-        Sp = BitPackedWriter.forBuffer( Path.of( "Sp" ), w.getNumberOfPredicates() );
-        So = BitPackedWriter.forBuffer( Path.of( "So" ), w.getNumberOfObjects() );        
-        SBs = BitPackedWriter.forBuffer( Path.of( "SBs" ), w.getNumberOfSubjects() );
-        SBp = BitPackedWriter.forBuffer( Path.of( "SBp" ), w.getNumberOfPredicates() );
-        SBo = BitPackedWriter.forBuffer( Path.of( "SBo" ), w.getNumberOfObjects() );
-        BBs = BitPackedWriter.forBuffer( Path.of( "BBs" ), w.getNumberOfSubjects() );
-        BBp = BitPackedWriter.forBuffer( Path.of( "BBp" ), w.getNumberOfPredicates() );
-        BBo = BitPackedWriter.forBuffer( Path.of( "BBo" ), w.getNumberOfObjects() );
+        Ss = BitPackedWriter.forBuffer( Path.of( "Ss" ), MinBits(w.getNumberOfSubjects()) );
+        Sp = BitPackedWriter.forBuffer( Path.of( "Sp" ), MinBits(w.getNumberOfPredicates()) );
+        So = BitPackedWriter.forBuffer( Path.of( "So" ), MinBits(w.getNumberOfObjects()) );        
+        SBs = BitPackedWriter.forBuffer( Path.of( "SBs" ), MinBits(w.getNumberOfSubjects()) );
+        SBp = BitPackedWriter.forBuffer( Path.of( "SBp" ), MinBits(w.getNumberOfPredicates()) );
+        SBo = BitPackedWriter.forBuffer( Path.of( "SBo" ), MinBits(w.getNumberOfObjects()) );
+        BBs = BitPackedWriter.forBuffer( Path.of( "BBs" ), MinBits(w.getNumberOfSubjects()) );
+        BBp = BitPackedWriter.forBuffer( Path.of( "BBp" ), MinBits(w.getNumberOfPredicates()) );
+        BBo = BitPackedWriter.forBuffer( Path.of( "BBo" ), MinBits(w.getNumberOfObjects()) );
         final Current c = new Current();
         final AtomicInteger totaltriples = new AtomicInteger();
         final AtomicInteger totalsubjects = new AtomicInteger();

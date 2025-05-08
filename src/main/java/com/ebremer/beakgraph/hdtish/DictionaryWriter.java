@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdtish;
 
+import static com.ebremer.beakgraph.hdtish.UTIL.MinBits;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -67,11 +68,7 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
     public int getNumberOfNodes() {
         return sorted.size();
     }
-    
-    private int MinBits(long x) {
-        return (int) Math.ceil(Math.log(x)/Math.log(2d));
-    }
-    
+        
     @Override
     public int locateGraph(Node element) {
         return NodeSearch.findPosition(sorted, element);

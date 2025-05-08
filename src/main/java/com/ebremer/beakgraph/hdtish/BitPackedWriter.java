@@ -48,7 +48,7 @@ public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
     // Write the least significant n bits of the integer to the buffer
     public void writeInteger(int value) throws IOException {
         if (width < 0 || width > 32) {
-            throw new IllegalArgumentException("n must be between 0 and 32");
+            throw new IllegalArgumentException("n must be between 0 and 32 ---> "+value);
         }
         entries++;
         // Extract the least significant n bits
@@ -96,6 +96,9 @@ public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
     }
 
     public static BitPackedWriter forBuffer(Path path, int width) throws IOException {
+        if (width < 0 || width > 32) {
+            throw new IllegalArgumentException("n must be between 0 and 32 ---> "+width);
+        }
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         ByteWriter fileWriter = new ByteWriter() {
             @Override
