@@ -173,14 +173,10 @@ public class HDF5Writer {
                     curr = b.getName().getParent();
                     System.out.println("Creating new HDF5 group : "+b.getName().getParent().toString());
                     group = ultra.putGroup(b.getName().getParent().toString());
-                    group.putAttribute("metadata", "this is really cool --> "+b.getName().getParent().toString());
                 }
                 if (b.getBuffer().length>0) {
                     System.out.println("Adding : "+b.getName().toFile().getName()+" ----> "+b.getBuffer().length);                    
-                    WritableDataset ds = group.putDataset(b.getName().toFile().getName(), b.getBuffer());
-                    b.getProperties().forEach((k,v)->{
-                        ds.putAttribute(k, v);
-                    });
+                    putAttributes(group.putDataset(b.getName().toFile().getName(), b.getBuffer()),b.getProperties());
                 }               
             }
             if (Bs.getBuffer().length>0) {
