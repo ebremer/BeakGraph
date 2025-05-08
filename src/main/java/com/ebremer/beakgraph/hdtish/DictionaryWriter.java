@@ -64,6 +64,10 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         text.close();
     }
     
+    public int getNumberOfNodes() {
+        return sorted.size();
+    }
+    
     private int MinBits(long x) {
         return (int) Math.ceil(Math.log(x)/Math.log(2d));
     }
@@ -184,17 +188,7 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
             throw new Error("WTF : "+node);
         }
     }
-/*
-    @Override
-    public int locate(Node element) {
-        if (element.isLiteral()) {
-            // look at literal tables
-        } else if (element.isURI()) {
-            
-        }
-        return -1;
-    }
-*/    
+
     public static String readCString(byte[] data, int offset) {
         int end = offset;
         while (end < data.length && data[end] != 0) {
@@ -267,21 +261,6 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
             this.baos = baos;
             return this;
         }
-
-        /*
-        private Builder Add(Node node) {
-           nodes.add(node);
-           if (node.isLiteral()) {
-               if (node.getLiteralDatatypeURI().equals(XSD.xlong.toString())) {
-                   switch (node.getLiteralValue()) {
-                       case Long x -> maxLong = Math.max(maxLong, x);
-                       case Integer x -> maxInteger = Math.max(maxInteger, x);
-                       default -> {}
-                   }
-               }
-           }
-           return this;
-        }*/
         
         public DictionaryWriter build() throws IOException {                  
             return new DictionaryWriter(this);

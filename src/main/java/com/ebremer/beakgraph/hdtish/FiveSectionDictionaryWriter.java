@@ -61,6 +61,22 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
             builder.getDestination().getParentFile().mkdirs();
         }
     }
+
+    public int getNumberOfGraphs() {
+        return graphsdict.getNumberOfNodes();
+    }
+    
+    public int getNumberOfSubjects() {
+        return shareddict.getNumberOfNodes()+subjectsdict.getNumberOfNodes();
+    }
+    
+    public int getNumberOfPredicates() {
+        return predicatesdict.getNumberOfNodes();
+    }
+    
+    public int getNumberOfObjects() {
+        return shareddict.getNumberOfNodes()+objectsdict.getNumberOfNodes();
+    }
     
     @Override
     public int locateGraph(Node element) {
@@ -219,19 +235,11 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                         Node o = quad.getObject();
                         if (!g.equals(c.cg)) {
                             c.cg = g;
-                            if (subjects.contains(g)||objects.contains(g)) {
-                                graphs.remove(g);
-                                subjects.remove(g);
-                                objects.remove(g);
-                                shared.add(g);
-                            } else {
-                                graphs.add(g);
-                            }
+                            graphs.add(g);
                         }
                         if (!s.equals(c.cs)) {
                             c.cs = s;
-                            if (graphs.contains(s)||objects.contains(s)) {
-                                graphs.remove(s);
+                            if (objects.contains(s)) {                                
                                 subjects.remove(s);
                                 objects.remove(s);
                                 shared.add(s);
@@ -245,8 +253,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                         }
                         if (!o.equals(c.co)) {
                             c.co = o;
-                            if (graphs.contains(o)||subjects.contains(o)) {
-                                graphs.remove(o);
+                            if (subjects.contains(o)) {
                                 subjects.remove(o);
                                 objects.remove(o);
                                 shared.add(o);

@@ -10,6 +10,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
@@ -26,12 +27,20 @@ import org.apache.jena.riot.system.AsyncParserBuilder;
 public class HDF5Writer {
     private File src = null;
     private File dest = null;
-    private final BitPackedWriter bitmapX;
-    private final BitPackedWriter bitmapY;
-    private final BitPackedWriter bitmapZ;
-    private final BitPackedWriter arrayX;
-    private final BitPackedWriter arrayY;
-    private final BitPackedWriter arrayZ;
+    private final BitPackedWriter Bs;
+    private final BitPackedWriter Bp;
+    private final BitPackedWriter Bo;
+    private final BitPackedWriter Ss;
+    private final BitPackedWriter Sp;
+    private final BitPackedWriter So;
+    private final BitPackedWriter SBs;
+    private final BitPackedWriter SBp;
+    private final BitPackedWriter SBo;
+    private final BitPackedWriter BBs;
+    private final BitPackedWriter BBp;
+    private final BitPackedWriter BBo;
+    public static final int BLOCKSIZE = 64;
+    public static final int SUPERBLOCKSIZE = 512;
         
     private HDF5Writer(Builder builder) throws IOException {
         src = builder.getSource();
@@ -41,13 +50,27 @@ public class HDF5Writer {
             .setSource(src)
             .setDestination(dest)
             .build();
-        bitmapX = BitPackedWriter.forBuffer( Path.of( "BitmapX" ), 1 );
-        bitmapY = BitPackedWriter.forBuffer( Path.of( "BitmapY" ), 1 );
-        bitmapZ = BitPackedWriter.forBuffer( Path.of( "BitmapZ" ), 1 );
-        arrayX = BitPackedWriter.forBuffer( Path.of( "ArrayX" ), 1 );
-        arrayY = BitPackedWriter.forBuffer( Path.of( "ArrayY" ), 1 );
-        arrayZ = BitPackedWriter.forBuffer( Path.of( "ArrayZ" ), 1 );        
+        Bs = BitPackedWriter.forBuffer( Path.of( "Bs" ), 1 );
+        Bp = BitPackedWriter.forBuffer( Path.of( "Bp" ), 1 );
+        Bo = BitPackedWriter.forBuffer( Path.of( "Bo" ), 1 );
+        Ss = BitPackedWriter.forBuffer( Path.of( "Ss" ), w.getNumberOfSubjects() );
+        Sp = BitPackedWriter.forBuffer( Path.of( "Sp" ), w.getNumberOfPredicates() );
+        So = BitPackedWriter.forBuffer( Path.of( "So" ), w.getNumberOfObjects() );        
+        SBs = BitPackedWriter.forBuffer( Path.of( "SBs" ), w.getNumberOfSubjects() );
+        SBp = BitPackedWriter.forBuffer( Path.of( "SBp" ), w.getNumberOfPredicates() );
+        SBo = BitPackedWriter.forBuffer( Path.of( "SBo" ), w.getNumberOfObjects() );
+        BBs = BitPackedWriter.forBuffer( Path.of( "BBs" ), w.getNumberOfSubjects() );
+        BBp = BitPackedWriter.forBuffer( Path.of( "BBp" ), w.getNumberOfPredicates() );
+        BBo = BitPackedWriter.forBuffer( Path.of( "BBo" ), w.getNumberOfObjects() );
         final Current c = new Current();
+        final AtomicInteger totaltriples = new AtomicInteger();
+        final AtomicInteger totalsubjects = new AtomicInteger();
+        final AtomicInteger totalpredicates = new AtomicInteger();
+        final AtomicInteger totalobjects = new AtomicInteger();
+        final AtomicInteger deltatriples = new AtomicInteger();
+        final AtomicInteger deltasubjects = new AtomicInteger();
+        final AtomicInteger deltapredicates = new AtomicInteger();
+        final AtomicInteger deltaobjects = new AtomicInteger();
         try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {
             AsyncParserBuilder xbuilder = AsyncParser.of(fis, Lang.NQUADS, null);
             xbuilder.mutateSources(rdfBuilder->
@@ -57,6 +80,7 @@ public class HDF5Writer {
                 .streamQuads()
                 //.limit(10)
                 .forEach(quad->{
+                    totaltriples.incrementAndGet();
                     //Node g = quad.getGraph();
                     Node s = quad.getSubject();
                     Node p = quad.getPredicate();
@@ -64,14 +88,15 @@ public class HDF5Writer {
                     if (!s.equals(c.cs)) {
                         c.cs = s;
                         try {
-                            bitmapX.writeInteger(1);
-                            arrayX.writeInteger(w.locateSubject(quad.getSubject()));
+                            totalsubjects.incrementAndGet();
+                            Bs.writeInteger(1);
+                            Ss.writeInteger(w.locateSubject(quad.getSubject()));
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
                     } else {
                         try {
-                            bitmapX.writeInteger(0);
+                            Bs.writeInteger(0);
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
@@ -79,14 +104,15 @@ public class HDF5Writer {
                     if (!p.equals(c.cp)) {
                         c.cp = p;
                         try {
-                            bitmapY.writeInteger(1);
-                            arrayY.writeInteger(w.locatePredicate(quad.getPredicate()));
+                            totalpredicates.incrementAndGet();
+                            Bp.writeInteger(1);
+                            Sp.writeInteger(w.locatePredicate(quad.getPredicate()));
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
                     } else {
                         try {
-                            bitmapY.writeInteger(0);
+                            Bp.writeInteger(0);
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
@@ -94,17 +120,30 @@ public class HDF5Writer {
                     if (!o.equals(c.co)) {
                         c.co = o;                    
                         try {
-                            bitmapZ.writeInteger(1);
-                            arrayZ.writeInteger(w.locateObject(quad.getObject()));
+                            totalobjects.incrementAndGet();
+                            Bo.writeInteger(1);
+                            So.writeInteger(w.locateObject(quad.getObject()));
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
                     } else {
                         try {
-                            bitmapZ.writeInteger(0);
+                            Bo.writeInteger(0);
                         } catch (IOException ex) {
                             Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
                         }
+                    }
+                    if ((totaltriples.get() % SUPERBLOCKSIZE)==0) {
+                        try {
+                            SBs.writeInteger(totalsubjects.get());
+                            SBp.writeInteger(totalpredicates.get());
+                            SBo.writeInteger(totalobjects.get());
+                        } catch (IOException ex) {
+                            Logger.getLogger(HDF5Writer.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    }
+                    if ((totaltriples.get() % BLOCKSIZE)==0) {
+                        
                     }
                 });
         }        
@@ -127,23 +166,23 @@ public class HDF5Writer {
                     });
                 }               
             }
-            if (bitmapX.getBuffer().length>0) {
-                ultra.putDataset(bitmapX.getName().toString(), bitmapX.getBuffer());
+            if (Bs.getBuffer().length>0) {
+                ultra.putDataset(Bs.getName().toString(), Bs.getBuffer());
             }
-            if (bitmapY.getBuffer().length>0) {
-                ultra.putDataset(bitmapY.getName().toString(), bitmapY.getBuffer());
+            if (Bp.getBuffer().length>0) {
+                ultra.putDataset(Bp.getName().toString(), Bp.getBuffer());
             }
-            if (bitmapZ.getBuffer().length>0) {
-                ultra.putDataset(bitmapZ.getName().toString(), bitmapZ.getBuffer());
+            if (Bo.getBuffer().length>0) {
+                ultra.putDataset(Bo.getName().toString(), Bo.getBuffer());
             }
-            if (arrayX.getBuffer().length>0) {
-                ultra.putDataset(arrayX.getName().toString(), arrayX.getBuffer());
+            if (Ss.getBuffer().length>0) {
+                ultra.putDataset(Ss.getName().toString(), Ss.getBuffer());
             }
-            if (arrayY.getBuffer().length>0) {
-                ultra.putDataset(arrayY.getName().toString(), arrayY.getBuffer());
+            if (Sp.getBuffer().length>0) {
+                ultra.putDataset(Sp.getName().toString(), Sp.getBuffer());
             }
-            if (arrayZ.getBuffer().length>0) {
-                ultra.putDataset(arrayZ.getName().toString(), arrayZ.getBuffer());
+            if (So.getBuffer().length>0) {
+                ultra.putDataset(So.getName().toString(), So.getBuffer());
             }
         } catch (Exception e) {
             e.printStackTrace();
