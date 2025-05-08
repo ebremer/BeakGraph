@@ -204,7 +204,7 @@ public class HDF5Writer {
                 ultra.putDataset(SBo.getName().toString(), SBo.getBuffer());
             }
             if (BBs.getBuffer().length>0) {
-                ultra.putDataset(Ss.getName().toString(), Ss.getBuffer());
+                ultra.putDataset(BBs.getName().toString(), BBs.getBuffer());
             }            
             if (BBp.getBuffer().length>0) {
                 ultra.putDataset(BBp.getName().toString(), BBp.getBuffer());
