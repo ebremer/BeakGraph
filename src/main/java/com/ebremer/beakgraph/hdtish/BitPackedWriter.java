@@ -13,14 +13,14 @@ interface ByteWriter {
 
 public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
     private final ByteWriter byteWriter;
-    private final int width;
+    private final long width;
     private long bitBuffer = 0;
     private int bitCount = 0;
     private ByteArrayOutputStream os;
     private Path path;
     private long entries = 0;
 
-    private BitPackedWriter(Path path, ByteWriter byteWriter, int width, ByteArrayOutputStream os) {
+    private BitPackedWriter(Path path, ByteWriter byteWriter, long width, ByteArrayOutputStream os) {
         this.path = path;
         this.byteWriter = byteWriter;
         this.width = width;
@@ -95,10 +95,11 @@ public class BitPackedWriter implements HDF5Buffer, AutoCloseable {
         os.close();
     }
 
-    public static BitPackedWriter forBuffer(Path path, int width) throws IOException {
+    public static BitPackedWriter forBuffer(Path path, long width) throws IOException {
         if (width < 0 || width > 32) {
             throw new IllegalArgumentException("n must be between 0 and 32 ---> "+width);
         }
+        System.out.println(path+" ---> "+width);
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         ByteWriter fileWriter = new ByteWriter() {
             @Override

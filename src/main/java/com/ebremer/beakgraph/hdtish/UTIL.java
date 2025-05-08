@@ -6,8 +6,8 @@ package com.ebremer.beakgraph.hdtish;
  */
 public class UTIL {
     
-    public static int MinBits(long x) {
-        return (int) Math.ceil(Math.log(x)/Math.log(2d));
+    public static long MinBits(long x) {
+        return (long) Math.ceil(Math.log(x)/Math.log(2d));
     }
     
     public static String byteArrayToBinaryString(byte[] bytes) {
