@@ -19,21 +19,11 @@ public class HDF5Reader {
             System.out.println("BIT WIDTH = "+width);
             BitPackedReader bpr = new BitPackedReader(dataset.getBuffer(), (int) width);
             
-            IntStream.range(0, 28).forEach(i->{
+            IntStream.range(0, 27).forEach(i->{
                 System.out.println(i+" ==> "+bpr.readNthValue(i));
             });
-            
-            
-            /*
-            byte[] ha = (byte[]) dataset.getData();
-            System.out.println(ha.length);
-            ByteBuffer bb = dataset.getBuffer();
-            System.out.println(bb.getClass().toGenericString());
-            bb.position(0);
-            IntStream.range(0, 108).forEach(i->{
-                System.out.println(bb.get(i));
-            });
-            bb.position(0);*/
+
+
         }
     }
 }

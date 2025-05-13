@@ -55,6 +55,8 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
             .setNodes(builder.getObjects())
             .setMaxLong(builder.getMaxLong())
             .setMaxInteger(builder.getMaxInteger())
+            .setMinLong(builder.getMinLong())
+            .setMinInteger(builder.getMinInteger())
             .build();
         graphsdict = graphs
             .setName("graphs")
@@ -190,6 +192,8 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         private LinkedHashSet<Node> objects = new LinkedHashSet<>();
         private long maxLong = Long.MIN_VALUE;
         private int maxInteger = Integer.MIN_VALUE;
+        private long minLong = Long.MAX_VALUE;
+        private int minInteger = Integer.MAX_VALUE;
         private long quads;
         
         public File getDestination() {
@@ -229,6 +233,14 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         public long getNumberOfQuads() {
             return quads;
         }
+
+        public long getMinLong() {
+            return minLong;
+        }
+       
+        public int getMinInteger() {
+            return minInteger;
+        }   
         
         public long getMaxLong() {
             return maxLong;
@@ -240,7 +252,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         
         public FiveSectionDictionaryWriter build() throws IOException {
             final Current c = new Current();
-            final AtomicLong quads = new AtomicLong();        
+            final AtomicLong quadcount = new AtomicLong();        
             System.out.print("Create sections...");
             try (GZIPInputStream fis = new GZIPInputStream(new FileInputStream(src))) {
                 AsyncParserBuilder builder = AsyncParser.of(fis, Lang.NQUADS, null);
@@ -251,7 +263,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                     .streamQuads()
                    // .limit(100)
                     .forEach(quad->{
-                        quads.incrementAndGet();
+                        quadcount.incrementAndGet();
                         Node g = quad.getGraph();
                         Node s = quad.getSubject();
                         Node p = quad.getPredicate();
@@ -279,8 +291,10 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                             if (o.isLiteral()) {
                                 if (o.getLiteralValue() instanceof Long x) {
                                     maxLong = Math.max(maxLong, x);
+                                    minLong = Math.min(minLong, x);
                                 } if (o.getLiteralValue() instanceof Integer x) {
                                     maxInteger = Math.max(maxInteger, x);
+                                    minInteger = Math.min(minInteger, x);
                                 }
                             }
                             if (subjects.contains(o)) {
@@ -298,7 +312,7 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                 Logger.getLogger(FiveSectionDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
             }
             System.out.println("Initial sort done.");
-            this.quads = quads.get();
+            this.quads = quadcount.get();
             return new FiveSectionDictionaryWriter(this);
         }
     }

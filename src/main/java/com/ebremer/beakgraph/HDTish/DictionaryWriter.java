@@ -206,6 +206,8 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         private OutputStream baos;
         private long maxLong = Long.MIN_VALUE;
         private int maxInteger = Integer.MIN_VALUE;
+        private long minLong = Long.MAX_VALUE;
+        private int minInteger = Integer.MAX_VALUE;
         
         public OutputStream getOutputStream() {
             return baos;
@@ -215,14 +217,31 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
             return nodes;
         }
 
+        public int getMinInteger() {
+            return this.minInteger;
+        }
+        
+        public long getMinLong() {
+            return this.minLong;
+        }           
+        
         public int getMaxInteger() {
             return this.maxInteger;
         }
         
         public long getMaxLong() {
             return this.maxLong;
+        }        
+
+        public Builder setMinInteger(int value) {
+            this.minInteger = value;
+            return this;
         }
         
+        public Builder setMinLong(long value) {
+            this.minLong = value;
+            return this;
+        }
         
         public Builder setMaxInteger(int value) {
             this.maxInteger = value;
