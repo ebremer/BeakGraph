@@ -35,6 +35,8 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
         IO.println("Name           : " + builder.getName());
         IO.println("MaxInteger     : " + builder.getMaxInteger());
         IO.println("MaxLong        : " + builder.getMaxLong());
+        IO.println("MinInteger     : " + builder.getMinInteger());
+        IO.println("MinLong        : " + builder.getMinLong());
         IO.println("MaxBitsInteger : " + MinBits( builder.getMaxInteger() ));
         IO.println("MaxBitsLong    : " + MinBits( builder.getMaxLong() ));
         System.out.print("Sorting nodes...");

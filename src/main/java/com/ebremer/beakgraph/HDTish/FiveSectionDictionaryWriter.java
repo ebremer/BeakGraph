@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.HDTish;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.IO;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -38,6 +39,12 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
         DictionaryWriter.Builder predicates = new DictionaryWriter.Builder();
         DictionaryWriter.Builder objects = new DictionaryWriter.Builder();
         DictionaryWriter.Builder graphs = new DictionaryWriter.Builder();
+        IO.println("==================================================================");
+        IO.println("MaxInteger     : " + builder.getMaxInteger());
+        IO.println("MaxLong        : " + builder.getMaxLong());
+        IO.println("MinInteger     : " + builder.getMinInteger());
+        IO.println("MinLong        : " + builder.getMinLong());
+        IO.println("==================================================================");
         shareddict = shared  
             .setName("shared")
             .setNodes(builder.getShared())            
