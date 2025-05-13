@@ -1,4 +1,4 @@
-package com.ebremer.beakgraph.hdtish;
+package com.ebremer.beakgraph.HDTish;
 
 import io.jhdf.HdfFile;
 import io.jhdf.api.Dataset;
