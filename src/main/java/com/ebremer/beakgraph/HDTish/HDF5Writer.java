@@ -179,7 +179,6 @@ public class HDF5Writer {
                     putAttributes(group.putDataset(b.getName().toFile().getName(), b.getBuffer()),b.getProperties());
                 }               
             }
-            /*
             if (Bs.getBuffer().length>0) {
                 putAttributes(ultra.putDataset(Bs.getName().toString(), Bs.getBuffer()),Bs.getProperties());
             }
@@ -215,7 +214,7 @@ public class HDF5Writer {
             } 
             if (BBo.getBuffer().length>0) {
                 putAttributes(ultra.putDataset(BBo.getName().toString(), BBo.getBuffer()), BBo.getProperties());
-            }           */   
+            }  
         } catch (Exception e) {
             e.printStackTrace();
         }
