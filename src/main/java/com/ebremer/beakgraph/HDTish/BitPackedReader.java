@@ -1,10 +1,6 @@
 package com.ebremer.beakgraph.HDTish;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 
 public class BitPackedReader {
     private final ByteBuffer buffer;
@@ -37,15 +33,17 @@ public class BitPackedReader {
         return value;
     }
     
+    /*
     public static BitPackedReader fromFile(String filePath, int b) throws IOException {
         FileChannel channel = FileChannel.open(Paths.get(filePath), StandardOpenOption.READ);
         ByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
         return new BitPackedReader(buffer, b);
-    }
+    }*/
 
-    public static void main(String[] args) throws IOException {
+ //   public static void main(String[] args) throws IOException {
        // byte[] data = {(byte) 0b10101111, (byte) 0b10000000}; // 10101111 10000000
   
+    /*
         BitPackedReader reader = BitPackedReader.fromFile("output.dat", 3);
         System.out.println("n=0: " + reader.readNthValue(0));
         System.out.println("n=1: " + reader.readNthValue(1));
@@ -54,7 +52,7 @@ public class BitPackedReader {
         System.out.println("n=2: " + reader.readNthValue(4));
         System.out.println("n=2: " + reader.readNthValue(5));      
         System.out.println("n=2: " + reader.readNthValue(6));
-        
+        */
         /*
         BitPackedReader reader = new BitPackedReader(ByteBuffer.wrap(data), 3);
         System.out.println("n=0: " + reader.readNthValue(0)); // Should be 5
@@ -64,5 +62,5 @@ public class BitPackedReader {
         System.out.println("n=2: " + reader.readNthValue(4));
         System.out.println("n=2: " + reader.readNthValue(5));
 */
-    }
+//    }
 }
