@@ -16,10 +16,10 @@ public class HDF5Reader {
         try (HdfFile hdfFile = new HdfFile(src.toPath())) {
             ContiguousDataset dataset = (ContiguousDataset) hdfFile.getDatasetByPath("/HDT/objects/integers");
             long width = (Long) dataset.getAttribute("width").getData();
+            System.out.println("CAPACITY :"+dataset.getBuffer().capacity());
             System.out.println("BIT WIDTH = "+width);
             BitPackedReader bpr = new BitPackedReader(dataset.getBuffer(), (int) width);
-            
-            IntStream.range(0, 27).forEach(i->{
+            IntStream.range(0, 28).forEach(i->{
                 System.out.println(i+" ==> "+bpr.readNthValue(i));
             });
 

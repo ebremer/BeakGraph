@@ -298,15 +298,16 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                             c.co = o;
                             if (o.isLiteral()) {
                                 String dt = o.getLiteralDatatypeURI();
-                                Number n = (Number) o.getLiteralValue();
                                 if (dt.equals(XSD.xlong.getURI())) {
-                                        IO.println("ENTERING LONG =======================> "+n);
-                                        this.maxLong = Math.max(this.maxLong, n.longValue());
-                                        this.minLong = Math.min(this.minLong, n.longValue());
+                                    Number n = (Number) o.getLiteralValue();
+                                 //   IO.println("ENTERING LONG =======================> "+n);
+                                    this.maxLong = Math.max(this.maxLong, n.longValue());
+                                    this.minLong = Math.min(this.minLong, n.longValue());
                                 } else if (dt.equals(XSD.xint.getURI())) {
-                                        IO.println(o+" === ENTERING INTEGER ==== "+o.getLiteralDatatypeURI()+" ===================> "+n);
-                                        this.maxInteger = Math.max(this.maxInteger, n.intValue());
-                                        this.minInteger = Math.min(this.minInteger, n.intValue());
+                                    Number n = (Number) o.getLiteralValue();
+                                //    IO.println(o+" === ENTERING INTEGER ==== "+o.getLiteralDatatypeURI()+" ===================> "+n);
+                                    this.maxInteger = Math.max(this.maxInteger, n.intValue());
+                                    this.minInteger = Math.min(this.minInteger, n.intValue());
                                 }
                             }
                             if (subjects.contains(o)) {

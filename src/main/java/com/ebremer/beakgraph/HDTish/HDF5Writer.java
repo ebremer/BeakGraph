@@ -4,7 +4,6 @@ import static com.ebremer.beakgraph.HDTish.UTIL.MinBits;
 import static com.ebremer.beakgraph.HDTish.UTIL.putAttributes;
 import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
-import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.File;
 import java.io.FileInputStream;
@@ -163,7 +162,19 @@ public class HDF5Writer {
                         }
                     }
                 });
-        }        
+        }  
+        Bs.close();
+        Bp.close();
+        Bo.close();
+        Ss.close();
+        Sp.close();
+        So.close();
+        SBs.close();
+        SBp.close();
+        SBo.close();
+        BBs.close();
+        BBp.close();
+        BBo.close();
         try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
             WritableGroup ultra = hdfFile.putGroup(builder.getName());           
             WritableGroup group = null;

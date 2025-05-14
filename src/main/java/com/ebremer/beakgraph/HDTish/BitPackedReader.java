@@ -12,6 +12,9 @@ public class BitPackedReader {
     }
 
     public int readNthValue(int n) {
+        if (n==27) {
+            int gg = 0;
+        }
         int bitPos = n * b;
         int byteIdx = bitPos / 8;
         if (byteIdx >= buffer.capacity()) {
