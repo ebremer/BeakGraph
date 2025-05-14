@@ -19,6 +19,7 @@ import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
+import org.apache.jena.vocabulary.XSD;
 
 /**
  *
@@ -296,12 +297,16 @@ public class FiveSectionDictionaryWriter implements Dictionary, AutoCloseable {
                         if (!o.equals(c.co)) {
                             c.co = o;
                             if (o.isLiteral()) {
-                                if (o.getLiteralValue() instanceof Long x) {
-                                    maxLong = Math.max(maxLong, x);
-                                    minLong = Math.min(minLong, x);
-                                } if (o.getLiteralValue() instanceof Integer x) {
-                                    maxInteger = Math.max(maxInteger, x);
-                                    minInteger = Math.min(minInteger, x);
+                                String dt = o.getLiteralDatatypeURI();
+                                Number n = (Number) o.getLiteralValue();
+                                if (dt.equals(XSD.xlong.getURI())) {
+                                        IO.println("ENTERING LONG =======================> "+n);
+                                        this.maxLong = Math.max(this.maxLong, n.longValue());
+                                        this.minLong = Math.min(this.minLong, n.longValue());
+                                } else if (dt.equals(XSD.xint.getURI())) {
+                                        IO.println(o+" === ENTERING INTEGER ==== "+o.getLiteralDatatypeURI()+" ===================> "+n);
+                                        this.maxInteger = Math.max(this.maxInteger, n.intValue());
+                                        this.minInteger = Math.min(this.minInteger, n.intValue());
                                 }
                             }
                             if (subjects.contains(o)) {

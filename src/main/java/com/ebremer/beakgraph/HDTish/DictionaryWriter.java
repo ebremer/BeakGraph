@@ -136,25 +136,22 @@ public class DictionaryWriter implements Dictionary, AutoCloseable {
             }
         } else if (node.isLiteral()) {
             String dt = node.getLiteralDatatypeURI();
-            if (dt.equals(XSD.xlong.getURI())) {              
-                if (node.getLiteralValue() instanceof Long x) {
-                    try {
-                        offsets.writeInteger(Long.BYTES);
-                        datatype.writeInteger(DataType.LONG.ordinal());  
-                        longs.writeLong(x);
-                    } catch (IOException ex) {
-                        Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
-                    }
+            if (dt.equals(XSD.xlong.getURI())) {
+                try {
+                    offsets.writeInteger(Long.BYTES);
+                    datatype.writeInteger(DataType.LONG.ordinal());  
+                    longs.writeLong(((Number) node.getLiteralValue()).longValue());
+                } catch (IOException ex) {
+                    Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                 }
             } else if (dt.equals(XSD.xint.getURI())) {
-                if (node.getLiteralValue() instanceof Integer x) {
-                    try {
-                        offsets.writeInteger(Integer.BYTES);
-                        integers.writeInteger(x);
-                        datatype.writeInteger(DataType.INT.ordinal());
-                    } catch (IOException ex) {
-                        Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
-                    }
+                System.out.println("WRITING INTEGER =======> "+node.getLiteralValue());
+                try {
+                    offsets.writeInteger(Integer.BYTES);
+                    integers.writeInteger(((Number) node.getLiteralValue()).intValue());
+                    datatype.writeInteger(DataType.INT.ordinal());
+                } catch (IOException ex) {
+                    Logger.getLogger(DictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                 }
             } else if (dt.equals(XSD.xdouble.getURI())) {
                 if (node.getLiteralValue() instanceof Double x) {
