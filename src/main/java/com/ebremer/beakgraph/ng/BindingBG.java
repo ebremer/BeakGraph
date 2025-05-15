@@ -24,7 +24,7 @@ public class BindingBG extends BindingBase {
     }
     
     public BindingNodeId getBindingId() {
-        return idBinding ;
+        return idBinding;
     }
     
     @Override

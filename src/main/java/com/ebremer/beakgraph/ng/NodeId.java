@@ -7,12 +7,13 @@ final public class NodeId implements Comparable<NodeId> {
     private final Object value;
     private final NodeType type;
 
+    /*
     public NodeId(int c) {
         id = c;
         type = NodeType.RESOURCE;
         value = null;
         toString();
-    }
+    }*/
     
     public NodeId(Object c) {
         value = c;

@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.ng;
 
-
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.IntVector;
 

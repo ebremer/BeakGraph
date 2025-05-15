@@ -6,7 +6,6 @@ import java.util.List;
 import org.apache.arrow.algorithm.search.VectorRangeSearcher;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
-import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
@@ -174,7 +173,6 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                 neo.put(c, new NodeId(ss));
             }
         }
-        ArrowBuf ha;
         if (triple.getSubject().isVariable()) {
             Var ss = Var.alloc(triple.getSubject().getName());
             if (!neo.containsKey(ss)) {
@@ -191,7 +189,7 @@ public class BeakIterator implements Iterator<BindingNodeId> {
             if (!neo.containsKey(pp)) {
                 int ee = nodeTable.getID(predicate);
                 if (ee<nodeTable.getid2IRI().getValueCount()) {
-                    Node xx = nodeTable.getURINode(ee);
+                   // Node xx = nodeTable.getURINode(ee);
                     neo.put(pp, new NodeId(ee));
                 } else {
                     System.out.println("PREDICATE MISSING : "+predicate);
