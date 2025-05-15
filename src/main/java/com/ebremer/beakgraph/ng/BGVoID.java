@@ -3,7 +3,6 @@ package com.ebremer.beakgraph.ng;
 import java.util.HashSet;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.Statement;

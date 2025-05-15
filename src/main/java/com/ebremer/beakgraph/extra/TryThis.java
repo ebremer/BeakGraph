@@ -21,6 +21,10 @@ import org.apache.arrow.vector.VectorUnloader;
 import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.arrow.vector.ipc.message.ArrowBlock;
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
+import org.apache.jena.rdf.model.Model;
+import org.apache.jena.rdf.model.ModelFactory;
+import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.RDFDataMgr;
 
 /**
  *
@@ -38,7 +42,6 @@ try (BufferAllocator allocator = new RootAllocator()) {
     ){
         VarCharVector nameVector = (VarCharVector) vectorSchemaRoot.getVector("name");
         nameVector.allocateNew(10);
-        
         nameVector.set(0, "Zero".getBytes());
         nameVector.set(1, "One".getBytes());
         nameVector.set(2, "Two".getBytes());
@@ -63,7 +66,7 @@ try (BufferAllocator allocator = new RootAllocator()) {
         ageVector.set(7, 70);
         ageVector.set(8, 80);
         ageVector.set(9, 90);
-
+       
         vectorSchemaRoot.setRowCount(10);
         File file = new File("random.arrow");
         try (

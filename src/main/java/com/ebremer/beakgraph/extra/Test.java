@@ -26,8 +26,7 @@ public class Test {
         Configurator.setLevel("com.ebremer.beakgraph.ng", Level.ERROR);
         //Configurator.setRootLevel(Level.ALL);        
         StopWatch sw = StopWatch.getInstance();
-        //File file = new File("D:\\HalcyonStorage\\nuclearsegmentation2019\\coad\\TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
-        File file = new File("D:\\tcga\\cvpr-data\\zip\\brca\\TCGA-E2-A1B1-01Z-00-DX1.7C8DF153-B09B-44C7-87B8-14591E319354.zip");
+        File file = new File("D:\\HalcyonStorage\\nuclearsegmentation2019\\coad\\TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.zip");
         BeakGraph bg = new BeakGraph(file.toURI());
         Dataset ds = DatasetFactory.wrap(new BGDatasetGraph(bg));
         /*
@@ -40,6 +39,16 @@ public class Test {
         ha.setNsPrefix("so", "https://schema.org/");
           */     
         sw.Lapse("Default Graph Loaded");
+        /*
+        ParameterizedSparqlString pss = new ParameterizedSparqlString(
+            """
+            select *
+            where {
+                ?s ?p ?o
+            }
+            """
+        );*/
+        /*
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select *
@@ -53,8 +62,17 @@ public class Test {
                 }
             } limit 10
             """
+        );*/
+        ParameterizedSparqlString pss = new ParameterizedSparqlString(
+            """
+            select distinct ?g
+            where { 
+                graph ?g {?s geo:hasGeometry ?o }
+                filter (strstarts(str(?g),"https://halcyon.is/ns/grid/7/"))
+            } limit 100
+            """
         );
-        pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
+        pss.setNsPrefix("hal", "https://halcyon.is/ns/");
         pss.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
         pss.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
         pss.setNsPrefix("xmls", "http://www.w3.org/2001/XMLSchema#");

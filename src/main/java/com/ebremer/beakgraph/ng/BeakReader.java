@@ -7,6 +7,7 @@ import com.ebremer.rocrate4j.ROCrateReader;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.channels.SeekableByteChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,11 +47,23 @@ public final class BeakReader implements AutoCloseable {
     private int numtriples = 0;
     private final ROCrateReader reader;
     private final URI uri;
+    private final URI base;
+    private Mapper mapper = null;
+    private boolean usemapper;
     
     public BeakReader(URI uri) throws FileNotFoundException, IOException {
+        this(uri, uri);
+    }
+    
+    public BeakReader(URI uri, URI base) throws FileNotFoundException, IOException {
         StopWatch sw = StopWatch.getInstance();
         this.uri = uri;
-        reader = new ROCrateReader(uri);
+        this.base = base;        
+        this.usemapper = !uri.equals(base);
+        if (usemapper) {
+            this.mapper = new Mapper(uri, base);
+        }
+        reader = new ROCrateReader(uri, base);
         byPredicate = new HashMap<>();
         BufferAllocator allocator = AllocatorCore.getInstance().getChildAllocator(uri);
         manifest = reader.getManifest();
@@ -69,7 +82,18 @@ public final class BeakReader implements AutoCloseable {
         ResultSet rs = qe.execSelect();
         while (rs.hasNext()) {
             QuerySolution qs = rs.next();
-            String x = qs.get("file").asResource().getURI();  
+            String x = qs.get("file").asResource().getURI();
+            URI urix;
+            try {
+                urix = new URI(x);
+            } catch (URISyntaxException ex) {
+                throw new Error("BAD URI : "+x);
+            }
+            if (usemapper) {
+                x = mapper.Base2Src(urix);
+            } else {
+                x = urix.getPath();
+            }
             try {
                 SeekableByteChannel xxx = reader.getSeekableByteChannel(x);
                 ArrowFileReader afr = new ArrowFileReader(xxx, allocator, CommonsCompressionFactory.INSTANCE);
@@ -91,20 +115,14 @@ public final class BeakReader implements AutoCloseable {
                 Logger.getLogger(ROCrateReader.class.getName()).log(Level.SEVERE, null, ex);
             }
         }
-        String cha = uri.toString();
-        if (cha.startsWith("file:/")) {
-            if (!cha.startsWith("file://")) {
-                cha = "file:///"+cha.substring("file:/".length());
-            }
-        }
         nodeTable = new NodeTable();
-        try (SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/"+DICTIONARY)) {
+        try (SeekableByteChannel d = reader.getSeekableByteChannel(uri.getPath()+"/halcyon/"+DICTIONARY)) {
             ArrowFileReader afr = new ArrowFileReader(d, allocator, CommonsCompressionFactory.INSTANCE);
             VectorSchemaRoot za = afr.getVectorSchemaRoot();
             afr.loadNextBatch();
             nodeTable.setDictionaryVectors((VarCharVector) za.getVector(0), (IntVector) za.getVector(1), (VarCharVector) za.getVector(2), (IntVector) za.getVector(3));
         }
-        try (SeekableByteChannel d = reader.getSeekableByteChannel(cha+"/halcyon/"+NAMEDGRAPHS)) {
+        try (SeekableByteChannel d = reader.getSeekableByteChannel(uri.getPath()+"/halcyon/"+NAMEDGRAPHS)) {
             ArrowFileReader afr = new ArrowFileReader(d, allocator, CommonsCompressionFactory.INSTANCE);
             VectorSchemaRoot za = afr.getVectorSchemaRoot();
             afr.loadNextBatch();
@@ -158,15 +176,25 @@ public final class BeakReader implements AutoCloseable {
     }
 
     public Iterator<BindingNodeId> Read(int ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
-        if (byPredicate.containsKey(triple.getPredicate().getURI())) {
-            ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
-            byPredicate.get(triple.getPredicate().getURI()).getAllTypes(ng).forEach((k,dual)->{
-                Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable);
+        if (!triple.getPredicate().isVariable()) {            
+            if (byPredicate.containsKey(triple.getPredicate().getURI())) {
+                ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
+                byPredicate.get(triple.getPredicate().getURI()).getAllTypes(ng).forEach((k,dual)->{
+                    Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable, triple.getPredicate());
+                    its.add(i);
+                });
+                return new IteratorChain(its);
+            }
+            return new IteratorChain(new ArrayList<>());
+        }
+        ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
+        byPredicate.forEach((s,par)->{            
+            par.getAllTypes(ng).forEach((k,dual)->{
+                Iterator<BindingNodeId> i = new BeakIterator(bnid, k, dual, triple, filter, nodeTable, par.getPredicateNode());
                 its.add(i);
             });
-            return new IteratorChain(its);
-        }
-        return new IteratorChain(new ArrayList<>());
+        });
+        return new IteratorChain(its);
     }
     
     @Override

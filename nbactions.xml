@@ -10,10 +10,10 @@
                 <goal>org.codehaus.mojo:exec-maven-plugin:3.0.0:exec</goal>
             </goals>
             <properties>
-                <exec.vmArgs>-Xmx55G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true</exec.vmArgs>
+                <exec.vmArgs>--enable-preview -Xmx115G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
                 <exec.appArgs></exec.appArgs>
-                <exec.mainClass>com.ebremer.beakgraph.extra.Test</exec.mainClass>
+                <exec.mainClass>com.ebremer.beakgraph.HDTish.HDF5Writer</exec.mainClass>
                 <exec.executable>java</exec.executable>
             </properties>
         </action>
@@ -27,10 +27,10 @@
                 <goal>org.codehaus.mojo:exec-maven-plugin:3.0.0:exec</goal>
             </goals>
             <properties>
-                <exec.vmArgs>-Xmx55G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true -agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
+                <exec.vmArgs>--enable-preview -Xmx115G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true -agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
                 <exec.appArgs></exec.appArgs>
-                <exec.mainClass>com.ebremer.beakgraph.extra.Test</exec.mainClass>
+                <exec.mainClass>com.ebremer.beakgraph.HDTish.HDF5Writer</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <jpda.listen>true</jpda.listen>
             </properties>
@@ -45,9 +45,9 @@
                 <goal>org.codehaus.mojo:exec-maven-plugin:3.0.0:exec</goal>
             </goals>
             <properties>
-                <exec.vmArgs>-Xmx55G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true</exec.vmArgs>
+                <exec.vmArgs>--enable-preview -Xmx115G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.mainClass>com.ebremer.beakgraph.extra.Test</exec.mainClass>
+                <exec.mainClass>com.ebremer.beakgraph.HDTish.HDF5Writer</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <exec.appArgs></exec.appArgs>
             </properties>

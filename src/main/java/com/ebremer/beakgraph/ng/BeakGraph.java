@@ -35,9 +35,13 @@ public class BeakGraph extends GraphBase {
     static { JenaSystem.init(); }
 
     public BeakGraph(URI uri) throws IOException {
+        this(uri, uri);
+    }
+    
+    public BeakGraph(URI uri, URI base) throws IOException {
         logger.trace("Create a BeakGraph -> "+uri.toString());
         init();
-        this.reader = new BeakReader(uri);
+        this.reader = new BeakReader(uri, base);
         this.namedgraph = 0;
     }
     

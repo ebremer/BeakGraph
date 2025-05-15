@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.7.0</version>
+    <version>0.9.1</version>
     <packaging>jar</packaging>
     
     <description>Library for creating Apache Jena Graphs and Datasets backed by Apache Arrow</description>
@@ -38,14 +38,15 @@
         <plugins>
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.6.0</version>
+                <version>3.8.1</version>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
+                <version>3.13.0</version>
                 <configuration>
                     <compilerArgs>
+                        <arg>--enable-preview</arg>
                     </compilerArgs>
                 </configuration>
             </plugin>
@@ -53,14 +54,13 @@
     </build>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.release>24</maven.compiler.release>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
-        <jena.version>4.10.0</jena.version>
-        <arrow.version>14.0.1</arrow.version>
-        <rocrate4j.version>0.3.5</rocrate4j.version>
-        <commons-compress.version>1.24.0</commons-compress.version>
-        <log4j.version>2.21.1</log4j.version>
+        <jena.version>5.4.0</jena.version>
+        <arrow.version>18.2.0</arrow.version>
+        <rocrate4j.version>0.5.0</rocrate4j.version>
+        <commons-compress.version>1.27.1</commons-compress.version>
+        <log4j.version>2.24.3</log4j.version>
     </properties>
     <dependencies>
         <dependency>
@@ -74,15 +74,20 @@
             <version>2.4.0-b180830.0359</version>
         </dependency>
         <dependency>
-            <groupId>com.ebremer</groupId>
-            <artifactId>RO-Crate4J</artifactId>
-            <version>${rocrate4j.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.apache.jena</groupId>
             <artifactId>apache-jena-libs</artifactId>
             <type>pom</type>
             <version>${jena.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-server</artifactId>
+            <version>11.0.24</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-servlet</artifactId>
+            <version>11.0.24</version>
         </dependency>
         <dependency>
             <groupId>org.apache.arrow</groupId>
@@ -129,12 +134,32 @@
             <artifactId>log4j-slf4j-impl</artifactId>
             <version>${log4j.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.ebremer</groupId>
+            <artifactId>RO-Crate4J</artifactId>
+            <version>${rocrate4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jhdf</groupId>
+            <artifactId>jhdf</artifactId>
+            <version>0.9.4</version>
+        </dependency>
     </dependencies>
     <repositories>
+        <repository>
+            <id>central</id>
+            <name>Maven Central</name>
+            <url>https://repo1.maven.org/maven2</url>
+        </repository>
         <repository>
             <id>halcyon</id>
             <name>Halcyon</name>
             <url>https://cursus.bmi.stonybrookmedicine.edu/releases</url>
+        </repository>
+        <repository>
+            <id>apache</id>
+            <name>apache</name>
+            <url>https://repository.apache.org/snapshots</url>
         </repository>
     </repositories>
     <distributionManagement>

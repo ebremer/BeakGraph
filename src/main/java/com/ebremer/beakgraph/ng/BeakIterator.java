@@ -6,15 +6,18 @@ import java.util.List;
 import org.apache.arrow.algorithm.search.VectorRangeSearcher;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.VectorValueComparator;
+import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.complex.StructVector;
+import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.ExprList;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -29,9 +32,28 @@ public class BeakIterator implements Iterator<BindingNodeId> {
     private final StructVector pa;
     private final DataType datatype;
     private final boolean scan;
+    private final Node predicate;
+    private final NodeTable nodeTable;
+    private static final Logger logger = LoggerFactory.getLogger(BeakIterator.class);
     
-    public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable) {
-        if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
+    public BeakIterator(BindingNodeId bnid, DataType datatype, StructVector dual, Triple triple, ExprList filter, NodeTable nodeTable, Node predicate) {
+        this.nodeTable = nodeTable;
+        this.predicate = predicate;
+        if (!triple.getSubject().isVariable()) {
+            this.pa = (StructVector) dual.getChild("so");
+            int skey = nodeTable.getID(triple.getSubject());
+            IntVector s = (IntVector) pa.getChild("s");
+            try (IntVector search = new IntVector("search", dual.getAllocator())) {
+                search.allocateNew(1);
+                search.set(0, skey);
+                search.setValueCount(1);
+                VectorValueComparator<IntVector> comparator = DefaultVectorComparators.createDefaultComparator(search);
+                low = VectorRangeSearcher.getFirstMatch(s, comparator, search, 0 );
+                high = VectorRangeSearcher.getLastMatch(s, comparator, search, 0 );
+                scan = !((low<0)||(high<0));
+                search.close();
+            }
+        } else if (bnid.containsKey(Var.alloc(triple.getSubject()))) {
             this.pa = (StructVector) dual.getChild("so");
             int skey = bnid.get(Var.alloc(triple.getSubject())).getID();
             IntVector s = (IntVector) pa.getChild("s");
@@ -47,8 +69,11 @@ public class BeakIterator implements Iterator<BindingNodeId> {
             }
         } else {
             this.pa = (StructVector) dual.getChild("os");
+            if (pa==null) {
+                System.out.println("HOLD");
+            }
             if (!triple.getObject().isVariable()) {
-                int tar = nodeTable.getID(ResourceFactory.createResource(triple.getObject().getURI()));
+                int tar = nodeTable.getID(triple.getObject());
                 IntVector s = (IntVector) pa.getChild("o");
                 try (IntVector search = new IntVector("search", dual.getAllocator())) {
                     search.allocateNew(1);
@@ -148,15 +173,30 @@ public class BeakIterator implements Iterator<BindingNodeId> {
                 Object ss = fv.getObject(i);
                 neo.put(c, new NodeId(ss));
             }
-        } else { }
+        }
+        ArrowBuf ha;
         if (triple.getSubject().isVariable()) {
             Var ss = Var.alloc(triple.getSubject().getName());
             if (!neo.containsKey(ss)) {
+                try {
                 int rr2 = (int) pa.getChild("s").getObject(i);
                 neo.put(ss, new NodeId(rr2));
+                } catch (IndexOutOfBoundsException ex) {
+                    System.out.println("hold 2");
+                }
             }
-        } else {
-            System.out.println("NOT A VARIABLE");
+        }
+        if (triple.getPredicate().isVariable()) {
+            Var pp = Var.alloc(triple.getPredicate().getName());
+            if (!neo.containsKey(pp)) {
+                int ee = nodeTable.getID(predicate);
+                if (ee<nodeTable.getid2IRI().getValueCount()) {
+                    Node xx = nodeTable.getURINode(ee);
+                    neo.put(pp, new NodeId(ee));
+                } else {
+                    System.out.println("PREDICATE MISSING : "+predicate);
+                }
+            }
         }
         i++;
         return neo;
