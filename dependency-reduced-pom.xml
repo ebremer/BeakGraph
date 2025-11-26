@@ -202,15 +202,6 @@
       <name>apache</name>
       <url>https://repository.apache.org/snapshots</url>
     </repository>
-    <repository>
-      <id>adatao-releases</id>
-      <url>https://raw.githubusercontent.com/adatao/mvnrepos/master/releases/</url>
-    </repository>
-    <repository>
-      <id>unidata-all</id>
-      <name>Unidata All</name>
-      <url>https://artifacts.unidata.ucar.edu/repository/unidata-all/</url>
-    </repository>
   </repositories>
   <dependencies>
     <dependency>
@@ -245,10 +236,8 @@
     <slf4j.version>2.0.17</slf4j.version>
     <hilbert.ver>0.2.3</hilbert.ver>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <arrow.version>18.3.0</arrow.version>
     <log4j.version>2.25.2</log4j.version>
     <jcommander.version>3.0</jcommander.version>
-    <unidata.version>5.9.1</unidata.version>
     <jhdf.version>0.10.0</jhdf.version>
   </properties>
 </project>

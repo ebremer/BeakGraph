@@ -41,7 +41,7 @@
         
         <!-- Dependency versions -->
         <jena.version>5.6.0</jena.version>
-        <arrow.version>18.3.0</arrow.version>
+        <!--<arrow.version>18.3.0</arrow.version>-->
         <rocrate4j.version>0.5.0</rocrate4j.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-collections.version>4.5.0</commons-collections.version>
@@ -50,7 +50,6 @@
         <log4j.version>2.25.2</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
         <jhdf.version>0.10.0</jhdf.version>
-        <unidata.version>5.9.1</unidata.version>
         <jcommander.version>3.0</jcommander.version>
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
@@ -264,31 +263,6 @@
             <version>${jetty.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.arrow</groupId>
-            <artifactId>arrow-memory-core</artifactId>
-            <version>${arrow.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.arrow</groupId>
-            <artifactId>arrow-memory-unsafe</artifactId>
-            <version>${arrow.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.arrow</groupId>
-            <artifactId>arrow-algorithm</artifactId>
-            <version>${arrow.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.arrow</groupId>
-            <artifactId>arrow-format</artifactId>
-            <version>${arrow.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.arrow</groupId>
-            <artifactId>arrow-compression</artifactId>
-            <version>${arrow.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-compress</artifactId>
             <version>${commons-compress.version}</version>
@@ -317,22 +291,6 @@
             <groupId>io.jhdf</groupId>
             <artifactId>jhdf</artifactId>
             <version>${jhdf.version}</version>
-        </dependency>  
-        <dependency>
-            <groupId>edu.ucar</groupId>
-            <artifactId>cdm-core</artifactId>
-            <version>${unidata.version}</version>
-            <scope>compile</scope>
-        </dependency>        
-        <dependency>
-            <groupId>edu.ucar</groupId>
-            <artifactId>netcdf4</artifactId>
-            <version>${unidata.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>RO-Crate4J</artifactId>
-            <version>${rocrate4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.jcommander</groupId>
@@ -380,16 +338,7 @@
             <id>apache</id>
             <name>apache</name>
             <url>https://repository.apache.org/snapshots</url>
-        </repository>
-        <repository>
-            <id>adatao-releases</id>
-            <url>https://raw.githubusercontent.com/adatao/mvnrepos/master/releases/</url>
-        </repository>   
-        <repository>
-            <id>unidata-all</id>
-            <name>Unidata All</name>
-            <url>https://artifacts.unidata.ucar.edu/repository/unidata-all/</url>
-        </repository>             
+        </repository>       
     </repositories>
     <distributionManagement>
         <repository>

@@ -38,7 +38,7 @@ public class Test {
                 """
                 select *
                 where {                            
-                    ?s hal:asHilbert1 ?hilbert .
+                    ?s hal:asHilbert7 ?hilbert .
                     ?hilbert hal:hasRange ?range .
                     ?range hal:low ?low; hal:high ?high .
                     
@@ -55,7 +55,7 @@ public class Test {
                                     #geo:hasGeometry [ geo:asWKT ?wkt ]
                                 }
                                 #order by ?low
-                                limit 100
+                             #   limit 100
                 """
             );
             ParameterizedSparqlString  pss2 = new ParameterizedSparqlString(
