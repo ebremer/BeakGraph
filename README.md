@@ -37,7 +37,7 @@ HDF5Writer.Builder()
     .write();
 ```
 
-### Using and BeakGraph in your Apache Jena
+### Using a BeakGraph in your Apache Jena
 ```
     try (HDF5Reader reader = new HDF5Reader(dest)) {
         BeakGraph bg = new BeakGraph( reader );
