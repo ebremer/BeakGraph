@@ -41,6 +41,8 @@ import org.apache.jena.rdf.model.Statement;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.util.Text;
 import org.apache.jena.datatypes.xsd.XSDDateTime;
+import org.apache.jena.graph.Node;
+import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.query.ParameterizedSparqlString;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryExecutionFactory;
@@ -62,7 +64,7 @@ public final class BeakWriter implements AutoCloseable {
     private final BufferAllocator allocator;
     private final CopyOnWriteArrayList<FieldVector> vectors = new CopyOnWriteArrayList<>();
     private final HashMap<String,PAW> byPredicate = new HashMap<>();
-    private final HashMap<Resource,Integer> blanknodes;
+    private final HashMap<Node,Integer> blanknodes;
     private final String base;
     private final BGVoID VoID = new BGVoID();
     private final ConcurrentHashMap<String,Writer> writers;
@@ -102,6 +104,7 @@ public final class BeakWriter implements AutoCloseable {
     public void HandleThese(List<BG.PropertyAndDataType> pairs) {
         pairs.forEach(pair -> {
             if (!byPredicate.containsKey(pair.predicate())) {
+                System.out.println(pair.predicate()+"  "+nt.getID(NodeFactory.createURI(pair.predicate())));
                 byPredicate.put(pair.predicate(), new PAW(allocator.newChildAllocator("PAW -> "+pair.predicate(), 0, Long.MAX_VALUE), nt, pair.predicate()));
             }
             PAW paw = byPredicate.get(pair.predicate());
@@ -118,24 +121,23 @@ public final class BeakWriter implements AutoCloseable {
     }
         
     public void Analyze(Dataset ds) {
+        System.out.println("HERE Analyze A");
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
             select distinct ?p ?datatype
             where {
-                {
-                    ?s ?p ?o
-                } union {
-                    graph ?g {?s ?p ?o}
-                }
+                { ?s ?p ?o } union { graph ?g {?s ?p ?o} }
                 bind(datatype(?o) as ?datatype)
             }
             """
         );
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(),ds);
         ResultSet rs = qe.execSelect();
+        System.out.println("HERE Analyze Ab");
         rs.forEachRemaining(qs->{
             String p = qs.get("p").asResource().getURI();
             if (!byPredicate.containsKey(p)) {
+                System.out.println(p+"  "+nt.getID(qs.get("p").asResource().asNode()));
                 byPredicate.put(p, new PAW(allocator.newChildAllocator("PAW -> "+p, 0, Long.MAX_VALUE), nt, p));
             }
             PAW paw = byPredicate.get(p);
@@ -146,12 +148,14 @@ public final class BeakWriter implements AutoCloseable {
                 paw.Handle(dt.asResource());
             }
         });
+        System.out.println("HERE Analyze Ac");
         byPredicate.forEach((k,paw)->{
             paw.getCS().forEach((dt,sv)->{
                 vectors.add(sv);
             });
             paw.resetCounts();
         });
+        System.out.println("HERE Analyze Ad");
         Model mk = ModelFactory.createDefaultModel();
         Resource b = mk.createResource();
         byPredicate.forEach((k,paw)->{
@@ -191,7 +195,7 @@ public final class BeakWriter implements AutoCloseable {
                 paw.resetCounts();
                 paw.resetVectors();
             });
-            nt.AddNamedGraph(ng);
+            nt.AddNamedGraph(ng.asNode());
             Add(ng,ds.getNamedModel(ng));
             c--;
             sw.Lapse(ng+" "+c);
@@ -199,7 +203,7 @@ public final class BeakWriter implements AutoCloseable {
     }
     
     public void RegisterNamedGraph(Resource ng) {
-        nt.AddNamedGraph(ng);
+        nt.AddNamedGraph(ng.asNode());
     }
     
     public void Add(Resource ng, Model m) {
@@ -219,7 +223,7 @@ public final class BeakWriter implements AutoCloseable {
     }
 
     private VectorSchemaRoot CreateNGDictionary() {
-        HashMap<Resource,Integer> ha = nt.getNGResources();
+        HashMap<Node,Integer> ha = nt.getNGResources();
         record Pair(int ng, int id) {}
         int size = ha.size();
         ArrayList<Pair> d = new ArrayList<>(size);
@@ -244,7 +248,7 @@ public final class BeakWriter implements AutoCloseable {
     }
     
     private VectorSchemaRoot CreateDictionary() {
-        HashMap<Resource,Integer> ha = nt.getResources();
+        HashMap<Node,Integer> ha = nt.getResources();
         record Trio(String iri, int index, Integer ng) {}
         ArrayList<Trio> d = new ArrayList<>(ha.size());
         ha.forEach((k,v)->{
@@ -400,28 +404,36 @@ public final class BeakWriter implements AutoCloseable {
         if (track) VoID.Add(stmt);
         Resource res = stmt.getSubject();
        if (res.isAnon()) {
-            if (!nt.getBlankNodes().containsKey(res)) {
-                nt.getBlankNodes().put(res, blanknodes.size()-Integer.MIN_VALUE);
+            if (!nt.getBlankNodes().containsKey(res.asNode())) {
+                nt.getBlankNodes().put(res.asNode(), blanknodes.size()-Integer.MIN_VALUE);
             }
         } else if (res.isResource()) {           
         } else {
             throw new Error("ack");
         }
         String p = stmt.getPredicate().asResource().getURI();
-        Class<?> cc;
+        Class<?> cc = null;
         RDFNode o = stmt.getObject();
         if (o.isResource()) {
             cc = o.asResource().getClass();
             if (o.isAnon()) {
-                if (!nt.getBlankNodes().containsKey(o.asResource())) {
-                    nt.getBlankNodes().put(o.asResource(), blanknodes.size()-Integer.MIN_VALUE);
+                if (!nt.getBlankNodes().containsKey(o.asResource().asNode())) {
+                    nt.getBlankNodes().put(o.asResource().asNode(), blanknodes.size()-Integer.MIN_VALUE);
                 }
             }
         } else if (o.isLiteral()) {
-            cc = o.asLiteral().getDatatype().getJavaClass();
+            if (o.asLiteral().getDatatypeURI().equals("http://www.opengis.net/ont/geosparql#wktLiteral")) {
+                o.asLiteral().getString();
+            } else {
+                cc = o.asLiteral().getDatatype().getJavaClass();
+            }
         } else {
             Resource r = o.asResource();
             throw new Error(r.isResource()+" Don't know how to deal with "+o.toString());
+        }
+        
+        if (cc==null) {
+            cc=String.class;
         }
         if (cc.equals(ResourceImpl.class)) {
             byPredicate.get(p).set(res, o.asResource());

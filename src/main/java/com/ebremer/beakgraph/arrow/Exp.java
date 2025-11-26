@@ -2,7 +2,7 @@ package com.ebremer.beakgraph.arrow;
 
 import java.util.HashMap;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.tdb.store.NodeId;
+//import org.apache.jena.tdb.store.NodeId;
 
 /**
  *
@@ -11,7 +11,7 @@ import org.apache.jena.tdb.store.NodeId;
 public class Exp {
     
     public static void main(String[] args) {
-        NodeId n;
+  //      NodeId n;
         Triple sds;
         Integer i = 5;
         String w = "booooo";

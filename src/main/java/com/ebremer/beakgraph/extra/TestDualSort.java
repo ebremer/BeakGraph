@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.extra;
 
+/*
 import java.util.stream.IntStream;
 import org.apache.arrow.algorithm.sort.DefaultVectorComparators;
 import org.apache.arrow.algorithm.sort.GeneralOutOfPlaceVectorSorter;
@@ -12,8 +13,10 @@ import org.apache.arrow.vector.testing.ValueVectorDataPopulator;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.FieldType;
 
-public class TestDualSort {
+*/
 
+public class TestDualSort {
+/*
     public static VectorValueComparator<StructVector> getComparator(StructVector structVector) {
         IntVector child0 = structVector.getChild("column0", IntVector.class);
         VectorValueComparator<IntVector> childComp0 = DefaultVectorComparators.createDefaultComparator(child0);
@@ -68,5 +71,5 @@ public class TestDualSort {
       System.out.println(srcVector);
       System.out.println(dstVector);
     }
-  }
+  }*/
 }

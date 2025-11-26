@@ -49,9 +49,9 @@ public class BGStructVectorSorter<StructVector extends ValueVector> implements O
                     executor.submit(() -> {
                         for (int X = start; X < end; X++) {
                             int srcIndex = sortedIndices.get(X);
-                            final int dstIndex = X;    
-                            MemoryUtil.UNSAFE.copyMemory( srcsb.memoryAddress() + srcIndex * srcsw, destsb.memoryAddress() + dstIndex * srcsw, srcsw);
-                            MemoryUtil.UNSAFE.copyMemory( srcob.memoryAddress() + srcIndex * srcow, destob.memoryAddress() + dstIndex * srcow, srcow);
+                            final int dstIndex = X;                                              
+                            MemoryUtil.copyMemory( srcsb.memoryAddress() + srcIndex * srcsw, destsb.memoryAddress() + dstIndex * srcsw, srcsw);
+                            MemoryUtil.copyMemory( srcob.memoryAddress() + srcIndex * srcow, destob.memoryAddress() + dstIndex * srcow, srcow);
                         }
                     });
                 }

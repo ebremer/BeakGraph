@@ -286,6 +286,10 @@ public class PAW implements AutoCloseable {
             if (!cs.containsKey(LONG)) {
                 cs.put(LONG, build(p,LONG));
             }    
+        } else if (dt.getURI().equals("http://www.opengis.net/ont/geosparql#wktLiteral")) {
+            if (!cs.containsKey(STRING)) {
+                cs.put(STRING, build(p,STRING));
+            }
         } else {
             throw new Error("WHAT IS THIS "+dt);
         }
@@ -296,7 +300,7 @@ public class PAW implements AutoCloseable {
         StructVector sv = cs.get(INTEGER);
         IntVector ss = (IntVector) sv.getChild("s");
         IntVector oo = (IntVector) sv.getChild("o");
-        ss.setSafe(index, nt.getID(s));
+        ss.setSafe(index, nt.getID(s.asNode()));
         oo.setSafe(index, o);
         Count(INTEGER);
     }
@@ -307,7 +311,7 @@ public class PAW implements AutoCloseable {
         StructVector sv = cs.get(LONG);
         IntVector ss = (IntVector) sv.getChild("s");
         BigIntVector oo = (BigIntVector) sv.getChild("o");
-        ss.setSafe(index, nt.getID(s));
+        ss.setSafe(index, nt.getID(s.asNode()));
         oo.setSafe(index, o);
         Count(LONG);}
         catch (NullPointerException ex) {
@@ -320,7 +324,7 @@ public class PAW implements AutoCloseable {
         StructVector sv = cs.get(FLOAT);
         IntVector ss = (IntVector) sv.getChild("s");
         Float4Vector oo = (Float4Vector) sv.getChild("o");
-        ss.setSafe(index, nt.getID(s));
+        ss.setSafe(index, nt.getID(s.asNode()));
         oo.setSafe(index, o);
         Count(FLOAT);
     }
@@ -330,7 +334,7 @@ public class PAW implements AutoCloseable {
         StructVector sv = cs.get(DOUBLE);
         IntVector ss = (IntVector) sv.getChild("s");
         Float8Vector oo = (Float8Vector) sv.getChild("o");
-        ss.setSafe(index, nt.getID(s));
+        ss.setSafe(index, nt.getID(s.asNode()));
         oo.setSafe(index, o);
         Count(DOUBLE);
     }
@@ -340,7 +344,7 @@ public class PAW implements AutoCloseable {
         StructVector sv = cs.get(STRING);
         IntVector ss = (IntVector) sv.getChild("s");
         VarCharVector oo = (VarCharVector) sv.getChild("o");
-        ss.setSafe(index, nt.getID(s));
+        ss.setSafe(index, nt.getID(s.asNode()));
         oo.setSafe(index, new Text(o.getBytes()));
         Count(STRING);
     }
@@ -350,8 +354,8 @@ public class PAW implements AutoCloseable {
         StructVector sv = cs.get(RESOURCE);
         IntVector ss = (IntVector) sv.getChild("s");
         IntVector oo = (IntVector) sv.getChild("o");
-        ss.setSafe(index, nt.getID(s));
-        oo.setSafe(index, nt.getID(o));
+        ss.setSafe(index, nt.getID(s.asNode()));
+        oo.setSafe(index, nt.getID(o.asNode()));
         Count(RESOURCE);
     }
 }

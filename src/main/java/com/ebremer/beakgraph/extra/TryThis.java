@@ -38,7 +38,6 @@ try (BufferAllocator allocator = new RootAllocator()) {
     ){
         VarCharVector nameVector = (VarCharVector) vectorSchemaRoot.getVector("name");
         nameVector.allocateNew(10);
-        
         nameVector.set(0, "Zero".getBytes());
         nameVector.set(1, "One".getBytes());
         nameVector.set(2, "Two".getBytes());
@@ -63,7 +62,7 @@ try (BufferAllocator allocator = new RootAllocator()) {
         ageVector.set(7, 70);
         ageVector.set(8, 80);
         ageVector.set(9, 90);
-
+       
         vectorSchemaRoot.setRowCount(10);
         File file = new File("random.arrow");
         try (
