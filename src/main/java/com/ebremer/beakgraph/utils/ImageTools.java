@@ -1,36 +1,81 @@
 package com.ebremer.beakgraph.utils;
 
-import org.locationtech.jts.geom.CoordinateSequence;
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.Polygon;
+import org.locationtech.jts.geom.CoordinateSequence;
 import org.locationtech.jts.io.WKTReader;
 import java.awt.*;
 import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
- * Utility class for rendering JTS geometries (WKT polygons) that are already expressed
- * in image pixel coordinates onto a BufferedImage.
+ * Utility class for rendering JTS Polygon geometries (in image pixel coordinates)
+ * onto BufferedImage and converting WKT strings to JTS Polygon(s).
+ *
+ * Coordinates are assumed to be in pixel space:
+ * - Origin: top-left
+ * - Y-axis: positive downward
  *
  * @author erich
  */
 public class ImageTools {
 
-    /**
-     * Draws a collection of WKT polygons (Polygon or MultiPolygon) directly onto a BufferedImage.
-     * Coordinates in the WKT strings are treated as pixel coordinates (origin top-left).
-     *
-     * @param wktList     List of WKT strings (Polygon or MultiPolygon)
-     * @param image       The BufferedImage to draw on (modified in-place)
-     * @param fillColor   Fill color (with alpha for transparency); null = no fill
-     * @param strokeColor Outline color; null = no outline
-     * @throws Exception if any WKT cannot be parsed
-     */
-    public static void drawWktPolygonsOnImage(ArrayList<String> wktList,
-                                              BufferedImage image,
-                                              Color fillColor,
-                                              Color strokeColor) throws Exception {
+    /** Thread-safe, reused WKTReader for performance */
+    private static final WKTReader WKT_READER = new WKTReader();
 
+    //=======================================================================
+    // 1. Draw pre-parsed JTS Polygons (recommended high-performance method)
+    //=======================================================================
+    public static void drawPolygonsOnImage(List<Polygon> polygons,
+                                           BufferedImage image,
+                                           Color strokeColor) {
+        if (polygons == null || polygons.isEmpty() || image == null) {
+            return;
+        }
+
+        Graphics2D g2d = image.createGraphics();
+        try {
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+
+            if (strokeColor != null) {
+                g2d.setColor(strokeColor);
+                g2d.setStroke(new BasicStroke(2f));
+            }
+
+            for (Polygon polygon : polygons) {
+                if (polygon == null || polygon.isEmpty()) {
+                    continue;
+                }
+
+                Shape exterior = coordinateSequenceToShape(polygon.getExteriorRing().getCoordinateSequence());
+
+                Path2D.Double path = new Path2D.Double();
+                path.append(exterior, false);
+
+                for (int h = 0; h < polygon.getNumInteriorRing(); h++) {
+                    Shape hole = coordinateSequenceToShape(polygon.getInteriorRingN(h).getCoordinateSequence());
+                    path.append(hole, false);
+                }
+
+                if (strokeColor != null) {
+                    g2d.draw(path);
+                }
+            }
+        } finally {
+            g2d.dispose();
+        }
+    }
+
+    //=======================================================================
+    // 2. Draw directly from WKT strings (convenience method)
+    //=======================================================================
+    public static void drawWktPolygonsOnImage(List<String> wktList,
+                                              BufferedImage image,
+                                              Color strokeColor) throws Exception {
         if (wktList == null || wktList.isEmpty() || image == null) {
             return;
         }
@@ -40,45 +85,21 @@ public class ImageTools {
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
 
-            WKTReader reader = new WKTReader();
+            if (strokeColor != null) {
+                g2d.setColor(strokeColor);
+                g2d.setStroke(new BasicStroke(2f));
+            }
 
             for (String wkt : wktList) {
-                if (wkt == null || wkt.trim().isEmpty()) {
-                    continue;
-                }
-
-                Geometry geom = reader.read(wkt.trim());
-
-                // Support Polygon and MultiPolygon
-                for (int i = 0; i < geom.getNumGeometries(); i++) {
-                    Geometry part = geom.getGeometryN(i);
-
-                    if (!(part instanceof org.locationtech.jts.geom.Polygon polygon)) {
-                        continue; // skip non-polygon geometries
-                    }
-
-                    // Exterior ring
-                    Shape exterior = coordinateSequenceToShape(polygon.getExteriorRing().getCoordinateSequence());
-
-                    // Build path including holes
+                List<Polygon> polygons = wktToPolygons(wkt);
+                for (Polygon p : polygons) {
+                    Shape exterior = coordinateSequenceToShape(p.getExteriorRing().getCoordinateSequence());
                     Path2D.Double path = new Path2D.Double();
                     path.append(exterior, false);
-
-                    for (int h = 0; h < polygon.getNumInteriorRing(); h++) {
-                        Shape hole = coordinateSequenceToShape(polygon.getInteriorRingN(h).getCoordinateSequence());
-                        path.append(hole, false);
+                    for (int h = 0; h < p.getNumInteriorRing(); h++) {
+                        path.append(coordinateSequenceToShape(p.getInteriorRingN(h).getCoordinateSequence()), false);
                     }
-
-                    // Fill
-                    if (fillColor != null) {
-                        g2d.setColor(fillColor);
-                        g2d.fill(path);
-                    }
-
-                    // Outline
                     if (strokeColor != null) {
-                        g2d.setColor(strokeColor);
-                        g2d.setStroke(new BasicStroke(2f));
                         g2d.draw(path);
                     }
                 }
@@ -88,27 +109,59 @@ public class ImageTools {
         }
     }
 
-    /**
-     * Converts a JTS CoordinateSequence directly to an AWT Shape.
-     * Coordinates are used as-is (origin top-left, Y positive downward).
-     */
+    //=======================================================================
+    // 3. WKT → Single Polygon (first part only)
+    //=======================================================================
+    public static Polygon wktToPolygon(String wkt) throws Exception {
+        List<Polygon> polygons = wktToPolygons(wkt);
+        return polygons.isEmpty() ? null : polygons.get(0);
+    }
+
+    //=======================================================================
+    // 4. WKT → List of all Polygons (handles Polygon and MultiPolygon)
+    //=======================================================================
+    public static List<Polygon> wktToPolygons(String wkt) throws Exception {
+        if (wkt == null || wkt.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Geometry geom = WKT_READER.read(wkt.trim());
+        if (geom.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Polygon> result = new ArrayList<>();
+
+        if (geom instanceof Polygon polygon) {
+            result.add(polygon);
+        } else {
+            for (int i = 0; i < geom.getNumGeometries(); i++) {
+                Geometry part = geom.getGeometryN(i);
+                if (part instanceof Polygon p) {
+                    result.add(p);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    //=======================================================================
+    // Helper: CoordinateSequence → AWT Shape
+    //=======================================================================
     private static Shape coordinateSequenceToShape(CoordinateSequence seq) {
         Path2D.Double path = new Path2D.Double();
-
         if (seq.size() == 0) {
             return path;
         }
 
-        // First point
         org.locationtech.jts.geom.Coordinate c = seq.getCoordinate(0);
         path.moveTo(c.x, c.y);
 
-        // Remaining points
         for (int i = 1; i < seq.size(); i++) {
             c = seq.getCoordinate(i);
             path.lineTo(c.x, c.y);
         }
-
         path.closePath();
         return path;
     }

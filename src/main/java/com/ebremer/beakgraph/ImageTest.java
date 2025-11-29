@@ -21,6 +21,7 @@ import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.SchemaDO;
 import com.ebremer.beakgraph.utils.ImageTools;
 import java.awt.Color;
+import org.locationtech.jts.geom.Polygon;
 
 /**
  *
@@ -45,15 +46,19 @@ public class ImageTest {
                 select ?wkt
                 where {
                     ?range hal:low ?low
-                    filter ( ?low < 400000 )
+                    filter ( ?low < 4000000 )
                     ?hilbert hal:hasRange ?range .
-                    ?s hal:asHilbert1 ?hilbert .
+                    ?s hal:asHilbert0 ?hilbert .
                     ?s geo:asWKT ?wkt
                 }
-                limit 25
+                limit 10
                 """
             );
-            ArrayList<String> list = new ArrayList<>();
+            ArrayList<Polygon> list = new ArrayList<>();
+            int MaxX = Integer.MIN_VALUE;
+            int MaxY = Integer.MIN_VALUE;
+            int MinX = Integer.MAX_VALUE;
+            int MinY = Integer.MAX_VALUE;
             ParameterizedSparqlString pss2 = new ParameterizedSparqlString(
                 """
                 select *
@@ -65,9 +70,20 @@ public class ImageTest {
                 limit 100
                 """
             );
+            ParameterizedSparqlString pss3 = new ParameterizedSparqlString(
+                """
+                select *
+                where {
+                    ?s hal:asHilbert8 ?hilbert .
+                    ?hilbert hal:hasRange ?range .
+                    ?range hal:low ?low; hal:high ?high
+                }
+                #order by ?low
+                limit 100
+                """
+            );            
             
-            
-          //  pss = pss2;
+            pss = pss3;
             pss.setNsPrefix("hal", "https://halcyon.is/ns/");
             pss.setNsPrefix("rdfs", RDFS.getURI());
             pss.setNsPrefix("exif", EXIF.NS);
@@ -84,24 +100,31 @@ public class ImageTest {
             start = System.nanoTime();
             try (QueryExecution qexec = QueryExecutionFactory.create(pss.toString(), ds)) {
                 ResultSet results = qexec.execSelect();
-                //ResultSetFormatter.out(System.out, results);
+                ResultSetFormatter.out(System.out, results);
+                /*
                 while (results.hasNext()) {
                     QuerySolution qs = results.next();
-                    list.add(qs.get("wkt").asLiteral().getString());
-                }
+                    Polygon p = ImageTools.wktToPolygon(qs.get("wkt").asLiteral().getString()); 
+                    MaxX = (int) Math.max(MaxX, p.getEnvelopeInternal().getMaxX());
+                    MaxY = (int) Math.max(MaxY, p.getEnvelopeInternal().getMaxY());
+                    MinX = (int) Math.min(MinX, p.getEnvelopeInternal().getMinX());
+                    MinY = (int) Math.min(MinY, p.getEnvelopeInternal().getMinY());
+                    list.add(p);
+                }*/
                 end = System.nanoTime();
                 delta = end - start;
                 delta = delta / 1000000d;
                 IO.println("B : "+delta);
             }
+            /*
             list.forEach(p->{
                 IO.println(p);
             });
-            BufferedImage image = new BufferedImage(20000, 20000, BufferedImage.TYPE_INT_ARGB);
-            ImageTools.drawWktPolygonsOnImage(list, image, Color.white, Color.black);
+            BufferedImage image = new BufferedImage(MaxX-MinX, MaxY-MinY, BufferedImage.TYPE_INT_RGB);
+            ImageTools.drawPolygonsOnImage(list, image, Color.red);
             File outputFile = new File("/data/wow.png");
             boolean success = ImageIO.write(image, "png", outputFile);
-            
+            */
         } catch (IOException ex) {
             System.getLogger(ImageTest.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
         } catch (Exception ex) {
