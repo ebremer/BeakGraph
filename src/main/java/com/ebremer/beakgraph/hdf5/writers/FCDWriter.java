@@ -26,7 +26,6 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
         this.blockSize = blockSize;
         this.baos = new ByteArrayOutputStream();
         this.offsets = new DataOutputBuffer(Path.of("offsets"));
-        //IO.println("Creating "+path.toString());
     }
     
     @Override

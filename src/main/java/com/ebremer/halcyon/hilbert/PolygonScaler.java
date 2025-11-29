@@ -45,7 +45,8 @@ public class PolygonScaler {
             }
             original = (Polygon) geom;
         } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to parse input WKT as Polygon "+wkt, e);
+            IO.println(String.format("Failed to parse input WKT as Polygon %s %s", wkt, e.getMessage()));
+            original = gf.createPolygon();
         }
 
         List<Polygon> scaledPolygons = new ArrayList<>();

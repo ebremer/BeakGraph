@@ -27,7 +27,7 @@ public class BG {
         dest = new File("/data/beakgraph/dest/dXX.h5");
         dest.getParentFile().mkdirs();
         
-        /*
+        
         if (dest.exists()) dest.delete();
         HDF5Writer.Builder()
             .setSource(file)
@@ -35,13 +35,13 @@ public class BG {
             .setDestination(dest)
             .build()
             .write();
-        */
+        /*
         try (HDF5Reader reader = new HDF5Reader(dest)) {
             BeakGraph bg = new BeakGraph( reader, null, null );
             BGDatasetGraph dsg = new BGDatasetGraph(bg);
             Dataset ds = DatasetFactory.wrap(dsg);
             ds.getDefaultModel().write(System.out, "NTRIPLE");
-        }
+        }*/
     }
     
 }

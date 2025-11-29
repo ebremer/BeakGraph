@@ -15,17 +15,12 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Array;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
@@ -503,98 +498,93 @@ public class FiveSectionDictionaryWriter implements GSPODictionary, AutoCloseabl
             }      
         }
         
-        public FiveSectionDictionaryWriter build() throws IOException {
-            final AtomicLong quadcount = new AtomicLong();        
-            System.out.print("Creating dictionary...");
-            try ( InputStream xis = (src.toString().endsWith(".gz"))? new GZIPInputStream(new FileInputStream(src)): new FileInputStream(src)) {
-                AsyncParserBuilder builder = AsyncParser.of(xis, Lang.TURTLE, null);
-                builder.mutateSources(rdfBuilder->
-                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven())
-                );
-                BlockingQueue<ArrayList<Quad>> completedResults = new LinkedBlockingQueue<>();
-                ArrayList<ArrayList<Quad>> allResults = new ArrayList<>();
-                try (var scope = StructuredTaskScope.open()) {
-                builder
-                    .streamQuads()
-                    .map(quad -> quad.isDefaultGraph()?new Quad(Quad.defaultGraphIRI,quad.getSubject(),quad.getPredicate(),quad.getObject()):quad )
-                    .map(q->AlignBnodes(q))
-                    .forEach(quad->{
-                        //IO.println(quad);
-                        quadcount.incrementAndGet();
-                        if (quadcount.get() % 1_000 == 0) {
-                            System.out.println(completedResults.size()+" "+allResults.size()+"  Loaded " + quadcount.get() + " quads...");
-                        }
-                        quadslist.add(quad);
-                        try {
-                            ProcessQuad(quad);
-                        } catch (Throwable ex) {
-                            IO.println(ex.getMessage()+" "+quad);
-                        }
-                        if (spatial) {
-                            Node o = quad.getObject();
-                            if (o.isLiteral()) {
-                                if (o.getLiteralDatatypeURI().equals(GEO.wktLiteral.toString())) {
-                                    String wkt = o.getLiteralLexicalForm();
-                                    scope.fork(() -> {
-                                        ArrayList<Quad> result = AddSpatial(quad, wkt);
-                                        try {
-                                            completedResults.put(result);
-                                        } catch (InterruptedException ex) {
-                                            System.getLogger(FiveSectionDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
-                                        }
-                                    });
-                                }
-                            }
-                            if (!completedResults.isEmpty()) {
-                            try {
-                                ArrayList<Quad> task = completedResults.take();
-                                task.forEach(q->{
-                                    quadslist.add(q);
-                                    ProcessQuad(q);
-                                });
-                            } catch (InterruptedException ex) {
-                                System.getLogger(FiveSectionDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
-                            }
-                            }
-                        }
-                    });
-                    try {
-                       scope.join();
-                    } catch (StructuredTaskScope.FailedException e) {
-                        System.err.println("A task failed: " + e.getCause());
-                        throw new RuntimeException(e.getCause());
+public FiveSectionDictionaryWriter build() throws IOException {
+    final AtomicLong quadcount = new AtomicLong();
+    System.out.print("Creating dictionary...");
+
+    try (InputStream xis = src.toString().endsWith(".gz")
+            ? new GZIPInputStream(new FileInputStream(src))
+            : new FileInputStream(src)) {
+
+        AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, null);
+        parserBuilder.mutateSources(rdfBuilder ->
+                rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+
+        // Holds all spatial expansion subtasks so we can join them properly
+        final List<StructuredTaskScope.Subtask<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
+
+        try (var scope = StructuredTaskScope.open()) {
+
+            parserBuilder.streamQuads()
+                .map(quad -> quad.isDefaultGraph()
+                        ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
+                        : quad)
+                .map(this::AlignBnodes)
+                .forEach(quad -> {
+                    quadcount.incrementAndGet();
+
+                    if (quadcount.get() % 100_000 == 0) {
+                        System.out.println("Loaded " + quadcount.get() + " quads...");
                     }
-                    while (!completedResults.isEmpty()) {
-                        try {
-                            ArrayList<Quad> task = completedResults.take();
-                            task.forEach(q->{
-                                quadslist.add(q);
-                                ProcessQuad(q);
-                            });
-                        } catch (InterruptedException ex) {
-                            System.getLogger(FiveSectionDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
-                        }
-                    }                    
-                    stats.numGraphs = graphs.size();
-                    stats.numSubjects = subjects.size();
-                    stats.numPredicates = predicates.size();
-                    stats.numObjects = objects.size();
-                    stats.numShared = shared.size();
-                }
-            } catch (FileNotFoundException ex) {
-                throw new Error(ex.getMessage());
-                //Logger.getLogger(FiveSectionDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
-            } catch (IOException ex) {
-                throw new Error(ex.getMessage());
-                //Logger.getLogger(FiveSectionDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
-            }  catch (Throwable ex) {
+
+                    quadslist.add(quad);
+                    ProcessQuad(quad);
+
+                    // Spatial expansion: offload heavy Hilbert processing to virtual threads
+                    if (spatial && isGeoLiteral(quad)) {
+                        String wkt = quad.getObject().getLiteralLexicalForm();
+
+                        StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad, wkt));
+                        spatialTasks.add(task);
+                    }
+                });
+
+            // Wait for ALL spatial tasks to complete before scope closes
+            try {
+                scope.join();                    // Blocks until every forked task finishes
+            } catch (IllegalArgumentException ex) {
                 IO.println(ex.getMessage());
             }
-            this.numQuads = quadcount.get();
-            this.quads = quadslist.toArray(new Quad[0]);
-            quadslist.clear();
-            System.out.println("Dictionary created. Total Quads: " + this.numQuads);
-            return new FiveSectionDictionaryWriter(this);
+            //scope.throwIfFailed(ex -> new RuntimeException("One or more spatial tasks failed", ex));
+        } catch (InterruptedException ex) {
+            System.getLogger(FiveSectionDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
         }
+        // At this point, scope is closed cleanly → no interrupts occur
+
+        // Safely collect results from completed spatial tasks
+        for (var task : spatialTasks) {
+            ArrayList<Quad> extraQuads = task.get();  // guaranteed to be available
+            extraQuads.forEach(q -> {
+                quadslist.add(q);
+                ProcessQuad(q);
+            });
+        }
+
+        // Final statistics
+        stats.numGraphs = graphs.size();
+        stats.numSubjects = subjects.size();
+        stats.numPredicates = predicates.size();
+        stats.numObjects = objects.size();
+        stats.numShared = shared.size();
+
+    } catch (FileNotFoundException e) {
+        throw new IOException("Source file not found: " + src, e);
+    } catch (IOException e) {
+        throw new IOException("I/O error while reading RDF source", e);
+    }
+
+    this.numQuads = quadcount.get();
+    this.quads = quadslist.toArray(Quad[]::new);
+    quadslist.clear();
+
+    System.out.println("Dictionary created. Total Quads: " + this.numQuads);
+    return new FiveSectionDictionaryWriter(this);
+}
+
+// Helper method to avoid repeated datatype checks
+private boolean isGeoLiteral(Quad quad) {
+    Node o = quad.getObject();
+    return o.isLiteral() && GEO.wktLiteral.getURI().equals(o.getLiteralDatatypeURI());
+}
     }
 }

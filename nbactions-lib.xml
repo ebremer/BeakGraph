@@ -12,10 +12,9 @@
             <properties>
                 <exec.vmArgs>-XX:+UseZGC -XX:+UseCompactObjectHeaders --enable-preview -Xmx32G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-src src -dest dest -status -spatial</exec.appArgs>
-                <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
+                <exec.appArgs></exec.appArgs>
+                <exec.mainClass>com.ebremer.beakgraph.BG</exec.mainClass>
                 <exec.executable>java</exec.executable>
-                <exec.workingdir>d:\data\beakgraph</exec.workingdir>
             </properties>
         </action>
         <action>
@@ -30,11 +29,10 @@
             <properties>
                 <exec.vmArgs>-XX:+UseZGC -XX:+UseCompactObjectHeaders --enable-preview -Xmx32G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true -agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-src src -dest dest -status -spatial</exec.appArgs>
-                <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
+                <exec.appArgs></exec.appArgs>
+                <exec.mainClass>com.ebremer.beakgraph.BG</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <jpda.listen>true</jpda.listen>
-                <exec.workingdir>d:\data\beakgraph</exec.workingdir>
             </properties>
         </action>
         <action>
@@ -49,10 +47,9 @@
             <properties>
                 <exec.vmArgs>-XX:+UseZGC -XX:+UseCompactObjectHeaders --enable-preview -Xmx32G --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.memory.debug.allocator=true</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
+                <exec.mainClass>com.ebremer.beakgraph.BG</exec.mainClass>
                 <exec.executable>java</exec.executable>
-                <exec.appArgs>-src src -dest dest -status -spatial</exec.appArgs>
-                <exec.workingdir>d:\data\beakgraph</exec.workingdir>
+                <exec.appArgs></exec.appArgs>
             </properties>
         </action>
         <action>

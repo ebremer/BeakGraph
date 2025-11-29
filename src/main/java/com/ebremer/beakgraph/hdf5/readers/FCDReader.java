@@ -16,8 +16,6 @@ public class FCDReader {
     private final ByteBuffer buffer;
     private final ByteBuffer offsets;
     private final long blockSize;
-    //private final long numBlocks;
-    //private final long numEntries;
     
     public FCDReader(Group strings) {
         ContiguousDataset stringbuffer = (ContiguousDataset) strings.getChild("stringbuffer");
@@ -25,8 +23,6 @@ public class FCDReader {
         this.buffer = stringbuffer.getBuffer();
         this.offsets = off.getBuffer().order(ByteOrder.BIG_ENDIAN);
         this.blockSize = (int) strings.getAttribute("blockSize").getData();
-        //this.numBlocks = (long) strings.getAttribute("numBlocks").getData();
-        //this.numEntries = (long) strings.getAttribute("numEntries").getData();
     }
     
     public String get(long n) {
