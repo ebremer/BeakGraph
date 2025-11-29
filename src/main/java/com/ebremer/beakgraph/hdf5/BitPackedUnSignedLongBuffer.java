@@ -60,7 +60,7 @@ public class BitPackedUnSignedLongBuffer {
     }
 
     // --- QUERY METHODS ---
-
+/*
     public long select1(long rank) {
         if (rank <= 0) return -1;
         if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
@@ -88,8 +88,128 @@ public class BitPackedUnSignedLongBuffer {
             currentRank += pop;
         }
         return -1;
+    }*/
+        
+    public long select1(long rank) {
+        if (rank <= 0) return -1;
+        if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
+        long currentRank = 0;
+        long maxIndex = numEntries;        
+        // Optimization: Read directly from buffer limit to avoid Boundary Checks in the loop
+        // We stop 8 bytes before the end to safely use getLong() without BufferUnderflow
+        int safeLimit = buffer.limit() - 8; 
+        int bufferOffset = 0;
+        long i = 0;
+        // FAST PATH: Iterate over full 64-bit words directly from buffer
+        // This eliminates the overhead of getWord64()
+        while (bufferOffset <= safeLimit && i < maxIndex) {
+            long word = buffer.getLong(bufferOffset);
+            int pop = Long.bitCount(word);
+            if (currentRank + pop >= rank) {
+                // The target bit is in this word.
+                long needed = rank - currentRank;
+                return i + selectInWordSafe(word, needed);
+            }
+            currentRank += pop;
+            i += 64;
+            bufferOffset += 8;
+        }
+
+        // TAIL PATH: Handle the remaining bits (if any) safely
+        // This handles cases where numEntries isn't a multiple of 64
+        for (; i < maxIndex; i += 64) {
+             long word = getWord64SafeTail(i); // Use existing safe method for the edge
+             int pop = Long.bitCount(word);
+             
+             if (currentRank + pop >= rank) {
+                long needed = rank - currentRank;
+                long resultIndex = i + selectInWordSafe(word, needed);
+                return (resultIndex < maxIndex) ? resultIndex : -1;
+             }
+             currentRank += pop;
+        }
+
+        return -1;
+    }
+    
+    /**
+     * Finds the index (0-63) of the k-th set bit in a 64-bit word using Broadword Selection.
+     * This is strictly O(1) -- exactly 6 checks, no loops.
+     * * @param word The 64-bit word (Big Endian context).
+     * @param k The rank to find (1-based).
+     * @return The 0-based index of the k-th set bit (from MSB).
+     */
+    private int selectInWordSafe(long word, long k) {
+        int result = 0;
+        int cnt;
+        // Check top 32 bits
+        // shift right to isolate the top 32 bits.
+        cnt = Long.bitCount(word >>> 32);
+        if (k > cnt) {
+            // The target is NOT in the top 32. It's in the lower 32.
+            // Move the lower 32 bits up, add 32 to our result index, and subtract the count we skipped.
+            word <<= 32;
+            result += 32;
+            k -= cnt;
+        }
+        // Check top 16 bits (of the remaining word)
+        cnt = Long.bitCount(word >>> 48);
+        if (k > cnt) {
+            word <<= 16;
+            result += 16;
+            k -= cnt;
+        }
+        // Check top 8 bits
+        cnt = Long.bitCount(word >>> 56);
+        if (k > cnt) {
+            word <<= 8;
+            result += 8;
+            k -= cnt;
+        }
+        // Check top 4 bits
+        cnt = Long.bitCount(word >>> 60);
+        if (k > cnt) {
+            word <<= 4;
+            result += 4;
+            k -= cnt;
+        }
+        // Check top 2 bits
+        cnt = Long.bitCount(word >>> 62);
+        if (k > cnt) {
+            word <<= 2;
+            result += 2;
+            k -= cnt;
+        }
+        // Check top 1 bit
+        // If k > cnt (where cnt is 0 or 1), it means the target is the 2nd bit of this pair.
+        cnt = Long.bitCount(word >>> 63);
+        if (k > cnt) {
+            result += 1;
+        }
+        return result;
     }
 
+    /**
+     * Finds the index (0-63) of the k-th set bit in a 64-bit word.
+     * Uses CPU intrinsics (numberOfLeadingZeros) which is safer and faster than manual loops.
+     */
+    private int selectInWordSafe2(long word, long k) {
+        // Loop finding the next set bit until we find the k-th one.
+        // Since max k is 64, this is extremely fast.
+        while (k > 0) {
+            // Find position of the first set bit (MSB 0-indexed)
+            int lz = Long.numberOfLeadingZeros(word);        
+            if (k == 1) {
+                return lz;
+            }            
+            // Clear the bit we just found so we can find the next one
+            // (1L << (63 - lz)) creates a mask with only that bit set.
+            word &= ~(1L << (63 - lz));
+            k--;
+        }
+        return -1; // Should not happen given the logic in select1
+    }
+    
     // --- WRITE METHODS ---
 
     public void writeInteger(int value) {

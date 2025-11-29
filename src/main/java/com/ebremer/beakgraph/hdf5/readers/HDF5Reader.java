@@ -45,7 +45,7 @@ public class HDF5Reader implements BGReader {
         this.totalQuads = (long) hdt.getAttribute("numQuads").getData();
         this.defaultGraph = Quad.defaultGraphIRI;
         nodeTable = new SimpleNodeTable(dict);
-        dict.getPredicates().streamNodes().forEach(p->{IO.println("PREDICATE : "+p);});
+        //dict.getPredicates().streamNodes().forEach(p->{IO.println("PREDICATE : "+p);});
     }
     
     public IndexReader getIndexReader(Index indexType) {

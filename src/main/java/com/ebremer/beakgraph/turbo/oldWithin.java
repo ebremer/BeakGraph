@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.turbo;
 
+import com.ebremer.beakgraph.core.lib.GEO;
+import com.ebremer.beakgraph.core.lib.HAL;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.jena.graph.Node;
@@ -21,7 +23,7 @@ import org.apache.jena.sparql.pfunction.PFuncSimple;
  *
  * @author erich
  */
-public class Within extends PFuncSimple {
+public class oldWithin extends PFuncSimple {
 
     @Override
     public QueryIterator execEvaluated(Binding binding, Node subject, Node predicate, Node object, ExecutionContext execCxt) {    
@@ -37,8 +39,8 @@ public class Within extends PFuncSimple {
             """
         );
         pss.setParam("s", subject);
-        pss.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-        pss.setNsPrefix("hal", "https://www.ebremer.com/halcyon/ns/");
+        pss.setNsPrefix("geo", GEO.NS);
+        pss.setNsPrefix("hal", HAL.NS);
         QueryExecution qe = QueryExecutionFactory.create(pss.toString(),m);
         ResultSet rs = qe.execSelect();
         ResultSetFormatter.out(System.out, rs);

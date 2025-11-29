@@ -16,7 +16,6 @@ import java.util.Map;
 public class IndexReader {
     
     private final Index indexType;
-    // Store raw buffers alongside the directory objects
     private final Map<Character, BitPackedUnSignedLongBuffer> bitmaps = new HashMap<>();
     private final Map<Character, BitPackedUnSignedLongBuffer> ids = new HashMap<>();
     private final Map<Character, HDTBitmapDirectory> componentDirectories = new HashMap<>();
@@ -24,16 +23,11 @@ public class IndexReader {
     
     public IndexReader(Group index, Index indexType) {
         this.indexType = indexType;
-        
-        System.out.println("IndexReader Loading: " + indexType.name());
-        
         String indexName = indexType.name();
         this.positions = new char[4];
         for (int i = 0; i < 4; i++) {
             positions[i] = indexName.charAt(i);
         }
-        
-        // Load levels 1, 2, 3
         for (int i = 1; i < 4; i++) {
             char component = positions[i];
             String suffix = String.valueOf(component).toLowerCase(); 

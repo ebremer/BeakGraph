@@ -1,96 +1,194 @@
 package com.ebremer.halcyon.hilbert;
 
-import com.ebremer.beakgraph.core.lib.GEO;
-import org.apache.jena.datatypes.RDFDatatype;
-import org.apache.jena.datatypes.TypeMapper;
-import org.apache.jena.graph.Node;
-import org.apache.jena.graph.NodeFactory;
-import org.apache.jena.sparql.core.Quad;
+import com.ebremer.beakgraph.utils.ImageTools;
 import org.locationtech.jts.algorithm.Orientation;
 import org.locationtech.jts.geom.*;
 import org.locationtech.jts.geom.util.AffineTransformation;
-import org.locationtech.jts.io.WKTReader;
 import org.locationtech.jts.io.WKTWriter;
-import org.locationtech.jts.util.GeometricShapeFactory;
-
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
-import java.util.Random;
+import org.locationtech.jts.operation.polygonize.Polygonizer;
+import static com.ebremer.beakgraph.Params.GRIDTILESIZE;
 
 public class PolygonScaler {
 
-    private static final String BASE_PREDICATE = "https://halcyon.is/ns/asHilbert";
-    private static final RDFDatatype WKT_TYPE = TypeMapper.getInstance().getSafeTypeByName(GEO.wktLiteral.toString());
+    private static final GeometryFactory gf = new GeometryFactory();
+    private static final AffineTransformation half = AffineTransformation.scaleInstance(0.5, 0.5);
 
     /**
-     * Generates a sequence of progressively quarter-area scaled polygons from a geo:wktLiteral string.
-     * The returned array contains:
-     *   result[0] → polygon scaled by 0.25  (area = original × 0.25)
-     *   result[1] → polygon scaled by 0.0625 (area = original × 0.0625)
-     *   result[n] → further quarter-area reductions
-     * Scaling stops when the area becomes ≤ 1.0 or the geometry becomes invalid/degenerate.
-     *
-     * @param wkt Well-Known Text representation of a Polygon (geo:wktLiteral)
-     * @return Array of scaled Polygon objects; never null (may be empty if input is invalid)
+     * Parses WKT and generates a sequence of progressively quarter-area scaled polygons.
+     * @param wkt The Well-Known Text string.
+     * @return Array of Polygons.
      */
-    public static Polygon[] toHilbert(String wkt) {
-        GeometryFactory gf = new GeometryFactory();
-        WKTReader reader = new WKTReader(gf);
-
+    public static Polygon[] toPolygons(String wkt) {
         Polygon original;
         try {
-            Geometry geom = reader.read(wkt);
-            if (!(geom instanceof Polygon)) {
-                throw new IllegalArgumentException("Provided WKT must represent a Polygon "+wkt);
-            }
-            original = (Polygon) geom;
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Failed to parse input WKT as Polygon "+wkt, e);
+            original = ImageTools.wktToPolygon(wkt);
+        } catch (Exception ex) {
+            System.err.println(String.format("Failed to parse input WKT as Polygon %s %s", wkt, ex.getMessage()));
+            original = gf.createPolygon();
+        }
+        return toPolygons(original);
+    }
+    
+    public static Polygon fixPolygon(Polygon polygon) {
+        // Check if already valid
+        if (polygon.isValid()) {
+            return polygon;
         }
 
-        List<Polygon> scaledPolygons = new ArrayList<>();
+        // First try simple buffer(0) trick
+        Geometry fixed = polygon.buffer(0);
+        if (fixed instanceof Polygon && fixed.isValid()) {
+            return (Polygon) fixed;
+        }
 
-        Polygon current = snapAndSimplify(original, gf);
+        // If result is MultiPolygon, pick largest polygon
+        if (fixed instanceof MultiPolygon mp) {
+            Polygon largest = null;
+            double maxArea = 0;
+            for (int i = 0; i < mp.getNumGeometries(); i++) {
+                Polygon p = (Polygon) mp.getGeometryN(i);
+                if (p.getArea() > maxArea) {
+                    maxArea = p.getArea();
+                    largest = p;
+                }
+            }
+            if (largest != null && largest.isValid()) {
+                return largest;
+            }
+        }
+
+        // Last resort: use Polygonizer to reconstruct from edges
+        Polygonizer polygonizer = new Polygonizer();
+        polygonizer.add(polygon); // adds lines of polygon
+        @SuppressWarnings("unchecked")
+        Collection<Polygon> polys = polygonizer.getPolygons();
+        if (!polys.isEmpty()) {
+            // pick largest polygon
+            Polygon largest = null;
+            double maxArea = 0;
+            for (Polygon p : polys) {
+                if (p.getArea() > maxArea) {
+                    maxArea = p.getArea();
+                    largest = p;
+                }
+            }
+            if (largest != null && largest.isValid()) {
+                return largest;
+            }
+        }
+        throw new Error("COULD NOT FIX ");
+    }
+
+    /**
+     * Generates a sequence of progressively quarter-area scaled polygons.
+     * (Geometry itself is scaled down).
+     * @param original The original high-res polygon.
+     * @return Array of Polygons (Levels).
+     */
+    public static Polygon[] toPolygons(Polygon original) {
+        List<Polygon> scaledPolygons = new ArrayList<>();
+        Polygon current = fixPolygon(original);
         if (current == null || !current.isValid()) {
             return new Polygon[0];
-        }
-
+        }        
         while (true) {
             double area = current.getArea();
-
-            // The first scaled polygon (¼ area) goes into index 0, etc.
-            scaledPolygons.add(current);
-
-            if (area <= 1.0) {
+            scaledPolygons.add(current);   
+            // Stop if polygon is too small
+            if (area < 4.0) {
                 break;
-            }
-
-            // Scale 50% around centroid → new area = previous area × 0.25
-            Coordinate centroid = current.getCentroid().getCoordinate();
-            AffineTransformation scaleTrans = AffineTransformation.scaleInstance(0.5, 0.5, centroid.x, centroid.y);
-            Geometry scaled = scaleTrans.transform(current);
-
-            // Snap to integer grid
+            }            
+            // Scale geometry down by 0.5 (area becomes 0.25)
+            Geometry scaled = half.transform(current);
             scaled.apply(new IntSnapFilter());
-            scaled.geometryChanged();
-
-            // Clean up and simplify
-            current = snapAndSimplify((Polygon) scaled, gf);
-
+            scaled.geometryChanged();            
+            current = snapAndSimplify((Polygon) scaled);            
             if (current == null || current.getNumPoints() < 4 || !current.isValid()) {
                 break;
             }
         }
-
         return scaledPolygons.toArray(new Polygon[0]);
     }
 
-    // ---------- SNAP + SIMPLIFY ----------
-    private static Polygon snapAndSimplify(Polygon poly, GeometryFactory gf) {
+    /**
+     * Converts an array of JTS Polygons into an array of WKT Strings.
+     * @param polygons
+     * @return 
+     */
+    public static String[] toWKT(Polygon[] polygons) {
+        if (polygons == null) {
+            return new String[0];
+        }
+        WKTWriter wktWriter = new WKTWriter();
+        String[] wktStrings = new String[polygons.length];        
+        for (int i = 0; i < polygons.length; i++) {
+            if (polygons[i] != null) {
+                wktStrings[i] = wktWriter.write(polygons[i]);
+            } else {
+                wktStrings[i] = "POLYGON EMPTY";
+            }
+        }
+        return wktStrings;
+    }
+    
+    public static List<GridCell> getGridCells(Polygon poly, int numscales) {
+        List<GridCell> list = new ArrayList<>();
+        for (short s=0; s<numscales; s++ ) {
+            getGridCells(list,poly,s);
+        }
+        return list;
+    }
+
+    /**
+     * Determines which grid cells the polygon intersects at a specific resolution scale.
+     * * Logic:
+     * Scale 0: Tile covers 256 coordinates.
+     * Scale 1: Tile covers 512 coordinates (1/2 resolution).
+     * Scale 2: Tile covers 1024 coordinates (1/4 resolution).
+     * Formula: EffectiveSize = 256 * 2^scale
+     * * @param poly The input JTS Polygon (in base scale 0 coordinates)
+     * @param intersectingCells
+     * @param poly
+     * @param scale The pyramid scale level (0, 1, 2, 3...)
+     * @return List of GridCell indices {x, y} at the requested scale
+     */
+    public static List<GridCell> getGridCells(List<GridCell> intersectingCells, Polygon poly, short scale) {
+        if (poly == null || poly.isEmpty() || scale < 0) {
+            return intersectingCells;
+        }
+        double effectiveTileSize = GRIDTILESIZE * (1 << scale);
+        Envelope env = poly.getEnvelopeInternal();
+        int minGridX = (int) Math.floor(env.getMinX() / effectiveTileSize);
+        int maxGridX = (int) Math.floor(env.getMaxX() / effectiveTileSize);
+        int minGridY = (int) Math.floor(env.getMinY() / effectiveTileSize);
+        int maxGridY = (int) Math.floor(env.getMaxY() / effectiveTileSize);
+        for (int x = minGridX; x <= maxGridX; x++) {
+            for (int y = minGridY; y <= maxGridY; y++) {
+                double tileMinX = x * effectiveTileSize;
+                double tileMaxX = (x + 1) * effectiveTileSize;
+                double tileMinY = y * effectiveTileSize;
+                double tileMaxY = (y + 1) * effectiveTileSize;                
+                Envelope tileEnv = new Envelope(tileMinX, tileMaxX, tileMinY, tileMaxY);
+                if (poly.intersects(gf.toGeometry(tileEnv))) {
+                    intersectingCells.add(new GridCell(scale, x, y));
+                }
+            }
+        }
+        return intersectingCells;
+    }
+
+    // ==========================================
+    // GEOMETRY CLEANUP HELPERS
+    // ==========================================
+
+    private static Polygon snapAndSimplify(Polygon poly) {
         poly.apply(new IntSnapFilter());
         poly.geometryChanged();
 
-        poly = removeDuplicateAndCollinearVertices(poly, gf);
+        poly = removeDuplicateAndCollinearVertices(poly);
         if (poly == null || poly.getNumPoints() < 4) {
             return null;
         }
@@ -99,8 +197,7 @@ public class PolygonScaler {
         return (cleaned instanceof Polygon) ? (Polygon) cleaned : null;
     }
 
-    // ---------- SNAP FILTER ----------
-    static class IntSnapFilter implements CoordinateSequenceFilter {
+    private static class IntSnapFilter implements CoordinateSequenceFilter {
         @Override
         public void filter(CoordinateSequence seq, int i) {
             seq.setOrdinate(i, 0, Math.round(seq.getOrdinate(i, 0)));
@@ -111,18 +208,15 @@ public class PolygonScaler {
         @Override public boolean isGeometryChanged() { return true; }
     }
 
-    // ---------- REMOVE DUPLICATE & COLLINEAR ----------
-    private static Polygon removeDuplicateAndCollinearVertices(Polygon poly, GeometryFactory gf) {
+    private static Polygon removeDuplicateAndCollinearVertices(Polygon poly) {
         Coordinate[] coords = poly.getExteriorRing().getCoordinates();
         List<Coordinate> cleaned = new ArrayList<>();
-
         for (Coordinate coord : coords) {
             if (cleaned.isEmpty() || !coord.equals2D(cleaned.get(cleaned.size() - 1))) {
                 cleaned.add(coord);
             }
         }
-
-        // Remove collinear points (simple forward pass)
+        // Remove collinear points
         for (int i = 0; i < cleaned.size() - 2; ) {
             Coordinate a = cleaned.get(i);
             Coordinate b = cleaned.get(i + 1);
@@ -133,16 +227,13 @@ public class PolygonScaler {
                 i++;
             }
         }
-
         // Ensure ring closure
-        if (cleaned.size() > 0 && !cleaned.get(0).equals2D(cleaned.get(cleaned.size() - 1))) {
+        if (!cleaned.isEmpty() && !cleaned.get(0).equals2D(cleaned.get(cleaned.size() - 1))) {
             cleaned.add(new Coordinate(cleaned.get(0)));
         }
-
         if (cleaned.size() < 4) {
             return null;
         }
-
         try {
             LinearRing shell = gf.createLinearRing(cleaned.toArray(new Coordinate[0]));
             return gf.createPolygon(shell);
@@ -150,27 +241,34 @@ public class PolygonScaler {
             return null;
         }
     }
-
-    // -----------------------------------------------------------------
-    // The original toHilbertQuads method has been removed as requested.
-    // -----------------------------------------------------------------
-
-    public static void main(String[] args) {
-        GeometryFactory gf = new GeometryFactory();
-        Random rnd = new Random();
-        GeometricShapeFactory sf = new GeometricShapeFactory(gf);
-        sf.setNumPoints(10);
-        sf.setCentre(new Coordinate(rnd.nextDouble() * 100, rnd.nextDouble() * 100));
-        sf.setSize(20 + rnd.nextDouble() * 30);
-        Polygon poly = sf.createEllipse();
-
+    
+    // ==========================================
+    // MAIN / TEST
+    // ==========================================
+    
+    public static void main(String[] args) throws Exception {       
+        String wkt = "POLYGON ((84100 19091, 84099 19092, 84097 19092, 84096 19093, 84095 19093, 84095 19094, 84094 19095, 84094 19099, 84095 19100, 84095 19102, 84103 19110, 84103 19111, 84109 19117, 84111 19117, 84113 19115, 84114 19115, 84115 19114, 84116 19114, 84117 19113, 84118 19113, 84121 19110, 84121 19108, 84120 19107, 84120 19106, 84119 19105, 84119 19104, 84118 19103, 84117 19103, 84114 19100, 84114 19099, 84111 19096, 84110 19096, 84109 19095, 84108 19095, 84105 19092, 84104 19092, 84100 19091))";
+        Polygon poly = ImageTools.wktToPolygon(wkt);
         WKTWriter wktWriter = new WKTWriter();
-        System.out.println("Original polygon:\n" + wktWriter.write(poly));
-
-        Polygon[] scaled = toHilbert(wktWriter.write(poly));
-        for (int i = 0; i < scaled.length; i++) {
-            System.out.printf("Level %d (area ≈ %.6f):%n%s%n%n",
-                    i + 1, scaled[i].getArea(), wktWriter.write(scaled[i]));
+        System.out.println("Original Polygon Bounds: " + poly.getEnvelopeInternal());        
+        System.out.println("\n--- Geometry Scaling (Vector Pyramid) ---");
+        Polygon[] scaledPolygons = toPolygons(wktWriter.write(poly));
+        System.out.println("Generated " + scaledPolygons.length + " vector pyramid levels.");
+        System.out.println("\n--- Grid Cell Intersection (Tile Pyramid) ---");
+        for (int scale = 0; scale < 5; scale++) {
+            List<GridCell> cells = getGridCells(poly, scale);
+            double currentTileSize = GRIDTILESIZE * (1 << scale);
+            System.out.printf("Scale %d (Tile Size: %.0f) -> Touches %d tiles%n", 
+            scale, currentTileSize, cells.size());
+            if (!cells.isEmpty()) {
+                System.out.print("   Sample: ");
+                for (int i=0; i<Math.min(5, cells.size()); i++) {
+                    System.out.print(cells.get(i) + " ");
+                }
+                if (cells.size() > 5) System.out.print("...");
+                System.out.println();
+            }
         }
+        Polygon[] p = toPolygons(wkt);
     }
 }

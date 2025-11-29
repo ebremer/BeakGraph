@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.sparql.core.Quad;
+import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.ExprList;
 
 public class BGIteratorMaster implements Iterator<BindingNodeId> {
@@ -16,19 +17,16 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
 
     public BGIteratorMaster(HDF5Reader reader, FiveSectionDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
-        
-        boolean gBound = !quad.getGraph().isVariable();
-        boolean sBound = !quad.getSubject().isVariable();
-        boolean pBound = !quad.getPredicate().isVariable();
-        boolean oBound = !quad.getObject().isVariable();
-        
+        boolean gBound = !quad.getGraph().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getGraph())));
+        boolean sBound = !quad.getSubject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getSubject())));
+        boolean pBound = !quad.getPredicate().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getPredicate())));
+        boolean oBound = !quad.getObject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getObject())));        
         if (gBound) {
             if (pBound) {
                 if (sBound) {
-                    // G, P, S bound -> Find O (Index: GSPO)
+                    // G, P, S bound (either constant or via spatial index) -> Find O (Index: GSPO)
                     IndexReader gspo = reader.getIndexReader(Index.GSPO);
                     if (gspo != null) {
-                         // BGIteratorSO finds O given G, S, P
                          its.add(new BGIteratorSO(dict, gspo, bnid, quad, filter, nodeTable));
                     }
                 } else {
@@ -40,7 +38,6 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         }
                     } else {
                         // G, P bound -> Find S, O (Index: GPOS)
-                        // OPTIMIZATION: Use GPOS directly instead of scanning Object dictionary
                         IndexReader gpos = reader.getIndexReader(Index.GPOS);
                         if (gpos != null) {
                             its.add(new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable));
@@ -48,12 +45,6 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                     }
                 }
             } else {
-                /*
-                IndexReader gpos = reader.getIndexReader(Index.GPOS);
-                if (gpos != null) {
-                    its.add(new BGIteratorPOS_All(dict, gpos, bnid, quad, filter, nodeTable));
-                }
-*/
                 IndexReader gspo = reader.getIndexReader(Index.GSPO);
                 if (gspo != null) {
                     its.add(new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable));

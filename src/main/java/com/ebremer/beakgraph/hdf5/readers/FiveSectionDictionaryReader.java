@@ -24,17 +24,15 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
         Group sharedGroup = (Group) dictionary.getChild("shared");
         Group subjectsGroup = (Group) dictionary.getChild("subjects");
         Group predicatesGroup = (Group) dictionary.getChild("predicates");
-        Group objectsGroup = (Group) dictionary.getChild("objects");        
-
+        Group objectsGroup = (Group) dictionary.getChild("objects");
         this.graphs = new MultiTypeDictionaryReader(graphsGroup);
         this.shared = (sharedGroup != null) ? new MultiTypeDictionaryReader(sharedGroup) : new EmptyDictionary();
         this.subjects = new MultiTypeDictionaryReader(subjectsGroup);
         this.predicates = new MultiTypeDictionaryReader(predicatesGroup);
         this.objects = new MultiTypeDictionaryReader(objectsGroup);
-        
         this.subjects.setOffset( shared.getNumberOfNodes() );
         this.objects.setOffset( shared.getNumberOfNodes() + subjects.getNumberOfNodes() );
-        this.graphs.setOffset( shared.getNumberOfNodes() + subjects.getNumberOfNodes() + objects.getNumberOfNodes() );
+        //predicates.streamNodes().forEach(n->IO.println(n));
     }
 
     public Dictionary getGraphs() {
@@ -52,18 +50,11 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
             @Override
             public long search(Node element) {
                 long id = shared.search(element);
-                if (id > 0) return id; // Exact match in shared
-                
-                // If not in shared, check local subjects.
-                // Note: The "insertion point" in shared might be relevant if the dictionaries are interleaved,
-                // but typically in HDT/BeakGraph, one section follows the other strictly or they cover different types.
-                // Here we prioritize the "Found" result.
-                
+                if (id > 0) return id;
                 long localId = subjects.search(element);
                 if (localId > 0) {
                     return localId + shared.getNumberOfNodes();
-                }
-                
+                }                
                 // If strictly not found in either, we usually return the insertion point in the "Local" section
                 // offset by the Shared size, assuming Shared comes "before" or is a separate bucket.
                 // Returning the encoded insertion point relative to the combined ID space:
@@ -113,15 +104,12 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
                     long combinedInsertion = localInsertion + shared.getNumberOfNodes();
                     return -(combinedInsertion) - 1;
                 }
-
                 long id = shared.search(element);
                 if (id > 0) return id;
-
                 long localId = objects.search(element);
                 if (localId > 0) {
                     return localId + shared.getNumberOfNodes();
                 }
-
                 long localInsertion = (-localId) - 1;
                 long combinedInsertion = localInsertion + shared.getNumberOfNodes();
                 return -(combinedInsertion) - 1;
@@ -147,64 +135,64 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
             }
         };
     }
+    
+    @Override
+    public Stream<Node> streamGraphs() {
+        return graphs.streamNodes();
+    }    
 
     @Override
     public long locateGraph(Node element) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public Object extractGraph(int id) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public long locateSubject(Node element) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public Object extractSubject(int id) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public long locatePredicate(Node element) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public Object extractPredicate(int id) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public long locateObject(Node element) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public Object extractObject(int id) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
-    }
-
-    @Override
-    public Stream<Node> streamGraphs() {
-        return graphs.streamNodes();
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public Stream<Node> streamSubjects() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public Stream<Node> streamPredicates() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     @Override
     public Stream<Node> streamObjects() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 }

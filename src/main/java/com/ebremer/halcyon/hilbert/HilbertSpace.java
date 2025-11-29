@@ -16,7 +16,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedList;
 import org.davidmoten.hilbert.HilbertCurve;
 import org.davidmoten.hilbert.Range;
 import org.davidmoten.hilbert.Ranges;
@@ -33,7 +32,7 @@ import org.locationtech.jts.io.WKTReader;
  * @author erich
  */
 public final class HilbertSpace {
-    public SmallHilbertCurve hc;
+    public static final SmallHilbertCurve hc = HilbertCurve.small().bits(31).dimensions(2);
     public static final byte N = 0;
     public static final byte NE = 1;
     public static final byte E = 2;
@@ -42,12 +41,12 @@ public final class HilbertSpace {
     public static final byte SW = 5;
     public static final byte W = 6;
     public static final byte NW = 7;
+    //public static enum DIR {N, NE, E, SE, S, SW, W, NW};
     
-    public HilbertSpace() {
-        this.hc = HilbertCurve.small().bits(31).dimensions(2);
-    }
     
-    public boolean inRange(LinkedList<Range> rr, Point p, Byte neighbor) {
+    private HilbertSpace() {}
+    
+    public static boolean inRange(ArrayList<Range> rr, Point p, Byte neighbor) {
         switch (neighbor) {
             case N -> contains(rr,p.x,p.y-1);
             case NE -> contains(rr,p.x+1,p.y-1);
@@ -61,7 +60,7 @@ public final class HilbertSpace {
         return false;
     }
     
-    public boolean inRange(Ranges rr, Point p, Byte neighbor) {
+    public static boolean inRange(Ranges rr, Point p, Byte neighbor) {
         switch (neighbor) {
             case N -> contains(rr,p.x,p.y-1);
             case NE -> contains(rr,p.x+1,p.y-1);
@@ -75,12 +74,12 @@ public final class HilbertSpace {
         return false;
     }
     
-    public Point getPoint(long p) {
+    public static Point getPoint(long p) {
         long[] c = hc.point(p);
         return new Point((int) c[0], (int) c[1]);
     }
 
-    public Polygon getFatPoint(long p) {
+    public static Polygon getFatPoint(long p) {
         long[] c = hc.point(p);
         int a = (int) c[0];
         int b = (int) c[1];
@@ -97,7 +96,7 @@ public final class HilbertSpace {
         return new Polygon(x,y,4);
     }
     
-    public Polygon getSkinnyPoint(int a, int b) {
+    public static Polygon getSkinnyPoint(int a, int b) {
         int[] x = new int[4];
         int[] y = new int[4];
         x[0] = a;
@@ -111,7 +110,7 @@ public final class HilbertSpace {
         return new Polygon(x,y,4);
     }
     
-    public Polygon getSkinnyPoint(long p) {
+    public static Polygon getSkinnyPoint(long p) {
         long[] c = hc.point(p);
         int a = (int) c[0];
         int b = (int) c[1];
@@ -128,9 +127,35 @@ public final class HilbertSpace {
         return new Polygon(x,y,4);
     }
     
-    public Ranges Fatten(Ranges rr) {
+    public static long getCentroidHilbertIndex(org.locationtech.jts.geom.Polygon polygon) {
+        if (polygon == null || polygon.isEmpty()) {
+            throw new IllegalArgumentException("Polygon cannot be null or empty");
+        }
+        org.locationtech.jts.geom.Point centroid = polygon.getCentroid();
+        int x = (int) Math.round(centroid.getX());
+        int y = (int) Math.round(centroid.getY());
+        return hc.index(new long[] {x, y});
+    }
+   
+    public static long[] getBoundingBoxHilbertIndices(org.locationtech.jts.geom.Polygon polygon) {
+        if (polygon == null || polygon.isEmpty()) {
+            throw new IllegalArgumentException("Polygon cannot be null or empty");
+        }
+        org.locationtech.jts.geom.Envelope env = polygon.getEnvelopeInternal();
+        int minX = (int) Math.round(env.getMinX());
+        int maxX = (int) Math.round(env.getMaxX());
+        int minY = (int) Math.round(env.getMinY());
+        int maxY = (int) Math.round(env.getMaxY());
+        long bl = hc.index(new long[] {minX, minY});
+        long tl = hc.index(new long[] {minX, maxY});
+        long tr = hc.index(new long[] {maxX, maxY});
+        long br = hc.index(new long[] {maxX, minY});
+        return new long[] {bl, tl, tr, br};
+    }    
+    
+    public static Ranges Fatten(Ranges rr) {
         Iterator<Range> i = rr.iterator();
-        LinkedList<Long> nr = new LinkedList();
+        ArrayList<Long> nr = new ArrayList();
         while (i.hasNext()) {
             Range r = i.next();
             for (long c = r.low(); c<=r.high();c++) {
@@ -164,7 +189,7 @@ public final class HilbertSpace {
         return neo;
     }
     
-    public Point NextPoint(Point p, Byte neighbor) {
+    public static Point NextPoint(Point p, Byte neighbor) {
         switch (neighbor) {
             case N -> { return new Point(p.x,p.y-1); }
             case NE -> { return new Point(p.x+1,p.y-1); }
@@ -178,12 +203,12 @@ public final class HilbertSpace {
         return null;
     }
     
-    public Point GetXY(long p) {
+    public static Point GetXY(long p) {
         long[] c = hc.point(p);
         return new Point((int) c[0],(int) c[1]);
     }
 
-    public boolean contains(LinkedList<Range> rr, int x, int y) {
+    public static boolean contains(ArrayList<Range> rr, int x, int y) {
         long target = hc.index(new long[] {x,y});
         for (Range r : rr) {
             if ((target>=r.low())&&(target<=r.high())) {
@@ -193,7 +218,7 @@ public final class HilbertSpace {
         return false;
     }
     
-    public boolean contains(Ranges rr, int x, int y) {
+    public static boolean contains(Ranges rr, int x, int y) {
         long target = hc.index(new long[] {x,y});
         for (Range r : rr) {
             if ((target>=r.low())&&(target<=r.high())) {
@@ -203,7 +228,7 @@ public final class HilbertSpace {
         return false;
     }
     
-    public BufferedImage GetBI(int px, int py, int width, int height, Ranges ranges) {
+    public static BufferedImage GetBI(int px, int py, int width, int height, Ranges ranges) {
         BufferedImage bi = new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2 = bi.createGraphics();
         g2.setColor(Color.RED);
@@ -220,15 +245,18 @@ public final class HilbertSpace {
         }
         return bi;
     }
-    
-    public hsPolygon Box(int x, int y, int width, int height) {
+
+    public static Ranges search(int x, int y, int width, int height) {
         long[] a = new long[] {x,y};
         long[] b = new long[] {x+width-1,y+height-1};
-        Ranges rr = hc.query(a, b);
-        return new hsPolygon(rr);
+        return hc.query(a, b);
+    }
+    
+    public static hsPolygon Box(int x, int y, int width, int height) {
+        return new hsPolygon(search(x,y,width,height));
     }
 
-    public BufferedImage GetBI(int px, int py, int width, int height, HashMap<Integer,LinkedList<Range>> ranges, HashMap<Integer,Integer> cvalues, HashMap<Integer,Float> pvalues) {
+    public static BufferedImage GetBI(int px, int py, int width, int height, HashMap<Integer,ArrayList<Range>> ranges, HashMap<Integer,Integer> cvalues, HashMap<Integer,Float> pvalues) {
         BufferedImage bi = new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2 = bi.createGraphics();
         g2.setColor(new Color(128,0,128,128));
@@ -238,7 +266,7 @@ public final class HilbertSpace {
             int classid = cvalues.get(id);
             int prob = (int) (pc*255f+0.5);
             int color = (0xFF000000)+(classid<<16)+(prob<<8);
-            LinkedList<Range> rs = ranges.get(id);
+            ArrayList<Range> rs = ranges.get(id);
             for (Range pp : rs) {
                 long len = pp.high()-pp.low()+1;
                 if ((pp.low()>0)&&(len<((width*height)+1))) {
@@ -256,7 +284,7 @@ public final class HilbertSpace {
         return bi;
     }
     
-    public BufferedImage GetBIbyClass(int px, int py, int width, int height, HashMap<Integer,LinkedList<Range>> ranges, HashMap<Integer,Integer> values) {
+    public static BufferedImage GetBIbyClass(int px, int py, int width, int height, HashMap<Integer,ArrayList<Range>> ranges, HashMap<Integer,Integer> values) {
         BufferedImage bi = new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2 = bi.createGraphics();
         g2.setColor(new Color(128,0,128,128));
@@ -264,7 +292,7 @@ public final class HilbertSpace {
         for (Integer id : ranges.keySet()) {
             int color = values.get(id);
             color = (0xFF000000)+(color<<16)+(color<<8)+(color);
-            LinkedList<Range> rs = ranges.get(id);
+            ArrayList<Range> rs = ranges.get(id);
             for (Range pp : rs) {
                 long len = pp.high()-pp.low()+1;
                 if ((pp.low()>0)&&(len<((width*height)+1))) {
@@ -282,7 +310,7 @@ public final class HilbertSpace {
         return bi;
     }
     
-    public BufferedImage GetBIbyProbability(int px, int py, int width, int height, HashMap<Integer,LinkedList<Range>> ranges, HashMap<Integer,Float> values) {
+    public static BufferedImage GetBIbyProbability(int px, int py, int width, int height, HashMap<Integer,ArrayList<Range>> ranges, HashMap<Integer,Float> values) {
         BufferedImage bi = new BufferedImage(width,height,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2 = bi.createGraphics();
         g2.setColor(new Color(128,0,128,128));
@@ -291,7 +319,7 @@ public final class HilbertSpace {
             float pc = values.get(id);
             int color = (int) (pc*255f+0.5);
             color = (0xFF000000)+(color<<16)+(color<<8)+(color);
-            LinkedList<Range> rs = ranges.get(id);
+            ArrayList<Range> rs = ranges.get(id);
             for (Range pp : rs) {
                 long len = pp.high()-pp.low()+1;
                 if ((pp.low()>0)&&(len<((width*height)+1))) {
@@ -309,7 +337,7 @@ public final class HilbertSpace {
         return bi;
     }
     
-    public Box BoundingBox(Ranges rr) {
+    public static Box BoundingBox(Ranges rr) {
         long start = System.nanoTime();
         Iterator<Range> i = rr.iterator();
         long c = 0;
@@ -342,12 +370,12 @@ public final class HilbertSpace {
         return bb;
     }
     
-    public String JsonPolygons(int px, int py, int width, int height, HashMap<Integer,LinkedList<Range>> ranges, HashMap<Integer,Float> values, HashMap<Integer,Integer> classids) {      
+    public static String JsonPolygons(int px, int py, int width, int height, HashMap<Integer,ArrayList<Range>> ranges, HashMap<Integer,Float> values, HashMap<Integer,Integer> classids) {      
         System.out.println("Convert to JSON String...");
         long start = System.nanoTime();
         JsonArrayBuilder jab = Json.createArrayBuilder();
         for (Integer id : ranges.keySet()) {
-            LinkedList<Range> rs = ranges.get(id);
+            ArrayList<Range> rs = ranges.get(id);
             Ranges rr = hTools.Tran(rs);
             Polygon p = getPolygon(rr);
             JsonArrayBuilder cab = Json.createArrayBuilder();
@@ -377,7 +405,7 @@ public final class HilbertSpace {
         return jab.build().toString();
     }
         
-    public void Print(Ranges rr) {
+    public static void Print(Ranges rr) {
         for (Range r : rr) {
             System.out.println(r.low()+" "+r.high()+" "+(r.high()-r.low()));
             System.out.println("X");
@@ -393,7 +421,7 @@ public final class HilbertSpace {
         }
     }
       
-    public Point GetUpperLeft(Ranges rr) {
+    public static Point GetUpperLeft(Ranges rr) {
         Iterator<Range> i = rr.iterator();
         Point top = new Point(Integer.MAX_VALUE,Integer.MAX_VALUE);
         while (i.hasNext()) {
@@ -414,13 +442,12 @@ public final class HilbertSpace {
         return top;
     }
     
-    public hNode DetermineNeighbors(Long p) {
+    public static hNode DetermineNeighbors(Long p) {
         hNode node = new hNode();
-        
         return node;
     }
         
-    public Polygon getPolygon(Ranges rr) {
+    public static Polygon getPolygon(Ranges rr) {
         if (rr.size()==1) {
             Iterator<Range> ri = rr.iterator();
             Range r = ri.next();
@@ -503,7 +530,7 @@ public final class HilbertSpace {
         return e.trim();
     }
     
-    public final ArrayList<Range> Polygon2Hilbert(Polygon p, int scale) {
+    public static ArrayList<Range> Polygon2Hilbert(Polygon p, int scale) {
         if (scale>0) {
             for (int i=0; i<p.npoints; i++) {
                 p.xpoints[i]=p.xpoints[i]>>scale;
@@ -518,14 +545,21 @@ public final class HilbertSpace {
     public static boolean mergable(Range a, Range b) {
         if (a.high()<b.low()) {
             return false;
-        } else return b.high() >= a.low();
+        }
+        if (b.high()<a.low()) {
+            return false;
+        }
+        if (b.high() >= a.low()) {
+            return true;
+        }
+        return a.high() >= b.low();
     }
 
     public static Range merge(Range a, Range b) {
         return new Range(Math.min(a.low(), b.low()),Math.max(a.high(), b.high()));
     }
 
-    public static long Area(LinkedList<Range> list) {
+    public static long Area(ArrayList<Range> list) {
         long area = 0;
         for (Range item : list) {
             area = area + item.high()-item.low()+1;
@@ -533,11 +567,11 @@ public final class HilbertSpace {
         return area;
     }    
      
-    public static LinkedList<Range> compact(LinkedList<Range> list) {
+    public static ArrayList<Range> compact(ArrayList<Range> list) {
         if (list.size()==1) {
             return list;
         } else {
-            LinkedList<Range> neo = new LinkedList<>();
+            ArrayList<Range> neo = new ArrayList<>();
             while (list.size()>1) {
                 Range item = list.get(0);
                 int i = 1;
@@ -563,18 +597,18 @@ public final class HilbertSpace {
         }
     }
     
-    public static void print(LinkedList<Range> list) {
+    public static void print(ArrayList<Range> list) {
         Iterator<Range> i = list.iterator();
         while (i.hasNext()) {
             System.out.println(i.next());
         }
     }
     
-    public int len(int x1, int x2, int y1, int y2) {
+    public static int len(int x1, int x2, int y1, int y2) {
         return (int) Math.sqrt(((x1-x2)*(x1-x2))+((y1-y2)*(y1-y2)));
     }
     
-    public boolean isSquare(Polygon p) {
+    public static boolean isSquare(Polygon p) {
         if (p.npoints!=4) return false;
         int s1 = len(p.xpoints[0],p.xpoints[1],p.ypoints[0],p.ypoints[1]);
         int s2 = len(p.xpoints[1],p.xpoints[2],p.ypoints[1],p.ypoints[2]);
@@ -583,7 +617,7 @@ public final class HilbertSpace {
         return (s1==s2)&&(s2==s3)&&(s3==s4);
     }
     
-    public final ArrayList<Range> Polygon2Hilbert(Polygon p) {
+    public static ArrayList<Range> Polygon2Hilbert(Polygon p) {
         ArrayList<Range> rah = new ArrayList();
         Area a = new Area(p);
         Rectangle2D r = a.getBounds2D();
@@ -591,7 +625,7 @@ public final class HilbertSpace {
         int maxx = (int) r.getMaxX();
         int miny = (int) r.getMinY();
         int maxy = (int) r.getMaxY();
-        LinkedList pp = new LinkedList();       
+        ArrayList pp = new ArrayList();       
         for (int x=minx;x<maxx; x++) {
             for (int y=miny;y<maxy;y++) {
                if (a.contains(new java.awt.Point(x,y))) {
@@ -638,11 +672,11 @@ public final class HilbertSpace {
         }
     }
     
-    public final ArrayList<Range> Polygon2Hilbert(String wkt) {
+    public static ArrayList<Range> Polygon2Hilbert(String wkt) {
         return Polygon2Hilbert(fromWkt(wkt));
     }
 
-    public final ArrayList<Range> Polygon2Hilbert(org.locationtech.jts.geom.Polygon p) {
+    public static ArrayList<Range> Polygon2Hilbert(org.locationtech.jts.geom.Polygon p) {
         ArrayList<Range> rah = new ArrayList();
         GeometryFactory geometryFactory = new GeometryFactory();
         Envelope r = p.getEnvelopeInternal();

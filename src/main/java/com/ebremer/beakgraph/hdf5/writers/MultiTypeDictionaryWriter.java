@@ -62,8 +62,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         integers = ( !et.contains( Types.INTEGER ) || ( stats.numInteger == 0 ) ) ? null : new BitPackedSignedLongBuffer( Path.of( "integers"), null, 1 + MinBits( stats.maxInteger) );
         longs = ( !et.contains( Types.LONG ) || ( stats.numLong == 0) )? null : new BitPackedSignedLongBuffer( Path.of("longs"), null, 1 + MinBits( stats.maxLong ));
         datatype = new BitPackedSignedLongBuffer( Path.of( "datatype" ), null, MinBits(DataType.values().length) );
-        iri = ( !et.contains( Types.IRI ) || ( stats.numIRI == 0)) ? null : new FCDWriter( Path.of( "iri" ), 8, builder.getStats().numIRI);
-        strings = ( !et.contains(Types.STRING ) || ( stats.numStrings == 0))? null : new FCDWriter( Path.of( "strings" ), 8, builder.stats.numStrings);
+        iri = ( !et.contains( Types.IRI ) || ( stats.numIRI == 0)) ? null : new FCDWriter( Path.of( "iri" ), 64);
+        strings = ( !et.contains(Types.STRING ) || ( stats.numStrings == 0))? null : new FCDWriter( Path.of( "strings" ), 64);
         sorted.forEach( n -> Add(n) );
         try {
             close();

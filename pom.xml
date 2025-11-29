@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.10.0</version>
+    <version>0.11.0</version>
     <packaging>jar</packaging>
     
     <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
@@ -53,6 +53,7 @@
         <jcommander.version>3.0</jcommander.version>
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
+        <aircompressor.ver>3.3</aircompressor.ver>
         
         <!-- Plugin versions -->
         <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
@@ -321,6 +322,11 @@
             <groupId>org.locationtech.jts</groupId>
             <artifactId>jts-core</artifactId>
             <version>${jts.ver}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>aircompressor-v3</artifactId>
+            <version>${aircompressor.ver}</version>
         </dependency>        
     </dependencies>    
     <repositories>

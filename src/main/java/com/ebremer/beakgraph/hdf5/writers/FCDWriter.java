@@ -21,12 +21,11 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private long position = 0;
     private final DataOutputBuffer offsets;
 
-    public FCDWriter(Path path, int blockSize, long numEntries) throws FileNotFoundException {
+    public FCDWriter(Path path, int blockSize) throws FileNotFoundException {
         this.path = path;
         this.blockSize = blockSize;
         this.baos = new ByteArrayOutputStream();
         this.offsets = new DataOutputBuffer(Path.of("offsets"));
-        //IO.println("Creating "+path.toString());
     }
     
     @Override
@@ -40,7 +39,6 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
         try (baos) {
             baos.flush();
         }
-        System.out.println(path.toString()+"  ---> "+position);
     }
 
     public void add(String item) throws IOException {

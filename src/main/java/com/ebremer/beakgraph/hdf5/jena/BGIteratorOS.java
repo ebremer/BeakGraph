@@ -17,7 +17,6 @@ import org.apache.jena.sparql.expr.ExprList;
 public class BGIteratorOS implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
     private final Quad queryQuad;
-    private final FiveSectionDictionaryReader dict;
     private final BitPackedUnSignedLongBuffer Bs;
     private final BitPackedUnSignedLongBuffer Ss;
     private long i; 
@@ -28,7 +27,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     private long maxSubId = Long.MAX_VALUE;
 
     public BGIteratorOS(FiveSectionDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        this.dict = dict;
+        //IO.println("BGIteratorOS "+quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         this.Bs = reader.getBitmapBuffer('S');

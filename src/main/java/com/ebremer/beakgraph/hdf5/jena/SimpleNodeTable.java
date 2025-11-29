@@ -15,7 +15,6 @@ public class SimpleNodeTable implements NodeTable {
     @Override
     public NodeId getNodeIdForNode(Node n) {
         long id;
-        // Try to find the node in any dictionary
         id = dict.getGraphs().locate(n);
         if (id != -1) return new NodeId(id, NodeType.GRAPH);
         id = dict.getPredicates().locate(n);
@@ -23,8 +22,7 @@ public class SimpleNodeTable implements NodeTable {
         id = dict.getSubjects().locate(n);
         if (id != -1) return new NodeId(id, NodeType.SUBJECT);
         id = dict.getObjects().locate(n);
-        if (id != -1) return new NodeId(id, NodeType.OBJECT);
-        
+        if (id != -1) return new NodeId(id, NodeType.OBJECT);        
         return NodeId.NodeDoesNotExist;
     }
 
@@ -32,10 +30,10 @@ public class SimpleNodeTable implements NodeTable {
     public Node getNodeForNodeId(NodeId id) {
         if (id == null) return null; //|| NodeId.isDoesNotExist(id)) return null;
         return switch (id.getType()) {
-            case NodeType.SUBJECT -> dict.getSubjects().extract(id.getID());
-            case NodeType.PREDICATE -> dict.getPredicates().extract(id.getID());
-            case NodeType.OBJECT -> dict.getObjects().extract(id.getID());
-            case NodeType.GRAPH -> dict.getGraphs().extract(id.getID());
+            case NodeType.SUBJECT -> dict.getSubjects().extract(id.getId());
+            case NodeType.PREDICATE -> dict.getPredicates().extract(id.getId());
+            case NodeType.OBJECT -> dict.getObjects().extract(id.getId());
+            case NodeType.GRAPH -> dict.getGraphs().extract(id.getId());
             default -> throw new Error("Unknown Node Type ID: " + id.getType());
         };
     }

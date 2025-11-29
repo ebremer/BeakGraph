@@ -7,33 +7,21 @@ import com.ebremer.beakgraph.hdf5.readers.FiveSectionDictionaryReader;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.ExprFunction2;
 import org.apache.jena.sparql.expr.ExprList;
 
-/**
- * Iterates over Objects for a bound (Graph, Subject, Predicate).
- * Uses GSPO Index (G->S->P->O).
- * Updated to use raw Bitmap Buffers instead of HDTBitmapDirectory for consistency.
- */
 public class BGIteratorSO implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
-    private final FiveSectionDictionaryReader dict;
     private final Quad queryQuad;
-    
-    // Raw Buffers for Object Level
-    private final BitPackedUnSignedLongBuffer Bo; 
-    private final BitPackedUnSignedLongBuffer So; 
-    
+    private final BitPackedUnSignedLongBuffer So;
     private long i; 
-    private long j; 
+    private final long j;
     private long gi;
     private long si;
     private long pi;
-    private long oi = -1;
     private boolean hasNext = false;
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
@@ -41,90 +29,81 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     public BGIteratorSO(FiveSectionDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
         this.queryQuad = quad;
-        this.dict = dict;
-        
-        // Load raw buffers for Object level
-        this.Bo = reader.getBitmapBuffer('O');
-        this.So = reader.getIDBuffer('O');
-        
+        BitPackedUnSignedLongBuffer Bo = reader.getBitmapBuffer('O');
+        this.So = reader.getIDBuffer('O');        
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
         }
-        
-        // 1. Locate Graph
-        gi = dict.getGraphs().locate(quad.getGraph());
-        if (gi < 1) return;
-        
-        // 2. Locate Subject
-        si = dict.getSubjects().locate(quad.getSubject());
-        if (si < 1) return;
-        
-        // 3. Locate Predicate
-        pi = dict.getPredicates().locate(quad.getPredicate());
-        if (pi < 1) return;
-        
-        // 4. Locate Object (if bound)
-        if (!quad.getObject().isVariable()) {
-            oi = dict.getObjects().locate(quad.getObject());
-            if (oi < 1) return;
-            if (oi < minObjId || oi > maxObjId) return;
+        if (quad.getGraph().isVariable() && bnid.containsKey(Var.alloc(quad.getGraph()))) {
+            gi = bnid.get(Var.alloc(quad.getGraph())).getId();
+        } else {
+            gi = dict.getGraphs().locate(quad.getGraph());
         }
-
-        // --- Navigate GSPO Index using Raw Buffers ---
-
-        // Level 1: Subject (S)
+        if (gi < 1) { this.j = 0; return; }
+        if (quad.getSubject().isVariable() && bnid.containsKey(Var.alloc(quad.getSubject()))) {
+            si = bnid.get(Var.alloc(quad.getSubject())).getId();
+        } else {
+            si = dict.getSubjects().locate(quad.getSubject());
+        }
+        if (si < 1) { this.j = 0; return; }
+        if (quad.getPredicate().isVariable() && bnid.containsKey(Var.alloc(quad.getPredicate()))) {
+            pi = bnid.get(Var.alloc(quad.getPredicate())).getId();
+        } else {
+            pi = dict.getPredicates().locate(quad.getPredicate());
+        }
+        if (pi < 1) { this.j = 0; return; }
+        long specificObjId = -1;
+        boolean isObjBound = !quad.getObject().isVariable() || bnid.containsKey(Var.alloc(quad.getObject()));        
+        if (isObjBound) {
+            if (quad.getObject().isVariable()) {
+                specificObjId = bnid.get(Var.alloc(quad.getObject())).getId();
+            } else {
+                specificObjId = dict.getObjects().locate(quad.getObject());
+            }
+            if (specificObjId < 1 || specificObjId < minObjId || specificObjId > maxObjId) {
+                this.j = 0; return; 
+            }
+        }
         BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
-        // Get Subject ID buffer (not needed for select, but needed for value check)
         BitPackedUnSignedLongBuffer Ss = reader.getIDBuffer('S');
-        
         long sStart = (gi == 1) ? 0 : Bs.select1(gi - 1) + 1;
         long sEnd = Bs.select1(gi);
-        if (sStart == -1 || sEnd == -1 || sStart > sEnd) return;
-        
-        // Find the specific Subject ID in the range
+        if (sStart > sEnd) { this.j = 0; return; }
         long sIndex = findIdInRange(Ss, dict.getSubjects(), si, sStart, sEnd);
-        if (sIndex < 0) return;
-
-        // Level 2: Predicate (P)
+        if (sIndex < 0) { this.j = 0; return; }
         BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
         BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
-
         long sRank = sIndex + 1; 
         long pStart = (sRank == 1) ? 0 : Bp.select1(sRank - 1) + 1;
         long pEnd = Bp.select1(sRank);
-        if (pStart == -1 || pEnd == -1 || pStart > pEnd) return;
-        
-        // Find the specific Predicate ID in the range
+        if (pStart > pEnd) { this.j = 0; return; }        
         long pIndex = findIdInRange(Sp, dict.getPredicates(), pi, pStart, pEnd);
-        if (pIndex < 0) return;
-
-        // Level 3: Object (O)
-        // Bo and So already loaded
+        if (pIndex < 0) { this.j = 0; return; }
         long pRank = pIndex + 1;
         long oStart = (pRank == 1) ? 0 : Bo.select1(pRank - 1) + 1;
         long oEnd = Bo.select1(pRank);
-        if (oStart == -1 || oEnd == -1 || oStart > oEnd) return;
-
+        if (oStart > oEnd) {
+            this.j = 0;
+            return;
+        }
         this.i = oStart;
-        this.j = oEnd + 1;
-
-        if (oi > 0) {
-            long foundIndex = findIdInRange(So, dict.getObjects(), oi, i, j - 1);
-            if (foundIndex < 0) {
-                hasNext = false;
-            } else {
+        this.j = oEnd + 1;        
+        if (specificObjId > 0) {
+            long foundIndex = findIdInRange(So, dict.getObjects(), specificObjId, i, j - 1);
+            if (foundIndex >= 0) {
                 i = foundIndex;
-                j = foundIndex + 1;
-                hasNext = true;
+                hasNext = true; 
+            } else {
+                hasNext = false;
             }
         } else {
-            while (i < j && So.get(i) < minObjId) {
+            while ((i < j) && (So.get(i) < minObjId)) {
                 i++;
             }
-            hasNext = i < j && So.get(i) <= maxObjId;
+            hasNext = ((i < j) && (So.get(i) <= maxObjId));
         }
     }
-    
+
     private void analyzeFilters(ExprList filter, FiveSectionDictionaryReader dict, Quad quad) {
         for (Expr expr : filter.getList()) {
             if (expr instanceof ExprFunction2 func) {
@@ -132,13 +111,9 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
                 Expr right = func.getArg2();
                 String opcode = func.getOpName();
                 if (left.isVariable() && right.isConstant()) {
-                    Var var = left.asVar();
-                    Node value = right.getConstant().asNode();
-                    applyBound(var, opcode, value, dict, quad);
+                    applyBound(left.asVar(), opcode, right.getConstant().asNode(), dict, quad);
                 } else if (left.isConstant() && right.isVariable()) {
-                    Var var = right.asVar();
-                    Node value = left.getConstant().asNode();
-                    applyBound(var, flipOp(opcode), value, dict, quad);
+                    applyBound(right.asVar(), flipOp(opcode), left.getConstant().asNode(), dict, quad);
                 }
             }
         }
@@ -154,23 +129,26 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         };
     }
 
-    private void applyBound(Var var, String op, Node value, FiveSectionDictionaryReader dict, Quad quad) {
+    private void applyBound(Var var, String op, org.apache.jena.graph.Node value, FiveSectionDictionaryReader dict, Quad quad) {
         if (!var.equals(quad.getObject())) return;
         long rawResult = dict.getObjects().search(value);
         long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
         boolean found = (rawResult >= 0);
         switch (op) {
             case ">" -> {
-                long bound = found ? id + 1 : Math.max(0, id - 1);
+                long bound = found ? id + 1 : id;
                 minObjId = Math.max(minObjId, bound);
             }
             case ">=" -> {
-                long bound = found ? id : Math.max(0, id - 1);
+                long bound = id;
                 minObjId = Math.max(minObjId, bound);
             }
-            case "<" -> maxObjId = Math.min(maxObjId, id - 1);
+            case "<" -> {
+                long bound = id - 1;
+                maxObjId = Math.min(maxObjId, bound);
+            }
             case "<=" -> {
-                long bound = found ? id : id;
+                long bound = found ? id : id - 1;
                 maxObjId = Math.min(maxObjId, bound);
             }
         }
@@ -179,13 +157,10 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long findIdInRange(BitPackedUnSignedLongBuffer buffer, Dictionary d, long target, long start, long end) {
         long low = start;
         long high = end; 
-        
         while (low <= high) {
             long mid = (low + high) >>> 1;
             long midID = buffer.get(mid);
-            
             if (midID == target) return mid;
-            
             if (midID < target) {
                 low = mid + 1;
             } else {
@@ -203,24 +178,30 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     @Override
     public BindingNodeId next() {
         if (!hasNext) throw new NoSuchElementException();        
+        
         BindingNodeId result = new BindingNodeId(this.parentBinding);
         long currentObjectId = So.get(i); 
         
-        if (queryQuad.getGraph().isVariable()) {
+        if (queryQuad.getGraph().isVariable() && !result.containsKey(Var.alloc(queryQuad.getGraph()))) {
             result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
         }
-        if (queryQuad.getSubject().isVariable()) {
+        if (queryQuad.getSubject().isVariable() && !result.containsKey(Var.alloc(queryQuad.getSubject()))) {
             result.put(Var.alloc(queryQuad.getSubject()), new NodeId(si, NodeType.SUBJECT));
         }
-        if (queryQuad.getPredicate().isVariable()) {
+        if (queryQuad.getPredicate().isVariable() && !result.containsKey(Var.alloc(queryQuad.getPredicate()))) {
             result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
         }
-        if (queryQuad.getObject().isVariable()) {
+        if (queryQuad.getObject().isVariable() && !result.containsKey(Var.alloc(queryQuad.getObject()))) {
             result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));
         }
-        i++;        
+        i++;
         if (i < j) {
-            hasNext = So.get(i) <= maxObjId;
+            boolean isObjBound = !queryQuad.getObject().isVariable() || (parentBinding != null && parentBinding.containsKey(Var.alloc(queryQuad.getObject())));
+            if (isObjBound) {
+                 hasNext = false;
+            } else {
+                 hasNext = So.get(i) <= maxObjId;
+            }
         } else {
             hasNext = false;
         }        
