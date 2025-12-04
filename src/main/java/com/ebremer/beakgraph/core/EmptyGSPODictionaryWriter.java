@@ -19,7 +19,7 @@ public class EmptyGSPODictionaryWriter implements DictionaryWriter, GSPODictiona
     }
 
     @Override
-    public Object extractGraph(int id) {
+    public Object extractGraph(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
@@ -29,7 +29,7 @@ public class EmptyGSPODictionaryWriter implements DictionaryWriter, GSPODictiona
     }
 
     @Override
-    public Object extractSubject(int id) {
+    public Object extractSubject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
@@ -39,7 +39,7 @@ public class EmptyGSPODictionaryWriter implements DictionaryWriter, GSPODictiona
     }
 
     @Override
-    public Object extractPredicate(int id) {
+    public Object extractPredicate(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
@@ -49,7 +49,7 @@ public class EmptyGSPODictionaryWriter implements DictionaryWriter, GSPODictiona
     }
 
     @Override
-    public Object extractObject(int id) {
+    public Object extractObject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 

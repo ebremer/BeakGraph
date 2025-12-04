@@ -1,0 +1,10 @@
+{
+  "resources": {
+    "includes": [
+      { "pattern": "META-INF/sparql/.*" },
+      { "pattern": "log4j2.yaml" },
+      { "pattern": "org/apache/jena/ext/xerces/impl/msg/.*" },
+      { "pattern": "META-INF/services/.*" }
+    ]
+  }
+}

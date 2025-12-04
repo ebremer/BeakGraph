@@ -98,7 +98,9 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     public void Add(WritableGroup group) {
         WritableGroup strings = group.putGroup(path.toString());
         strings.putAttribute("blockSize", blockSize);
-        strings.putAttribute("numBlocks", numBlocks+1); // add 1 for the zero-th block
+        long validBlocks = (stringsInCurrentBlock == 0 && numEntries > 0) ? numBlocks : numBlocks + 1;
+        if (numEntries == 0) validBlocks = 0; // Handle empty case
+        strings.putAttribute("numBlocks", validBlocks);
         strings.putAttribute("numEntries", numEntries);
         strings.putDataset("stringbuffer", baos.toByteArray());
         offsets.Add(strings);

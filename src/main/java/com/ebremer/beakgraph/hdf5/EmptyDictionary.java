@@ -32,6 +32,6 @@ public class EmptyDictionary extends AbstractDictionary {
 
     @Override
     public long search(Node element) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        return -1;
     }
 }

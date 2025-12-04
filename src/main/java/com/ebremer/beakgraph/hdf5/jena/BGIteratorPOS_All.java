@@ -2,7 +2,7 @@ package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.hdf5.readers.FiveSectionDictionaryReader;
+import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -49,7 +49,7 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
     private long minObjId = 0, maxObjId = Long.MAX_VALUE;
     private long minSubId = 0, maxSubId = Long.MAX_VALUE;
 
-    public BGIteratorPOS_All(FiveSectionDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+    public BGIteratorPOS_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
         this.queryQuad = quad;
         
@@ -243,7 +243,7 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         if (idxO < So.getNumEntries()) curOID = So.get(idxO);
     }
 
-    private void analyzeFilters(ExprList filter, FiveSectionDictionaryReader dict, Quad quad) {
+    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
         for (Expr expr : filter.getList()) {
             if (expr instanceof ExprFunction2 func) {
                 Expr left = func.getArg1();
@@ -264,7 +264,7 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         };
     }
 
-    private void applyBound(Var var, String op, Node value, FiveSectionDictionaryReader dict, Quad quad) {
+    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
         // Identify which component is being filtered
         int type = 0; // 1=S, 2=P, 3=O
         if (var.equals(quad.getSubject())) type = 1;
@@ -273,9 +273,11 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         else return;
 
         long rawResult;
-        if (type == 1) rawResult = dict.getSubjects().search(value);
-        else if (type == 2) rawResult = dict.getPredicates().search(value);
-        else rawResult = dict.getObjects().search(value);
+        rawResult = switch (type) {
+            case 1 -> dict.getSubjects().search(value);
+            case 2 -> dict.getPredicates().search(value);
+            default -> dict.getObjects().search(value);
+        };
 
         long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
         boolean found = (rawResult >= 0);
@@ -283,9 +285,20 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         long min = 0, max = Long.MAX_VALUE;
         
         // Get current bounds for the specific type
-        if (type == 1) { min = minSubId; max = maxSubId; }
-        else if (type == 2) { min = minPid; max = maxPid; }
-        else { min = minObjId; max = maxObjId; }
+        switch (type) {
+            case 1:
+                min = minSubId;
+                max = maxSubId;
+                break;
+            case 2:
+                min = minPid;
+                max = maxPid;
+                break;
+            default:
+                min = minObjId;
+                max = maxObjId;
+                break;
+        }
 
         switch (op) {
             case ">" -> min = Math.max(min, found ? id + 1 : id);
@@ -295,9 +308,20 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         }
 
         // Write back
-        if (type == 1) { minSubId = min; maxSubId = max; }
-        else if (type == 2) { minPid = min; maxPid = max; }
-        else { minObjId = min; maxObjId = max; }
+        switch (type) {
+            case 1:
+                minSubId = min;
+                maxSubId = max;
+                break;
+            case 2:
+                minPid = min;
+                maxPid = max;
+                break;
+            default:
+                minObjId = min;
+                maxObjId = max;
+                break;
+        }
     }
 
     @Override

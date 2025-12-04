@@ -2,7 +2,7 @@ package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.hdf5.readers.FiveSectionDictionaryReader;
+import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
@@ -18,9 +18,9 @@ import org.apache.jena.sparql.core.Quad;
 public class QuadStreamer {
     
     private final Group hdt;
-    private final FiveSectionDictionaryReader dict;
+    private final PositionalDictionaryReader dict;
 
-    public QuadStreamer(Group hdt, FiveSectionDictionaryReader dict) {
+    public QuadStreamer(Group hdt, PositionalDictionaryReader dict) {
         this.hdt = hdt;
         this.dict = dict;
     }
@@ -186,7 +186,7 @@ public class QuadStreamer {
                 return;
             }
             
-            FiveSectionDictionaryReader dict = new FiveSectionDictionaryReader(dictGroup);
+            PositionalDictionaryReader dict = new PositionalDictionaryReader(dictGroup);
             QuadStreamer streamer = new QuadStreamer(hdt, dict);
             
             System.out.println("=== Testing GSPO Stream ===");

@@ -102,7 +102,7 @@ public class PatternMatchBG {
                                     // It's a literal directly in the filter
                                     wktString = arg1.getConstant().asNode().getLiteralLexicalForm();
                                 } else if (arg1.isVariable()) {
-                                    // Complex BIND handling would go here, skipping for now to ensure safety
+                                    // Complex BIND handling
                                 }
 
                                 if (wktString != null) {

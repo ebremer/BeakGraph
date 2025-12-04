@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.turbo;
 
 import com.ebremer.beakgraph.core.lib.GEO;
-import org.apache.jena.sparql.expr.ExprEvalException;
 import org.apache.jena.sparql.expr.NodeValue;
 import org.apache.jena.sparql.function.FunctionBase2;
 import org.locationtech.jts.geom.Geometry;

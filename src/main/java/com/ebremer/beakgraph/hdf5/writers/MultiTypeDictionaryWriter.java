@@ -21,13 +21,16 @@ import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.vocabulary.XSD;
 
 /**
@@ -44,8 +47,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private FCDWriter iri;
     private FCDWriter strings;  
     private String name;
-    private ArrayList<Node> sorted;
+    //private final ArrayList<Node> nodes;
+    private final ArrayList<Node> sorted;
     private Set<Types> et;
+    private final AtomicLong cc = new AtomicLong();
     
     private MultiTypeDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         name = builder.getName();
@@ -54,16 +59,17 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         Stats stats = builder.getStats();
         et = builder.getEnabledTypes();
         System.out.print("Sorting nodes...");
-        sorted = NodeSorter.parallelSort(builder.getNodes());      
+        sorted = NodeSorter.parallelSort(builder.getNodes());
+       // sorted.forEach(n->IO.println(n));
         System.out.println("Done.");        
-        doubles = ( !et.contains( Types.DOUBLE ) || ( stats.numDouble == 0 ) ) ? null : new DataOutputBuffer( Path.of("doubles"));
-        floats = ( !et.contains( Types.FLOAT ) || ( stats.numFloat == 0 ) ) ? null : new DataOutputBuffer( Path.of("floats"));
+        doubles = ( !et.contains( Types.DOUBLE ) || ( stats.numDouble == 0 ) ) ? null : new DataOutputBuffer( Path.of( "doubles" ));
+        floats = ( !et.contains( Types.FLOAT ) || ( stats.numFloat == 0 ) ) ? null : new DataOutputBuffer( Path.of( "floats" ));
         offsets = new BitPackedUnSignedLongBuffer( Path.of( "offsets" ), null, 0, MinBits( builder.getNodes().size()) );
-        integers = ( !et.contains( Types.INTEGER ) || ( stats.numInteger == 0 ) ) ? null : new BitPackedSignedLongBuffer( Path.of( "integers"), null, 1 + MinBits( stats.maxInteger) );
-        longs = ( !et.contains( Types.LONG ) || ( stats.numLong == 0) )? null : new BitPackedSignedLongBuffer( Path.of("longs"), null, 1 + MinBits( stats.maxLong ));
+        integers = ( !et.contains( Types.INTEGER ) || ( stats.numInteger == 0 ) ) ? null : new BitPackedSignedLongBuffer( Path.of( "integers" ), null, 1 + MinBits( stats.maxInteger) );
+        longs = ( !et.contains( Types.LONG ) || ( stats.numLong == 0) )? null : new BitPackedSignedLongBuffer( Path.of( "longs" ), null, 1 + MinBits( stats.maxLong ));
         datatype = new BitPackedSignedLongBuffer( Path.of( "datatype" ), null, MinBits(DataType.values().length) );
-        iri = ( !et.contains( Types.IRI ) || ( stats.numIRI == 0)) ? null : new FCDWriter( Path.of( "iri" ), 64);
-        strings = ( !et.contains(Types.STRING ) || ( stats.numStrings == 0))? null : new FCDWriter( Path.of( "strings" ), 64);
+        iri = ( !et.contains( Types.IRI ) || ( stats.numIRI == 0)) ? null : new FCDWriter( Path.of( "iri" ), 64 );
+        strings = ( !et.contains(Types.STRING ) || ( stats.numStrings == 0))? null : new FCDWriter( Path.of( "strings" ), 64 );
         sorted.forEach( n -> Add(n) );
         try {
             close();
@@ -99,20 +105,20 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     public long getNumberOfNodes() {
         return sorted.size();
     }
-
+    
     @Override
     public long locate(Node element) {
         int pos = NodeSearch.findPosition(sorted, element);
-        if (pos<0) {
+        if ( pos < 0 ) {
             return -1;
         }
         return pos + 1;
     }
-    
-    private void Add(Node node) {  
-        if (node.isBlank()) {           
+        
+    private void Add(Node node) {        
+        if (node.isBlank()) {
             datatype.writeInteger(DataType.BNODE.ordinal());
-            offsets.writeInteger(0);
+            offsets.writeInteger(0);            
         } else if (node.isURI()) {    
             try {             
                 offsets.writeInteger((int) iri.getNumEntries());
@@ -169,20 +175,16 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                     System.getLogger(MultiTypeDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
                 }
             } else if (dt.equals(XSD.dateTime.getURI())) {
-                String lex = node.getLiteralLexicalForm();  // e.g. "2024-11-23T15:17:39Z"
+                String lex = node.getLiteralLexicalForm();
                 int t = lex.indexOf('T');
                 String x = (t > 0) ? lex.substring(0, t) : lex;
-                //if (node.getLiteralValue() instanceof String x) {
-                    try {
-                        offsets.writeInteger((int) strings.getNumEntries());
-                        datatype.writeInteger(DataType.STRING.ordinal());
-                        strings.add(x);
-                    } catch (IOException ex) {
-                        Logger.getLogger(MultiTypeDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
-                    }
-                //} else {
-                  //  throw new Error("HELP ME : "+node);
-                //}
+                try {
+                    offsets.writeInteger((int) strings.getNumEntries());
+                    datatype.writeInteger(DataType.STRING.ordinal());
+                    strings.add(x);
+                } catch (IOException ex) {
+                    Logger.getLogger(MultiTypeDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
+                }
             } else if (dt.equals(XSD.xboolean.getURI())) {                             
                 if (node.getLiteralValue() instanceof String x) {
                     try {
@@ -213,6 +215,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         } else {
             throw new Error("WTF : "+node);
         }
+        cc.incrementAndGet();
     }
 
     public static String readCString(byte[] data, int offset) {
@@ -289,11 +292,6 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             this.stats = stats;
             return this;
         }
-        
-        public Builder setOffset(long off) {
-            this.offset = off;
-            return this;
-        }
 
         public Builder setNodes(Set<Node> nodes) {
             this.nodes = nodes;
@@ -307,10 +305,6 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         
         public String getName() {
             return name;
-        }
-        
-        public long getOffset() {
-            return offset;
         }
         
         public Builder setOutputStream(OutputStream baos) {

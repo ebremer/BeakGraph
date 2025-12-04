@@ -19,4 +19,6 @@ public class Params {
     public static final String VOIDSTRING = String.format("urn:%s:void", BGURN);
     public static final Node VOID = NodeFactory.createURI(VOIDSTRING);
     public static final short GRIDTILESIZE = 256;
+    
+    private Params() {}
 }

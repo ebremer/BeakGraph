@@ -2,8 +2,6 @@ package com.ebremer.beakgraph.hdf5.readers;
 
 import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.Dictionary;
-import com.ebremer.beakgraph.core.AbstractDictionary;
-import com.ebremer.beakgraph.hdf5.EmptyDictionary;
 import io.jhdf.api.Group;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
@@ -12,26 +10,21 @@ import org.apache.jena.graph.Node;
  * A dictionary composed of five sections: shared, subjects, predicates, objects, and graphs.
  * @author Erich Bremer
  */
-public class FiveSectionDictionaryReader implements GSPODictionary {
+public class PositionalDictionaryReader implements GSPODictionary {
     private final MultiTypeDictionaryReader graphs;
-    private final AbstractDictionary shared;
     private final MultiTypeDictionaryReader subjects;
     private final MultiTypeDictionaryReader predicates;
     private final MultiTypeDictionaryReader objects;
 
-    public FiveSectionDictionaryReader(Group dictionary) {
+    public PositionalDictionaryReader(Group dictionary) {
         Group graphsGroup = (Group) dictionary.getChild("graphs");
-        Group sharedGroup = (Group) dictionary.getChild("shared");
         Group subjectsGroup = (Group) dictionary.getChild("subjects");
         Group predicatesGroup = (Group) dictionary.getChild("predicates");
         Group objectsGroup = (Group) dictionary.getChild("objects");
         this.graphs = new MultiTypeDictionaryReader(graphsGroup);
-        this.shared = (sharedGroup != null) ? new MultiTypeDictionaryReader(sharedGroup) : new EmptyDictionary();
         this.subjects = new MultiTypeDictionaryReader(subjectsGroup);
         this.predicates = new MultiTypeDictionaryReader(predicatesGroup);
         this.objects = new MultiTypeDictionaryReader(objectsGroup);
-        this.subjects.setOffset( shared.getNumberOfNodes() );
-        this.objects.setOffset( shared.getNumberOfNodes() + subjects.getNumberOfNodes() );
         //predicates.streamNodes().forEach(n->IO.println(n));
     }
 
@@ -49,34 +42,31 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
 
             @Override
             public long search(Node element) {
-                long id = shared.search(element);
-                if (id > 0) return id;
                 long localId = subjects.search(element);
                 if (localId > 0) {
-                    return localId + shared.getNumberOfNodes();
+                    return localId;
                 }                
                 // If strictly not found in either, we usually return the insertion point in the "Local" section
                 // offset by the Shared size, assuming Shared comes "before" or is a separate bucket.
                 // Returning the encoded insertion point relative to the combined ID space:
                 long localInsertionPoint = (-localId) - 1;
-                long combinedInsertionPoint = localInsertionPoint + shared.getNumberOfNodes();
+                long combinedInsertionPoint = localInsertionPoint;
                 return -(combinedInsertionPoint) - 1;
             }
 
             @Override
             public Node extract(long id) {
-                Node node = shared.extract(id);
-                return (node != null) ? node : subjects.extract(id - shared.getNumberOfNodes());
+                return subjects.extract(id);
             }
 
             @Override
             public Stream<Node> streamNodes() {
-                return Stream.concat(shared.streamNodes(), subjects.streamNodes());
+                return subjects.streamNodes();
             }
 
             @Override
             public long getNumberOfNodes() {
-                return shared.getNumberOfNodes() + subjects.getNumberOfNodes();
+                return subjects.getNumberOfNodes();
             }
         };
     }
@@ -98,40 +88,36 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
                 if (element.isLiteral()) {
                     long id = objects.search(element);
                     if (id > 0) {
-                        return id + shared.getNumberOfNodes();
+                        return id;
                     }
                     long localInsertion = (-id) - 1;
-                    long combinedInsertion = localInsertion + shared.getNumberOfNodes();
+                    long combinedInsertion = localInsertion;
                     return -(combinedInsertion) - 1;
                 }
-                long id = shared.search(element);
-                if (id > 0) return id;
                 long localId = objects.search(element);
                 if (localId > 0) {
-                    return localId + shared.getNumberOfNodes();
+                    return localId;
                 }
                 long localInsertion = (-localId) - 1;
-                long combinedInsertion = localInsertion + shared.getNumberOfNodes();
+                long combinedInsertion = localInsertion;
                 return -(combinedInsertion) - 1;
             }
 
             @Override
             public Node extract(long id) {
-                Node node = shared.extract(id);
-                if (node != null) return node;
-                node = objects.extract( id - shared.getNumberOfNodes());
+                Node node = objects.extract( id );
                 if (node != null) return node;
                 throw new Error("Cannot find Object ID: " + id);
             }
 
             @Override
             public Stream<Node> streamNodes() {
-                return Stream.concat(shared.streamNodes(), objects.streamNodes());
+                return objects.streamNodes();
             }
 
             @Override
             public long getNumberOfNodes() {
-                return shared.getNumberOfNodes() + objects.getNumberOfNodes();
+                return objects.getNumberOfNodes();
             }
         };
     }
@@ -147,7 +133,7 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
     }
 
     @Override
-    public Object extractGraph(int id) {
+    public Object extractGraph(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
@@ -157,7 +143,7 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
     }
 
     @Override
-    public Object extractSubject(int id) {
+    public Object extractSubject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
@@ -167,7 +153,7 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
     }
 
     @Override
-    public Object extractPredicate(int id) {
+    public Object extractPredicate(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
@@ -177,7 +163,7 @@ public class FiveSectionDictionaryReader implements GSPODictionary {
     }
 
     @Override
-    public Object extractObject(int id) {
+    public Object extractObject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 

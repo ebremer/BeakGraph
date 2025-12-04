@@ -8,6 +8,7 @@ import com.ebremer.beakgraph.core.lib.GEOF;
 import com.ebremer.beakgraph.core.lib.HAL;
 import com.ebremer.beakgraph.hdf5.jena.NumScale;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
+import com.ebremer.beakgraph.pool.BeakGraphPool;
 import com.ebremer.beakgraph.turbo.Spatial;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -53,18 +54,15 @@ public class ImageTest {
         return GF.createPolygon(shell, null);  // no interior holes
     }
     
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException, Exception {
         Spatial.init();
-        File src = new File("/beakgraph/dest/dXX.h5");
+        File src = new File("/beakgraph/dXX.h5");
         if (!src.exists()) {
             System.err.println("File not found: " + src.getAbsolutePath());
             return;
         }
-        
-        try (HDF5Reader reader = new HDF5Reader(src)) {
-            BeakGraph bg = new BeakGraph( reader, null, null );
-            BGDatasetGraph dsg = new BGDatasetGraph(bg);
-            Dataset ds = DatasetFactory.wrap(dsg);
+        BeakGraph bg = BeakGraphPool.getPool().borrowObject(src.toURI());
+        Dataset ds = bg.getDataset();
             //ds.listNames().forEachRemaining(ng->IO.println(ng));
             ArrayList<Polygon> list = new ArrayList<>();
             ParameterizedSparqlString pss = new ParameterizedSparqlString(
@@ -112,7 +110,7 @@ public class ImageTest {
             int b = 128;
             a = 312;
             b = 99;
-            int scale = 10;
+            int scale = 16;
             int offX = GRIDTILESIZE*a;
             int offY = GRIDTILESIZE*b;
             int size = 255;
@@ -184,10 +182,5 @@ public class ImageTest {
             ImageTools.drawPolygonsOnImage(list, image, Color.red, offX, offY);
             File outputFile = new File("/beakgraph/wow.png");
             ImageIO.write(image, "png", outputFile);
-        } catch (IOException ex) {
-            System.getLogger(ImageTest.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
-        } catch (Exception ex) {
-            System.getLogger(ImageTest.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
-        }
     }    
 }

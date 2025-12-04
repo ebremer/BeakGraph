@@ -8,10 +8,6 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Iterator;
-import org.apache.jena.graph.Node;
-import org.apache.jena.query.Dataset;
 import org.apache.jena.sparql.core.Quad;
 
 /**
@@ -27,14 +23,14 @@ public class HDF5Writer implements BeakGraphWriter {
 
     @Override
     public void write() throws IOException {
-        FiveSectionDictionaryWriter.Builder db = new FiveSectionDictionaryWriter.Builder();
-        FiveSectionDictionaryWriter w = db
+        IO.println("Writing...");
+        PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
+        PositionalDictionaryWriter w = db
             .setSource(builder.getSource())
             .setDestination(builder.getDestination())
             .setName("dictionary")
             .setSpatial(builder.getSpatial())
             .build();
-        
         Quad[] allQuads = w.getQuads();
         BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
         BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
@@ -81,14 +77,5 @@ public class HDF5Writer implements BeakGraphWriter {
 
     public static Builder Builder() {
         return new Builder();
-    }
-
-    public static ArrayList<Quad> convertDatasetToQuadList(Dataset dataset) {
-        ArrayList<Quad> quads = new ArrayList<>();
-        Iterator<Quad> iter = dataset.asDatasetGraph().find(Node.ANY, Node.ANY, Node.ANY, Node.ANY);        
-        while (iter.hasNext()) {
-            quads.add(iter.next());
-        }
-        return quads;
     }
 }

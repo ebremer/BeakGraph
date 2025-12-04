@@ -37,6 +37,7 @@ public class BeakGraph extends GraphBase {
     private final Node namedgraph;
     private final BGReader reader;
     private static final Logger logger = LoggerFactory.getLogger(BeakGraph.class);
+    private final URI uri;
     
     static { JenaSystem.init(); }
 
@@ -47,17 +48,23 @@ public class BeakGraph extends GraphBase {
     public BeakGraph(BGReader reader, URI uri, URI base) throws IOException {
         //logger.trace("Create a BeakGraph -> "+uri.toString());
         init();
+        this.uri = uri;
         this.reader = reader;
         this.namedgraph = Quad.defaultGraphIRI;
     }
     
     public BeakGraph(BGReader reader) throws IOException {
-        this( reader, null, null);
+        this( reader, reader.getURI(), null);
     }
     
+    public URI getURI() {
+        return uri;
+    }
+        
     public BeakGraph(Node namedgraph, BGReader reader) throws IOException {
         logger.trace("Create a SubBeakGraph -> <need subgraph>");
         init();
+        this.uri = reader.getURI();
         this.reader = reader;
         this.namedgraph = namedgraph;
     }

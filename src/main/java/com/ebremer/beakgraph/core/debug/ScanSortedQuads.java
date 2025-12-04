@@ -1,7 +1,8 @@
 package com.ebremer.beakgraph.core.debug;
 
 import com.ebremer.beakgraph.hdf5.Index;
-import com.ebremer.beakgraph.hdf5.writers.FiveSectionDictionaryWriter;
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriter;
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import java.io.File;
 import java.util.Arrays;
 import org.apache.jena.graph.Node;
@@ -15,8 +16,8 @@ public class ScanSortedQuads {
 
         try {
             System.out.println("Loading Quads...");
-            FiveSectionDictionaryWriter.Builder db = new FiveSectionDictionaryWriter.Builder();
-            FiveSectionDictionaryWriter w = db
+            PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
+            PositionalDictionaryWriter w = db
                 .setSource(file)
                 .setDestination(dest)
                 .setName("dictionary")

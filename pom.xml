@@ -6,21 +6,21 @@
     <name>BeakGraph</name>
     <version>0.11.0</version>
     <packaging>jar</packaging>
-    
+   
     <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
-    
+   
     <licenses>
         <license>
             <name>The Apache Software License, Version 2.0</name>
             <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
         </license>
     </licenses>
-    
+   
     <issueManagement>
         <system>github</system>
         <url>https://github.com/ebremer/BeakGraph/issues</url>
     </issueManagement>
-    
+   
     <developers>
         <developer>
           <id>ebremer</id>
@@ -31,14 +31,14 @@
           </roles>
         </developer>
     </developers>
-    
+   
     <inceptionYear>2021</inceptionYear>
-    
+   
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
         <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
-        
+       
         <!-- Dependency versions -->
         <jena.version>5.6.0</jena.version>
         <!--<arrow.version>18.3.0</arrow.version>-->
@@ -47,14 +47,15 @@
         <commons-collections.version>4.5.0</commons-collections.version>
         <jaxb.version>2.4.0-b180830.0359</jaxb.version>
         <jetty.version>11.0.26</jetty.version>
-        <log4j.version>2.25.2</log4j.version>
+        <log4j.version>3.0.0-beta2</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
         <jhdf.version>0.10.0</jhdf.version>
         <jcommander.version>3.0</jcommander.version>
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
         <aircompressor.ver>3.3</aircompressor.ver>
-        
+        <commons.pool.ver>2.12.1</commons.pool.ver>
+       
         <!-- Plugin versions -->
         <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
         <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>
@@ -62,27 +63,83 @@
         <maven-enforcer-plugin.version>3.6.2</maven-enforcer-plugin.version>
         <native-maven-plugin.version>0.11.3</native-maven-plugin.version>
     </properties>
-    
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Log4j dependencies with enforced versions -->
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-api</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-core</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-slf4j-impl</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-slf4j2-impl</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-layout-template-json</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-1.2-api</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>2.21.0</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>2.0.17</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>3.20.0</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.servlet</groupId>
+                <artifactId>jakarta.servlet-api</artifactId>
+                <version>6.1.0</version>
+            </dependency>            
+        </dependencies>
+    </dependencyManagement>
+   
     <build>
         <plugins>
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>
                 <version>${maven-dependency-plugin.version}</version>
             </plugin>
-<plugin>
-    <groupId>org.apache.maven.plugins</groupId>
-    <artifactId>maven-compiler-plugin</artifactId>
-    <version>3.14.1</version>
-    <configuration>
-        <release>25</release>
-        <fork>true</fork>
-        <compilerArgs>
-            <arg>--enable-preview</arg>
-        </compilerArgs>
-        <compilerArgument>--enable-preview</compilerArgument>
-        <executable>${java.home}/bin/javac</executable>
-    </configuration>
-</plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <release>25</release>
+                    <fork>true</fork>
+                    <compilerArgs>
+                        <arg>--enable-preview</arg>
+                    </compilerArgs>
+                    <compilerArgument>--enable-preview</compilerArgument>
+                    <executable>${java.home}/bin/javac</executable>
+                </configuration>
+            </plugin>
         </plugins>
      </build>
     <profiles>
@@ -93,7 +150,7 @@
             </activation>
             <build>
                 <finalName>BeakGraph-${project.version}</finalName>
-                <plugins>                  
+                <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-shade-plugin</artifactId>
@@ -102,7 +159,7 @@
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <!--<mainClass>com.ebremer</mainClass>-->
+                                    <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
                                     </manifestEntries>
@@ -142,18 +199,19 @@
                                 <configuration>
                                     <rules>
                                         <banDuplicatePomDependencyVersions/>
+                                        <dependencyConvergence/>
                                     </rules>
                                 </configuration>
                             </execution>
                         </executions>
-                    </plugin>                    
+                    </plugin>
                 </plugins>
             </build>
         </profile>
         <profile>
             <id>cmdlinenative</id>
             <build>
-                <plugins>                
+                <plugins>
                     <plugin>
                         <groupId>org.graalvm.buildtools</groupId>
                         <artifactId>native-maven-plugin</artifactId>
@@ -175,12 +233,23 @@
                             <skipNativeTests>true</skipNativeTests>
                             <verbose>true</verbose>
                             <buildArgs>
+                                <buildArg>--enable-preview</buildArg>
+                                <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
+                                <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>                           
                                 <buildArg>--no-fallback</buildArg>
                                 <buildArg>--enable-url-protocols=https</buildArg>
                                 <buildArg>-H:+AddAllCharsets</buildArg>
                                 <buildArg>-march=native</buildArg>
-                                <buildArg>--no-server</buildArg>
                                 <buildArg>-J-Xmx32G</buildArg>
+                                <buildArg>-H:IncludeResources=META-INF/sparql/.*</buildArg>
+                                <buildArg>-H:IncludeResources=log4j2.yaml</buildArg>
+                                <buildArg>-H:IncludeResources=META-INF/services/.*</buildArg>
+                                <buildArg>-H:IncludeResourceBundles=org.apache.jena.ext.xerces.impl.msg.XMLSchemaMessages</buildArg>
+                                <buildArg>-H:IncludeResourceBundles=org.apache.jena.ext.xerces.impl.msg.XMLMessages</buildArg>
+                                <buildArg>-H:+ReportExceptionStackTraces</buildArg>
+                                <buildArg>--link-at-build-time=com.ebremer.beakgraph</buildArg>
+                                <buildArg>--future-defaults=all</buildArg>
+                                <buildArg>-R:MaxHeapSize=4g</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
@@ -190,7 +259,7 @@
         <profile>
             <id>cmdlinejar</id>
             <build>
-                <plugins>                  
+                <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-shade-plugin</artifactId>
@@ -199,8 +268,7 @@
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.ebremer.beakgraph.BG</mainClass>
-                                    <!--<mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>-->
+                                    <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
                                     </manifestEntries>
@@ -229,9 +297,14 @@
                     </plugin>
                 </plugins>
             </build>
-        </profile>        
+        </profile>
     </profiles>
     <dependencies>
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+            <version>2.20.1</version>
+        </dependency>
         <dependency>
             <groupId>me.tongfei</groupId>
             <artifactId>progressbar</artifactId>
@@ -254,14 +327,9 @@
             <version>${jena.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-server</artifactId>
-            <version>${jetty.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-servlet</artifactId>
-            <version>${jetty.version}</version>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-fuseki-main</artifactId>
+            <version>${jena.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -271,12 +339,14 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-api</artifactId>
-            <version>${log4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j-impl</artifactId>
-            <version>${log4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -300,18 +370,11 @@
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-core</artifactId>
-            <version>${log4j.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-layout-template-json</artifactId>
-            <version>${log4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-1.2-api</artifactId>
-            <version>${log4j.version}</version>
         </dependency>
         <dependency>
             <groupId>com.github.davidmoten</groupId>
@@ -323,12 +386,19 @@
             <artifactId>jts-core</artifactId>
             <version>${jts.ver}</version>
         </dependency>
+        <!--
         <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>aircompressor-v3</artifactId>
             <version>${aircompressor.ver}</version>
-        </dependency>        
-    </dependencies>    
+        </dependency>
+         -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+            <version>${commons.pool.ver}</version>
+        </dependency>
+    </dependencies>
     <repositories>
         <repository>
             <id>central</id>
@@ -344,12 +414,12 @@
             <id>apache</id>
             <name>apache</name>
             <url>https://repository.apache.org/snapshots</url>
-        </repository>       
+        </repository>
     </repositories>
     <distributionManagement>
         <repository>
             <id>halcyon</id>
             <url>https://cursus.bmi.stonybrookmedicine.edu/releases</url>
-        </repository>       
+        </repository>
     </distributionManagement>
 </project>

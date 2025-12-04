@@ -1,7 +1,7 @@
 package com.ebremer.beakgraph.hdf5;
 
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
-import com.ebremer.beakgraph.hdf5.readers.FiveSectionDictionaryReader;
+import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.NodeId;
@@ -25,7 +25,7 @@ public class BGIterator implements Iterator<BindingNodeId> {
     private final ExprList filter;
     private final NodeTable nodeTable; 
     private final Group hdt;
-    private final FiveSectionDictionaryReader dict;
+    private final PositionalDictionaryReader dict;
     private final Quad queryQuad;
     
     // Search Ranges
@@ -37,7 +37,7 @@ public class BGIterator implements Iterator<BindingNodeId> {
     private boolean hasNext = false;
     private final char[] positions;
 
-    public BGIterator(FiveSectionDictionaryReader dict, IndexReader defaultReader, Group hdt, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+    public BGIterator(PositionalDictionaryReader dict, IndexReader defaultReader, Group hdt, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
         this.hdt = hdt;
         this.queryQuad = quad;

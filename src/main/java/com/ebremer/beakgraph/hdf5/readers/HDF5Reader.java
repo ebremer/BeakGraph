@@ -9,11 +9,12 @@ import com.ebremer.beakgraph.hdf5.jena.NodeId;
 import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
-import com.ebremer.beakgraph.hdf5.QuadID;
 import com.ebremer.beakgraph.hdf5.jena.SimpleNodeTable;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Group;
 import java.io.File;
+import java.net.URI;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -31,21 +32,32 @@ public class HDF5Reader implements BGReader {
 
     private final HdfFile hdf;
     private final Group hdt;
-    private final FiveSectionDictionaryReader dict;
+    private final PositionalDictionaryReader dict;
     private final long totalQuads;
     private final Node defaultGraph;
     private final SimpleNodeTable nodeTable;
     private final Map<Index, IndexReader> indexCache = new HashMap<>();
+    private final URI uri;
 
+    public HDF5Reader(Path src) {
+        this(src.toFile());
+    }
+    
     public HDF5Reader(File src) {
         this.hdf = new HdfFile(src.toPath());
         this.hdt = (Group) hdf.getChild(Params.BG);
         Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
-        this.dict = new FiveSectionDictionaryReader(dictionary);
+        this.dict = new PositionalDictionaryReader(dictionary);
         this.totalQuads = (long) hdt.getAttribute("numQuads").getData();
         this.defaultGraph = Quad.defaultGraphIRI;
         nodeTable = new SimpleNodeTable(dict);
+        this.uri = src.toURI();
         //dict.getPredicates().streamNodes().forEach(p->{IO.println("PREDICATE : "+p);});
+    }
+    
+    @Override
+    public URI getURI() {
+        return uri;
     }
     
     public IndexReader getIndexReader(Index indexType) {
@@ -132,7 +144,6 @@ public class HDF5Reader implements BGReader {
     @Override public GSPODictionary getDictionary() { return dict; }    
     @Override public int getNumberOfTriples(String ng) { return 0; }
     @Override public Stream<Quad> streamQuads() { return Stream.empty(); }
-    @Override public Stream<QuadID> streamQuadID() { return Stream.empty(); }
 
     @Override
     public Iterator<Node> listGraphNodes() {
