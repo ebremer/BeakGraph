@@ -97,7 +97,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble((int) (off * Double.BYTES)));
             case STRING -> NodeFactory.createLiteralByValue(strings.get(off));
             case IRI -> NodeFactory.createURI(iri.get(off));
-            case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (idx + 1 + offset)));
+            case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
             default -> throw new IllegalStateException("Unknown DataType: " + dt);
         };
     }

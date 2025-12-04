@@ -12,11 +12,17 @@ public class Parameters {
     
     @Parameter(names = "-help", converter = BooleanConverter.class, help = true)
     public boolean help = false;
+
+    @Parameter(names = "-endpoint", description = "Start SAPRQL Endpoint for -endpoint", required = false)
+    public File sparqlendpoint = null;
     
-    @Parameter(names = "-src", description = "Source Folder or File", required = true)
+    @Parameter(names = "-port", description = "Set HTTP port when endpoint started", required = false)
+    public int port = 8888;
+    
+    @Parameter(names = "-src", description = "Source Folder or File", required = false)
     public File src = null;
 
-    @Parameter(names = "-dest", description = "Destination Folder or File", required = true)
+    @Parameter(names = "-dest", description = "Destination Folder or File", required = false)
     public File dest = null;
     
     @Parameter(names = {"-spatial"}, converter = BooleanConverter.class)

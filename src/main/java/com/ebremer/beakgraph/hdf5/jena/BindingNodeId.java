@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.jena;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import org.apache.jena.atlas.lib.Map2;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.Binding;
@@ -64,6 +65,19 @@ public class BindingNodeId extends Map2<Var, NodeId> {
                 throw new IllegalArgumentException("("+v+","+n+")");
             super.put(v, n);
         }
+    }
+    
+    /**
+     * Returns a Set of entries representing all bindings (local + parent).
+     * Added to support iteration in BGIterator classes.
+     * @return 
+     */
+    public Set<Map.Entry<Var, NodeId>> entrySet() {
+        Map<Var, NodeId> allEntries = new HashMap<>();
+        for (Var v : this) {
+            allEntries.put(v, get(v));
+        }
+        return allEntries.entrySet();
     }
 
     @Override

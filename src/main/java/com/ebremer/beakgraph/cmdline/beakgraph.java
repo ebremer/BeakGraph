@@ -3,14 +3,12 @@ package com.ebremer.beakgraph.cmdline;
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.ParameterException;
 import com.ebremer.beakgraph.Params;
+import com.ebremer.beakgraph.core.fuseki.SPARQLEndPoint;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -21,6 +19,7 @@ import me.tongfei.progressbar.ProgressBar;
 import me.tongfei.progressbar.ProgressBarBuilder;
 import me.tongfei.progressbar.ProgressBarStyle;
 import org.apache.jena.rdf.model.Model;
+import org.apache.jena.sys.JenaSystem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +35,7 @@ public class beakgraph {
     private final FileCounter fc;
     
     public beakgraph(Parameters params) {
+        JenaSystem.init();
         this.params = params;
         this.fc = new FileCounter();
         String os = System.getProperty("os.name").toLowerCase();
@@ -55,34 +55,50 @@ public class beakgraph {
         }
     }
 
-    public static void main(String[] args) throws FileNotFoundException, IOException {
+    public static void main(String[] args) throws FileNotFoundException, IOException {        
         //Configurator.setRootLevel(Level.ERROR);
         //Configurator.setLevel("com.ebremer.halcyon.raptor", Level.ERROR);
         //Configurator.setLevel("com.ebremer.beakgraph", Level.ERROR);      
         // monitor https://issues.apache.org/jira/browse/LOG4J2-2649
-        logger.info("ingest "+Arrays.toString(args));
+        logger.info(String.format("%s %s", "beakgraph ", Arrays.toString(args)));
         Parameters params = new Parameters();
         JCommander jc = JCommander.newBuilder().addObject(params).build();
-        jc.setProgramName("ingest");    
-        try {
-            jc.parse(args);
-            if (params.help) {
-                jc.usage();
-                System.exit(0);
-            } else {
-                if (params.src.exists()) {
-                    beakgraph bg = new beakgraph(params);
-                    bg.Traverse();
-                    //new beakgraph().Process(params.threads, params.src, params.dest, params);
-                } else {
-                    System.out.println("Source does not exist! "+params.src);
+        jc.setProgramName("beakgraph");
+        if (args.length!=0) {
+            try {
+                jc.parse(args);
+                if (params.help) {
+                    jc.usage();
+                    System.exit(0);
+                } else {             
+                    if (params.sparqlendpoint!=null) {
+                        if (params.sparqlendpoint.exists()) {
+                            SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);                                
+                            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                            endpoint.shutdown();
+                            }));
+                            System.out.println("Press Ctrl+C to stop the server...");        
+                            // Keep the application running
+                            try {
+                                Thread.currentThread().join();
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
+                    } else if (params.src.exists()) {
+                        JenaSystem.init();
+                        beakgraph bg = new beakgraph(params);
+                        bg.Traverse();                 
+                    } else {
+                        System.out.println("Source does not exist! "+params.src);
+                    }
                 }
-            }
-        } catch (ParameterException ex) {
-            if (params.version) {
-                System.out.println("ingest - Version : "+Params.VERSION);
-            } else {
-                System.out.println(ex.getMessage());
+            } catch (ParameterException ex) {
+                if (params.version) {
+                    System.out.println("beakgraph - Version : "+Params.VERSION);
+                } else {
+                    System.out.println(ex.getMessage());
+                }
             }
         }
     }
@@ -91,7 +107,7 @@ public class beakgraph {
         try (ThreadPoolExecutor engine = new ThreadPoolExecutor(params.threads, params.threads, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>())) {
             engine.prestartAllCoreThreads();
             Files.walk(params.src.toPath())                        
-                //.parallel()
+                .parallel()
                 .filter(p->{
                     if (p.toFile().isDirectory()) {
                         fc.incrementDirectoryCount();
@@ -102,11 +118,9 @@ public class beakgraph {
                         return false;
                     }
                     if (p.toFile().toString().toLowerCase().endsWith(".ttl.gz")) {
-                        fc.incrementRDFFileCount();
                         return true;
                     }
                     if (p.toFile().toString().toLowerCase().endsWith(".ttl")) {
-                        fc.incrementRDFFileCount();
                         return true;
                     }
                     fc.incrementOtherFileCount();
@@ -189,12 +203,11 @@ public class beakgraph {
         @Override
         public Model call() {
             Path dest = mapToDestinationWithNewExtension(src, params.src.toPath(), params.dest.toPath(), "h5");
-            IO.println("\nReady to : "+src+"  "+dest+"\n");
             if (dest.toFile().exists()) {
                 dest.toFile().delete();
             }
             dest.getParent().toFile().mkdirs();
-            try {   
+            try {
                 HDF5Writer.Builder()
                     .setSource(src.toFile())
                     .setDestination(dest.toFile())
@@ -204,7 +217,6 @@ public class beakgraph {
             } catch (IOException ex) {
                 fc.incrementFailedConversionFileCount();
                 throw new Error(ex.getMessage());
-                //System.getLogger(beakgraph.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
             } catch (Throwable ex) {
                 throw new Error(ex.getMessage());
             }

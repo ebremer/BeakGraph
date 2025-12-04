@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.core.debug;
 
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.writers.FiveSectionDictionaryWriter;
+import com.ebremer.beakgraph.hdf5.writers.FiveSectionDictionaryWriterBuilder;
 import java.io.File;
 import java.util.Arrays;
 import org.apache.jena.graph.Node;
@@ -14,7 +15,7 @@ public class FullSanityCheck {
 
         try {
             System.out.println("1. Loading Quads...");
-            FiveSectionDictionaryWriter.Builder db = new FiveSectionDictionaryWriter.Builder();
+            FiveSectionDictionaryWriterBuilder db = new FiveSectionDictionaryWriterBuilder();
             FiveSectionDictionaryWriter w = db
                 .setSource(file)
                 .setDestination(dest)

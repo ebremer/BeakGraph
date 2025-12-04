@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.core.debug;
 
 import com.ebremer.beakgraph.hdf5.writers.FiveSectionDictionaryWriter;
+import com.ebremer.beakgraph.hdf5.writers.FiveSectionDictionaryWriterBuilder;
 import java.io.File;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
@@ -13,7 +14,7 @@ public class SanityCheck {
         System.out.println("--- Running Advanced Sanity Check ---");
         
         try {
-            FiveSectionDictionaryWriter.Builder db = new FiveSectionDictionaryWriter.Builder();
+            FiveSectionDictionaryWriterBuilder db = new FiveSectionDictionaryWriterBuilder();
             FiveSectionDictionaryWriter w = db
                 .setSource(file)
                 .setDestination(dest)

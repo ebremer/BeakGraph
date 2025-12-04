@@ -273,9 +273,11 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         else return;
 
         long rawResult;
-        if (type == 1) rawResult = dict.getSubjects().search(value);
-        else if (type == 2) rawResult = dict.getPredicates().search(value);
-        else rawResult = dict.getObjects().search(value);
+        rawResult = switch (type) {
+            case 1 -> dict.getSubjects().search(value);
+            case 2 -> dict.getPredicates().search(value);
+            default -> dict.getObjects().search(value);
+        };
 
         long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
         boolean found = (rawResult >= 0);
@@ -283,9 +285,20 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         long min = 0, max = Long.MAX_VALUE;
         
         // Get current bounds for the specific type
-        if (type == 1) { min = minSubId; max = maxSubId; }
-        else if (type == 2) { min = minPid; max = maxPid; }
-        else { min = minObjId; max = maxObjId; }
+        switch (type) {
+            case 1:
+                min = minSubId;
+                max = maxSubId;
+                break;
+            case 2:
+                min = minPid;
+                max = maxPid;
+                break;
+            default:
+                min = minObjId;
+                max = maxObjId;
+                break;
+        }
 
         switch (op) {
             case ">" -> min = Math.max(min, found ? id + 1 : id);
@@ -295,9 +308,20 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         }
 
         // Write back
-        if (type == 1) { minSubId = min; maxSubId = max; }
-        else if (type == 2) { minPid = min; maxPid = max; }
-        else { minObjId = min; maxObjId = max; }
+        switch (type) {
+            case 1:
+                minSubId = min;
+                maxSubId = max;
+                break;
+            case 2:
+                minPid = min;
+                maxPid = max;
+                break;
+            default:
+                minObjId = min;
+                maxObjId = max;
+                break;
+        }
     }
 
     @Override
