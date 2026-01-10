@@ -109,6 +109,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (pStart == -1 || pStart > pEnd) return;
         
         // D. Find Predicate Index
+        /*
         long pIndex = -1;
         for (long k = pStart; k <= pEnd; k++) {
             if (Sp.get(k) == pi) {
@@ -116,6 +117,8 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
                 break;
             }
         }
+*/
+        long pIndex = Sp.binarySearch(pStart, pEnd, pi);
         if (pIndex < 0) return;
         
 
