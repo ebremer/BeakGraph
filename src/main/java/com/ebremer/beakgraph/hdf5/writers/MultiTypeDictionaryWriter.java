@@ -21,6 +21,7 @@ import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,6 +30,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.vocabulary.XSD;
 
 /**
@@ -45,7 +47,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private FCDWriter iri;
     private FCDWriter strings;  
     private String name;
-    private ArrayList<Node> sorted;
+    //private final ArrayList<Node> nodes;
+    private final ArrayList<Node> sorted;
     private Set<Types> et;
     private final AtomicLong cc = new AtomicLong();
     
@@ -56,7 +59,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         Stats stats = builder.getStats();
         et = builder.getEnabledTypes();
         System.out.print("Sorting nodes...");
-        sorted = NodeSorter.parallelSort(builder.getNodes());      
+        sorted = NodeSorter.parallelSort(builder.getNodes());
+       // sorted.forEach(n->IO.println(n));
         System.out.println("Done.");        
         doubles = ( !et.contains( Types.DOUBLE ) || ( stats.numDouble == 0 ) ) ? null : new DataOutputBuffer( Path.of( "doubles" ));
         floats = ( !et.contains( Types.FLOAT ) || ( stats.numFloat == 0 ) ) ? null : new DataOutputBuffer( Path.of( "floats" ));
@@ -101,20 +105,20 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     public long getNumberOfNodes() {
         return sorted.size();
     }
-
+    
     @Override
     public long locate(Node element) {
         int pos = NodeSearch.findPosition(sorted, element);
-        if (pos<0) {
+        if ( pos < 0 ) {
             return -1;
         }
         return pos + 1;
     }
-    
+        
     private void Add(Node node) {        
         if (node.isBlank()) {
             datatype.writeInteger(DataType.BNODE.ordinal());
-            offsets.writeInteger(0);
+            offsets.writeInteger(0);            
         } else if (node.isURI()) {    
             try {             
                 offsets.writeInteger((int) iri.getNumEntries());

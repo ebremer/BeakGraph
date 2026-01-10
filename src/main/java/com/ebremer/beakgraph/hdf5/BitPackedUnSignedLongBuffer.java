@@ -382,4 +382,21 @@ public class BitPackedUnSignedLongBuffer {
             ds.putAttribute("numEntries", numEntries);
         }
     }
+    
+    public long binarySearch(long start, long end, long value) {
+       long low = start;
+        long high = end;
+        while (low <= high) {
+            long mid = (low + high) >>> 1;
+            long midVal = get(mid); // Internal get is bit-unpacked
+            if (midVal < value) {
+                low = mid + 1;
+            } else if (midVal > value) {
+                high = mid - 1;
+            } else {
+                return mid; // Value found
+            }
+        }
+        return -(low + 1); // Value not found, returns insertion point
+    }
 }

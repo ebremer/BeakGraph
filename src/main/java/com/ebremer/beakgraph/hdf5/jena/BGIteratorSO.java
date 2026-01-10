@@ -32,7 +32,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long maxObjId = Long.MAX_VALUE;
 
     public BGIteratorSO(FiveSectionDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-    //    IO.println("BGIteratorSO (GSPO) Init: " + quad);
+        //IO.println("BGIteratorSO (GSPO) Init: " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         
@@ -91,14 +91,16 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (sStart == -1 || sStart > sEnd) return;
         
         // B. Find Subject Index
+        /*
         long sIndex = -1;
         for (long k = sStart; k <= sEnd; k++) {
             if (Ss.get(k) == si) {
                 sIndex = k;
                 break;
             }
-        }
-        if (sIndex < 0) return;
+        }*/
+        long sIndex = Ss.binarySearch(sStart, sEnd, si);
+        if (sIndex < 0) return;       
 
         // C. Level 3: Predicate Range for Subject
         long pStart = select1Safe(Bp, sIndex + 1);
@@ -115,6 +117,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
             }
         }
         if (pIndex < 0) return;
+        
 
         // E. Level 4: Object Range for Predicate
         long oStart = select1Safe(Bo, pIndex + 1);
@@ -222,7 +225,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (queryQuad.getSubject().isVariable()) result.put(Var.alloc(queryQuad.getSubject()), new NodeId(si, NodeType.SUBJECT));
         if (queryQuad.getPredicate().isVariable()) result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
         if (queryQuad.getObject().isVariable()) result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjId, NodeType.OBJECT));
-        
+        // IO.println(String.format("QUAD : %d %d %d %d", gi, si, pi, currentObjId));
         i++;
         if (i < j) {
             boolean isObjBound = !queryQuad.getObject().isVariable() || (parentBinding != null && parentBinding.containsKey(Var.alloc(queryQuad.getObject())));

@@ -34,6 +34,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private final FiveSectionDictionaryReader dict;
 
     public BGIteratorSPO_All(FiveSectionDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+       // IO.println("BGIteratorSPO_All (GSPO) Init: " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         this.dict = dict;
@@ -288,6 +289,8 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         if (queryQuad.getObject().isVariable()) {
             result.put(Var.alloc(queryQuad.getObject()), new NodeId(resO, NodeType.OBJECT));
         }
+        
+      //  IO.println(String.format("QUAD : %d %d %d %d", gi, resS, resP, resO));
 
         advance(); 
         return result;

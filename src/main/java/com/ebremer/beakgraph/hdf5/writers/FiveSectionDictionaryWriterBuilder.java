@@ -190,13 +190,12 @@ public class FiveSectionDictionaryWriterBuilder {
         MaxX = Math.max(MaxX, (int) env.getMaxX());
         MaxY = Math.max(MaxY, (int) env.getMaxY());
     }
-   
-    /*
+       
     private synchronized Node getSafeBnode() {
         Node bnode = NodeFactory.createBlankNode(String.format("b%020d", bmap.size() ));
         bmap.put(bnode, bnode);
         return bnode;
-    }*/
+    }
    
     private ArrayList<Quad> AddSpatial(Quad quad, String wkt) {
         final Polygon[] scales = PolygonScaler.toPolygons(wkt);
@@ -302,30 +301,31 @@ public class FiveSectionDictionaryWriterBuilder {
             }
             graphs.add(g);
         }
+        /*
         if (!shared.contains(s)) {
             if (objects.contains(s)) {
                 subjects.remove(s);
                 objects.remove(s);
                 shared.add(s);
-            } else {
+            } else {*/
                 if (s.isBlank()) {
                     stats.numBlankNodes++;
                 } else if (s.isURI()) {
                     stats.numIRI++;
                 }
                 subjects.add(s);
-            }
-        }
+       //     }
+        //}
         if (!predicates.contains(p)) {
             stats.numIRI++;
             predicates.add(p);
         }
-        if (!shared.contains(o)) {
-            if (subjects.contains(o)) {
-                subjects.remove(o);
-                objects.remove(o);
-                shared.add(o);
-            } else {
+        //if (!shared.contains(o)) {
+         //   if (subjects.contains(o)) {
+           //     subjects.remove(o);
+             //   objects.remove(o);
+              //  shared.add(o);
+            //} else {
                 if (o.isBlank()) {
                     stats.numBlankNodes++;
                 } else if (o.isURI()) {
@@ -390,8 +390,8 @@ public class FiveSectionDictionaryWriterBuilder {
                     throw new Error("WHAT THE HELL IS THIS : "+o);
                 }
                 objects.add(o);
-            }
-        }
+         //   }
+       // }
     }
    
 public FiveSectionDictionaryWriter build() throws IOException {
@@ -410,7 +410,7 @@ public FiveSectionDictionaryWriter build() throws IOException {
                 .map(quad -> quad.isDefaultGraph()
                         ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                         : quad)
-                //.map(this::AlignBnodes)
+                .map(this::AlignBnodes)
                 .forEach(quad -> {
                     quadcount.incrementAndGet();
                     if (quadcount.get() % 100_000 == 0) {

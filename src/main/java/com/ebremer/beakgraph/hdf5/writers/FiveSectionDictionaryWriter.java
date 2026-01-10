@@ -104,6 +104,7 @@ public class FiveSectionDictionaryWriter implements GSPODictionary, AutoCloseabl
         }
         throw new Error("Cannot resolve Graph : "+element);
     }
+    
     @Override
     public long locateSubject(Node element) {
         long c = ((Dictionary) shareddict).locate(element);
@@ -126,6 +127,7 @@ public class FiveSectionDictionaryWriter implements GSPODictionary, AutoCloseabl
         }
         throw new Error("Cannot resolve Predicate : "+element);
     }
+    
     @Override
     public long locateObject(Node element) {
         long c;
@@ -146,14 +148,17 @@ public class FiveSectionDictionaryWriter implements GSPODictionary, AutoCloseabl
         }
         return c + shareddict.getNumberOfNodes();
     }
+    
     @Override
     public Object extractGraph(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public Object extractSubject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public Object extractPredicate(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
@@ -163,18 +168,22 @@ public class FiveSectionDictionaryWriter implements GSPODictionary, AutoCloseabl
     public Object extractObject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public void close() {
        
     }
+    
     @Override
     public long getNumberOfNodes() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public List<Node> getNodes() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public void Add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);
@@ -184,18 +193,22 @@ public class FiveSectionDictionaryWriter implements GSPODictionary, AutoCloseabl
         if ( predicatesdict.getNumberOfNodes() > 0 ) predicatesdict.Add( dictionary );
         if ( objectsdict.getNumberOfNodes() > 0 ) objectsdict.Add( dictionary );
     }
+    
     @Override
     public Stream<Node> streamSubjects() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public Stream<Node> streamPredicates() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public Stream<Node> streamObjects() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+    
     @Override
     public Stream<Node> streamGraphs() {
         throw new UnsupportedOperationException("Not supported yet.");

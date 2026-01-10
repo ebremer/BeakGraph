@@ -95,6 +95,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (pStart == -1 || pStart > pEnd) { IO.println("OS: No Predicates for Graph"); return; }
         
         // B. Find Predicate Index
+        /*
         long pIndex = -1;
         for (long k = pStart; k <= pEnd; k++) {
             if (Sp.get(k) == pi) {
@@ -102,6 +103,8 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
                 break;
             }
         }
+*/
+        long pIndex = Sp.binarySearch(pStart, pEnd, pi);
         if (pIndex < 0) { IO.println("OS: Predicate " + pi + " not found in Graph " + gi); return; }
 
         // C. Level 3: Object Range for P
@@ -112,13 +115,15 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (oStart == -1 || oStart > oEnd) return;
         
         // D. Find Object Index
+        /*
         long oIndex = -1;
         for (long k = oStart; k <= oEnd; k++) {
             if (So.get(k) == oi) {
                 oIndex = k;
                 break;
             }
-        }
+        }*/
+        long oIndex = So.binarySearch(oStart, oEnd, oi);
         if (oIndex < 0) { IO.println("OS: Object " + oi + " not found under Predicate " + pi); return; }
 
         // E. Level 4: Subject Range for O
