@@ -16,7 +16,7 @@ final public class NodeId implements Comparable<NodeId> {
         return type;
     }
     
-    public long getID() {
+    public long getId() {
         return id;
     }
 
@@ -28,9 +28,14 @@ final public class NodeId implements Comparable<NodeId> {
     public static final boolean isDoesNotExist(NodeId nodeId) {
        return NodeDoesNotExist.equals(nodeId);
     }
+    
+    @Override
+    public String toString() {
+        return String.format("NodeID [%s %s]", id, type);
+    }
 
     @Override
     public int compareTo(NodeId o) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 }

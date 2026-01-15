@@ -1,7 +1,7 @@
 package com.ebremer.halcyon.hilbert;
 
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedList;
 import org.davidmoten.hilbert.Range;
 import org.davidmoten.hilbert.Ranges;
 
@@ -11,8 +11,8 @@ import org.davidmoten.hilbert.Ranges;
  */
 public class hTools {
     
-    public static Ranges Tran(LinkedList<Range> src) {
-        LinkedList<eRange> tmp = new LinkedList<>();
+    public static Ranges Tran(ArrayList<Range> src) {
+        ArrayList<eRange> tmp = new ArrayList<>();
         for (Range r : src) {
             tmp.add(new eRange(r.low(),r.high()));
         }

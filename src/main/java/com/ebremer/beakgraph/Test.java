@@ -23,7 +23,7 @@ import org.apache.jena.vocabulary.SchemaDO;
 public class Test {
     
     public static void main(String[] args) {
-        File src = new File("D:\\data\\beakgraph\\dest\\dXX.h5");
+        File src = new File("/beakgraph/dest/dXX.h5");
         if (!src.exists()) {
             System.err.println("File not found: " + src.getAbsolutePath());
             return;
@@ -38,24 +38,15 @@ public class Test {
                 """
                 select *
                 where {                            
-                    ?s hal:asHilbert1 ?hilbert .
+                    ?range hal:low ?low .
+                    ?range hal:high ?high .
                     ?hilbert hal:hasRange ?range .
-                    ?range hal:low ?low; hal:high ?high .
-                    
-                    
-                                        #filter ((?low >= 3391593900) && (?low <= 3391593999))
+                    ?s hal:asHilbert0 ?hilbert .
+                    #filter ((?low >= 3391593900) && (?low <= 3391593999))
                                         #filter ((?low > 1847600570) && (?low <= 1847600572))
-                                        #?range hal:high ?high
-                                    
-                                    #?member rdfs:member ?yay .
-                                    #?yay a geo:Feature;
-                                    #?s a geo:FeatureCollection;
-                                    #    ?p ?o
-                                    #?wow hal:classification ?classification
-                                    #geo:hasGeometry [ geo:asWKT ?wkt ]
-                                }
+                    }
                                 #order by ?low
-                                limit 100
+                   limit 10
                 """
             );
             ParameterizedSparqlString  pss2 = new ParameterizedSparqlString(
@@ -66,10 +57,10 @@ public class Test {
                     ?image exif:width ?width .                   
                     ?image exif:height ?height .
                 }
-                limit 100
+                limit 1000
                 """
             );            
-            pss = pss2;
+            //pss = pss2;
             pss.setNsPrefix("hal", "https://halcyon.is/ns/");
             pss.setNsPrefix("rdfs", RDFS.getURI());
             pss.setNsPrefix("exif", EXIF.NS);

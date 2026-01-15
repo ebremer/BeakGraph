@@ -45,7 +45,7 @@ public class BGIndex {
             };
         }
 
-        long locateInDictionary(FiveSectionDictionaryWriter w, Quad quad) {
+        long locateInDictionary(PositionalDictionaryWriter w, Quad quad) {
             return switch (component) {
                 case 'G' -> w.locateGraph(quad.getGraph());
                 case 'S' -> w.locateSubject(quad.getSubject());
@@ -55,14 +55,20 @@ public class BGIndex {
             };
         }
 
-        int getBitSize(FiveSectionDictionaryWriter w) {
+        int getBitSize(PositionalDictionaryWriter w) {
+            // IDs are 1-based (1..N). The maximum integer value to store is N.
+            // MinBits(N) typically calculates bits for cardinality N (0..N-1).
+            // Example: Count=256. MaxID=256. MinBits(256) -> 8 bits. 
+            // 8 bits can only store up to 255. Value 256 overflows to 0.
+            // MinBits(257) -> 9 bits. Correct.
             int needed = switch (component) {
-                case 'G' -> MinBits(w.getNumberOfGraphs());
-                case 'S' -> MinBits(w.getNumberOfShared() + w.getNumberOfSubjects());
-                case 'P' -> MinBits(w.getNumberOfPredicates());
-                case 'O' -> MinBits(w.getNumberOfShared() + w.getNumberOfObjects());
+                case 'G' -> MinBits(w.getNumberOfGraphs() + 1);
+                case 'S' -> MinBits(w.getNumberOfSubjects() + 1);
+                case 'P' -> MinBits(w.getNumberOfPredicates() + 1);
+                case 'O' -> MinBits(w.getNumberOfObjects() + 1);
                 default -> throw new IllegalStateException();
             };
+            
             // This prevents bit-packing corruption for non-aligned widths (e.g. 9 bits)
             // and neutralizes endianness issues during HDF5 I/O.
             if (needed == 0) return 8;
@@ -70,7 +76,7 @@ public class BGIndex {
         }
     }
 
-    private static class LevelState {
+    private class LevelState {
         long bitsProcessed = 0;
         long onesSoFar = 0;
         long onesInCurrentSuperblock = 0;
@@ -79,7 +85,7 @@ public class BGIndex {
         long lastBlockWritten = -1;     
     }
 
-    public BGIndex(HDF5Writer.Builder builder, FiveSectionDictionaryWriter dictWriter, Index type, Quad[] allQuads) {
+    public BGIndex(HDF5Writer.Builder builder, PositionalDictionaryWriter dictWriter, Index type, Quad[] allQuads) {
         System.out.println("Creating Index " + type);
         this.type = type;
         String indexName = type.name();
@@ -118,82 +124,58 @@ public class BGIndex {
         prepareForReading();
     }
 
-    private void processQuads(FiveSectionDictionaryWriter w, Quad[] allQuads) {
+    private void processQuads(PositionalDictionaryWriter w, Quad[] allQuads) {
         System.out.print("Sorting quads for " + type.name() + "... ");
         Arrays.parallelSort(allQuads, type.getComparator());
         System.out.println("done");
 
-        LevelState l1 = new LevelState();
-        LevelState l2 = new LevelState();
-        LevelState l3 = new LevelState();
-
-        Quad prev = null;
+        LevelState l1 = new LevelState(), l2 = new LevelState(), l3 = new LevelState();
+        Quad lastUnique = null;
 
         for (Quad curr : allQuads) {
-            if (prev != null &&
-                    positions[0].getNode(prev).equals(positions[0].getNode(curr)) &&
-                    positions[1].getNode(prev).equals(positions[1].getNode(curr)) &&
-                    positions[2].getNode(prev).equals(positions[2].getNode(curr)) &&
-                    positions[3].getNode(prev).equals(positions[3].getNode(curr))) {
+            //IO.println(curr);
+            // 1. Duplicate Check
+            if (lastUnique != null && 
+                positions[0].getNode(lastUnique).equals(positions[0].getNode(curr)) &&
+                positions[1].getNode(lastUnique).equals(positions[1].getNode(curr)) &&
+                positions[2].getNode(lastUnique).equals(positions[2].getNode(curr)) &&
+                positions[3].getNode(lastUnique).equals(positions[3].getNode(curr))) {
                 continue;
             }
 
-            if (prev == null) {
-                prev = curr;
-                continue;
-            }
+            // 2. Determine if this quad starts a new list at each level
+            // The very first unique quad ALWAYS starts a new list (change = true)
+            boolean changeL0 = (lastUnique == null) || !positions[0].getNode(lastUnique).equals(positions[0].getNode(curr));
+            boolean changeL1 = (lastUnique == null) || changeL0 || !positions[1].getNode(lastUnique).equals(positions[1].getNode(curr));
+            boolean changeL2 = (lastUnique == null) || changeL1 || !positions[2].getNode(lastUnique).equals(positions[2].getNode(curr));
 
-            boolean changeL0 = !positions[0].getNode(prev).equals(positions[0].getNode(curr));
-            boolean changeL1 = changeL0 || !positions[1].getNode(prev).equals(positions[1].getNode(curr));
-            boolean changeL2 = changeL1 || !positions[2].getNode(prev).equals(positions[2].getNode(curr));
-            
-            // Level 3
-            long id3 = positions[3].locateInDictionary(w, prev);
-            S3.writeLong(id3);
-            int bit3 = changeL2 ? 1 : 0;
+            // 3. Level 3 (Objects) - One entry for every unique Quad
+            S3.writeLong(positions[3].locateInDictionary(w, curr));
+            int bit3 = changeL2 ? 1 : 0; // 1 if this is the first object for this Predicate
             B3.writeInteger(bit3);
             advanceLevel(l3, bit3, SB3, BB3);
 
-            // Level 2
+            // 4. Level 2 (Predicates) - One entry per unique Subject-Predicate pair
             if (changeL2) {
-                long id2 = positions[2].locateInDictionary(w, prev);
-                S2.writeLong(id2);
-                int bit2 = changeL1 ? 1 : 0;
+                S2.writeLong(positions[2].locateInDictionary(w, curr));
+                int bit2 = changeL1 ? 1 : 0; // 1 if this is the first predicate for this Subject
                 B2.writeInteger(bit2);
                 advanceLevel(l2, bit2, SB2, BB2);
             }
 
-            // Level 1
+            // 5. Level 1 (Subjects) - One entry per unique Graph-Subject pair
             if (changeL1) {
-                long id1 = positions[1].locateInDictionary(w, prev);
-                S1.writeLong(id1);
-                int bit1 = changeL0 ? 1 : 0;
+                S1.writeLong(positions[1].locateInDictionary(w, curr));
+                int bit1 = changeL0 ? 1 : 0; // 1 if this is the first subject for this Graph
                 B1.writeInteger(bit1);
                 advanceLevel(l1, bit1, SB1, BB1);
             }
 
-            prev = curr;
+            lastUnique = curr;
         }
 
-        if (prev != null) {
-            long id3 = positions[3].locateInDictionary(w, prev);
-            S3.writeLong(id3);
-            B3.writeInteger(1); 
-            advanceLevel(l3, 1, SB3, BB3);
-
-            long id2 = positions[2].locateInDictionary(w, prev);
-            S2.writeLong(id2);
-            B2.writeInteger(1); 
-            advanceLevel(l2, 1, SB2, BB2);
-
-            long id1 = positions[1].locateInDictionary(w, prev);
-            S1.writeLong(id1);
-            B1.writeInteger(1); 
-            advanceLevel(l1, 1, SB1, BB1);
-        }
-        
         flushAllBuffers();
-    }
+      }
 
     private void advanceLevel(LevelState state, int bitValue, BitPackedUnSignedLongBuffer SB, BitPackedUnSignedLongBuffer BB) {
         if (bitValue == 1) {

@@ -2,7 +2,7 @@ package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.core.GSPODictionary;
-import com.ebremer.beakgraph.hdf5.QuadID;
+import java.net.URI;
 import java.util.Iterator;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
@@ -22,5 +22,5 @@ public interface BGReader extends AutoCloseable {
     public Iterator<Node> listGraphNodes();
     public Stream<Quad> streamQuads();
     public boolean containsGraph(Node graphNode);
-    public Stream<QuadID> streamQuadID();
+    public URI getURI();
 }

@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.core.debug;
 
-import com.ebremer.beakgraph.hdf5.writers.FiveSectionDictionaryWriter;
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriter;
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import java.io.File;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
@@ -12,8 +13,8 @@ public class DictionaryDebug {
 
         try {
             System.out.println("Building Dictionary in Memory...");
-            FiveSectionDictionaryWriter.Builder db = new FiveSectionDictionaryWriter.Builder();
-            FiveSectionDictionaryWriter w = db
+            PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
+            PositionalDictionaryWriter w = db
                 .setSource(file)
                 .setDestination(dest)
                 .setName("dictionary")
@@ -34,8 +35,6 @@ public class DictionaryDebug {
             // 3. What is at ID 9 (relative to objects)?
             // Note: locateObject returns absolute ID (shared + objects).
             // We need to adjust if shared > 0.
-            long numShared = w.getNumberOfShared();
-            System.out.println("Num Shared: " + numShared);
             
             // The logs showed IndexReader reading 9.
             // If shared is 0, then it's just index 9 (rank 8) in objects.

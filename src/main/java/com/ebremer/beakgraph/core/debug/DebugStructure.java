@@ -2,7 +2,7 @@ package com.ebremer.beakgraph.core.debug;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.hdf5.readers.FiveSectionDictionaryReader;
+import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
@@ -20,7 +20,7 @@ public class DebugStructure {
         try (HdfFile hdf = new HdfFile(file.toPath())) {
             Group hdt = (Group) hdf.getChild(Params.BG);
             Group dictGroup = (Group) hdt.getChild(Params.DICTIONARY);
-            FiveSectionDictionaryReader dict = new FiveSectionDictionaryReader(dictGroup);
+            PositionalDictionaryReader dict = new PositionalDictionaryReader(dictGroup);
             
             System.out.println("--- GPOS DEEP SCAN ---");
             

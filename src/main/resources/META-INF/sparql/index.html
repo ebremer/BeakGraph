@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPARQL Endpoint</title>
+    <link rel="stylesheet" href="yasgui.min.css">
+    <style>
+        .yasgui .autocompleteWrapper {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div style="display:flex; align-items:center; gap:20px;">
+        <img src="beakgraph.png" width="100">
+        <h3 style="margin:0;">SPARQL Endpoint</h3>
+    </div>
+    <hr>
+    <div id="yasgui"></div>
+
+    <script src="yasgui.min.js"></script>
+    <script>
+        Yasgui.defaults.tabName = "Query";
+        Yasgui.defaults.yasqe.value = "select *\nwhere {graph ?g {?s ?p ?o}}\nlimit 20";
+        const yasgui = new Yasgui(document.getElementById("yasgui"), {
+            requestConfig: {
+                endpoint: "/rdf"
+            },
+            copyEndpointOnNewTab: false
+        });
+        var tab = yasgui.getTab();
+        tab.yasqe.addPrefixes({ sdo: "https://schema.org/" });
+        tab.yasqe.addPrefixes({ hal: "https://halcyon.is/ns/" });
+        tab.yasqe.addPrefixes({ rdfs: "http://www.w3.org/2000/01/rdf-schema#" });
+        tab.yasqe.addPrefixes({ rdf: "http://www.w3.org/1999/02/22-rdf-syntax-ns#" });
+        tab.yasqe.addPrefixes({ exif: "http://www.w3.org/2003/12/exif/ns#" });
+        tab.yasqe.addPrefixes({ owl: "http://www.w3.org/2002/07/owl#" });
+        tab.yasqe.addPrefixes({ loc: "https://id.loc.gov/vocabulary/preservation/cryptographicHashFunctions/" });
+        tab.yasqe.addPrefixes({ geo: "http://www.opengis.net/ont/geosparql#" });
+        tab.yasqe.addPrefixes({ dct: "http://purl.org/dc/terms/" });
+        tab.yasqe.addPrefixes({ prov: "http://www.w3.org/ns/prov#" });
+        tab.yasqe.addPrefixes({ xsd: "http://www.w3.org/2001/XMLSchema#" });
+        tab.yasqe.addPrefixes({ void: "http://rdfs.org/ns/void#" });
+        tab.yasqe.addPrefixes({ bg: "https://www.ebremer.com/beakgraph/ns/" });
+        tab.yasqe.addPrefixes({ ror: "https://ror.org/" });
+        tab.yasqe.addPrefixes({ wac: "http://www.w3.org/ns/auth/acl#" });
+        tab.yasqe.addPrefixes({ sno: "http://snomed.info/id/" });
+        tab.yasqe.addPrefixes({ ldp: "http://www.w3.org/ns/ldp#" });
+        tab.yasqe.addPrefixes({ solid: "http://www.w3.org/ns/solid/terms#" });
+        tab.yasqe.addPrefixes({ zeph: "https://halcyon.is/zephyr/ns/" });
+        tab.yasqe.addPrefixes({ geof: "http://www.opengis.net/def/function/geosparql/" });
+        tab.yasqe.collapsePrefixes(true);
+    </script>
+</body>
+</html>

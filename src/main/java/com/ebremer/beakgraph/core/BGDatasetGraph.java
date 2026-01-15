@@ -47,7 +47,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
     }
 
     @Override
-    public Graph getGraph(Node node) {
+    public Graph getGraph(Node node) {        
         try {
             return new BeakGraph(node, bg.getReader());
         } catch (IOException ex) {

@@ -5,10 +5,8 @@ import org.apache.jena.graph.Graph;
 import org.apache.jena.sparql.ARQInternalErrorException;
 import org.apache.jena.sparql.algebra.Op;
 import org.apache.jena.sparql.algebra.op.OpBGP;
-import org.apache.jena.sparql.algebra.op.OpDistinct;
 import org.apache.jena.sparql.algebra.op.OpFilter;
-import org.apache.jena.sparql.algebra.op.OpGraph;
-import org.apache.jena.sparql.algebra.op.OpReduced;
+import org.apache.jena.sparql.algebra.op.OpPropFunc;
 import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 import org.apache.jena.sparql.core.BasicPattern;
 import org.apache.jena.sparql.core.Substitute;
@@ -43,30 +41,21 @@ public class OpExecutorBG extends OpExecutor {
     }
     
     @Override
+    protected QueryIterator execute(OpPropFunc opPropFunc, QueryIterator input) {
+        return super.execute(opPropFunc, input);
+    }
+    
+    @Override
     protected QueryIterator execute(OpFilter opFilter, QueryIterator input) {
-//        OpGraph ha = (OpGraph) opFilter.getSubOp();
-//        Object jj = ha.getSubOp();
-//        ExprList list = opFilter.getExprs();
         if (!isForBeakGraph) {
             return super.execute(opFilter, input);
-        }
-        
+        }        
         if (OpBGP.isBGP(opFilter.getSubOp())) {
             BeakGraph graph = (BeakGraph)execCxt.getActiveGraph();
             OpBGP opBGP = (OpBGP)opFilter.getSubOp();
             return executeBGP(graph, opBGP, input, opFilter.getExprs(), execCxt);
         }
         return super.execute(opFilter, input);
-    }
-    
-    @Override
-    protected QueryIterator execute(OpDistinct opDistinct, QueryIterator input) {
-        return super.execute(opDistinct, input) ;
-    }
-    
-    @Override
-    protected QueryIterator execute(OpReduced opReduced, QueryIterator input) {
-        return super.execute(opReduced, input) ;
     }
 
     @Override

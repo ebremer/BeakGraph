@@ -1,7 +1,7 @@
 package com.ebremer.beakgraph.core.debug;
 
 import com.ebremer.beakgraph.Params;
-import com.ebremer.beakgraph.hdf5.readers.FiveSectionDictionaryReader;
+import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Group;
 import java.io.File;
@@ -19,7 +19,7 @@ public class CheckDictionaryID {
         try (HdfFile hdf = new HdfFile(file.toPath())) {
             Group hdt = (Group) hdf.getChild(Params.BG);
             Group dictGroup = (Group) hdt.getChild(Params.DICTIONARY);
-            FiveSectionDictionaryReader dict = new FiveSectionDictionaryReader(dictGroup);
+            PositionalDictionaryReader dict = new PositionalDictionaryReader(dictGroup);
             
             System.out.println("--- DICTIONARY ID CHECK ---");
             

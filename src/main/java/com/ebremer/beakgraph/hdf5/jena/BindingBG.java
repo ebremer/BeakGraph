@@ -60,5 +60,6 @@ public class BindingBG extends BindingBase {
     @Override
     protected Binding detachWithNewParent(Binding newParent) {
         throw new UnsupportedOperationException("Not supported yet.");
+        //return new BindingBG(new BindingNodeId(idBinding, newParent), bGraph);
     }
 }

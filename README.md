@@ -8,9 +8,9 @@
 
 ## Building
 
-Configuration file generation
+Configuration file generation for native-image (already generated for current source code.  Only needed if extensive changes have been made)
 ```
-java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.10.0.jar
+java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.11.0.jar
 ```
 Native Command-line
 ```
@@ -37,7 +37,8 @@ HDF5Writer.Builder()
     .write();
 ```
 
-### Using a BeakGraph in your Apache Jena
+### Using a BeakGraph with Apache Jena
+
 ```
     try (HDF5Reader reader = new HDF5Reader(dest)) {
         BeakGraph bg = new BeakGraph( reader );
@@ -71,3 +72,11 @@ The original BeakGraph was an [Apache Jena](https://jena.apache.org/) Graph impl
 wrapped in a [Research Object Crate (RO-Crate)](https://www.researchobject.org/ro-crate/) inspired by [HDT](https://www.rdfhdt.org/).
 
 Developed to power [Halcyon](https://github.com/halcyon-project/Halcyon).  See [Arxiv](https://arxiv.org/) paper at http://arxiv.org/abs/2304.10612
+
+
+<img
+  src="https://github.com/ebremer/BeakGraph/blob/develop/src/main/resources/beakgraph.png"
+  width=300px height=300px
+  alt="BeakGraph"
+  title="BeakGraph"
+  style="display: inline-block; margin: 0 auto; max-width: 150px">

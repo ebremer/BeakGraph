@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.hdf5;
 
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import org.apache.jena.sparql.core.Quad;
-import org.apache.jena.sparql.util.NodeCmp;
 import java.util.Comparator;
 
 public enum Index {
@@ -12,9 +11,9 @@ public enum Index {
         public Comparator<Quad> getComparator() {
             return Comparator
                 .comparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE);
         }
     },
     GPSO { // Graph, Predicate, Subject, Object
@@ -22,9 +21,9 @@ public enum Index {
         public Comparator<Quad> getComparator() {
             return Comparator
                 .comparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE);
         }
     },
     GPOS { // Graph, Predicate, Object, Subject
@@ -32,9 +31,9 @@ public enum Index {
         public Comparator<Quad> getComparator() {
             return Comparator
                 .comparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE);
         }
     },
     GOSP { // Graph, Object, Subject, Predicate
@@ -42,19 +41,19 @@ public enum Index {
         public Comparator<Quad> getComparator() {
             return Comparator
                 .comparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE);
         }
     },
-    GSOE { // Graph, Subject, Object, Predicate (Note: 'E' usually implies mismatch, assumed GSOP intent but kept GSOE name)
+    GSOE { // Graph, Subject, Object, Predicate
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
                 .comparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE);
         }
     },
     GOPS { // Graph, Object, Predicate, Subject
@@ -62,9 +61,9 @@ public enum Index {
         public Comparator<Quad> getComparator() {
             return Comparator
                 .comparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE);
         }
     },
 
@@ -73,39 +72,39 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getSubject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getSubject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE);
         }
     },
     SGOP { // Subject, Graph, Object, Predicate
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getSubject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getSubject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE);
         }
     },
     SPGO { // Subject, Predicate, Graph, Object
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE);
         }
     },
     SPOG { // Subject, Predicate, Object, Graph
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE);
         }
     },
@@ -113,19 +112,19 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE);
         }
     },
     SOPG { // Subject, Object, Predicate, Graph
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE);
         }
     },
@@ -135,19 +134,19 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE);
         }
     },
     PSOG { // Predicate, Subject, Object, Graph
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE);
         }
     },
@@ -155,29 +154,29 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getPredicate, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE);
         }
     },
     PGOS { // Predicate, Graph, Object, Subject
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getPredicate, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE);
         }
     },
     POSG { // Predicate, Object, Subject, Graph
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE);
         }
     },
@@ -185,10 +184,10 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getObject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getObject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE);
         }
     },
 
@@ -197,9 +196,9 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE);
         }
     },
@@ -207,39 +206,39 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getObject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getObject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE);
         }
     },
     OGPS { // Object, Graph, Predicate, Subject
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getObject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getObject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE);
         }
     },
     OSGP { // Object, Subject, Graph, Predicate
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE);
         }
     },
     OSPG { // Object, Subject, Predicate, Graph
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE);
         }
     },
@@ -247,10 +246,10 @@ public enum Index {
         @Override
         public Comparator<Quad> getComparator() {
             return Comparator
-                .comparing(Quad::getObject, NodeCmp::compareRDFTerms)
-                .thenComparing(Quad::getPredicate, NodeCmp::compareRDFTerms)
+                .comparing(Quad::getObject, NodeComparator.INSTANCE)
+                .thenComparing(Quad::getPredicate, NodeComparator.INSTANCE)
                 .thenComparing(Quad::getGraph, NodeComparator.INSTANCE)
-                .thenComparing(Quad::getSubject, NodeCmp::compareRDFTerms);
+                .thenComparing(Quad::getSubject, NodeComparator.INSTANCE);
         }
     };
 
