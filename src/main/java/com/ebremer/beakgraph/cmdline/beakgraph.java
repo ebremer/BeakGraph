@@ -75,7 +75,7 @@ public class beakgraph {
                         if (params.sparqlendpoint.exists()) {
                             SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);                                
                             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                            endpoint.shutdown();
+                                endpoint.shutdown();
                             }));
                             System.out.println("Press Ctrl+C to stop the server...");        
                             // Keep the application running

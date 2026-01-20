@@ -10,11 +10,7 @@ import org.locationtech.jts.io.WKTWriter;
 
 public class WKTDatatype extends BaseDatatype {
 
-    // The standard GeoSPARQL URI for WKT literals
-    public static final String URI = "http://www.opengis.net/ont/geosparql#wktLiteral";
-    
-    // Singleton instance (Jena prefers singletons for Datatypes)
-    // FIX: Changed "WktDatatype" to "WKTDatatype" below
+    public static final String URI = "http://www.opengis.net/ont/geosparql#wktLiteral";   
     public static final WKTDatatype INSTANCE = new WKTDatatype();
 
     private WKTDatatype() {
@@ -32,11 +28,7 @@ public class WKTDatatype extends BaseDatatype {
         if (lexicalForm == null || lexicalForm.isEmpty()) {
             return null;
         }
-
         try {
-            // 1. Handle GeoSPARQL CRS Prefix (e.g., <http://...>)
-            // We strip the URI to get the raw WKT for JTS.
-            // In a full implementation, you might want to store the SRID in the Geometry's userData.
             String cleanWkt = lexicalForm;
             if (lexicalForm.startsWith("<")) {
                 int endUri = lexicalForm.indexOf(">");
@@ -44,11 +36,8 @@ public class WKTDatatype extends BaseDatatype {
                     cleanWkt = lexicalForm.substring(endUri + 1).trim();
                 }
             }
-
-            // 2. Parse using JTS
             WKTReader reader = new WKTReader();
             return reader.read(cleanWkt);
-
         } catch (ParseException e) {
             throw new DatatypeFormatException(
                 lexicalForm, 
@@ -88,7 +77,7 @@ public class WKTDatatype extends BaseDatatype {
     }
     
     /**
-     * Comparison logic for SPARQL FILTERs (optional but recommended).
+     * Comparison logic for SPARQL FILTERs
      * @param value1
      * @param value2
      * @return 

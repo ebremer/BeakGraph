@@ -9,6 +9,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.UUID;
 
 public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private final int blockSize;
@@ -20,16 +21,21 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private long numEntries = 0;
     private long position = 0;
     private final DataOutputBuffer offsets;
+    public final String ID = UUID.randomUUID().toString();
 
     public FCDWriter(Path path, int blockSize) throws FileNotFoundException {
         this.path = path;
         this.blockSize = blockSize;
         this.baos = new ByteArrayOutputStream();
         this.offsets = new DataOutputBuffer(Path.of("offsets"));
+        IO.println(path+"   "+ID);
     }
     
     @Override
     public long getNumEntries() {
+        //if (numEntries<10) {
+          //  IO.println("getNumEntries ID "+ID+" ===> "+numEntries);
+        //}
         return numEntries;
     }
     
@@ -42,7 +48,10 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     }
 
     public void add(String item) throws IOException {
-        numEntries++;  
+        numEntries++;
+        if (numEntries<10) {
+            IO.println(item+" Add Item ID "+ID+" ===> "+numEntries);
+        }
         if (stringsInCurrentBlock == 0) {
             byte[] bb = item.getBytes(StandardCharsets.UTF_8);
             offsets.writeLong(position);            
@@ -96,6 +105,9 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
 
     @Override
     public void Add(WritableGroup group) {
+        //if (numEntries<10) {
+          //  IO.println("Add Group ID "+ID+" ===> "+numEntries);
+        //}
         WritableGroup strings = group.putGroup(path.toString());
         strings.putAttribute("blockSize", blockSize);
         long validBlocks = (stringsInCurrentBlock == 0 && numEntries > 0) ? numBlocks : numBlocks + 1;

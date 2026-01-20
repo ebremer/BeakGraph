@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author erich
  */
-public class BeakGraph extends GraphBase {
+public class BeakGraph extends GraphBase implements AutoCloseable {
     private static final Object initLock = new Object() ;
     private static volatile boolean initialized = false ;
     private final Node namedgraph;

@@ -31,8 +31,7 @@ public class BindingBG extends BindingBase {
     @Override
     protected Node get1(Var var) {
         if (idBinding.containsKey(var)) {
-            NodeId i = idBinding.get(var);
-            return bGraph.getReader().getNodeTable().getNodeForNodeId(i);
+            return bGraph.getReader().getNodeTable().getNodeForNodeId(idBinding.get(var));
         }
         return null;
     }   

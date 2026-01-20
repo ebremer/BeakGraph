@@ -5,8 +5,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class FileCounter {    
     private final AtomicLong directoryCount = new AtomicLong(0);
     private final AtomicLong rdfFileCount = new AtomicLong(0);
-    private final AtomicLong otherFileCount = new AtomicLong(0);
-    
+    private final AtomicLong otherFileCount = new AtomicLong(0);    
     private final AtomicLong zeroLengthFileCount = new AtomicLong(0);
     private final AtomicLong failedConversionFileCount = new AtomicLong(0); 
 

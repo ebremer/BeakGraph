@@ -52,7 +52,6 @@ public class HDF5Reader implements BGReader {
         this.defaultGraph = Quad.defaultGraphIRI;
         nodeTable = new SimpleNodeTable(dict);
         this.uri = src.toURI();
-        //dict.getPredicates().streamNodes().forEach(p->{IO.println("PREDICATE : "+p);});
     }
     
     @Override
@@ -126,13 +125,13 @@ public class HDF5Reader implements BGReader {
 
         return WrappedIterator.create(it).mapWith(bnid -> {
             Node sRes = tp.getSubject().isConcrete() ? tp.getSubject() : nodeTable.getNodeForNodeId(bnid.get(sVar));
-            NodeId ha = bnid.get(pVar);
+            //NodeId ha = bnid.get(pVar);
             Node pRes = tp.getPredicate().isConcrete() ? tp.getPredicate() : nodeTable.getNodeForNodeId(bnid.get(pVar));
             Node oRes = tp.getObject().isConcrete() ? tp.getObject() : nodeTable.getNodeForNodeId(bnid.get(oVar));
             try {
                 return Triple.create(sRes, pRes, oRes);
             } catch (UnsupportedOperationException ex) {
-                int c = 0;
+                //int c = 0;
                 return null;
             }
         });

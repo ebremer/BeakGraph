@@ -11,6 +11,7 @@ public class Stats {
     public long numSubjects = 0;
     public long numPredicates = 0;
     public long numObjects = 0;
+    public long numDataTypes = 0;
     public long numShared = 0;
     public long numBlankNodes = 0;
     public long numIRI = 0;
@@ -43,6 +44,8 @@ public class Stats {
             Number of Shared      : %d
             Number of Blank nodes : %d
             
+            Number of Data Types  : %d
+            
             Number of Integers    : %d
             Number of Longs       : %d
             Number of Floats      : %d
@@ -68,6 +71,7 @@ public class Stats {
             numObjects,
             numShared,
             numBlankNodes,
+            numDataTypes,
             numInteger,
             numLong,
             numFloat,

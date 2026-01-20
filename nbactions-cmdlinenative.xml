@@ -12,7 +12,7 @@
             <properties>
                 <exec.vmArgs>--enable-preview -Xmx115G --add-opens java.base/java.nio=ALL-UNNAMED</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-endpoint dXX.h5</exec.appArgs>
+                <exec.appArgs>-src src\compressed\TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.ttl.gz -dest dest2\WOW.h5 -spatial</exec.appArgs>
                 <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <exec.workingdir>/beakgraph</exec.workingdir>
@@ -30,7 +30,7 @@
             <properties>
                 <exec.vmArgs>--enable-preview -Xmx115G --add-opens java.base/java.nio=ALL-UNNAMED -agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-endpoint dXX.h5</exec.appArgs>
+                <exec.appArgs>-src src\compressed\TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.ttl.gz -dest dest2\WOW.h5 -spatial</exec.appArgs>
                 <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <jpda.listen>true</jpda.listen>
@@ -51,7 +51,7 @@
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
                 <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
                 <exec.executable>java</exec.executable>
-                <exec.appArgs>-endpoint dXX.h5</exec.appArgs>
+                <exec.appArgs>-src src\compressed\TCGA-CM-5348-01Z-00-DX1.2ad0b8f6-684a-41a7-b568-26e97675cce9.ttl.gz -dest dest2\WOW.h5 -spatial</exec.appArgs>
                 <exec.workingdir>/beakgraph</exec.workingdir>
             </properties>
         </action>

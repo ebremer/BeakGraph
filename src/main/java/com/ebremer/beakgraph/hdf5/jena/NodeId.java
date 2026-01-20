@@ -1,15 +1,15 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 final public class NodeId implements Comparable<NodeId> {
-    public static final NodeId NodeDoesNotExist = new NodeId( -8, NodeType.SPECIAL) ;
-    public static final NodeId NodeIdAny = new NodeId( -9, NodeType.SPECIAL ) ;
+    public static final NodeId NodeDoesNotExist = new NodeId( -8, NodeType.SPECIAL );
+    public static final NodeId NodeIdAny = new NodeId( -9, NodeType.SPECIAL );
     private final long id;
     private final NodeType type;
 
     public NodeId(long id, NodeType type) {
         this.id = id;
         this.type = type;
-        toString();
+        //toString();
     }
     
     public NodeType getType() {

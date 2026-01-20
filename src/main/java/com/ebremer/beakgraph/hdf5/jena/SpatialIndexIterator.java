@@ -4,10 +4,11 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.pool.BeakGraphPool;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Node;
 import org.apache.jena.query.Dataset;
@@ -19,31 +20,32 @@ import org.apache.jena.query.ResultSet;
 import org.apache.jena.sparql.core.Var;
 import org.davidmoten.hilbert.Range;
 
+/**
+ * Optimized SpatialIndexIterator using lazy flatMapping and efficient pool management.
+ * @author erich
+ */
 public class SpatialIndexIterator implements Iterator<BindingNodeId> {
     private final Iterator<BindingNodeId> outputIterator;
+    private int scale = 0;
 
     /**
      * @param input The incoming stream of bindings
      * @param bGraph The graph instance
-     * @param targetVar The specific variable to bind (e.g. ?geo). DO NOT guess this from a triple.
+     * @param targetVar The specific variable to bind (e.g. ?geo).
      * @param wkt The search polygon string
      */
     public SpatialIndexIterator(Iterator<BindingNodeId> input, BeakGraph bGraph, Var targetVar, String wkt) {
-        // We no longer guess the variable. We trust the PatternMatchBG to pass the correct one.
         // Pre-fetch all Node IDs that match the Hilbert ranges.
         List<NodeId> candidateIds = fetchCandidateIds(bGraph, wkt);
-        // Create the iterator pipeline.
+
+        // LAZY PIPELINE: We map the input to the candidate IDs without 
+        // pre-allocating large intermediate lists.
         this.outputIterator = Iter.flatMap(input, parent -> {
-            List<BindingNodeId> joined = new ArrayList<>(candidateIds.size());
-            for (NodeId nodeId : candidateIds) {
-                // Create a new child binding from the parent
+            return Iter.map(candidateIds.iterator(), nodeId -> {
                 BindingNodeId child = new BindingNodeId(parent);
-                // Bind the geometry variable to the found Node ID
-                child.put(targetVar, nodeId);                
-                joined.add(child);
-            }
-            
-            return joined.iterator();
+                child.put(targetVar, nodeId);
+                return child;
+            });
         });
     }
 
@@ -56,64 +58,57 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
     public BindingNodeId next() {
         return outputIterator.next();
     }
-    
-    private int scale = 0;
 
-    private List<NodeId> fetchCandidateIds2(BeakGraph bGraph, String wkt) {
-        ArrayList<Range> ranges = HilbertPolygon.Polygon2Hilbert(wkt,scale);        
-        List<NodeId> results = new ArrayList<>(300);
-        NodeTable nt = bGraph.getReader().getNodeTable();
-        Dataset ds = bGraph.getDataset();
-        IO.println("RANGES : "+ranges.size());       
-        for (Range r : ranges) {
-            ParameterizedSparqlString pss = getQuery(r);
-            try (QueryExecution qexec = QueryExecutionFactory.create(pss.toString(), ds)) {
-                ResultSet rs = qexec.execSelect();
-                while (rs.hasNext()) {
-                    QuerySolution qs = rs.next();
-                    Node node = qs.getResource("geo").asNode();
-                    NodeId nn = nt.getNodeIdForNode(node);
-                    results.add(nn);
+    /**
+     * Fetches candidate NodeIds using parallel range queries against the BeakGraph pool.
+     */
+    private List<NodeId> fetchCandidateIds(BeakGraph bGraph, String wkt) {
+        ArrayList<Range> ranges = HilbertPolygon2.Polygon2Hilbert(wkt, scale);
+        URI uri = bGraph.getURI();
+        //BeakGraphPool.getPool().printStatus();
+        // Use parallel stream to query ranges, but borrow from pool once per task
+        return ranges.stream()
+            .parallel()
+            .flatMap(r -> {
+                List<NodeId> localResults = new ArrayList<>();
+                BeakGraph bg = null;
+                try {
+                    bg = BeakGraphPool.getPool().borrowObject(uri.normalize());                    
+                    NodeTable nt = bg.getReader().getNodeTable();
+                    Dataset ds = bg.getDataset();                    
+                    ParameterizedSparqlString pss = getQuery(r);
+                    try (QueryExecution qexec = QueryExecutionFactory.create(pss.asQuery(), ds)) {
+                        ResultSet rs = qexec.execSelect();
+                        while (rs.hasNext()) {
+                            QuerySolution qs = rs.next();
+                            Node node = qs.get("geo").asNode();
+                            localResults.add(nt.getNodeIdForNode(node));
+                        }
+                    }
+                } catch (Exception ex) {
+                    System.getLogger(SpatialIndexIterator.class.getName())
+                          .log(System.Logger.Level.ERROR, "Error querying spatial index for range: " + r, ex);
+                } finally {
+                    if (bg != null) {
+                        try {
+                            BeakGraphPool.getPool().returnObject(uri.normalize(), bg);
+                        } catch (Exception e) {
+                            // Pool return failure
+                        }
+                    }
                 }
-            }
-        }
-        IO.println("RESULTS : "+results.size());
-        return results;
+                return localResults.stream();
+            })
+            .collect(Collectors.toList());
     }
 
-    private List<NodeId> fetchCandidateIds(BeakGraph bGraph, String wkt) {
-        ArrayList<Range> ranges = HilbertPolygon.Polygon2Hilbert(wkt,scale);        
-        final CopyOnWriteArrayList<NodeId> results = new CopyOnWriteArrayList<>();
-        IO.println("RANGES : "+ranges.size());
-        //IO.println("URI : "+bGraph.getURI());        
-        ranges.stream().parallel().forEach(r->{
-            BeakGraph bg = BeakGraphPool.getPool().borrowObject(bGraph.getURI());
-            NodeTable nt = bg.getReader().getNodeTable();
-            Dataset ds = bg.getDataset();
-            ParameterizedSparqlString pss = getQuery(r);
-            try (QueryExecution qexec = QueryExecutionFactory.create(pss.toString(), ds)) {                
-                ResultSet rs = qexec.execSelect();
-                while (rs.hasNext()) {
-                    QuerySolution qs = rs.next();
-                    Node node = qs.getResource("geo").asNode();
-                    NodeId nn = nt.getNodeIdForNode(node);
-                    results.add(nn);
-                }
-            }
-            BeakGraphPool.getPool().returnObject(bGraph.getURI(), bg);
-        });
-        IO.println("RESULTS : "+results.size());
-        return results;
-    }    
-    
     private ParameterizedSparqlString getQuery(Range r) {
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
-            #select distinct ?geo
             select distinct *
             where {                
                 graph ?spatial {
-                    ?geo hal:hilbertCorner ?index .
+                    ?geo hal:hilbertCorner?s ?index .
                     filter (?index >= ?a)
                     filter (?index <= ?b)
                 }
@@ -124,10 +119,11 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
         pss.setIri("spatial", Params.SPATIALSTRING);
         pss.setLiteral("a", r.low());
         pss.setLiteral("b", r.high());
-        //IO.println(pss.toString());
+        pss.setLiteral("s", 0);
         return pss;
     }
-    
+
+    // Kept for reference or alternative scale logic
     private ParameterizedSparqlString getQuery2(Range r) {
         ParameterizedSparqlString pss = new ParameterizedSparqlString(
             """
