@@ -125,7 +125,7 @@ public class CRC {
         System.out.println("--- Test Case 1: Integers (bitWidth=5) ---");
         ByteBuffer byteBuffer1 = ByteBuffer.allocate(100);
         int bitWidth5 = 5; // Range for 5 bits signed: -16 to 15
-        BitPackedSignedLongBuffer packedBuffer1 = new BitPackedSignedLongBuffer(null, null, bitWidth5);
+        BitPackedSignedLongBuffer packedBuffer1 = new BitPackedSignedLongBuffer(null, null, 0, bitWidth5);
 
         int[] valuesToWrite1 = {0, 1, 15, -1, -16, 7, -8}; // 15 is max pos, -16 is min neg for 5 bits
         System.out.println("Writing values:");
@@ -148,7 +148,7 @@ public class CRC {
         System.out.println("--- Test Case 2: Longs (bitWidth=10) ---");
         ByteBuffer byteBuffer2 = ByteBuffer.allocate(100);
         int bitWidth10 = 10; // Range for 10 bits signed: -512 to 511
-        BitPackedSignedLongBuffer packedBuffer2 = new BitPackedSignedLongBuffer(null, byteBuffer2, bitWidth10);
+        BitPackedSignedLongBuffer packedBuffer2 = new BitPackedSignedLongBuffer(null, byteBuffer2, 0, bitWidth10);
 
         long[] valuesToWrite2 = {0L, 1L, 511L, -1L, -512L, 123L, -256L};
         System.out.println("Writing long values:");
@@ -169,7 +169,7 @@ public class CRC {
         // --- Test Case 3: Integers (bitWidth = 32) ---
         System.out.println("--- Test Case 3: Integers (bitWidth=32) ---");
         ByteBuffer byteBuffer3 = ByteBuffer.allocate(100);
-        BitPackedSignedLongBuffer packedBuffer3 = new BitPackedSignedLongBuffer(null, byteBuffer3, 32);
+        BitPackedSignedLongBuffer packedBuffer3 = new BitPackedSignedLongBuffer(null, byteBuffer3, 0, 32);
 
         int[] valuesToWrite3 = {Integer.MAX_VALUE, Integer.MIN_VALUE, 0, -1, 123456789};
         System.out.println("Writing values:");
@@ -190,7 +190,7 @@ public class CRC {
         // --- Test Case 4: Longs (bitWidth = 32, effectively storing int range) ---
         System.out.println("--- Test Case 4: Longs (bitWidth=32) ---");
         ByteBuffer byteBuffer4 = ByteBuffer.allocate(100);
-        BitPackedSignedLongBuffer packedBuffer4 = new BitPackedSignedLongBuffer(null, byteBuffer4, 32);
+        BitPackedSignedLongBuffer packedBuffer4 = new BitPackedSignedLongBuffer(null, byteBuffer4, 0, 32);
 
         long[] valuesToWrite4 = {(long)Integer.MAX_VALUE, (long)Integer.MIN_VALUE, 0L, -1L, 123456789L, -2L};
         System.out.println("Writing long values (as 32-bit patterns):");
@@ -210,7 +210,7 @@ public class CRC {
 
         System.out.println("--- Test Case 5: Longs (bitWidth=32) ---");
         ByteBuffer byteBuffer5 = ByteBuffer.allocate(100);
-        BitPackedSignedLongBuffer packedBuffer5 = new BitPackedSignedLongBuffer(null, byteBuffer5, 17);
+        BitPackedSignedLongBuffer packedBuffer5 = new BitPackedSignedLongBuffer(null, byteBuffer5, 0, 17);
 
         System.out.println();
         long[] valuesToWrite5 = {0, 1, 10373, 112231, 1297, 14029, 1754, 2, 20746, 2594, 28058, 3, 325, 3508, 4, 41492, 439, 5, 512, 5187, 56116, 6, 649, 7, 7015, 8, 82984, 877};

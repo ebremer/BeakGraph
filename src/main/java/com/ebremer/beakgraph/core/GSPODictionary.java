@@ -25,4 +25,7 @@ public interface GSPODictionary {
     public Stream<Node> streamSubjects();
     public Stream<Node> streamPredicates();
     public Stream<Node> streamObjects();
+    
+    //public long getNumberOfNodes();
+    
 }

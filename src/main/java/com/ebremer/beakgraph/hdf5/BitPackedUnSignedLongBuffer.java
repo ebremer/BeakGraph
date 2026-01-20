@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5;
 
+import io.jhdf.WritableDatasetImpl;
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
@@ -398,5 +399,57 @@ public class BitPackedUnSignedLongBuffer {
             }
         }
         return -(low + 1); // Value not found, returns insertion point
+    }
+    
+/**
+     * Finds the first index in the range [start, end] where the value is 
+     * greater than or equal to the target. (Unsigned)
+     * @param start
+     * @param end
+     * @param value
+     * @return 
+     */
+    public long lowerBound(long start, long end, long value) {
+        long low = start;
+        long high = end;
+        long result = -1;
+
+        while (low <= high) {
+            long mid = (low + high) >>> 1;
+            long midVal = get(mid);
+            if (Long.compareUnsigned(midVal, value) >= 0) {
+                result = mid;
+                high = mid - 1;
+            } else {
+                low = mid + 1;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Finds the last index in the range [start, end] where the value is 
+     * less than or equal to the target. (Unsigned)
+     * @param start
+     * @param end
+     * @param value
+     * @return 
+     */
+    public long upperBound(long start, long end, long value) {
+        long low = start;
+        long high = end;
+        long result = -1;
+
+        while (low <= high) {
+            long mid = (low + high) >>> 1;
+            long midVal = get(mid);
+            if (Long.compareUnsigned(midVal, value) <= 0) {
+                result = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return result;
     }
 }

@@ -266,7 +266,7 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
 
     private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
         // Identify which component is being filtered
-        int type = 0; // 1=S, 2=P, 3=O
+        int type; // 1=S, 2=P, 3=O
         if (var.equals(quad.getSubject())) type = 1;
         else if (var.equals(quad.getPredicate())) type = 2;
         else if (var.equals(quad.getObject())) type = 3;
@@ -282,22 +282,22 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
         boolean found = (rawResult >= 0);
 
-        long min = 0, max = Long.MAX_VALUE;
+        long min, max;
         
         // Get current bounds for the specific type
         switch (type) {
-            case 1:
+            case 1 -> {
                 min = minSubId;
                 max = maxSubId;
-                break;
-            case 2:
+            }
+            case 2 -> {
                 min = minPid;
                 max = maxPid;
-                break;
-            default:
+            }
+            default -> {
                 min = minObjId;
                 max = maxObjId;
-                break;
+            }
         }
 
         switch (op) {
@@ -309,18 +309,18 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
 
         // Write back
         switch (type) {
-            case 1:
+            case 1 -> {
                 minSubId = min;
                 maxSubId = max;
-                break;
-            case 2:
+            }
+            case 2 -> {
                 minPid = min;
                 maxPid = max;
-                break;
-            default:
+            }
+            default -> {
                 minObjId = min;
                 maxObjId = max;
-                break;
+            }
         }
     }
 

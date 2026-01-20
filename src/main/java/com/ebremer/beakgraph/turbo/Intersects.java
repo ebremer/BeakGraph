@@ -1,16 +1,28 @@
 package com.ebremer.beakgraph.turbo;
 
 import com.ebremer.beakgraph.core.lib.GEO;
+import java.util.List;
+import org.apache.jena.atlas.lib.Lib;
+import org.apache.jena.query.QueryBuildException;
+import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.sparql.expr.NodeValue;
-import org.apache.jena.sparql.function.FunctionBase2;
+import org.apache.jena.sparql.function.FunctionBase;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
 
-public class Intersects extends FunctionBase2 {
+public class Intersects extends FunctionBase {
 
     private static final String WKT_DATATYPE_URI = GEO.wktLiteral.getURI();
+    
+    @Override
+    public void checkBuild(String uri, ExprList args) {
+        if (( args.size() < 2 ) || ( args.size() > 3 )) {
+            throw new QueryBuildException("Function '" + Lib.className(this) + "' takes two or three arguments");
+        }
+    }
 
+        /*
     @Override
     public NodeValue exec(NodeValue v1, NodeValue v2) {
         return NodeValue.TRUE;
@@ -28,8 +40,8 @@ public class Intersects extends FunctionBase2 {
             return isWithin ? NodeValue.TRUE : NodeValue.FALSE;
         } catch (Exception e) {
             throw new ExprEvalException("sfWithin: Calculation failed: " + e.getMessage());
-        }*/
-    }
+        }
+    }*/
 
     private boolean isValidGeometryLiteral(NodeValue nv) {
         if (!nv.isLiteral()) return false;        
@@ -77,5 +89,10 @@ public class Intersects extends FunctionBase2 {
             }
         }
         return trimmed;
+    }
+
+    @Override
+    public NodeValue exec(List<NodeValue> args) {
+        return NodeValue.TRUE;
     }
 }

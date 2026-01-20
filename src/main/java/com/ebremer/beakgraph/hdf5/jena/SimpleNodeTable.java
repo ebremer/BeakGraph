@@ -8,36 +8,36 @@ import org.apache.jena.graph.Node;
 public class SimpleNodeTable implements NodeTable {
     
     private final PositionalDictionaryReader dict;
-    private static final ConcurrentHashMap<NodeId, Node> nodeId2nodemap = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Node, NodeId> node2nodeIdmap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<NodeId, Node> nodeId2nodemap = new ConcurrentHashMap<>(1_000);
+    private final ConcurrentHashMap<Node, NodeId> node2nodeIdmap = new ConcurrentHashMap<>(1_000);
     
     public SimpleNodeTable(PositionalDictionaryReader dict) {
         this.dict = dict;
     }
+    
+    private NodeId findInDictionaries(Node n) {
+        long id;
+        if ((id = dict.getGraphs().locate(n)) != -1) return new NodeId(id, NodeType.GRAPH);
+        if ((id = dict.getPredicates().locate(n)) != -1) return new NodeId(id, NodeType.PREDICATE);
+        if ((id = dict.getSubjects().locate(n)) != -1) return new NodeId(id, NodeType.SUBJECT);
+        if ((id = dict.getObjects().locate(n)) != -1) return new NodeId(id, NodeType.OBJECT);    
+        return NodeId.NodeDoesNotExist;
+    }    
 
     @Override
     public NodeId getNodeIdForNode(Node n) {
-        if (node2nodeIdmap.contains(n)) {
+        if (node2nodeIdmap.containsKey(n)) {
             return node2nodeIdmap.get(n);
         }
-        long id;
-        NodeId nid = NodeId.NodeDoesNotExist;
-        id = dict.getGraphs().locate(n);
-        if (id != -1) nid = new NodeId(id, NodeType.GRAPH);
-        id = dict.getPredicates().locate(n);
-        if (id != -1) nid = new NodeId(id, NodeType.PREDICATE);
-        id = dict.getSubjects().locate(n);
-        if (id != -1) nid = new NodeId(id, NodeType.SUBJECT);
-        id = dict.getObjects().locate(n);
-        if (id != -1) nid = new NodeId(id, NodeType.OBJECT);
+        NodeId nid = findInDictionaries(n);
         nodeId2nodemap.putIfAbsent(nid, n);
         return nid;
     }
 
     @Override
     public Node getNodeForNodeId(NodeId id) {
-        if (id == null) throw new Error("getNodeForNodeId : "+id); //return null; //|| NodeId.isDoesNotExist(id)) return null;
-        if (nodeId2nodemap.contains(id)) {
+        if (id == null) throw new Error("getNodeForNodeId : "+id);
+        if (nodeId2nodemap.containsKey(id)) {
             return nodeId2nodemap.get(id);
         }
         Node node = switch (id.getType()) {
@@ -50,6 +50,10 @@ public class SimpleNodeTable implements NodeTable {
         nodeId2nodemap.putIfAbsent(id, node);
         node2nodeIdmap.putIfAbsent(node, id);
         return node;
+    }
+    
+    public void status() {
+        IO.println(String.format("nodeId2nodemap : %d, node2nodeIdmap : %d", nodeId2nodemap.size(), node2nodeIdmap.size()));
     }
 
     @Override

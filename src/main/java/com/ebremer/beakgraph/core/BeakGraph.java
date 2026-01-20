@@ -5,6 +5,7 @@ import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import com.ebremer.beakgraph.hdf5.jena.QueryEngineBeak;
 import com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG;
+import com.ebremer.beakgraph.turbo.Spatial;
 import java.io.IOException;
 import java.net.URI;
 import java.util.stream.Stream;
@@ -31,7 +32,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author erich
  */
-public class BeakGraph extends GraphBase {
+public class BeakGraph extends GraphBase implements AutoCloseable {
     private static final Object initLock = new Object() ;
     private static volatile boolean initialized = false ;
     private final Node namedgraph;
@@ -39,14 +40,17 @@ public class BeakGraph extends GraphBase {
     private static final Logger logger = LoggerFactory.getLogger(BeakGraph.class);
     private final URI uri;
     
-    static { JenaSystem.init(); }
+    static {
+        JenaSystem.init();
+        Spatial.init();
+    }
 
     public BeakGraph(BGReader reader, URI uri) throws IOException {
         this(reader, uri, uri);
     }
     
     public BeakGraph(BGReader reader, URI uri, URI base) throws IOException {
-        //logger.trace("Create a BeakGraph -> "+uri.toString());
+        logger.trace("BeakGraph -> {}", uri.toString());
         init();
         this.uri = uri;
         this.reader = reader;
@@ -62,7 +66,7 @@ public class BeakGraph extends GraphBase {
     }
         
     public BeakGraph(Node namedgraph, BGReader reader) throws IOException {
-        logger.trace("Create a SubBeakGraph -> <need subgraph>");
+        logger.trace("Create a SubBeakGraph -> {}", namedgraph);
         init();
         this.uri = reader.getURI();
         this.reader = reader;
@@ -93,7 +97,7 @@ public class BeakGraph extends GraphBase {
         try {
             reader.close();
         } catch (Exception ex) {
-            System.getLogger(BeakGraph.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
+            logger.error(ex.getMessage());
         }
     }
     
@@ -118,22 +122,22 @@ public class BeakGraph extends GraphBase {
 
     @Override
     public void add(Node s, Node p, Node o) throws AddDeniedException {
-        throw new UnsupportedOperationException("Not supported yet."); 
+        throw new UnsupportedOperationException("Not supported yet add."); 
     }
 
     @Override
     public void delete(Node s, Node p, Node o) throws DeleteDeniedException {
-        throw new UnsupportedOperationException("Not supported yet."); 
+        throw new UnsupportedOperationException("Not supported yet. delete"); 
     }
 
     @Override
     public Stream<Triple> stream(Node s, Node p, Node o) {
-        throw new UnsupportedOperationException("Not supported yet."); 
+        throw new UnsupportedOperationException("Not supported yet. Stream<Triple> stream(Node s, Node p, Node o)"); 
     }
 
     @Override
     public Stream<Triple> stream() {
-        throw new UnsupportedOperationException("Not supported yet."); 
+        throw new UnsupportedOperationException("Not supported yet. stream"); 
     }
     
     @Override

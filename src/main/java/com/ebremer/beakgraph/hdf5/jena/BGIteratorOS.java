@@ -20,19 +20,15 @@ import org.apache.jena.sparql.expr.ExprList;
 public class BGIteratorOS implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
     private final Quad queryQuad;
-    
     private final BitPackedUnSignedLongBuffer Bp, Sp, Bo, So, Bs, Ss;
-    
     private long i; 
     private long j;
     private long gi, pi, oi;
-    private boolean hasNext = false;
-    
+    private boolean hasNext = false;    
     private long minSubId = 0;
     private long maxSubId = Long.MAX_VALUE;
 
     public BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-    //    IO.println("BGIteratorOS Init: " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         
@@ -46,7 +42,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         
         if (filter != null && !filter.isEmpty()) analyzeFilters(filter, dict, quad);
         
-        // 1. Resolve Graph
+        // Resolve Graph
         if (quad.getGraph().isVariable()) {
             if (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph()))) gi = bnid.get(Var.alloc(quad.getGraph())).getId();
             else return; 
@@ -55,7 +51,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         }
         if (gi < 1) { IO.println("OS: Graph not found"); return; }
         
-        // 2. Resolve Predicate
+        // Resolve Predicate
         if (quad.getPredicate().isVariable()) {
             if (bnid != null && bnid.containsKey(Var.alloc(quad.getPredicate()))) pi = bnid.get(Var.alloc(quad.getPredicate())).getId();
             else return; 
@@ -64,7 +60,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         }
         if (pi < 1) { IO.println("OS: Predicate not found"); return; }
 
-        // 3. Resolve Object
+        // Resolve Object
         if (quad.getObject().isVariable()) {
             if (bnid != null && bnid.containsKey(Var.alloc(quad.getObject()))) oi = bnid.get(Var.alloc(quad.getObject())).getId();
             else return; 
@@ -73,7 +69,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         }
         if (oi < 1) { IO.println("OS: Object not found: " + quad.getObject()); return; }
 
-        // 4. Resolve Subject Filter
+        // Resolve Subject Filter
         long specificSubId = -1;
         boolean isSubBound = !quad.getSubject().isVariable() || (bnid != null && bnid.containsKey(Var.alloc(quad.getSubject())));
         if (isSubBound) {
@@ -82,8 +78,6 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
              
              if (specificSubId < 1) { IO.println("OS: Bound Subject not found"); return; }
         }
-
-     //   IO.println("OS Search: G=" + gi + " P=" + pi + " O=" + oi);
 
         // --- Traverse GPOS ---
 
@@ -94,35 +88,14 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         
         if (pStart == -1 || pStart > pEnd) { IO.println("OS: No Predicates for Graph"); return; }
         
-        // B. Find Predicate Index
-        /*
-        long pIndex = -1;
-        for (long k = pStart; k <= pEnd; k++) {
-            if (Sp.get(k) == pi) {
-                pIndex = k;
-                break;
-            }
-        }
-*/
         long pIndex = Sp.binarySearch(pStart, pEnd, pi);
         if (pIndex < 0) { IO.println("OS: Predicate " + pi + " not found in Graph " + gi); return; }
 
         // C. Level 3: Object Range for P
         long oStart = select1Safe(Bo, pIndex + 1);
         long nextPStart = select1Safe(Bo, pIndex + 2);
-        long oEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);
-        
-        if (oStart == -1 || oStart > oEnd) return;
-        
-        // D. Find Object Index
-        /*
-        long oIndex = -1;
-        for (long k = oStart; k <= oEnd; k++) {
-            if (So.get(k) == oi) {
-                oIndex = k;
-                break;
-            }
-        }*/
+        long oEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);        
+        if (oStart == -1 || oStart > oEnd) return;        
         long oIndex = So.binarySearch(oStart, oEnd, oi);
         if (oIndex < 0) { IO.println("OS: Object " + oi + " not found under Predicate " + pi); return; }
 
@@ -135,8 +108,6 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         
         this.i = sStart;
         this.j = sEnd + 1;
-        
-     //   IO.println("OS: Found Subject Range [" + sStart + " - " + sEnd + "]");
 
         // F. Initialize
         if (specificSubId > 0) {
@@ -168,19 +139,15 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
                 i++;
                 continue;
             }
-            // Removed strict optimization for safety
             if (subId > maxSubId) {
                 i++;
                 continue; 
             }
-            
-            // IO.println("OS Yielding Subject: " + subId);
             hasNext = true;
             return;
         }
     }
 
-    // ... Filter methods (copy from previous classes) ...
     private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
         for (Expr expr : filter.getList()) {
             if (expr instanceof ExprFunction2 func) {
@@ -232,7 +199,6 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
     @Override
     public boolean hasNext() {
-        //IO.println("BGIteratorOS - hasNext");
         return hasNext;
     }
 

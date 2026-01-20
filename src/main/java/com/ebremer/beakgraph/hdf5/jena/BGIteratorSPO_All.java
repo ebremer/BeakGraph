@@ -44,7 +44,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         this.Sp = reader.getIDBuffer('P');
         this.Bo = reader.getBitmapBuffer('O');
         this.So = reader.getIDBuffer('O');
-
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
         }
@@ -102,18 +101,14 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
 
     private void advance() {
         hasNext = false;
-
         while (idxS <= endS) {
-            // 1. Validation
             boolean isMatch = true;
-
             if (curSID < minSubId) {
                 skipSubjectBlock();
                 continue;
             } else if (curSID > maxSubId) {
                 return; 
             }
-
             if (curPID < minPid) {
                 skipPredicateBlock();
                 long nextSID = (idxS <= endS) ? Ss.get(idxS) : -1;
@@ -123,7 +118,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 skipSubjectBlock();
                 continue;
             }
-
             if (idxO >= So.getNumEntries()) {
                 skipPredicateBlock();
                 continue;
@@ -132,37 +126,27 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             if (curOID < minObjId || curOID > maxObjId) {
                 isMatch = false;
             }
-
-            // 2. Capture Result
             if (isMatch) {
                 this.resS = curSID;
                 this.resP = curPID;
                 this.resO = curOID;
                 hasNext = true;
             }
-
-            // 3. Transition (Increment Cursors)
             idxO++; 
-            
             boolean endOfObjectList = (idxO >= So.getNumEntries()) || (Bo.get(idxO) == 1);
-
             if (endOfObjectList) {
                 idxP++;
-                
                 boolean endOfPredicateList = (idxP >= Sp.getNumEntries()) || (Bp.get(idxP) == 1);
-                
                 if (endOfPredicateList) {
                     idxS++;
                     if (idxS <= endS) {
                         curSID = Ss.get(idxS);
                     }
-                }
-                
+                }   
                 if (idxP < Sp.getNumEntries()) {
                       curPID = Sp.get(idxP);
                 }
-            }
-            
+            }            
             if (hasNext) return;
         }
     }
@@ -274,9 +258,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     @Override
     public BindingNodeId next() {
         if (!hasNext) throw new NoSuchElementException();
-
-        BindingNodeId result = new BindingNodeId(parentBinding);
-        
+        BindingNodeId result = new BindingNodeId(parentBinding);        
         if (queryQuad.getGraph().isVariable()) {
             result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
         }
@@ -289,9 +271,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         if (queryQuad.getObject().isVariable()) {
             result.put(Var.alloc(queryQuad.getObject()), new NodeId(resO, NodeType.OBJECT));
         }
-        
-      //  IO.println(String.format("QUAD : %d %d %d %d", gi, resS, resP, resO));
-
         advance(); 
         return result;
     }

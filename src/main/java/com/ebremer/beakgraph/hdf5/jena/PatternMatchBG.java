@@ -23,7 +23,7 @@ import org.apache.jena.sparql.expr.E_Function;
 
 /**
  * Optimized BGP Pattern Matcher for BeakGraph.
- * Handles Spatial Index injection for geof:sfIntersect queries.
+ * Handles Spatial Index injection for geof:sfIntersects queries.
  */
 public class PatternMatchBG {
 
@@ -33,105 +33,193 @@ public class PatternMatchBG {
         List<Triple> triples = new ArrayList<>(bgp.getList());
         List<Abortable> killList = new ArrayList<>();
         Iterator<BindingNodeId> chain = Iter.map(input, SolverLibBeak.convFromBinding(bGraph));
+        
+        // Check for spatial filter optimization opportunity
         SpatialContext spatialCtx = getSpatialContext(filter);
+        ExprList modifiedFilter = filter;
+        Triple triggerTriple = null;
+        
         if (spatialCtx != null) {
-            Triple triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);            
+           // IO.println("SPATIAL OPTIMIZATION: var=" + spatialCtx.geometryVar + 
+             //         ", region=" + spatialCtx.searchRegionWKT + ", scale=" + spatialCtx.scale);
+            
+            triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
+            
             if (triggerTriple != null) {
+                //IO.println("Trigger triple: " + triggerTriple);
+                
                 Var varToBind = spatialCtx.geometryVar;
-                if (triggerTriple.getObject().isVariable() && triggerTriple.getObject().equals(spatialCtx.geometryVar)) {
+                if (triggerTriple.getObject().isVariable() && 
+                    triggerTriple.getObject().equals(spatialCtx.geometryVar)) {
                     if (triggerTriple.getSubject().isVariable()) {
                         varToBind = (Var) triggerTriple.getSubject();
                     }
                 }
-                chain = new SpatialIndexIterator(chain, bGraph, varToBind, spatialCtx.searchRegionWKT);
+                
+                //IO.println("Injecting SpatialIndexIterator for: " + varToBind);
+                chain = new SpatialIndexIterator(chain, bGraph, varToBind, spatialCtx);
+                modifiedFilter = removeSpatialFilter(filter);
             }
         }
+        
+        // Execute all triple patterns
         for (Triple triple : triples) {
-            chain = solve(bGraph, triple, filter, chain, execCxt);
+            ExprList filterToUse = (triggerTriple != null && triple.equals(triggerTriple)) ? null : modifiedFilter;
+            chain = solve(bGraph, triple, filterToUse, chain, execCxt);
             chain = makeAbortable(chain, killList);
         }
+        
+        // Convert back to Jena bindings
         Iterator<Binding> iterBinding = SolverLibBeak.convertToNodes(chain, bGraph);
         iterBinding = makeAbortable(iterBinding, killList);
+        
         return new QueryIterAbortable(iterBinding, killList, input, execCxt);
     }
 
-    private static Iterator<BindingNodeId> solve(BeakGraph bGraph, Triple triple, ExprList filter, Iterator<BindingNodeId> chain, ExecutionContext execCxt) {       
-        Function<BindingNodeId, Iterator<BindingNodeId>> step = bnid -> find(bGraph, bnid, triple, filter, execCxt);
+    private static Iterator<BindingNodeId> solve(BeakGraph bGraph, Triple triple, ExprList filter, 
+                                                  Iterator<BindingNodeId> chain, ExecutionContext execCxt) {
+        Function<BindingNodeId, Iterator<BindingNodeId>> step = 
+            bnid -> find(bGraph, bnid, triple, filter, execCxt);
         return Iter.flatMap(chain, step);
     }
     
-    private static Iterator<BindingNodeId> find(BeakGraph bGraph, BindingNodeId bnid, Triple xPattern, ExprList filter, ExecutionContext execCxt) {
-        return bGraph.getReader().Read(bGraph.getNamedGraph(), bnid, xPattern, filter, bGraph.getReader().getNodeTable());
+    private static Iterator<BindingNodeId> find(BeakGraph bGraph, BindingNodeId bnid, Triple xPattern, 
+                                                ExprList filter, ExecutionContext execCxt) {
+        return bGraph.getReader().Read(bGraph.getNamedGraph(), bnid, xPattern, filter, 
+                                       bGraph.getReader().getNodeTable());
     }
 
-    private static class SpatialContext {
+    public static class SpatialContext {
         Var geometryVar;
         String searchRegionWKT;
+        int scale;
 
         public SpatialContext(Var v, String wkt) {
+            this(v, wkt, 0);
+        }
+        
+        public SpatialContext(Var v, String wkt, int scale) {
             this.geometryVar = v;
             this.searchRegionWKT = wkt;
+            this.scale = scale;
         }
     }
 
-    /**
-     * Analyzes the filter list to find geof:sfIntersects(?var, "POLYGON...")
-     */
     private static SpatialContext getSpatialContext(ExprList filters) {
-        if (filters == null) return null;
-
+        if (filters == null || filters.isEmpty()) {
+            return null;
+        }
+        
         for (Expr e : filters) {
-            if (e.isFunction()) {
-                ExprFunction func = e.getFunction();
-                // Check if function is E_Function (Standard Jena Function)
-                if (func instanceof E_Function) {
-                    if (func.getFunctionIRI().equals(SF_INTERSECTS)) {
-                        
-                        // We expect args: [0] = ?geometryVar, [1] = ?searchRegion (or Literal)
-                        if (func.getArgs().size() == 2) {
-                            Expr arg0 = func.getArgs().get(0);
-                            Expr arg1 = func.getArgs().get(1);
-
-                            // Ensure first arg is a variable
-                            if (arg0.isVariable()) {
-                                Var targetVar = arg0.asVar();
-                                String wktString = null;
-
-                                // Resolve the second argument (The Polygon)
-                                if (arg1.isConstant()) {
-                                    // It's a literal directly in the filter
-                                    wktString = arg1.getConstant().asNode().getLiteralLexicalForm();
-                                } else if (arg1.isVariable()) {
-                                    // Complex BIND handling
-                                }
-
-                                if (wktString != null) {
-                                    return new SpatialContext(targetVar, wktString);
-                                }
-                            }
-                        }
+            if (!e.isFunction()) {
+                continue;
+            }
+            
+            ExprFunction func = e.getFunction();
+            
+            if (!(func instanceof E_Function)) {
+                continue;
+            }
+            
+            if (!func.getFunctionIRI().equals(SF_INTERSECTS)) {
+                continue;
+            }
+            
+            int argCount = func.getArgs().size();
+            
+            if (argCount == 2) {
+                Expr arg0 = func.getArgs().get(0);
+                Expr arg1 = func.getArgs().get(1);
+                
+                if (arg0.isVariable()) {
+                    Var targetVar = arg0.asVar();
+                    String wktString = extractWKTString(arg1);
+                    
+                    if (wktString != null) {
+                        return new SpatialContext(targetVar, wktString);
                     }
                 }
+            } else if (argCount == 3) {
+                Expr arg0 = func.getArgs().get(0);
+                Expr arg1 = func.getArgs().get(1);
+                Expr arg2 = func.getArgs().get(2);
+                
+                if (arg0.isVariable()) {
+                    Var targetVar = arg0.asVar();
+                    String wktString = extractWKTString(arg1);
+                    Integer scale = extractScale(arg2);
+                    
+                    if (wktString != null && scale != null) {
+                        return new SpatialContext(targetVar, wktString, scale);
+                    }
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    private static String extractWKTString(Expr expr) {
+        if (expr.isConstant()) {
+            return expr.getConstant().asNode().getLiteralLexicalForm();
+        }
+        return null;
+    }
+
+    private static Integer extractScale(Expr expr) {
+        if (expr.isConstant()) {
+            try {
+                String lexicalForm = expr.getConstant().asNode().getLiteralLexicalForm();
+                return Integer.valueOf(lexicalForm);
+            } catch (NumberFormatException ex) {
+                return null;
             }
         }
         return null;
     }
 
-    /**
-     * Finds the triple in the BGP that produces the geometry variable.
-     * e.g. if filter is on ?wkt, find { ?s ?p ?wkt }
-     */
+    private static ExprList removeSpatialFilter(ExprList filters) {
+        if (filters == null || filters.isEmpty()) {
+            return null;
+        }
+        
+        ExprList newFilters = new ExprList();
+        
+        for (Expr e : filters) {
+            if (e.isFunction()) {
+                ExprFunction func = e.getFunction();
+                if (func instanceof E_Function) {
+                    if (func.getFunctionIRI().equals(SF_INTERSECTS)) {
+                        continue;
+                    }
+                }
+            }
+            newFilters.add(e);
+        }
+        
+        return newFilters.isEmpty() ? null : newFilters;
+    }
+
     private static Triple findTriggerTriple(List<Triple> triples, Var targetVar) {
+        String targetName = targetVar.getName();
+        
         for (Triple t : triples) {
-            // Check Object position (most likely for geometry WKT)
-            if (t.getObject().isVariable() && t.getObject().getName().equals(targetVar.getName())) {
+            if (t.getObject().isVariable() && 
+                t.getObject().getName().equals(targetName)) {
                 return t;
             }
-            // Check Subject position (if filtering directly on the Feature URI)
-            if (t.getSubject().isVariable() && t.getSubject().getName().equals(targetVar.getName())) {
+            
+            if (t.getSubject().isVariable() && 
+                t.getSubject().getName().equals(targetName)) {
+                return t;
+            }
+            
+            if (t.getPredicate().isVariable() && 
+                t.getPredicate().getName().equals(targetName)) {
                 return t;
             }
         }
+        
         return null;
     }
 }

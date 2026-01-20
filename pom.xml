@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.11.0</version>
+    <version>0.12.0</version>
     <packaging>jar</packaging>
    
     <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
@@ -42,7 +42,6 @@
         <!-- Dependency versions -->
         <jena.version>5.6.0</jena.version>
         <!--<arrow.version>18.3.0</arrow.version>-->
-        <rocrate4j.version>0.5.0</rocrate4j.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-collections.version>4.5.0</commons-collections.version>
         <jaxb.version>2.4.0-b180830.0359</jaxb.version>
@@ -53,8 +52,9 @@
         <jcommander.version>3.0</jcommander.version>
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
-        <aircompressor.ver>3.3</aircompressor.ver>
-        <commons.pool.ver>2.12.1</commons.pool.ver>
+        <aircompressor.ver>3.5</aircompressor.ver>
+        <commons.pool.ver>2.13.1</commons.pool.ver>
+        <zstd-jni.version>1.5.7-6</zstd-jni.version>
        
         <!-- Plugin versions -->
         <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
@@ -103,10 +103,20 @@
                 <version>2.21.0</version>
             </dependency>
             <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-pool2</artifactId>
+                <version>2.13.1</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>1.28.0</version>
+            </dependency>            
+            <dependency>
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
                 <version>2.0.17</version>
-            </dependency>
+            </dependency>            
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
@@ -116,7 +126,27 @@
                 <groupId>jakarta.servlet</groupId>
                 <artifactId>jakarta.servlet-api</artifactId>
                 <version>6.1.0</version>
-            </dependency>            
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.dataformat</groupId>
+                <artifactId>jackson-dataformat-yaml</artifactId>
+                <version>2.21.0</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>2.21.0</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-config-yaml</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.airlift</groupId>
+                <artifactId>aircompressor-v3</artifactId>
+                <version>3.5</version>
+            </dependency>         
         </dependencies>
     </dependencyManagement>
    
@@ -303,7 +333,14 @@
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>2.20.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>          
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-config-yaml</artifactId>
         </dependency>
         <dependency>
             <groupId>me.tongfei</groupId>
@@ -334,7 +371,6 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-compress</artifactId>
-            <version>${commons-compress.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
@@ -351,12 +387,10 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>${slf4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j2-impl</artifactId>
-            <version>${log4j.version}</version>
         </dependency>
         <dependency>
             <groupId>io.jhdf</groupId>
@@ -385,19 +419,15 @@
             <groupId>org.locationtech.jts</groupId>
             <artifactId>jts-core</artifactId>
             <version>${jts.ver}</version>
-        </dependency>
-        <!--
+        </dependency>        
         <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>aircompressor-v3</artifactId>
-            <version>${aircompressor.ver}</version>
         </dependency>
-         -->
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-pool2</artifactId>
-            <version>${commons.pool.ver}</version>
-        </dependency>
+        </dependency>       
     </dependencies>
     <repositories>
         <repository>

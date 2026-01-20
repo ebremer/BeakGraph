@@ -25,7 +25,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
         this.subjects = new MultiTypeDictionaryReader(subjectsGroup);
         this.predicates = new MultiTypeDictionaryReader(predicatesGroup);
         this.objects = new MultiTypeDictionaryReader(objectsGroup);
-        //predicates.streamNodes().forEach(n->IO.println(n));
+        //graphs.streamNodes().forEach(n->IO.println(n));
     }
 
     public Dictionary getGraphs() {
@@ -74,7 +74,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
     public Dictionary getPredicates() {
         return predicates;
     }
-
+    
     public Dictionary getObjects() {
         return new Dictionary() {
             @Override
@@ -169,16 +169,16 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
     @Override
     public Stream<Node> streamSubjects() {
-        throw new UnsupportedOperationException("Not supported yet.");
+        return subjects.streamNodes();
     }
 
     @Override
     public Stream<Node> streamPredicates() {
-        throw new UnsupportedOperationException("Not supported yet.");
+        return predicates.streamNodes();
     }
 
     @Override
     public Stream<Node> streamObjects() {
-        throw new UnsupportedOperationException("Not supported yet.");
+        return objects.streamNodes();
     }
 }

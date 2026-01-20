@@ -1,30 +1,33 @@
 package com.ebremer.beakgraph.pool;
 
 import com.ebremer.beakgraph.core.BeakGraph;
-import java.net.URI;
 import java.time.Duration;
 
 /**
  *
  * @author erich
  */
-public class BeakGraphPool {
-    private static BeakGraphKeyedPool<URI,BeakGraph> pool;
+public class BeakGraphPool {   
     
     private BeakGraphPool() {}
-    
-    public static synchronized BeakGraphKeyedPool<URI, BeakGraph> getPool() {
-        if (pool == null) {
-            BeakGraphKeyedPoolConfig config = new BeakGraphKeyedPoolConfig<>();
-            //config.setMaxTotalPerKey(Runtime.getRuntime().availableProcessors());
+
+    private static class Holder {
+        private static final BeakGraphKeyedPool INSTANCE;
+        static {
+            BeakGraphKeyedPoolConfig<BeakGraph> config = new BeakGraphKeyedPoolConfig<>();
             config.setMaxTotalPerKey(100);
+            config.setMaxTotal(200);
             config.setMinIdlePerKey(0);
+            config.setTestOnBorrow(true);
             config.setMaxWait(Duration.ofMillis(60000));
             config.setBlockWhenExhausted(true);
-            config.setMinEvictableIdleDuration(Duration.ofMillis(21000));
-            config.setTimeBetweenEvictionRuns(Duration.ofMillis(21000));
-            pool = new BeakGraphKeyedPool<>(new BeakGraphPoolFactory(),config);
+            config.setMinEvictableIdleDuration(Duration.ofMinutes(5));
+            config.setTimeBetweenEvictionRuns(Duration.ofMinutes(1));
+            INSTANCE = new BeakGraphKeyedPool(new BeakGraphPoolFactory(), config);
         }
-        return pool;
+    }
+
+    public static BeakGraphKeyedPool getPool() {
+        return Holder.INSTANCE;
     }
 }

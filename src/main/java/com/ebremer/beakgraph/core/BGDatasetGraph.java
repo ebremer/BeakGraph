@@ -1,13 +1,10 @@
 package com.ebremer.beakgraph.core;
 
-import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.graph.Graph;
 import org.apache.jena.graph.Node;
@@ -20,12 +17,15 @@ import org.apache.jena.sparql.core.DatasetGraphBase;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.util.iterator.WrappedIterator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author erich
  */
 public class BGDatasetGraph extends DatasetGraphBase {
+    private static final Logger logger = LoggerFactory.getLogger(BGDatasetGraph.class);        
     private final BeakGraph bg;
     
     public BGDatasetGraph(BeakGraph g) {
@@ -51,7 +51,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
         try {
             return new BeakGraph(node, bg.getReader());
         } catch (IOException ex) {
-            Logger.getLogger(BGDatasetGraph.class.getName()).log(Level.SEVERE, null, ex);
+            logger.error(ex.getMessage());
         }
         return Graph.emptyGraph;
     }

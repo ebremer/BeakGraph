@@ -6,6 +6,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.BufferOverflowException;
 import java.nio.BufferUnderflowException;
+import java.nio.ByteOrder;
 import java.nio.file.Path;
 
 /**
@@ -44,10 +45,10 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
     private long totalValidBitsWritten;
     private long totalValidBitsRead;
     // For internal dynamic buffer
-    private ByteArrayOutputStream internalByteStream;
+    private ByteArrayOutputStream internalStream;
     private final boolean usesInternalStream;
     private Path path;
-    private long numEntries = 0;
+    private long numEntries;
 
     /**
      * Constructs a BitPackedIntBuffer.
@@ -58,20 +59,23 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
      * @param bitWidth The number of bits for each number (must be between 1 and 64, inclusive).
      * @throws IllegalArgumentException if bitWidth is not in the range [1, 64].
      */
-    public BitPackedSignedLongBuffer(Path path, ByteBuffer buffer, int bitWidth) {
+    public BitPackedSignedLongBuffer(Path path, ByteBuffer buffer, long numEntries, int bitWidth) {
         this.path = path;
         if (bitWidth <= 0 || bitWidth > 64) {
             throw new IllegalArgumentException("Bit width must be between 1 and 64, inclusive. Got: " + bitWidth);
         }
         this.bitWidth = bitWidth;
         if (buffer == null) {
-            this.internalByteStream = new ByteArrayOutputStream();
+            this.internalStream = new ByteArrayOutputStream();
             this.usesInternalStream = true;
-            this.buffer = ByteBuffer.allocate(0); // Dummy buffer, actual data in internalByteStream until prepareForReading
+            this.buffer = ByteBuffer.allocate(0); 
+            this.numEntries = 0;
         } else {
             this.buffer = buffer;
+            // Enforce Big Endian so getLong() matches the stream byte order
+            this.buffer.order(ByteOrder.BIG_ENDIAN);
             this.usesInternalStream = false;
-            this.internalByteStream = null; // Not used
+            this.numEntries = numEntries;
         }
         this.writeAccumulator = 0L;
         this.writeAccumulatorCount = 0;
@@ -127,7 +131,7 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
             byte byteToWrite = (byte) (writeAccumulator >>> remainingBitsInAccumulator);
 
             if (usesInternalStream) {
-                internalByteStream.write(byteToWrite);
+                internalStream.write(byteToWrite);
             } else {
                 buffer.put(byteToWrite);
             }
@@ -171,7 +175,7 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
             throw new BufferUnderflowException();
         }
         // Ensure buffer is ready for reading, especially if it was just created from internalByteStream
-        if (usesInternalStream && (this.buffer == null || this.buffer.capacity() == 0) && internalByteStream.size() > 0) {
+        if (usesInternalStream && (this.buffer == null || this.buffer.capacity() == 0) && internalStream.size() > 0) {
             // This case should ideally be handled by ensuring prepareForReading was called.
             // If prepareForReading wasn't called, this.buffer might be the dummy one.
             // For robustness, one might re-wrap here, but it's better to enforce prepareForReading.
@@ -195,7 +199,7 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
     }
     
     public long get(long n) {
-        if (usesInternalStream && this.buffer.capacity() == 0 && totalValidBitsWritten > 0 && internalByteStream.size() > 0) {
+        if (usesInternalStream && this.buffer.capacity() == 0 && totalValidBitsWritten > 0 && internalStream.size() > 0) {
             throw new IllegalStateException(
                 """
                 Buffer was initialized with an internal stream and has data,
@@ -263,7 +267,7 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
             }
             byte lastByte = (byte) (writeAccumulator << (8 - writeAccumulatorCount));
             if (usesInternalStream) {
-                internalByteStream.write(lastByte);
+                internalStream.write(lastByte);
             } else {
                 buffer.put(lastByte);
             }
@@ -275,7 +279,7 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
     public void prepareForReading() {
         flush();
         if (usesInternalStream) {
-            byte[] packedBytes = internalByteStream.toByteArray();
+            byte[] packedBytes = internalStream.toByteArray();
             this.buffer = ByteBuffer.wrap(packedBytes); // Position 0, limit = capacity
         } else {
             this.buffer.flip(); // For external buffer
@@ -287,7 +291,7 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
 
     public void prepareForWriting() {
         if (usesInternalStream) {
-            internalByteStream.reset();
+            internalStream.reset();
             this.buffer = ByteBuffer.allocate(0); // Reset to dummy buffer
         } else {
             this.buffer.clear();

@@ -1,32 +1,43 @@
 Configuration:
   name: BeakGraph
   status: WARN
+
   Appenders:
     Console:
       name: STDOUT
       target: SYSTEM_OUT
       PatternLayout:
         pattern: "%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"
-  
+
     File:
       name: FileAppender
       fileName: "logs/beakgraph.log"
       PatternLayout:
         pattern: "%d{ISO8601} [%t] %-5level %logger{36} - %msg%n"
+
   Loggers:
     Root:
       level: error
       AppenderRef:
         - ref: STDOUT
         - ref: FileAppender
+
     Logger:
       - name: org.apache.jena.fuseki
         level: error
         additivity: false
-     
+        AppenderRef:
+          - ref: STDOUT
+          - ref: FileAppender
       - name: org.eclipse.jetty
         level: error
         additivity: false
+        AppenderRef:
+          - ref: STDOUT
+          - ref: FileAppender
       - name: io.jhdf
         level: error
         additivity: false
+        AppenderRef:
+          - ref: STDOUT
+          - ref: FileAppender
