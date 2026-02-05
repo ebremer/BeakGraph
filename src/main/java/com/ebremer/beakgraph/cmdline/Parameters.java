@@ -37,4 +37,7 @@ public class Parameters {
     @Parameter(names = "-threads", description = "# of Threads")
     public int threads = 1;
     
+    //@Parameter(names = "-export", description = "Destination File", required = false)
+    //public File export = null;
+    
 }

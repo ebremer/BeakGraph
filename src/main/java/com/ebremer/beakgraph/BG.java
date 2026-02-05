@@ -1,24 +1,12 @@
 package com.ebremer.beakgraph;
 
-import com.ebremer.beakgraph.core.BGDatasetGraph;
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.core.EXIF;
-import com.ebremer.beakgraph.core.lib.GEO;
-import com.ebremer.beakgraph.core.lib.HAL;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import org.apache.jena.query.Dataset;
-import org.apache.jena.query.DatasetFactory;
-import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFDataMgr;
-import org.apache.jena.vocabulary.RDFS;
-import org.apache.jena.vocabulary.XSD;
+import java.nio.file.Path;
 
 /**
  *
@@ -30,6 +18,16 @@ public class BG {
         return HDF5Writer.Builder();
     }
     
+    public static BeakGraph getBeakGraph(File file) throws IOException {
+        HDF5Reader reader = new HDF5Reader(file);
+        return new BeakGraph(reader);
+    }
+    
+    public static BeakGraph getBeakGraph(Path path) throws IOException {
+        HDF5Reader reader = new HDF5Reader(path);       
+        return new BeakGraph(reader);
+    }
+
     public static void main(String[] args) throws FileNotFoundException, IOException, Exception {
         File file = new File("/beakgraph/sorted.nq.gz");
         File dest = new File("/beakgraph/dX2.h5");

@@ -54,7 +54,7 @@
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
         <aircompressor.ver>3.3</aircompressor.ver>
-        <commons.pool.ver>2.12.1</commons.pool.ver>
+        <commons.pool.ver>2.13.1</commons.pool.ver>
        
         <!-- Plugin versions -->
         <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
@@ -351,12 +351,10 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>${slf4j.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j2-impl</artifactId>
-            <version>${log4j.version}</version>
         </dependency>
         <dependency>
             <groupId>io.jhdf</groupId>

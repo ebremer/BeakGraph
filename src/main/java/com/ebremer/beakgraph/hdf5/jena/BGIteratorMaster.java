@@ -24,8 +24,6 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
         boolean sBound = !quad.getSubject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getSubject())));
         boolean pBound = !quad.getPredicate().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getPredicate())));
         boolean oBound = !quad.getObject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getObject())));        
-        
-     //   IO.println("  Bindings: G=" + gBound + " S=" + sBound + " P=" + pBound + " O=" + oBound);
 
         if (gBound) {
             if (pBound) {
@@ -76,11 +74,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                 its.add(new BGIteratorMaster(reader, dict, bnid, new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable))
             );                    
         }
-        
         chain = new IteratorChain<>(its);
-      //  if (!chain.hasNext()) {
-        //    IO.println("  Master Chain is EMPTY (No results expected)");
-        //}
     }
 
     @Override

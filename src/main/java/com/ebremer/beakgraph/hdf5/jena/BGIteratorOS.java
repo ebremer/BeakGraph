@@ -232,7 +232,6 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
     @Override
     public boolean hasNext() {
-        //IO.println("BGIteratorOS - hasNext");
         return hasNext;
     }
 

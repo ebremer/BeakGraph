@@ -33,7 +33,7 @@ public class HilbertPolygon {
      * @param scale The downsampling scale. 0 = full size, 1 = 1/2 dim (1/4 area), 2 = 1/4 dim (1/16 area), etc.
      * @return Compressed ArrayList of Hilbert Ranges
      */
-    public static ArrayList<Range> Polygon2Hilbert(Polygon poly, int scale) {
+    private static ArrayList<Range> Polygon2Hilbert(Polygon poly, int scale) {
         ArrayList<Range> rah = new ArrayList<>();
         Envelope env = poly.getEnvelopeInternal();
         int minx = (int) env.getMinX() >> scale;

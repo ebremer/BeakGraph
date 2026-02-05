@@ -36,10 +36,9 @@ public class BitmapDumper {
             Object data = bo.getData();
             byte[] bytes;
             
-            if (data instanceof byte[]) {
-                bytes = (byte[]) data;
-            } else if (data instanceof ByteBuffer) {
-                ByteBuffer bb = (ByteBuffer) data;
+            if (data instanceof byte[] bs) {
+                bytes = bs;
+            } else if (data instanceof ByteBuffer bb) {
                 bytes = new byte[bb.remaining()];
                 bb.get(bytes);
             } else {

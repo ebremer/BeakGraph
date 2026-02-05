@@ -74,7 +74,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
     public Dictionary getPredicates() {
         return predicates;
     }
-
+    
     public Dictionary getObjects() {
         return new Dictionary() {
             @Override

@@ -37,11 +37,12 @@ import org.locationtech.jts.geom.Polygon;
 public class PositionalDictionaryWriterBuilder {
     private File src;
     private File dest;
-    private final HashSet<Node> shared = new HashSet<>();
+    //private final HashSet<Node> shared = new HashSet<>();
     private final LinkedHashSet<Node> graphs = new LinkedHashSet<>();
     private final LinkedHashSet<Node> subjects = new LinkedHashSet<>();
     private final HashSet<Node> predicates = new HashSet<>();
     private final LinkedHashSet<Node> objects = new LinkedHashSet<>();
+    private final LinkedHashSet<String> dataTypes = new LinkedHashSet<>();
     private final Stats stats = new Stats();
     private long numQuads;
     private String name;
@@ -121,7 +122,21 @@ public class PositionalDictionaryWriterBuilder {
         NodeFactory.createURI("https://halcyon.is/ns/asWKT10"),
         NodeFactory.createURI("https://halcyon.is/ns/asWKT11")
     };
-   
+    private static final Node[] hilbertCorner = {
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner0"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner1"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner2"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner3"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner4"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner5"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner6"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner7"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner8"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner9"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner10"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner11")
+    };
+    
     //private static final Node low = HAL.low.asNode();
     //private static final Node high = HAL.high.asNode();
     //private static final Node hasRange = HAL.hasRange.asNode();
@@ -131,9 +146,9 @@ public class PositionalDictionaryWriterBuilder {
         return dest;
     }
    
-    public Set<Node> getShared() {
-        return shared;
-    }
+    //public Set<Node> getShared() {
+      //  return shared;
+    //}
    
     public Quad[] getQuads() {
         return quads;
@@ -178,6 +193,10 @@ public class PositionalDictionaryWriterBuilder {
     public String getName() {
         return name;
     }
+    
+    public Set<String> getDataTypes() {
+        return dataTypes;
+    }
    
     public PositionalDictionaryWriterBuilder setName(String name) {
         this.name = name;
@@ -212,16 +231,16 @@ public class PositionalDictionaryWriterBuilder {
         } catch (IllegalArgumentException ex) {
             IO.println("Bad polygon bro : "+wkt);
         }
-        try {
-            long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[0]);
-            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), HAL.hilbertCorner.asNode(), NodeFactory.createLiteralByValue(corners[0])));
-            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), HAL.hilbertCorner.asNode(), NodeFactory.createLiteralByValue(corners[1])));
-            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), HAL.hilbertCorner.asNode(), NodeFactory.createLiteralByValue(corners[2])));
-            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), HAL.hilbertCorner.asNode(), NodeFactory.createLiteralByValue(corners[3])));
-        } catch (IllegalArgumentException ex) {
-            IO.println("Bad polygon bro : "+wkt);
-        }
         for (byte s=0; s<scales.length; s++) {
+            try {
+                long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[0]);
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));
+            } catch (IllegalArgumentException ex) {
+                IO.println("Bad polygon bro : "+wkt);
+            }            
             /*
             ArrayList<Range> ranges = HilbertSpace.Polygon2Hilbert(scales[s]);
             Node hp = getSafeBnode();
@@ -283,9 +302,6 @@ public class PositionalDictionaryWriterBuilder {
     }
    
     private void ProcessQuad(Quad quad) {
-        //if (quad.getSubject().equals(TAR)) {
-          // IO.println(quad);
-        //}
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node p = quad.getPredicate();
@@ -332,6 +348,7 @@ public class PositionalDictionaryWriterBuilder {
                 } else if (o.isLiteral()) {
                     if (!objects.contains(o)) {
                         String dt = o.getLiteralDatatypeURI();
+                        dataTypes.add(dt);
                         if (dt.equals(XSD.xlong.getURI())) {
                             Number n = (Number) o.getLiteralValue();
                             this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
@@ -358,7 +375,7 @@ public class PositionalDictionaryWriterBuilder {
                             this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
                             this.stats.numDouble++;
                         } else if (dt.equals(XSD.xstring.getURI())) {
-                            String wow = (String) o.getLiteralValue();
+                            String wow = (String) o.getLiteralValue();                           
                             this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
                             this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
                             this.stats.numStrings++;
@@ -442,7 +459,7 @@ public PositionalDictionaryWriter build() throws IOException {
         stats.numSubjects = subjects.size();
         stats.numPredicates = predicates.size();
         stats.numObjects = objects.size();
-        stats.numShared = shared.size();
+    //    stats.numShared = shared.size();
     } catch (FileNotFoundException e) {
         throw new IOException("Source file not found: " + src, e);
     } catch (IOException e) {

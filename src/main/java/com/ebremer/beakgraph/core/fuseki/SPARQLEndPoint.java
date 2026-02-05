@@ -28,33 +28,38 @@ public class SPARQLEndPoint {
     private SPARQLEndPoint(Parameters params) throws IOException {
         System.out.println("Starting Fuseki SPARQL Endpoint...");
         Spatial.init();
-        BeakGraph bg = BeakGraphPool.getPool().borrowObject(params.sparqlendpoint.toURI());
-        Dataset ds = bg.getDataset();
+        BeakGraph bg;
+        try {
+            bg = BeakGraphPool.getPool().borrowObject(params.sparqlendpoint.toURI());
+            Dataset ds = bg.getDataset();
         
-        // Build and configure the Fuseki server
-        server = FusekiServer.create()
+            // Build and configure the Fuseki server
+            server = FusekiServer.create()
                 .add("/rdf", ds)  // SPARQL endpoint at /rdf
                 .port(params.port)       // Server port
                 .loopback(false)  // Allow external connections (not just localhost)
                 .build();
         
-        // Add custom /sparql endpoint for web page
-        Server jettyServer = server.getJettyServer();
-        ServletContextHandler context = (ServletContextHandler) jettyServer.getHandler();
+            // Add custom /sparql endpoint for web page
+            Server jettyServer = server.getJettyServer();
+            ServletContextHandler context = (ServletContextHandler) jettyServer.getHandler();
         
-        // Create servlet to serve the SPARQL web interface
-        ServletHolder sparqlPageHolder = new ServletHolder("sparql-page", new SparqlWebPageServlet());
-        context.addServlet(sparqlPageHolder, "/sparql");
-        context.addServlet(sparqlPageHolder, "/sparql/*");
+            // Create servlet to serve the SPARQL web interface
+            ServletHolder sparqlPageHolder = new ServletHolder("sparql-page", new SparqlWebPageServlet());
+            context.addServlet(sparqlPageHolder, "/sparql");
+            context.addServlet(sparqlPageHolder, "/sparql/*");
 
-        server.start();
+            server.start();
         
-        System.out.println("Fuseki server started successfully!");
-        System.out.println("SPARQL Web Interface: http://localhost:8888/sparql");
-        System.out.println("SPARQL Query endpoint: http://localhost:8888/rdf/query");
-        System.out.println("SPARQL Update endpoint: http://localhost:8888/rdf/update");
-        System.out.println("Dataset endpoint: http://localhost:8888/rdf/data");
-        System.out.println("SPARQL Graph Store: http://localhost:8888/rdf");
+            System.out.println("Fuseki server started successfully!");
+            System.out.println("SPARQL Web Interface: http://localhost:8888/sparql");
+            System.out.println("SPARQL Query endpoint: http://localhost:8888/rdf/query");
+            System.out.println("SPARQL Update endpoint: http://localhost:8888/rdf/update");
+            System.out.println("Dataset endpoint: http://localhost:8888/rdf/data");
+            System.out.println("SPARQL Graph Store: http://localhost:8888/rdf");            
+        } catch (Exception ex) {
+            System.getLogger(SPARQLEndPoint.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
+        }
     }
 
     /**

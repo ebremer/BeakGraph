@@ -40,8 +40,8 @@ HDF5Writer.Builder()
 ### Using a BeakGraph with Apache Jena
 
 ```
-    try (HDF5Reader reader = new HDF5Reader(dest)) {
-        BeakGraph bg = new BeakGraph( reader );
+    File file = new File("mydata.h5");
+    try (BeakGraph bg = BG.getBeakGraph(file)) {
         Dataset ds = bg.getDataset();
         ds.getDefaultModel().write(System.out, "NTRIPLE");
     }
@@ -66,13 +66,11 @@ The full list of containers under consideration are:
 * [DICOM](https://www.dicomstandard.org/)
 * [LWS](https://github.com/w3c/lws-protocol)
 
-
 ### Historical
 The original BeakGraph was an [Apache Jena](https://jena.apache.org/) Graph implementation backed by [Apache Arrow](https://arrow.apache.org/)
 wrapped in a [Research Object Crate (RO-Crate)](https://www.researchobject.org/ro-crate/) inspired by [HDT](https://www.rdfhdt.org/).
 
 Developed to power [Halcyon](https://github.com/halcyon-project/Halcyon).  See [Arxiv](https://arxiv.org/) paper at http://arxiv.org/abs/2304.10612
-
 
 <img
   src="https://github.com/ebremer/BeakGraph/blob/develop/src/main/resources/beakgraph.png"

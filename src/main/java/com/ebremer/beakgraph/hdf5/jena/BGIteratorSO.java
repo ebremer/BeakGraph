@@ -32,7 +32,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long maxObjId = Long.MAX_VALUE;
 
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        //IO.println("BGIteratorSO (GSPO) Init: " + quad);
+        //IO.println("BGIteratorSO : " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         
@@ -228,7 +228,6 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (queryQuad.getSubject().isVariable()) result.put(Var.alloc(queryQuad.getSubject()), new NodeId(si, NodeType.SUBJECT));
         if (queryQuad.getPredicate().isVariable()) result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
         if (queryQuad.getObject().isVariable()) result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjId, NodeType.OBJECT));
-        // IO.println(String.format("QUAD : %d %d %d %d", gi, si, pi, currentObjId));
         i++;
         if (i < j) {
             boolean isObjBound = !queryQuad.getObject().isVariable() || (parentBinding != null && parentBinding.containsKey(Var.alloc(queryQuad.getObject())));

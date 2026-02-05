@@ -30,7 +30,6 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         name = builder.getName();
         numQuads = builder.getNumberOfQuads();
         quads = builder.getQuads();
-        MultiTypeDictionaryWriter.Builder shared = new MultiTypeDictionaryWriter.Builder();
         MultiTypeDictionaryWriter.Builder subjects = new MultiTypeDictionaryWriter.Builder();
         MultiTypeDictionaryWriter.Builder predicates = new MultiTypeDictionaryWriter.Builder();
         MultiTypeDictionaryWriter.Builder objects = new MultiTypeDictionaryWriter.Builder();
@@ -58,6 +57,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         objectsdict = objects
             .setName("objects")
             .setNodes(builder.getObjects())
+            .setDataTypes(builder.getDataTypes())
             .setStats(builder.getStats())
             .enable( Types.IRI, Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING )
             .build();
@@ -115,15 +115,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     
     @Override
     public long locateObject(Node element) {
-        long c;
-        if (element.isLiteral()) {
-            c = ((Dictionary) objectsdict).locate(element);
-            if (c < 0) {
-                return -1;
-            }
-            return c;
-        }
-        c = ((Dictionary) objectsdict).locate(element);
+        long c = ((Dictionary) objectsdict).locate(element);
         if (c < 0) {
             return -1;
         }
