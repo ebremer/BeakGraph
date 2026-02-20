@@ -133,7 +133,6 @@ public class BGIndex {
         Quad lastUnique = null;
 
         for (Quad curr : allQuads) {
-            //IO.println(curr);
             // 1. Duplicate Check
             if (lastUnique != null && 
                 positions[0].getNode(lastUnique).equals(positions[0].getNode(curr)) &&

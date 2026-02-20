@@ -15,8 +15,8 @@ public class BeakGraphPool {
         private static final BeakGraphKeyedPool INSTANCE;
         static {
             BeakGraphKeyedPoolConfig<BeakGraph> config = new BeakGraphKeyedPoolConfig<>();
-            config.setMaxTotalPerKey(8);
-            config.setMaxTotal(20);
+            config.setMaxTotalPerKey(100);
+            config.setMaxTotal(200);
             config.setMinIdlePerKey(0);
             config.setTestOnBorrow(true);
             config.setMaxWait(Duration.ofMillis(60000));

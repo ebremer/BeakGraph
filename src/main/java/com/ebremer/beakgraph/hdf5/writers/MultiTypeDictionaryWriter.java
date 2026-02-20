@@ -50,7 +50,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private String name;
     private final ArrayList<Node> sorted;
     private Set<Types> et;
-    private int fcdBlockSize = 32;
+    private int fcdBlockSize = 16;
     private final AtomicLong cc = new AtomicLong();
     private final boolean literalsPresent;
     
@@ -75,33 +75,26 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                     typedLiteralsDictionary = new FCDWriter( Path.of( "typedLiteralsDictionary" ), fcdBlockSize );
                     typedLiterals = new BitPackedUnSignedLongBuffer( Path.of( "typedLiterals" ), null, 0, 1 + MinBits( builder.getTypedLiterals().size()) );
                     IO.println("THE dataTypesDictionary : "+typedLiteralsDictionary.ID);
-                    //typedLiteralsDictionary.add("NAL");
-                    //dataTypesLookUp.put("NAL", typedLiteralsDictionary.getNumEntries());
                     builder
                         .getTypedLiterals().stream()
                         .sorted()
                         .toList()
                         .forEach(s->{
                             try {
-                                //IO.println(typedLiteralsDictionary.ID+" ==== ADD Literal DATA TYPE : "+s);
                                 typedLiteralsDictionary.add(s);
-                                //IO.println( typedLiteralsDictionary.ID + " ====> typedLiteralsDictionary SIZE : " + typedLiteralsDictionary.getNumEntries() );
                                 dataTypesLookUp.put(s, typedLiteralsDictionary.getNumEntries());
                             } catch (IOException ex) {
                                 IO.println("Oh hell no : "+ex.getMessage());
                             }
                         });
-                    dataTypesLookUp.forEach((k,v)->IO.println("DT LOOKUP : "+k+" -----> "+v));
                 } else {
                     typedLiteralsDictionary = null;
                     typedLiterals = null;
                     literalsPresent = false;
-                }        
-
+                }
         integers = ( !et.contains( Types.INTEGER ) || ( stats.numInteger == 0 ) ) ? null : new BitPackedUnSignedLongBuffer( Path.of( "integers" ), null, 0, 1 + MinBits( stats.maxInteger) );
         longs = ( !et.contains( Types.LONG ) || ( stats.numLong == 0) )? null : new BitPackedUnSignedLongBuffer( Path.of( "longs" ), null, 0, 1 + MinBits( stats.maxLong ));
         nativedatatypes = new BitPackedUnSignedLongBuffer( Path.of( "datatypes" ), null, 0, 1 + MinBits(DataType.values().length) );
-        
         iri = ( !et.contains( Types.IRI ) || ( stats.numIRI == 0)) ? null : new FCDWriter( Path.of( "iri" ), fcdBlockSize );
         strings = ( !et.contains(Types.STRING ) || ( stats.numStrings == 0))? null : new FCDWriter( Path.of( "strings" ), fcdBlockSize );        
         sorted.forEach( n -> Add(n) );                                                                           
@@ -138,7 +131,6 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (strings!=null) {
             strings.close();
         }
-        IO.println("***************** "+name+"  Sorted : "+sorted.size());
     }
     
     @Override
@@ -221,8 +213,6 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 }
             } else if (dt.equals(XSD.dateTime.getURI())) {
                 String lex = node.getLiteralLexicalForm();
-                //int t = lex.indexOf('T');
-                //String x = (t > 0) ? lex.substring(0, t) : lex;
                 try {
                     offsets.writeInteger((int) strings.getNumEntries());
                     nativedatatypes.writeInteger(DataType.STRING.ordinal());

@@ -28,11 +28,13 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
     private boolean hasNext = false;
+    private PositionalDictionaryReader dict;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        //IO.println("BGIteratorPOS Check: " + quad);
+        //IO.println("BGIteratorPOS : " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
+        this.dict = dict;
         
         this.Bp = reader.getBitmapBuffer('P'); 
         this.Sp = reader.getIDBuffer('P');     
@@ -181,7 +183,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     }
 
     @Override
-    public boolean hasNext() { return hasNext; }
+    public boolean hasNext() {
+        return hasNext;
+    }
 
     @Override
     public BindingNodeId next() {
@@ -189,6 +193,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         BindingNodeId result = new BindingNodeId(this.parentBinding);
         long currentObjectId = So.get(curOIndex);
         long currentSubjectId = Ss.get(curSIndex);
+       // IO.println("POS : "+dict.getSubjects().extract(currentSubjectId)+"   "+dict.getObjects().extract(currentObjectId));
         if (queryQuad.getGraph().isVariable()) result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
         if (queryQuad.getPredicate().isVariable()) result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
         if (queryQuad.getObject().isVariable()) result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));

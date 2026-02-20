@@ -10,6 +10,7 @@ import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.jena.SimpleNodeTable;
+import com.ebremer.beakgraph.turbo.Spatial;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Group;
 import java.io.File;
@@ -24,6 +25,7 @@ import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.ExprList;
+import org.apache.jena.sys.JenaSystem;
 import org.apache.jena.util.iterator.ExtendedIterator;
 import org.apache.jena.util.iterator.NullIterator;
 import org.apache.jena.util.iterator.WrappedIterator;
@@ -33,11 +35,16 @@ public class HDF5Reader implements BGReader {
     private final HdfFile hdf;
     private final Group hdt;
     private final PositionalDictionaryReader dict;
-    private final long totalQuads;
+    //private final long totalQuads;
     private final Node defaultGraph;
     private final SimpleNodeTable nodeTable;
     private final Map<Index, IndexReader> indexCache = new HashMap<>();
     private final URI uri;
+    
+    static {
+        JenaSystem.init();
+        Spatial.init();
+    }
 
     public HDF5Reader(Path src) {
         this(src.toFile());
@@ -48,7 +55,7 @@ public class HDF5Reader implements BGReader {
         this.hdt = (Group) hdf.getChild(Params.BG);
         Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
         this.dict = new PositionalDictionaryReader(dictionary);
-        this.totalQuads = (long) hdt.getAttribute("numQuads").getData();
+        //this.totalQuads = (long) hdt.getAttribute("numQuads").getData();
         this.defaultGraph = Quad.defaultGraphIRI;
         nodeTable = new SimpleNodeTable(dict);
         this.uri = src.toURI();
@@ -125,13 +132,11 @@ public class HDF5Reader implements BGReader {
 
         return WrappedIterator.create(it).mapWith(bnid -> {
             Node sRes = tp.getSubject().isConcrete() ? tp.getSubject() : nodeTable.getNodeForNodeId(bnid.get(sVar));
-            //NodeId ha = bnid.get(pVar);
             Node pRes = tp.getPredicate().isConcrete() ? tp.getPredicate() : nodeTable.getNodeForNodeId(bnid.get(pVar));
             Node oRes = tp.getObject().isConcrete() ? tp.getObject() : nodeTable.getNodeForNodeId(bnid.get(oVar));
             try {
                 return Triple.create(sRes, pRes, oRes);
             } catch (UnsupportedOperationException ex) {
-                //int c = 0;
                 return null;
             }
         });

@@ -2,9 +2,7 @@ package com.ebremer.beakgraph.hdf5.writers;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.lib.GEO;
-import com.ebremer.beakgraph.core.lib.HAL;
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.halcyon.hilbert.GridCell;
 import com.ebremer.halcyon.hilbert.HilbertSpace;
 import com.ebremer.halcyon.hilbert.PolygonScaler;
 import com.ebremer.halcyon.hilbert.WKTDatatype;
@@ -16,11 +14,11 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
 import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
@@ -29,26 +27,29 @@ import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
-import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.XSD;
 import org.locationtech.jts.geom.Envelope;
+import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class PositionalDictionaryWriterBuilder {
+    private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
     private File src;
     private File dest;
     //private final HashSet<Node> shared = new HashSet<>();
-    private final LinkedHashSet<Node> graphs = new LinkedHashSet<>();
-    private final LinkedHashSet<Node> subjects = new LinkedHashSet<>();
+    private final HashSet<Node> graphs = new HashSet<>();
+    private final HashSet<Node> subjects = new HashSet<>();
     private final HashSet<Node> predicates = new HashSet<>();
-    private final LinkedHashSet<Node> objects = new LinkedHashSet<>();
-    private final LinkedHashSet<String> dataTypes = new LinkedHashSet<>();
+    private final HashSet<Node> objects = new HashSet<>();
+    private final HashSet<String> dataTypes = new HashSet<>();
     private final Stats stats = new Stats();
     private long numQuads;
     private String name;
-    private final ArrayList<Quad> quadslist = new ArrayList<>(200_000_000); //200_000_000
+    private final ArrayList<Quad> quadslist = new ArrayList<>(100_000_000);
     private Quad[] quads = null;
-    private final HashMap<Node,Node> bmap = new HashMap<>(100_000_000); //100_000_000
+    private final HashMap<Node,Node> bmap = new HashMap<>(10_000_000);
     private boolean spatial = false;
     private int MaxX = Integer.MIN_VALUE;
     private int MaxY = Integer.MIN_VALUE;
@@ -140,15 +141,11 @@ public class PositionalDictionaryWriterBuilder {
     //private static final Node low = HAL.low.asNode();
     //private static final Node high = HAL.high.asNode();
     //private static final Node hasRange = HAL.hasRange.asNode();
-    private static final Node member = RDFS.member.asNode();
+    //private static final Node member = RDFS.member.asNode();
    
     public File getDestination() {
         return dest;
     }
-   
-    //public Set<Node> getShared() {
-      //  return shared;
-    //}
    
     public Quad[] getQuads() {
         return quads;
@@ -208,59 +205,92 @@ public class PositionalDictionaryWriterBuilder {
         MaxX = Math.max(MaxX, (int) env.getMaxX());
         MaxY = Math.max(MaxY, (int) env.getMaxY());
     }
-       
+    
+    /*
     private synchronized Node getSafeBnode() {
         Node bnode = NodeFactory.createBlankNode(String.format("b%020d", bmap.size() ));
         bmap.put(bnode, bnode);
         return bnode;
+    }*/
+    
+    private List<Node> generateGridURNs(Polygon polygon, int resolutionLevel) {
+        List<Node> intersectingURNs = new ArrayList<>();
+        Envelope env = polygon.getEnvelopeInternal();    
+        double cellSize = Params.GRIDTILESIZE;    
+        long minTileX = (long) Math.floor(env.getMinX() / cellSize);
+        long maxTileX = (long) Math.floor(env.getMaxX() / cellSize);
+        long minTileY = (long) Math.floor(env.getMinY() / cellSize);
+        long maxTileY = (long) Math.floor(env.getMaxY() / cellSize);    
+        GeometryFactory gf = polygon.getFactory();
+        for (long x = minTileX; x <= maxTileX; x++) {
+            double tileMinX = x * cellSize;
+            double tileMaxX = tileMinX + cellSize;
+            for (long y = minTileY; y <= maxTileY; y++) {
+                double tileMinY = y * cellSize;
+                double tileMaxY = tileMinY + cellSize;            
+                Envelope tileEnv = new Envelope(tileMinX, tileMaxX, tileMinY, tileMaxY);
+                if (env.intersects(tileEnv)) {
+                    Polygon tilePoly = (Polygon) gf.toGeometry(tileEnv);
+                    if (polygon.intersects(tilePoly)) {
+                        intersectingURNs.add(NodeFactory.createURI(
+                            String.format("urn:x-beakgraph:grid:%d:%d:%d", resolutionLevel, x, y)));
+                    }
+                }
+            }
+        }
+        return intersectingURNs;
     }
-   
-    private ArrayList<Quad> AddSpatial(Quad quad, String wkt) {
-        final Polygon[] scales = PolygonScaler.toPolygons(wkt);
+
+    private ArrayList<Quad> AddSpatial(Quad quad) {
+        final Polygon[] scales = PolygonScaler.toPolygons(quad.getObject().getLiteralLexicalForm());
+        final ArrayList<Quad> qqq = new ArrayList<>();
+        if (scales == null) {
+            return qqq;
+        }
         final String[] wktScales = PolygonScaler.toWKT(scales);
-        List<GridCell> cells;
+        //List<GridCell> cells;
+        /*
         if (scales.length>0) {
             cells = PolygonScaler.getGridCells(scales[0], scales.length);
         } else {
-            IO.println("NADA: "+quad);
+            logger.trace("NADA: {}", quad);
             cells = new ArrayList<>();
-        }
-        final ArrayList<Quad> qqq = new ArrayList<>();
+        }*/
+        
+        /*
         try {
             qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), HAL.hilbertCentroid.asNode(), NodeFactory.createLiteralByValue(HilbertSpace.getCentroidHilbertIndex(scales[0]))));
         } catch (IllegalArgumentException ex) {
-            IO.println("Bad polygon bro : "+wkt);
-        }
-        for (byte s=0; s<scales.length; s++) {
+            logger.error("Bad polygon bro1 : {}", quad.getObject().getLiteralLexicalForm());
+            return qqq;
+        }*/
+        for (int s=0; s<scales.length; s++) {
+            List<Node> tiles = generateGridURNs(scales[s],s);
             try {
-                long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[0]);
+                for (int ii=0; ii<tiles.size(); ii++) {
+                    qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
+                }            
+            } catch (Throwable ex) {
+                logger.error(ex.getMessage());
+            }
+            try {
+                long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
                 qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
                 qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
                 qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
+                qqq.add( Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
+                /*
+                for (int ss=0; ss<cells.size(); ss++) {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(Params.SPATIALSTRING).append("/").append(cells.get(ss));
+                    Node collection = NodeFactory.createURI(sb.toString());
+                    qqq.add( Quad.create(Params.SPATIAL, collection, member, quad.getSubject()));
+                }*/
             } catch (IllegalArgumentException ex) {
-                IO.println("Bad polygon bro : "+wkt);
-            }            
-            /*
-            ArrayList<Range> ranges = HilbertSpace.Polygon2Hilbert(scales[s]);
-            Node hp = getSafeBnode();
-            for (int c=0; c<ranges.size(); c++) {
-                Node range = getSafeBnode();
-                Quad qLow = Quad.create(Params.SPATIAL, range, low[s], NodeFactory.createLiteralByValue(ranges.get(c).low()));
-                Quad qHigh = Quad.create(Params.SPATIAL, range, high[s], NodeFactory.createLiteralByValue(ranges.get(c).high()));
-                Quad qrange = Quad.create(Params.SPATIAL, hp, hasRange[s], range);
-                qqq.add(qrange);
-                qqq.add(qLow);
-                qqq.add(qHigh);
-            }*/
-            //qqq.add( Quad.create(Params.SPATIAL, quad.getSubject(), asHilbert[s], hp) );
-            qqq.add( Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
-            for (int ss=0; ss<cells.size(); ss++) {
-                StringBuilder sb = new StringBuilder();
-                sb.append(Params.SPATIALSTRING).append("/").append(cells.get(ss));
-                Node collection = NodeFactory.createURI(sb.toString());
-                qqq.add( Quad.create(Params.SPATIAL, collection, member, quad.getSubject()));
-            }
+                logger.error("Bad polygon bro2 : {}", quad.getObject().getLiteralLexicalForm());
+                return qqq;
+            } 
         }
         return qqq;
     }
@@ -398,8 +428,7 @@ public class PositionalDictionaryWriterBuilder {
                             this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
                             this.stats.numStrings++;
                         } else {
-                            IO.println("I DON'T KNOW WHAT TO DO WITH : "+o);
-                            //throw new Error("I DON'T KNOW WHAT TO DO WITH : "+o);
+                            logger.error("I DON'T KNOW WHAT TO DO WITH : {}", o);
                         }
                     }                    
                 } else {
@@ -410,67 +439,68 @@ public class PositionalDictionaryWriterBuilder {
        // }
     }
    
-public PositionalDictionaryWriter build() throws IOException {
-    final AtomicLong quadcount = new AtomicLong();
-    System.out.print("Creating dictionary...");
-    try (InputStream xis = src.toString().endsWith(".gz")
-            ? new GZIPInputStream(new FileInputStream(src))
-            : new FileInputStream(src)) {
-        AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, null);
-        parserBuilder.mutateSources(rdfBuilder ->
-                rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
-        final List<StructuredTaskScope.Subtask<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
-        try (var scope = StructuredTaskScope.open()) {
-            parserBuilder.streamQuads()
-               // .limit(10000)
-                .map(quad -> quad.isDefaultGraph()
-                        ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
-                        : quad)
-                .map(this::AlignBnodes)
-                .forEach(quad -> {
-                    quadcount.incrementAndGet();
-                    if (quadcount.get() % 100_000 == 0) {
-                        System.out.println("Loaded " + quadcount.get() + " quads...");
-                    }
-                    quadslist.add(quad);
-                    ProcessQuad(quad);
-                    if (spatial && isGeoLiteral(quad)) {
-                        String wkt = quad.getObject().getLiteralLexicalForm();
-                        StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad, wkt));
-                        spatialTasks.add(task);
-                    }
-                });
-            try {
-                scope.join();
-            } catch (IllegalArgumentException ex) {
-                IO.println(ex.getMessage());
+    public PositionalDictionaryWriter build() throws IOException {
+        final AtomicLong quadcount = new AtomicLong();
+        logger.trace("Creating dictionary...");
+        try (InputStream xis = src.toString().endsWith(".gz")
+                ? new GZIPInputStream(new FileInputStream(src))
+                : new FileInputStream(src)) {
+            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, null);
+            parserBuilder.mutateSources(rdfBuilder ->
+                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+            final List<StructuredTaskScope.Subtask<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
+            try (var scope = StructuredTaskScope.open()) {
+                parserBuilder.streamQuads()
+                    .map(quad -> quad.isDefaultGraph()
+                            ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
+                            : quad)
+                    .map(this::AlignBnodes)
+                    .forEach(quad -> {
+                        quadcount.incrementAndGet();
+                        if (quadcount.get() % 100_000 == 0) {
+                            System.out.println("Loaded " + quadcount.get() + " quads...");
+                        }
+                        quadslist.add(quad);
+                        ProcessQuad(quad);                    
+                        if (spatial && isGeoLiteral(quad)) {
+                            StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad));
+                            spatialTasks.add(task);
+                        }
+                    });
+                try {
+                    scope.join();
+                } catch (IllegalArgumentException ex) {
+                    logger.error(ex.getMessage());
+                }
+            } catch (InterruptedException ex) {
+                System.getLogger(PositionalDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
             }
-        } catch (InterruptedException ex) {
-            System.getLogger(PositionalDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
+            for (var task : spatialTasks) {
+                ArrayList<Quad> extraQuads = task.get();
+                extraQuads.forEach(q -> {
+                    quadslist.add(q);
+                    ProcessQuad(q);
+                });
+            }
+            stats.numGraphs = graphs.size();
+            stats.numSubjects = subjects.size();
+            stats.numPredicates = predicates.size();
+            stats.numObjects = objects.size();
+            //stats.numShared = shared.size();
+        } catch (FileNotFoundException e) {
+            throw new IOException("Source file not found: " + src, e);
+        } catch (IOException e) {
+            throw new IOException("I/O error while reading RDF source", e);
+        } catch (Throwable ex) {
+            java.util.logging.Logger.getLogger(PositionalDictionaryWriterBuilder.class.getName()).log(Level.SEVERE, null, ex);
         }
-        for (var task : spatialTasks) {
-            ArrayList<Quad> extraQuads = task.get(); // guaranteed to be available
-            extraQuads.forEach(q -> {
-                quadslist.add(q);
-                ProcessQuad(q);
-            });
-        }
-        stats.numGraphs = graphs.size();
-        stats.numSubjects = subjects.size();
-        stats.numPredicates = predicates.size();
-        stats.numObjects = objects.size();
-    //    stats.numShared = shared.size();
-    } catch (FileNotFoundException e) {
-        throw new IOException("Source file not found: " + src, e);
-    } catch (IOException e) {
-        throw new IOException("I/O error while reading RDF source", e);
+        this.numQuads = quadcount.get();
+        this.quads = quadslist.toArray(Quad[]::new);
+        quadslist.clear();
+        System.out.println("Dictionary created. Total Quads: " + this.numQuads);
+        return new PositionalDictionaryWriter(this);
     }
-    this.numQuads = quadcount.get();
-    this.quads = quadslist.toArray(Quad[]::new);
-    quadslist.clear();
-    System.out.println("Dictionary created. Total Quads: " + this.numQuads);
-    return new PositionalDictionaryWriter(this);
-}
+
     private boolean isGeoLiteral(Quad quad) {
         Node o = quad.getObject();
         return o.isLiteral() && GEO.wktLiteral.getURI().equals(o.getLiteralDatatypeURI());

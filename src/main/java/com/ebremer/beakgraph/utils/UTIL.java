@@ -82,6 +82,7 @@ public class UTIL {
             buffer.position(currentPosition);
         }
     }
+    /*
     
     public static String readNullTerminatedString(ByteBuffer buffer) {
         int limit = buffer.limit();
@@ -95,6 +96,37 @@ public class UTIL {
         buffer.position(startPosition);
         buffer.get(stringBytes);
         buffer.position(endPosition+1);
+        return new String(stringBytes, StandardCharsets.UTF_8);
+    }*/
+    
+    public static String readNullTerminatedString(ByteBuffer buffer) {
+        if (!buffer.hasRemaining()) {
+            return "";
+        }
+        int startPosition = buffer.position();
+        int limit = buffer.limit();
+        int endPosition = startPosition;
+        // Find the null terminator
+        while (endPosition < limit && buffer.get(endPosition) != 0) {
+            endPosition++;
+        }
+        int length = endPosition - startPosition;
+        byte[] stringBytes = new byte[length];
+        // Use bulk get for better performance
+        buffer.get(stringBytes);
+        // If we stopped at a null terminator, skip over it
+        if (buffer.hasRemaining() && buffer.get() != 0) {
+            // This handles the edge case where the loop stopped at limit 
+            // but we still need to advance position correctly.
+            // Usually, buffer.get() above moves position to endPosition.
+            // If the byte at endPosition was 0, buffer.get() consumes it.
+        }
+        // Correctly advance position to after the null terminator if it exists
+        if (endPosition < limit) {
+            buffer.position(endPosition + 1);
+        } else {
+            buffer.position(limit);
+        }
         return new String(stringBytes, StandardCharsets.UTF_8);
     }
     

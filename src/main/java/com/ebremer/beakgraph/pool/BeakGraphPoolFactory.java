@@ -22,10 +22,7 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
 
     @Override
     public BeakGraph create(URI uri) throws Exception {
-        logger.trace("Creating BeakGraph "+uri);
-        
-        //IO.println("Creating BeakGraph "+uri);
-        //System.out.println("FACTORY CREATING FOR: " + uri.toASCIIString() + " | Hash: " + uri.hashCode());
+        logger.trace("Creating BeakGraph {}", uri);
         HDF5Reader reader = new HDF5Reader(new File(uri));
         return new BeakGraph(reader, uri, null);
     }
@@ -37,7 +34,7 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
 
     @Override
     public void destroyObject(URI uri, PooledObject<BeakGraph> p, DestroyMode mode) throws Exception {
-        logger.trace("Closing BeakGraph "+uri);        
+        logger.trace("destroyObject {}", uri);        
         p.getObject().close();
         super.destroyObject(uri, p, mode);               
     }  

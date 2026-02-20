@@ -4,7 +4,7 @@
   <groupId>com.ebremer</groupId>
   <artifactId>BeakGraph</artifactId>
   <name>BeakGraph</name>
-  <version>0.11.0</version>
+  <version>0.12.0</version>
   <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
   <issueManagement>
     <system>github</system>
@@ -263,6 +263,16 @@
         <version>2.21.0</version>
       </dependency>
       <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-pool2</artifactId>
+        <version>2.13.1</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-compress</artifactId>
+        <version>1.28.0</version>
+      </dependency>
+      <dependency>
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
         <version>2.0.17</version>
@@ -276,6 +286,26 @@
         <groupId>jakarta.servlet</groupId>
         <artifactId>jakarta.servlet-api</artifactId>
         <version>6.1.0</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.dataformat</groupId>
+        <artifactId>jackson-dataformat-yaml</artifactId>
+        <version>2.21.0</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>2.21.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-config-yaml</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.airlift</groupId>
+        <artifactId>aircompressor-v3</artifactId>
+        <version>3.5</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -292,13 +322,13 @@
     <maven-shade-plugin.version>3.6.1</maven-shade-plugin.version>
     <jena.version>5.6.0</jena.version>
     <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>
-    <rocrate4j.version>0.5.0</rocrate4j.version>
     <jetty.version>11.0.26</jetty.version>
     <jaxb.version>2.4.0-b180830.0359</jaxb.version>
     <commons-compress.version>1.28.0</commons-compress.version>
     <jts.ver>1.20.0</jts.ver>
     <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
     <native-maven-plugin.version>0.11.3</native-maven-plugin.version>
+    <zstd-jni.version>1.5.7-6</zstd-jni.version>
     <maven-enforcer-plugin.version>3.6.2</maven-enforcer-plugin.version>
     <slf4j.version>2.0.17</slf4j.version>
     <hilbert.ver>0.2.3</hilbert.ver>
@@ -307,6 +337,6 @@
     <log4j.version>3.0.0-beta2</log4j.version>
     <jcommander.version>3.0</jcommander.version>
     <jhdf.version>0.10.0</jhdf.version>
-    <aircompressor.ver>3.3</aircompressor.ver>
+    <aircompressor.ver>3.5</aircompressor.ver>
   </properties>
 </project>

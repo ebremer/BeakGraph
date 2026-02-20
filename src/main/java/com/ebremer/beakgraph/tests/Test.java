@@ -46,11 +46,11 @@ public class Test {
         Matcher matcher = pattern.matcher(wkt);
         List<Integer> xPoints = new ArrayList<>();
         List<Integer> yPoints = new ArrayList<>();
-        
         while (matcher.find()) {
             xPoints.add(Integer.parseInt(matcher.group(1)) - offsetX);
             yPoints.add(Integer.parseInt(matcher.group(2)) - offsetY);
         }
+
         
         return new Polygon(
             xPoints.stream().mapToInt(i -> i).toArray(),
@@ -115,8 +115,13 @@ public class Test {
                                 String foundWkt = qs.getLiteral("wkt").getString();
                                 
                                 // Parse and Draw the polygon
-                                Polygon poly = parseWktToPolygon(foundWkt, x, y);
-                                g2d.drawPolygon(poly); 
+                                try {
+                                  Polygon poly = parseWktToPolygon(foundWkt, x, y);
+                                  g2d.drawPolygon(poly); 
+                                } catch (NumberFormatException ex) {
+                                    IO.println(foundWkt+"    "+ex.getMessage());
+                                }
+                                
                                 // use g2d.fillPolygon(poly) if you want solid shapes
                                 
                                 count++;

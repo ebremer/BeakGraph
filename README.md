@@ -50,6 +50,11 @@ HDF5Writer.Builder()
 BeakGraph is a [Apache Jena](https://jena.apache.org/) Graph implementation backed by [HDF5](https://www.hdfgroup.org/solutions/hdf5/).
 Beakgraph's HDF5 design is heavily inspired by [HDT](https://www.rdfhdt.org/).
 
+### Limitations
+
+* no support for language tags
+* extremely limited GeoSPARQL support (only
+
 ### Author's notes
 The first iteration of BeakGraph was backed by Apache Arrow instead of [HDF5](https://www.hdfgroup.org/solutions/hdf5/).  An Apache Arrow version will return.  Reasons for this are varied with some of these reasons being just experimentation.
 The general idea of BeakGraph is a read-only, searchable, indexed set of binary [sussinct data structures](https://en.wikipedia.org/wiki/Succinct_data_structure) to represent an [RDF Dataset](https://www.w3.org/TR/rdf11-datasets/).

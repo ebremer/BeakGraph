@@ -16,18 +16,26 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import org.apache.jena.sys.JenaSystem;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * SPARQL Endpoint using Apache Jena Fuseki
  * @author erich
  */
 public class SPARQLEndPoint {
+    private static final Logger logger = LoggerFactory.getLogger(SPARQLEndPoint.class);
     private static SPARQLEndPoint sep = null;
     private static FusekiServer server = null;
+    
+    static {
+        JenaSystem.init();
+        Spatial.init();
+    }    
 
     private SPARQLEndPoint(Parameters params) throws IOException {
         System.out.println("Starting Fuseki SPARQL Endpoint...");
-        Spatial.init();
         BeakGraph bg;
         try {
             bg = BeakGraphPool.getPool().borrowObject(params.sparqlendpoint.toURI());
@@ -58,7 +66,7 @@ public class SPARQLEndPoint {
             System.out.println("Dataset endpoint: http://localhost:8888/rdf/data");
             System.out.println("SPARQL Graph Store: http://localhost:8888/rdf");            
         } catch (Exception ex) {
-            System.getLogger(SPARQLEndPoint.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
+            logger.error(ex.getMessage());
         }
     }
 

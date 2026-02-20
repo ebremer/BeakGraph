@@ -35,7 +35,7 @@ public class beakgraph {
     private final FileCounter fc;
     
     public beakgraph(Parameters params) {
-        JenaSystem.init();
+        JenaSystem.init();        
         this.params = params;
         this.fc = new FileCounter();
         String os = System.getProperty("os.name").toLowerCase();
@@ -73,7 +73,7 @@ public class beakgraph {
                 } else {             
                     if (params.sparqlendpoint!=null) {
                         if (params.sparqlendpoint.exists()) {
-                            SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);                                
+                            SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);
                             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                                 endpoint.shutdown();
                             }));
@@ -217,7 +217,9 @@ public class beakgraph {
             } catch (IOException ex) {
                 fc.incrementFailedConversionFileCount();
                 throw new Error(ex.getMessage());
-            } catch (Throwable ex) {
+            } catch (Throwable ex) {               
+                IO.println("***********************************************************************************\n"+ex.getMessage()+"\n*******************************************");
+                ex.printStackTrace();
                 throw new Error(ex.getMessage());
             }
             return null;
