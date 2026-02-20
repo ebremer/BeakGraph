@@ -18,9 +18,14 @@ import org.davidmoten.hilbert.Range;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Optimized SpatialIndexIterator using lazy flatMapping and efficient pool management.
+ * @author erich
+ */
 public class SpatialIndexIterator implements Iterator<BindingNodeId> {
     private static final Logger logger = LoggerFactory.getLogger(SpatialIndexIterator.class);
     private final Iterator<BindingNodeId> outputIterator;
+    private int scale = 0;
 
     public SpatialIndexIterator(Iterator<BindingNodeId> input, BeakGraph bGraph, Var targetVar, PatternMatchBG.SpatialContext context) {
         logger.trace("SpatialIndexIterator: {} at scale {}", context.searchRegionWKT, context.scale);

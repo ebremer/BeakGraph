@@ -142,6 +142,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     public long locate(Node element) {
         int pos = NodeSearch.findPosition(sorted, element);
         if ( pos < 0 ) {
+            IO.println("CANNOT FIND : " + element );
             return -1;
         }
         return pos + 1;
@@ -217,6 +218,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                     nativedatatypes.writeInteger(DataType.STRING.ordinal());
                     strings.add(lex);
                 } catch (IOException ex) {
+                    //IO.println("BAAAAAAAAAAAAAAAAAAAAAAAADDDDDDDDDDDDDDDDDDD!!!!");
                     Logger.getLogger(MultiTypeDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                 }
             } else if (dt.equals(XSD.xboolean.getURI())) {                             
@@ -241,12 +243,14 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                         Logger.getLogger(MultiTypeDictionaryWriter.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 } else {
+                    IO.println("HELP ME : "+node);
                     throw new Error("HELP ME : "+node);
                 }
             } else {
                 throw new Error("What is : "+node+" "+node.getLiteralDatatypeURI());
             }
         } else {
+            //IO.println("WTF : "+node);
             throw new Error("WTF : "+node);
         }
         cc.incrementAndGet();

@@ -6,10 +6,12 @@ import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Optional;
+import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.apache.jena.datatypes.TypeMapper;
@@ -101,8 +103,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         if (typeOrdinal < 0 || typeOrdinal >= DT_VALUES.length) {
              throw new RuntimeException("Corrupt HDF5: Unknown DataType ordinal " + typeOrdinal + " at ID " + id);
         }
-        DataType dt = DT_VALUES[typeOrdinal];
-        return switch (dt) {
+        DataType dt = DT_VALUES[typeOrdinal];        
+        Node na = switch (dt) {
             case INTEGER -> NodeFactory.createLiteralByValue((int) integers.get(off));
             case LONG -> NodeFactory.createLiteralByValue(longs.get(off));
             case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat((int) (off * Float.BYTES)));
@@ -112,6 +114,14 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
+        /*
+        if (typedLiterals!=null) {
+            long xxx = typedLiterals.get(idx);
+            if (xxx>0) {
+                IO.println("XXXXSTA : "+idx+" ] "+off+"  ===>  "+na+" LTT : "+typedLiterals.get(idx)+" ************* "+typedLiteralsDictionary.get(typedLiterals.get(idx)-1));
+            }
+        }*/
+        return na;
     }
 
     @Override

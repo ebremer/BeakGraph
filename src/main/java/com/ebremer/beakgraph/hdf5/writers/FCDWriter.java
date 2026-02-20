@@ -33,6 +33,7 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
         this.blockSize = blockSize;
         this.baos = new ByteArrayOutputStream();
         this.offsets = new DataOutputBuffer(Path.of("offsets"));
+        IO.println(path+"   "+ID);
     }
 
     private void writeFragment(byte[] data) throws IOException {
@@ -103,6 +104,9 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
 
     @Override
     public void Add(WritableGroup group) {
+        //if (numEntries<10) {
+          //  IO.println("Add Group ID "+ID+" ===> "+numEntries);
+        //}
         WritableGroup strings = group.putGroup(path.toString());
         strings.putAttribute("blockSize", blockSize);
         long validBlocks = (stringsInCurrentBlock == 0 && numEntries > 0) ? numBlocks : numBlocks + 1;
