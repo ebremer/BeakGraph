@@ -119,32 +119,25 @@ public class SPARQLEndPoint {
     private static class SparqlWebPageServlet extends HttpServlet {
         
         @Override
-        protected void doGet(HttpServletRequest req, HttpServletResponse resp) 
-                throws IOException {
-            
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {            
             String pathInfo = req.getPathInfo();
-            String resourcePath;
-            
+            String resourcePath;            
             // Default to index.html if no specific file requested
             if (pathInfo == null || pathInfo.equals("/") || pathInfo.isEmpty()) {
                 resourcePath = "/META-INF/sparql/index.html";
             } else {
                 resourcePath = "/META-INF/sparql" + pathInfo;
-            }
-            
+            }            
             // Try to load the resource
-            InputStream is = getClass().getResourceAsStream(resourcePath);
-            
+            InputStream is = getClass().getResourceAsStream(resourcePath);            
             if (is == null) {
                 resp.sendError(HttpServletResponse.SC_NOT_FOUND, 
                     "Resource not found: " + resourcePath);
                 return;
-            }
-            
+            }            
             // Set content type based on file extension
             String contentType = getContentType(resourcePath);
-            resp.setContentType(contentType);
-            
+            resp.setContentType(contentType);            
             // Stream the resource to response
             try (InputStream input = is; 
                  OutputStream output = resp.getOutputStream()) {

@@ -4,7 +4,7 @@
   <groupId>com.ebremer</groupId>
   <artifactId>BeakGraph</artifactId>
   <name>BeakGraph</name>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
   <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
   <issueManagement>
     <system>github</system>
