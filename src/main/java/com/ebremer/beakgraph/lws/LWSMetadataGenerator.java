@@ -11,8 +11,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.zip.GZIPOutputStream;
 
 public class LWSMetadataGenerator {
-
-    // LWS Vocab Constants
     private static final String LWS_NS = "https://www.w3.org/ns/lws#";
     private static final String AS_NS = "https://www.w3.org/ns/activitystreams#";
     private static final String SCHEMA_NS = "https://schema.org/";
