@@ -2,7 +2,7 @@ package com.ebremer.beakgraph.tests;
 
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.core.lib.GEO;
+import com.ebremer.ns.GEO;
 import com.ebremer.beakgraph.turbo.Spatial;
 import java.awt.*;
 import java.awt.image.BufferedImage;

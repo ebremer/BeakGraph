@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import static com.ebremer.beakgraph.Params.COMPRESSION_THRESHOLD;
 import com.ebremer.beakgraph.hdf5.DataOutputBuffer;
 import com.ebremer.beakgraph.hdf5.HDF5Buffer;
 import com.ebremer.beakgraph.core.lib.VByte;
@@ -15,7 +16,6 @@ import java.util.UUID;
 
 public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private final int blockSize;
-    private static final int COMPRESSION_THRESHOLD = 64;
     private int stringsInCurrentBlock = 0;
     private String prevString = null;
     private final ByteArrayOutputStream baos;

@@ -27,123 +27,107 @@ import org.slf4j.LoggerFactory;
  *
  * @author Erich Bremer
  */
-
 public class beakgraph {
     private static final Logger logger = LoggerFactory.getLogger(beakgraph.class);
-    private Parameters params;
-    private ProgressBar progressBar = null;
+    private static ProgressBar progressBar = null;
     private final FileCounter fc;
-    
+    private Parameters params;   // ← fixed: instance field
+
     public beakgraph(Parameters params) {
-        JenaSystem.init();        
+        JenaSystem.init();
         this.params = params;
         this.fc = new FileCounter();
         String os = System.getProperty("os.name").toLowerCase();
-        ProgressBarStyle style;
-        if (os.contains("win")) {
-            style = ProgressBarStyle.ASCII;
-        } else {
-            style = ProgressBarStyle.COLORFUL_UNICODE_BLOCK;
-        }
+        ProgressBarStyle style = os.contains("win") ? ProgressBarStyle.ASCII : ProgressBarStyle.COLORFUL_UNICODE_BLOCK;
         if (params.status) {
             progressBar = new ProgressBarBuilder()
                 .setTaskName("Processing RDF Source Files...")
                 .setInitialMax(0)
                 .setStyle(style)
                 .build();
-        } else {
         }
     }
 
-    public static void main(String[] args) throws FileNotFoundException, IOException {        
-        //Configurator.setRootLevel(Level.ERROR);
-        //Configurator.setLevel("com.ebremer.halcyon.raptor", Level.ERROR);
-        //Configurator.setLevel("com.ebremer.beakgraph", Level.ERROR);      
-        // monitor https://issues.apache.org/jira/browse/LOG4J2-2649
+    public static void main(String[] args) throws FileNotFoundException, IOException, Exception {
         logger.info(String.format("%s %s", "beakgraph ", Arrays.toString(args)));
         Parameters params = new Parameters();
         JCommander jc = JCommander.newBuilder().addObject(params).build();
         jc.setProgramName("beakgraph");
-        if (args.length!=0) {
+        if (args.length != 0) {
             try {
                 jc.parse(args);
                 if (params.help) {
                     jc.usage();
                     System.exit(0);
-                } else {             
-                    if (params.sparqlendpoint!=null) {
-                        if (params.sparqlendpoint.exists()) {
-                            SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);
-                            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                                endpoint.shutdown();
-                            }));
-                            System.out.println("Press Ctrl+C to stop the server...");        
-                            // Keep the application running
-                            try {
-                                Thread.currentThread().join();
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                            }
+                } else {
+                    if (params.sparqlendpoint != null) {
+                        if (!params.sparqlendpoint.exists()) {
+                            System.err.println("Error: -endpoint does not exist: " + params.sparqlendpoint);
+                            System.exit(1);
                         }
-                    } else if (params.src.exists()) {
+                        SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);
+                        Runtime.getRuntime().addShutdownHook(new Thread(() -> endpoint.shutdown()));
+                        System.out.println("Press Ctrl+C to stop the server...");
+                        try {
+                            Thread.currentThread().join();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    } else if (params.src != null && params.src.exists()) {
                         JenaSystem.init();
                         beakgraph bg = new beakgraph(params);
-                        bg.Traverse();                 
-                    } else {
-                        System.out.println("Source does not exist! "+params.src);
+                        bg.Traverse();
+                    } else if (params.src != null) {
+                        System.out.println("Source does not exist! " + params.src);
                     }
                 }
             } catch (ParameterException ex) {
                 if (params.version) {
-                    System.out.println("beakgraph - Version : "+Params.VERSION);
+                    System.out.println("beakgraph - Version : " + Params.VERSION);
                 } else {
                     System.out.println(ex.getMessage());
                 }
             }
         }
     }
-    
+
     public void Traverse() {
         try (ThreadPoolExecutor engine = new ThreadPoolExecutor(params.threads, params.threads, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>())) {
             engine.prestartAllCoreThreads();
-            Files.walk(params.src.toPath())                        
+            Files.walk(params.src.toPath())
                 .parallel()
-                .filter(p->{
+                .filter(p -> {
                     if (p.toFile().isDirectory()) {
                         fc.incrementDirectoryCount();
                         return false;
                     }
-                    if (p.toFile().length()==0) {
+                    if (p.toFile().length() == 0) {
                         fc.getZeroFileCount();
                         return false;
                     }
-                    if (p.toFile().toString().toLowerCase().endsWith(".ttl.gz")) {
-                        return true;
-                    }
-                    if (p.toFile().toString().toLowerCase().endsWith(".ttl")) {
+                    if (p.toFile().toString().toLowerCase().endsWith(".ttl.gz") || p.toFile().toString().toLowerCase().endsWith(".ttl")) {
                         return true;
                     }
                     fc.incrementOtherFileCount();
                     return false;
                 })
-                .forEach(p->{
+                .forEach(p -> {
                     fc.incrementRDFFileCount();
                     if (params.status) {
                         progressBar.maxHint(fc.getRDFFileCount());
                         progressBar.stepTo(engine.getCompletedTaskCount());
                     }
-                    engine.submit(new FileProcessor(p,fc));
+                    engine.submit(new FileProcessor(p, fc));
                 });
             engine.shutdown();
             while (!engine.isTerminated()) {
                 if (params.status) {
                     progressBar.stepTo(engine.getCompletedTaskCount());
                     progressBar.maxHint(fc.getRDFFileCount());
-                }                
+                }
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException ex) {
-                    //logger.severe(ex.getMessage());
                 }
             }
         } catch (IOException ex) {
@@ -153,20 +137,7 @@ public class beakgraph {
             System.out.println(fc);
         }
     }
-    
-    
-    /**
-    * Creates a destination Path by preserving the relative sub-path of srcFile
-    * (relative to srcDirectory) and placing it under destDirectory with a new file extension.
-    *
-    * @param srcFile       the original file whose relative path and name will be used
-    * @param srcDirectory the base directory that srcFile is located under
-    * @param destDirectory the target base directory where the new file will be placed
-    * @param newExt        the new file extension (without leading dot, e.g. "txt").
-    *                      If empty or null, no extension will be appended.
-    * @return the new Path in destDirectory with the same relative structure and the new extension
-    * @throws IllegalArgumentException if srcFile is not actually inside srcDirectory
-    */
+
     public static Path mapToDestinationWithNewExtension(Path srcFile, Path srcDirectory, Path destDirectory, String newExt) {
         Path normalizedSrcFile = srcFile.normalize();
         Path normalizedSrcDir = srcDirectory.normalize();
@@ -176,25 +147,18 @@ public class beakgraph {
         }
         Path relativePath = normalizedSrcDir.relativize(normalizedSrcFile);
         Path parentInRelative = relativePath.getParent();
-        Path destParent;
-        if (parentInRelative == null) {
-            destParent = normalizedDestDir;
-        } else {
-            destParent = normalizedDestDir.resolve(parentInRelative);
-        }
+        Path destParent = (parentInRelative == null) ? normalizedDestDir : normalizedDestDir.resolve(parentInRelative);
         String originalName = relativePath.getFileName().toString();
         int dotIndex = originalName.lastIndexOf('.');
         String nameWithoutExt = (dotIndex == -1) ? originalName : originalName.substring(0, dotIndex);
-        String newFileName = newExt == null || newExt.isEmpty()
-                             ? nameWithoutExt
-                            : nameWithoutExt + "." + newExt;
+        String newFileName = (newExt == null || newExt.isEmpty()) ? nameWithoutExt : nameWithoutExt + "." + newExt;
         return destParent.resolve(newFileName);
     }
-    
+
     class FileProcessor implements Callable<Model> {
         private final Path src;
         private final FileCounter fc;
-        
+
         public FileProcessor(Path src, FileCounter fc) {
             this.src = src;
             this.fc = fc;
@@ -217,12 +181,12 @@ public class beakgraph {
             } catch (IOException ex) {
                 fc.incrementFailedConversionFileCount();
                 throw new Error(ex.getMessage());
-            } catch (Throwable ex) {               
-                IO.println("***********************************************************************************\n"+ex.getMessage()+"\n*******************************************");
+            } catch (Throwable ex) {
+                IO.println("***********************************************************************************\n" + ex.getMessage() + "\n*******************************************");
                 ex.printStackTrace();
                 throw new Error(ex.getMessage());
             }
             return null;
-        }        
+        }
     }
 }

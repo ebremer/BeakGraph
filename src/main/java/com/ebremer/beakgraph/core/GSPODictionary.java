@@ -8,6 +8,11 @@ import org.apache.jena.graph.Node;
  * @author Erich Bremer
  */
 public interface GSPODictionary {
+
+    public Dictionary getGraphs();
+    public Dictionary getSubjects();
+    public Dictionary getPredicates();
+    public Dictionary getObjects();
     
     public long locateGraph(Node element);
     public Object extractGraph(long id);
@@ -25,7 +30,5 @@ public interface GSPODictionary {
     public Stream<Node> streamSubjects();
     public Stream<Node> streamPredicates();
     public Stream<Node> streamObjects();
-    
-    //public long getNumberOfNodes();
     
 }

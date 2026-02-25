@@ -28,9 +28,10 @@ public class DictionaryDebug {
             System.out.println("ID for " + snomed + " = " + idSnomed);
             
             // 2. Check ID of '1.0'
-            Node one = NodeFactory.createLiteral("1.0", org.apache.jena.datatypes.xsd.XSDDatatype.XSDfloat);
-            long idOne = w.locateObject(one);
-            System.out.println("ID for " + one + " = " + idOne);
+           
+           // Node one = NodeFactory.createLiteral("1.0", org.apache.jena.datatypes.xsd.XSDDatatype.XSDfloat);
+           // long idOne = w.locateObject(one);
+            //System.out.println("ID for " + one + " = " + idOne);
             
             // 3. What is at ID 9 (relative to objects)?
             // Note: locateObject returns absolute ID (shared + objects).

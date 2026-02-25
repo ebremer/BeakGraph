@@ -1,7 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
 import com.ebremer.beakgraph.Params;
-import com.ebremer.beakgraph.core.lib.GEO;
+import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.halcyon.hilbert.HilbertSpace;
 import com.ebremer.halcyon.hilbert.PolygonScaler;
@@ -18,10 +18,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
 import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
+import org.apache.jena.graph.Triple;
+import org.apache.jena.rdf.model.Model;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
@@ -33,6 +34,11 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import static com.ebremer.beakgraph.Params.BGVOID;
+import com.ebremer.beakgraph.sniff.SD;
+import com.ebremer.ns.GEO;
+import org.apache.jena.vocabulary.RDFS;
+import org.apache.jena.vocabulary.VOID;
 
 public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
@@ -53,6 +59,7 @@ public class PositionalDictionaryWriterBuilder {
     private boolean spatial = false;
     private int MaxX = Integer.MIN_VALUE;
     private int MaxY = Integer.MIN_VALUE;
+   
     private static final Node[] asHilbert = {
         NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"),
         NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
@@ -121,7 +128,10 @@ public class PositionalDictionaryWriterBuilder {
         NodeFactory.createURI("https://halcyon.is/ns/asWKT8"),
         NodeFactory.createURI("https://halcyon.is/ns/asWKT9"),
         NodeFactory.createURI("https://halcyon.is/ns/asWKT10"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT11")
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT11"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT12"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT13"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT14")
     };
     private static final Node[] hilbertCorner = {
         NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner0"),
@@ -135,13 +145,18 @@ public class PositionalDictionaryWriterBuilder {
         NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner8"),
         NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner9"),
         NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner10"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner11")
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner11"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner12"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner13"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner14")
     };
     
     //private static final Node low = HAL.low.asNode();
     //private static final Node high = HAL.high.asNode();
     //private static final Node hasRange = HAL.hasRange.asNode();
     //private static final Node member = RDFS.member.asNode();
+    
+    private BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
    
     public File getDestination() {
         return dest;
@@ -244,6 +259,7 @@ public class PositionalDictionaryWriterBuilder {
     private ArrayList<Quad> AddSpatial(Quad quad) {
         final Polygon[] scales = PolygonScaler.toPolygons(quad.getObject().getLiteralLexicalForm());
         final ArrayList<Quad> qqq = new ArrayList<>();
+        try {
         if (scales == null) {
             return qqq;
         }
@@ -273,8 +289,8 @@ public class PositionalDictionaryWriterBuilder {
             } catch (Throwable ex) {
                 logger.error(ex.getMessage());
             }
-            try {
-                long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
+            long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
+            try {                
                 qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
                 qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
                 qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
@@ -290,7 +306,12 @@ public class PositionalDictionaryWriterBuilder {
             } catch (IllegalArgumentException ex) {
                 logger.error("Bad polygon bro2 : {}", quad.getObject().getLiteralLexicalForm());
                 return qqq;
-            } 
+            }  catch (Throwable ex) {
+            logger.error(ex.getMessage());
+        }
+        }
+        } catch (Throwable ex) {
+            logger.error(ex.getMessage());
         }
         return qqq;
     }
@@ -441,7 +462,7 @@ public class PositionalDictionaryWriterBuilder {
    
     public PositionalDictionaryWriter build() throws IOException {
         final AtomicLong quadcount = new AtomicLong();
-        logger.trace("Creating dictionary...");
+        logger.trace("Creating dictionary...");        
         try (InputStream xis = src.toString().endsWith(".gz")
                 ? new GZIPInputStream(new FileInputStream(src))
                 : new FileInputStream(src)) {
@@ -461,19 +482,22 @@ public class PositionalDictionaryWriterBuilder {
                             System.out.println("Loaded " + quadcount.get() + " quads...");
                         }
                         quadslist.add(quad);
-                        ProcessQuad(quad);                    
+                        try {
+                           ProcessQuad(quad);
+                        } catch (Throwable ex) {
+                            logger.error(ex.getMessage());
+                        }
+                        xvoid.add(quad);
                         if (spatial && isGeoLiteral(quad)) {
                             StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad));
                             spatialTasks.add(task);
                         }
                     });
-                try {
-                    scope.join();
-                } catch (IllegalArgumentException ex) {
-                    logger.error(ex.getMessage());
-                }
+                scope.join();
             } catch (InterruptedException ex) {
                 System.getLogger(PositionalDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
+            } catch (Throwable ex) {
+                logger.error(ex.getMessage());
             }
             for (var task : spatialTasks) {
                 ArrayList<Quad> extraQuads = task.get();
@@ -482,6 +506,22 @@ public class PositionalDictionaryWriterBuilder {
                     ProcessQuad(q);
                 });
             }
+            Model xxx = xvoid.getModel();
+            xxx.setNsPrefix("void", VOID.NS);
+            xxx.setNsPrefix("sd", SD.getURI());
+            xxx.setNsPrefix("xsd", XSD.getURI());
+            xxx.setNsPrefix("rdfs", RDFS.getURI());
+            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
+            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
+            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
+            xvoid.getModel().listStatements().forEach(s->{
+                Triple ff = s.asTriple();
+                Quad qqq = Quad.create(BGVOID, ff);
+                ProcessQuad(qqq);
+                quadslist.add(qqq);
+            });
             stats.numGraphs = graphs.size();
             stats.numSubjects = subjects.size();
             stats.numPredicates = predicates.size();
@@ -491,8 +531,6 @@ public class PositionalDictionaryWriterBuilder {
             throw new IOException("Source file not found: " + src, e);
         } catch (IOException e) {
             throw new IOException("I/O error while reading RDF source", e);
-        } catch (Throwable ex) {
-            java.util.logging.Logger.getLogger(PositionalDictionaryWriterBuilder.class.getName()).log(Level.SEVERE, null, ex);
         }
         this.numQuads = quadcount.get();
         this.quads = quadslist.toArray(Quad[]::new);

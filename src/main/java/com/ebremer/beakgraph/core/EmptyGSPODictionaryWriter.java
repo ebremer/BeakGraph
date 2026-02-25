@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.core;
 
-import com.ebremer.beakgraph.core.GSPODictionary;
 import io.jhdf.api.WritableGroup;
 import java.util.ArrayList;
 import java.util.List;
@@ -83,6 +82,26 @@ public class EmptyGSPODictionaryWriter implements DictionaryWriter, GSPODictiona
 
     @Override
     public Stream<Node> streamGraphs() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Dictionary getGraphs() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Dictionary getSubjects() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Dictionary getPredicates() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Dictionary getObjects() {
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 }

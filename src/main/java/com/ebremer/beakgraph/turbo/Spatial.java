@@ -1,6 +1,6 @@
 package com.ebremer.beakgraph.turbo;
 
-import com.ebremer.beakgraph.core.lib.GEOF;
+import com.ebremer.ns.GEOF;
 import org.apache.jena.sparql.function.FunctionRegistry;
 import org.apache.jena.sparql.pfunction.PropertyFunctionRegistry;
 import org.apache.jena.vocabulary.RDFS;
