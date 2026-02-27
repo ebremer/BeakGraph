@@ -17,7 +17,7 @@ public class Params {
     public static final String SPATIALSTRING = String.format("urn:%s:Spatial",BGURN);
     public static final Node SPATIAL = NodeFactory.createURI(SPATIALSTRING);
     public static final String VOIDSTRING = String.format("urn:%s:void", BGURN);
-    public static final Node VOID = NodeFactory.createURI(VOIDSTRING);
+    public static final Node BGVOID = NodeFactory.createURI(VOIDSTRING);
     public static final short GRIDTILESIZE = 512;
     
     private Params() {}

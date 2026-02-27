@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
 import com.ebremer.beakgraph.Params;
+import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.GEO;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.halcyon.hilbert.HilbertSpace;
@@ -20,9 +21,13 @@ import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.zip.GZIPInputStream;
+import org.apache.jena.graph.Graph;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
+import org.apache.jena.graph.Triple;
+import org.apache.jena.rdf.model.Model;
 import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
@@ -33,6 +38,10 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import static com.ebremer.beakgraph.Params.BGVOID;
+import com.ebremer.beakgraph.sniff.SD;
+import org.apache.jena.vocabulary.RDFS;
+import org.apache.jena.vocabulary.VOID;
 
 public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
@@ -53,6 +62,7 @@ public class PositionalDictionaryWriterBuilder {
     private boolean spatial = false;
     private int MaxX = Integer.MIN_VALUE;
     private int MaxY = Integer.MIN_VALUE;
+   
     private static final Node[] asHilbert = {
         NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"),
         NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
@@ -142,6 +152,8 @@ public class PositionalDictionaryWriterBuilder {
     //private static final Node high = HAL.high.asNode();
     //private static final Node hasRange = HAL.hasRange.asNode();
     //private static final Node member = RDFS.member.asNode();
+    
+    private BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
    
     public File getDestination() {
         return dest;
@@ -441,7 +453,7 @@ public class PositionalDictionaryWriterBuilder {
    
     public PositionalDictionaryWriter build() throws IOException {
         final AtomicLong quadcount = new AtomicLong();
-        logger.trace("Creating dictionary...");
+        logger.trace("Creating dictionary...");        
         try (InputStream xis = src.toString().endsWith(".gz")
                 ? new GZIPInputStream(new FileInputStream(src))
                 : new FileInputStream(src)) {
@@ -461,7 +473,8 @@ public class PositionalDictionaryWriterBuilder {
                             System.out.println("Loaded " + quadcount.get() + " quads...");
                         }
                         quadslist.add(quad);
-                        ProcessQuad(quad);                    
+                        ProcessQuad(quad);
+                        xvoid.add(quad);
                         if (spatial && isGeoLiteral(quad)) {
                             StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad));
                             spatialTasks.add(task);
@@ -482,6 +495,22 @@ public class PositionalDictionaryWriterBuilder {
                     ProcessQuad(q);
                 });
             }
+            Model xxx = xvoid.getModel();
+            xxx.setNsPrefix("void", VOID.NS);
+            xxx.setNsPrefix("sd", SD.getURI());
+            xxx.setNsPrefix("xsd", XSD.getURI());
+            xxx.setNsPrefix("rdfs", RDFS.getURI());
+            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
+            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
+            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
+            xvoid.getModel().listStatements().forEach(s->{
+                Triple ff = s.asTriple();
+                Quad qqq = Quad.create(BGVOID, ff);
+                ProcessQuad(qqq);
+                quadslist.add(qqq);
+            });
             stats.numGraphs = graphs.size();
             stats.numSubjects = subjects.size();
             stats.numPredicates = predicates.size();

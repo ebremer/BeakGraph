@@ -9,12 +9,15 @@ import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
 import org.apache.jena.sparql.core.Quad;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author Erich Bremer
  */
 public class HDF5Writer implements BeakGraphWriter {
+    private static final Logger logger = LoggerFactory.getLogger(HDF5Writer.class);
     private final Builder builder;
     
     private HDF5Writer(Builder builder) {
@@ -44,11 +47,11 @@ public class HDF5Writer implements BeakGraphWriter {
             gspo.Add(hdt);
             gpos.Add(hdt);
             //gosp.Add(hdt);            
-        } catch (Exception e) {
-            e.printStackTrace();
-            
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            logger.error(ex.getMessage());
         } catch (Throwable ex) {
-            IO.println(ex.getMessage());
+            logger.error(ex.getMessage());
         }
         IO.println("Done.");
     }
