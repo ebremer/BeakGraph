@@ -125,7 +125,6 @@ public class BGVoIDSD {
                 if (pNode.isURI()) {
                     Property prop = ResourceFactory.createProperty(pNode.getURI());
                     vocabNamespaces.add(getNamespaceBase(pNode.getURI()));
-                    
                     graphRes.addProperty(VOID.propertyPartition,
                         graphRes.getModel().createResource()
                             .addProperty(VOID.property, prop)
