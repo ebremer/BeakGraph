@@ -21,7 +21,6 @@ import org.apache.jena.vocabulary.VOID;
 /**
  * A class for accumulating statistics over quads in an RDF dataset and generating
  * VoID and SPARQL Service Description (sd:) metadata.
- * * This version tracks distinct items using Jena Node objects in memory.
  */
 public class BGVoIDSD {
 
@@ -64,15 +63,12 @@ public class BGVoIDSD {
      */
     public Model getModel() {
         Model m = ModelFactory.createDefaultModel();
-
         // Primary dataset resource
         Resource dataset = m.createResource(datasetURI).addProperty(RDF.type, SD.Dataset);
-
         // Default graph description
         Resource defaultGraphRes = m.createResource().addProperty(RDF.type, SD.Graph);
         defaultStats.applyTo(defaultGraphRes, m);
         dataset.addProperty(SD.defaultGraph, defaultGraphRes);
-
         // Named graphs
         namedStats.forEach((node, stats) -> {
             if (!node.isURI()) {
@@ -98,20 +94,16 @@ public class BGVoIDSD {
         private final Set<Node> distinctSubjects = ConcurrentHashMap.newKeySet();
         private final Set<Node> distinctObjects = ConcurrentHashMap.newKeySet();
 
-        public Stats() {
-        }
+        public Stats() {}
 
         public void add(Quad quad) {
             numtriples++;
-
             Node sNode = quad.getSubject();
             Node pNode = quad.getPredicate();
             Node oNode = quad.getObject();
-
             predicateCounts.merge(pNode, 1L, Long::sum);
             distinctSubjects.add(sNode);
             distinctObjects.add(oNode);
-
             // Classes and instances (rdf:type)
             if (pNode.equals(RDF.type.asNode()) && oNode.isURI() && sNode.isURI()) {
                 classInstances.computeIfAbsent(oNode, c -> ConcurrentHashMap.newKeySet()).add(sNode);
@@ -127,9 +119,7 @@ public class BGVoIDSD {
                     .addLiteral(VOID.distinctSubjects, (long) distinctSubjects.size())
                     .addLiteral(VOID.distinctObjects, (long) distinctObjects.size())
                     .addLiteral(VOID.entities, entities);
-            
             Set<String> vocabNamespaces = new HashSet<>();
-
             // Process Property Partitions & capture predicate namespaces
             predicateCounts.forEach((pNode, count) -> {
                 if (pNode.isURI()) {
@@ -142,7 +132,6 @@ public class BGVoIDSD {
                             .addLiteral(VOID.triples, count));
                 }
             });
-
             // Process Class Partitions
             classInstances.forEach((cNode, instances) -> {
                 if (cNode.isURI()) {
@@ -153,19 +142,16 @@ public class BGVoIDSD {
                             .addLiteral(VOID.entities, (long) instances.size()));
                 }
             });
-
             // Evaluate Distinct Objects to grab the remaining namespaces
             distinctObjects.forEach(oNode -> {
                 if (oNode.isURI()) {
                     vocabNamespaces.add(getNamespaceBase(oNode.getURI()));
                 }
             });
-
             // Write void:vocabulary
             vocabNamespaces.forEach(ns -> {
                 graphRes.addProperty(VOID.vocabulary, ResourceFactory.createResource(ns));
             });
-
             // Infer void:uriSpace and void:uriRegexPattern iteratively over distinct subjects
             String commonPrefix = computeLongestCommonPrefix();
             if (commonPrefix != null && commonPrefix.length() > 10) {
@@ -174,7 +160,6 @@ public class BGVoIDSD {
                 Literal regexLit = m.createTypedLiteral(regex, XSDDatatype.XSDstring);
                 graphRes.addLiteral(VOID.uriRegexPattern, regexLit);
             }
-
             // Copy existing dcterms: properties
             graphRes.listProperties().toList().stream()
                 .filter(st -> st.getPredicate().getNameSpace().equals(DCTerms.NS))
