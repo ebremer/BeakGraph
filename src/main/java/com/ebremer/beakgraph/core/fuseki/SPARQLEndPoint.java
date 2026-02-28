@@ -19,13 +19,11 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Collections;
 import java.util.Enumeration;
-
 import org.apache.jena.sys.JenaSystem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,23 +45,17 @@ public class SPARQLEndPoint {
         try {
             bg = BeakGraphPool.getPool().borrowObject(params.sparqlendpoint.toURI());
             Dataset ds = bg.getDataset();
-            
-            // Build and configure the Fuseki server
             server = FusekiServer.create()
                 .add("/rdf", ds)
-                // Add the filter to the Fuseki Builder
                 .addFilter("/*", new ProfileInterceptorFilter())
                 .port(params.port)
                 .loopback(false)
-                .build();
-                
+                .build();                
             Server jettyServer = server.getJettyServer();
             ServletContextHandler context = (ServletContextHandler) jettyServer.getHandler();
-
             ServletHolder sparqlPageHolder = new ServletHolder("sparql-page", new SparqlWebPageServlet());
             context.addServlet(sparqlPageHolder, "/sparql");
             context.addServlet(sparqlPageHolder, "/sparql/*");
-            
             server.start();        
             System.out.println("Fuseki server started successfully!");
             System.out.println("SPARQL Query endpoint: http://localhost:" + params.port + "/rdf/query");
@@ -87,28 +79,19 @@ public class SPARQLEndPoint {
 
     public boolean isRunning() { return server != null; }
     
-// ========================================================================
-    // JETTY THREADLOCAL INTERCEPTOR
-    // ========================================================================
     private static class ProfileInterceptorFilter implements Filter {
         @Override
-        public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) 
-                throws IOException, ServletException {
-            
+        public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {            
             HttpServletRequest req = (HttpServletRequest) request;
             String acceptHeader = req.getHeader("Accept");
-
             boolean isProfileRequested = acceptHeader != null 
                     && acceptHeader.contains("application/ld+json") 
                     && acceptHeader.contains("profile=user-profile");
-
             if (isProfileRequested) {
                 System.out.println("Jetty Filter: Profile requested! Activating Frame.");
-                
-                // Flip the secret switch for this specific HTTP thread
-                JenaShaper.USE_PROFILE.set(true);
-                
-                // Strip the profile from the header so Fuseki handles it effortlessly
+                // Flip the switch for this specific HTTP thread
+                JenaShaper.USE_PROFILE.set(true);                
+                // Strip the profile from the header so Fuseki handles it
                 HttpServletRequestWrapper wrapper = new HttpServletRequestWrapper(req) {
                     @Override
                     public String getHeader(String name) {
@@ -127,13 +110,11 @@ public class SPARQLEndPoint {
                 try {
                     chain.doFilter(wrapper, response);
                 } finally {
-                    // MUST clean up the thread switch after response is sent!
+                    // clean up thread switch after response
                     JenaShaper.USE_PROFILE.remove();
                 }
                 return;
             }
-
-            // Normal requests flow through cleanly
             try {
                 chain.doFilter(request, response);
             } finally {
@@ -142,9 +123,6 @@ public class SPARQLEndPoint {
         }
     }
 
-    // ========================================================================
-    // SPARQL WEB INTERFACE SERVLET
-    // ========================================================================
     private static class SparqlWebPageServlet extends HttpServlet {
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {            
