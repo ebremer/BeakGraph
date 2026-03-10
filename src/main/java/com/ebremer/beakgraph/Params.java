@@ -10,7 +10,7 @@ import org.apache.jena.graph.NodeFactory;
 public class Params {
     public static final String BG = ".BG";
     public static final String DICTIONARY = "dictionary";
-    public static final String VERSION = "0.11.0";
+    public static final String VERSION = "0.13.0";
     public static final int BLOCKSIZE = 64;
     public static final int SUPERBLOCKSIZE = 512;
     public static final String BGURN = "x-beakgraph";
@@ -19,6 +19,7 @@ public class Params {
     public static final String VOIDSTRING = String.format("urn:%s:void", BGURN);
     public static final Node BGVOID = NodeFactory.createURI(VOIDSTRING);
     public static final short GRIDTILESIZE = 512;
+    public static final int COMPRESSION_THRESHOLD = 64;
     
     private Params() {}
 }
