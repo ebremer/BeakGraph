@@ -50,6 +50,7 @@ public class LWSMetadataGenerator {
         Resource rootResource = model.createResource(rootPath.toUri().toString());
         rootResource.addProperty(RDF.type, containerType);
         Files.walkFileTree(rootPath, new SimpleFileVisitor<>() {
+            
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 processResource(model, file, attrs, dataType, mediaType, size, modified);
