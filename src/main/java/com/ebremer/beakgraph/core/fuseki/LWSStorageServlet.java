@@ -18,7 +18,8 @@ import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.rdf.model.Statement;
-
+import org.apache.jena.vocabulary.OWL;
+import org.apache.jena.vocabulary.XSD;
 public class LWSStorageServlet extends HttpServlet {
     private static String BASE;
     private static Path STORAGE_ROOT;
@@ -29,31 +30,26 @@ public class LWSStorageServlet extends HttpServlet {
     private static final Property AS_MEDIA_TYPE = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#mediaType");
     private static final Property SCHEMA_SIZE = ResourceFactory.createProperty("https://schema.org/size");
     private static final Property AS_UPDATED = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#updated");
-
     public LWSStorageServlet(Model model) {
         this.MODEL = model;
     }
-
     public static void setBase(String b) {
         BASE = b;
     }
-  
+ 
     public static void setStorageRoot(Path root) {
         STORAGE_ROOT = root;
     }
-
     private boolean isHDF5(Path file) {
         String name = file.getFileName().toString().toLowerCase();
         return name.endsWith(".h5");
     }
-
     private boolean isSparqlRequest(HttpServletRequest req) {
         String method = req.getMethod();
         String ct = req.getContentType();
         if ("POST".equals(method) && ct != null && ct.toLowerCase().startsWith("application/sparql-query")) return true;
         return "GET".equals(method) && req.getParameter("query") != null;
     }
-
     private void handleSparqlQuery(HttpServletRequest req, HttpServletResponse resp, Path h5File) throws IOException {
         String queryStr = null;
         if ("GET".equals(req.getMethod())) {
@@ -93,6 +89,10 @@ public class LWSStorageServlet extends HttpServlet {
                     resp.getWriter().write("{\"boolean\":" + b + "}");
                 } else if (query.isConstructType() || query.isDescribeType()) {
                     Model m = query.isConstructType() ? qexec.execConstruct() : qexec.execDescribe();
+                    m.setNsPrefix("lws", "https://www.w3.org/ns/lws#");
+                    m.setNsPrefix("owl", OWL.getURI());
+                    m.setNsPrefix("as", "https://www.w3.org/ns/activitystreams#");
+                    m.setNsPrefix("xsd", XSD.getURI());
                     if (accept.contains("json")) {
                         resp.setContentType("application/ld+json");
                         RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.JSONLD);
@@ -111,18 +111,15 @@ public class LWSStorageServlet extends HttpServlet {
             if (bg != null) BeakGraphPool.getPool().returnObject(fileUri, bg);
         }
     }
-
     private String getParentURI(String resourceURI) {
         if (resourceURI.equals(HTTP_ROOT) || resourceURI.equals(HTTP_ROOT + "/")) return null;
         int lastSlash = resourceURI.lastIndexOf('/');
         if (lastSlash > HTTP_ROOT.length() - 1) return resourceURI.substring(0, lastSlash);
         return HTTP_ROOT;
     }
-
     private String getLinksetURI(String resourceURI) {
         return resourceURI.endsWith("/") ? resourceURI.substring(0, resourceURI.length()-1) + ".meta" : resourceURI + ".meta";
     }
-
     private void serveLinkset(HttpServletResponse resp, String resourceURI) throws IOException {
         Resource r = MODEL.getResource(resourceURI);
         if (!MODEL.containsResource(r)) {
@@ -172,7 +169,6 @@ public class LWSStorageServlet extends HttpServlet {
         resp.setCharacterEncoding("UTF-8");
         resp.getWriter().write(json);
     }
-
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String reqPath = req.getRequestURI();
@@ -193,7 +189,7 @@ public class LWSStorageServlet extends HttpServlet {
             resp.setHeader("Link", "<" + BASE + "description>; rel=\"storageDescription\"");
             resp.setHeader("Link", "<" + getLinksetURI(BASE + "description") + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
             resp.setHeader("Vary", "Accept");
-            resp.getWriter().write("{\"@context\":\"https://www.w3.org/ns/lws/v1\",\"@id\":\"" + BASE + "\",\"type\":\"Storage\",\"service\":[{\"type\":\"StorageDescription\",\"serviceEndpoint\":\"" + BASE + "description\"}]}");
+            resp.getWriter().write("{\"@context\":\"https://www.w3.org/ns/lws/v1\",\"@id\":\"" + BASE + "\",\"type\":\"Storage\",\"service\":[{\"type\":\"StorageDescription\",\"serviceEndpoint\":\"" + BASE + "description\"},{\"type\":\"SparqlService\",\"serviceEndpoint\":\"" + BASE + "sparql\"}]}");
             return;
         }
         if (reqPath.startsWith("HalcyonStorage")) {
@@ -206,7 +202,6 @@ public class LWSStorageServlet extends HttpServlet {
             resp.sendError(404, "Resource not found: " + resourceURI);
             return;
         }
-
         // SPARQL on .h5 files now checked FIRST (fixes Jena Accept header triggering metadata instead of query)
         if (STORAGE_ROOT != null) {
             Path localFile = STORAGE_ROOT.resolve(reqPath);
@@ -215,15 +210,17 @@ public class LWSStorageServlet extends HttpServlet {
                 return;
             }
         }
-
         String linksetURI = getLinksetURI(resourceURI);
         resp.addHeader("Link", "<" + linksetURI + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
         resp.setHeader("Vary", "Accept");
         boolean isContainer = r.hasProperty(RDF.type, LWS_CONTAINER);
         String accept = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase() : "";
-        boolean wantHtml = accept.contains("text/html") || accept.isEmpty();
-        boolean wantTurtle = accept.contains("turtle");
-        boolean wantJson = accept.contains("ld+json") || accept.contains("json");
+        String formatParam = req.getParameter("format");
+        boolean forceTurtle = "turtle".equalsIgnoreCase(formatParam);
+        boolean forceJsonLd = "jsonld".equalsIgnoreCase(formatParam);
+        boolean wantHtml = (accept.contains("text/html") || accept.isEmpty()) && !forceTurtle && !forceJsonLd;
+        boolean wantTurtle = accept.contains("turtle") || forceTurtle;
+        boolean wantJson = (accept.contains("ld+json") || accept.contains("json")) || forceJsonLd;
         if (isContainer && wantHtml) {
             resp.setContentType("text/html; charset=utf-8");
             try (PrintWriter out = resp.getWriter()) {
@@ -231,7 +228,8 @@ public class LWSStorageServlet extends HttpServlet {
                 out.println("<style>body{font-family:sans-serif;margin:40px} ul{list-style:none;padding:0} a{color:#0066cc}</style></head><body>");
                 out.println("<h1>🌐 LWS Container: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
                 out.println("<p><a href=\"" + BASE + "description\">Storage Description</a> | ");
-                out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a></p><hr>");
+                out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
+                out.println("<a href=\"/sparql/index.html\" target=\"_blank\">SPARQL Endpoint</a></p><hr>");
                 List<Resource> items = r.listProperties(LWS_ITEMS).mapWith(Statement::getResource).toList();
                 if (items.isEmpty()) {
                     out.println("<p><em>Empty container.</em></p>");
@@ -324,7 +322,6 @@ public class LWSStorageServlet extends HttpServlet {
         resp.setContentLengthLong(Files.size(localFile));
         Files.copy(localFile, resp.getOutputStream());
     }
-
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String reqPath = req.getRequestURI();
@@ -351,7 +348,6 @@ public class LWSStorageServlet extends HttpServlet {
         }
         resp.sendError(405, "Method not allowed");
     }
-
     @Override
     protected void doHead(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         doGet(req, resp);
