@@ -18,8 +18,6 @@ import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.rdf.model.Statement;
-import org.apache.jena.vocabulary.OWL;
-import org.apache.jena.vocabulary.XSD;
 public class LWSStorageServlet extends HttpServlet {
     private static String BASE;
     private static Path STORAGE_ROOT;
@@ -89,10 +87,6 @@ public class LWSStorageServlet extends HttpServlet {
                     resp.getWriter().write("{\"boolean\":" + b + "}");
                 } else if (query.isConstructType() || query.isDescribeType()) {
                     Model m = query.isConstructType() ? qexec.execConstruct() : qexec.execDescribe();
-                    m.setNsPrefix("lws", "https://www.w3.org/ns/lws#");
-                    m.setNsPrefix("owl", OWL.getURI());
-                    m.setNsPrefix("as", "https://www.w3.org/ns/activitystreams#");
-                    m.setNsPrefix("xsd", XSD.getURI());
                     if (accept.contains("json")) {
                         resp.setContentType("application/ld+json");
                         RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.JSONLD);
@@ -226,7 +220,7 @@ public class LWSStorageServlet extends HttpServlet {
             try (PrintWriter out = resp.getWriter()) {
                 out.println("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LWS Storage – /" + (reqPath.isEmpty() ? "" : reqPath) + "</title>");
                 out.println("<style>body{font-family:sans-serif;margin:40px} ul{list-style:none;padding:0} a{color:#0066cc}</style></head><body>");
-                out.println("<h1>🌐 LWS Container: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
+                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> LWS Container: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
                 out.println("<p><a href=\"" + BASE + "description\">Storage Description</a> | ");
                 out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
                 out.println("<a href=\"/sparql/index.html\" target=\"_blank\">SPARQL Endpoint</a></p><hr>");
