@@ -33,6 +33,7 @@ public class HDF5Writer implements BeakGraphWriter {
             .setDestination(builder.getDestination())
             .setName("dictionary")
             .setSpatial(builder.getSpatial())
+            .setFeatures(builder.getFeatures())
             .build();
         Quad[] allQuads = w.getQuads();
         BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);

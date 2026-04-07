@@ -10,6 +10,7 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
     protected File dest;
     protected Dataset ds;
     protected boolean spatial;
+    protected boolean features;
 
     // Force the concrete class to return 'this'
     protected abstract T self();
@@ -29,8 +30,17 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
         return self();
     }
     
+    public T setFeatures(boolean flag) {
+        this.features = flag;
+        return self();
+    }
+    
     public boolean getSpatial() {
         return spatial;
+    }
+    
+    public boolean getFeatures() {
+        return features;
     }
 
     public T setDataset(Dataset ds) {

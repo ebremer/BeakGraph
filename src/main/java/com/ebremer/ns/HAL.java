@@ -131,4 +131,7 @@ public class HAL {
     public static final Property urlpathprefix = ResourceFactory.createProperty(NS + "urlpathprefix");
     public static final Property mppx = ResourceFactory.createProperty(NS + "mppx");
     public static final Property mppy = ResourceFactory.createProperty(NS + "mppy");
+    public static final Property centroid = ResourceFactory.createProperty(NS + "centroid");
+    public static final Property majorAxis = ResourceFactory.createProperty(NS + "majorAxis");
+    public static final Property minorAxis = ResourceFactory.createProperty(NS + "minorAxis");
 }

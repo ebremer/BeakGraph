@@ -51,7 +51,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         // 1. Resolve Graph
         if (quad.getGraph().isVariable()) {
             if (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph()))) gi = bnid.get(Var.alloc(quad.getGraph())).getId();
-            else return; 
+            else throw new IllegalStateException("BGIteratorPOS requires Graph to be bound."); //return; 
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
@@ -86,7 +86,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
 
         // C. APPLY FILTER: Narrow the Object Range using Binary Search
         this.oStart = (minObjId <= 0) ? rawOStart : So.lowerBound(rawOStart, rawOEnd, minObjId);
-        this.oEnd = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId);
+        this.oEnd = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId) - 1;
 
         if (oStart > oEnd || oStart < 0) return;
         
@@ -194,11 +194,18 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         long currentObjectId = So.get(curOIndex);
         long currentSubjectId = Ss.get(curSIndex);
        // IO.println("POS : "+dict.getSubjects().extract(currentSubjectId)+"   "+dict.getObjects().extract(currentObjectId));
-        if (queryQuad.getGraph().isVariable()) result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
-        if (queryQuad.getPredicate().isVariable()) result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
-        if (queryQuad.getObject().isVariable()) result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));
-        if (queryQuad.getSubject().isVariable()) result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
+        //if (queryQuad.getGraph().isVariable()) result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
+        //if (queryQuad.getPredicate().isVariable()) result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
+        //if (queryQuad.getObject().isVariable()) result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));
+        //if (queryQuad.getSubject().isVariable()) result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
+        if (queryQuad.getObject().isVariable()) {
+            result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));
+        }
+        if (queryQuad.getSubject().isVariable()) {
+            result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
+        }
         curSIndex++;
+        IO.println(String.format("POS : %s --- %s ----> [%d] %s", dict.getSubjects().extract(currentSubjectId), dict.getPredicates().extract(pi), currentObjectId, dict.getObjects().extract(currentObjectId))); 
         advanceToNextValid();
         return result;
     }

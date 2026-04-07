@@ -10,7 +10,6 @@ import java.util.Collection;
 import java.util.List;
 import org.locationtech.jts.operation.polygonize.Polygonizer;
 import static com.ebremer.beakgraph.Params.GRIDTILESIZE;
-import java.util.Arrays;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

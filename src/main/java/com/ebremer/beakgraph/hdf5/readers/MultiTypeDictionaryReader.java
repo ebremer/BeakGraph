@@ -114,13 +114,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
-        /*
-        if (typedLiterals!=null) {
-            long xxx = typedLiterals.get(idx);
-            if (xxx>0) {
-                IO.println("XXXXSTA : "+idx+" ] "+off+"  ===>  "+na+" LTT : "+typedLiterals.get(idx)+" ************* "+typedLiteralsDictionary.get(typedLiterals.get(idx)-1));
-            }
-        }*/
         return na;
     }
 

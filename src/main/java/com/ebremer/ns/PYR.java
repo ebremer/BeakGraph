@@ -6,12 +6,10 @@ import org.apache.jena.rdf.model.ResourceFactory;
 
 /**
  * Apache Jena vocabulary constants for PyRadiomics Shape2D
- * Namespace: https://pyradiomics.org/ns/shape2d#
  * Preferred prefix: pyr
  */
-public final class PyRadiomics {
-    /** PyRadiomics namespace (with trailing #) */
-    public static final String NS = "https://pyradiomics.org/ns/shape2d#";
+public final class PYR {
+    public static final String NS = HAL.NS+"pyr/shape2d/";
     public static String getURI() { return NS; }
     private static String uri(String localName) { return NS + localName; }
 
@@ -35,5 +33,5 @@ public final class PyRadiomics {
     public static final Property MinorAxisLength = ResourceFactory.createProperty(NS, "MinorAxisLength");
     public static final Property Elongation = ResourceFactory.createProperty(NS, "Elongation");
 
-    private PyRadiomics() {}
+    private PYR() {}
 }

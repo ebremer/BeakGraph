@@ -1,4 +1,4 @@
-package com.ebremer.beakgraph.pyradiomics;
+package com.ebremer.beakgraph.features;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Shape;

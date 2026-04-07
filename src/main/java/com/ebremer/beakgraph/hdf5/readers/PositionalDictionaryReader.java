@@ -28,10 +28,12 @@ public class PositionalDictionaryReader implements GSPODictionary {
         //graphs.streamNodes().forEach(n->IO.println(n));
     }
 
+    @Override
     public Dictionary getGraphs() {
         return graphs;
     }
 
+    @Override
     public Dictionary getSubjects() {
         return new Dictionary() {
             @Override
@@ -71,10 +73,12 @@ public class PositionalDictionaryReader implements GSPODictionary {
         };
     }
 
+    @Override
     public Dictionary getPredicates() {
         return predicates;
     }
     
+    @Override
     public Dictionary getObjects() {
         return new Dictionary() {
             @Override

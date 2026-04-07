@@ -35,10 +35,14 @@ import org.locationtech.jts.geom.Polygon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static com.ebremer.beakgraph.Params.BGVOID;
+import com.ebremer.beakgraph.features.MajorMinor;
+import com.ebremer.beakgraph.features.pyradiomics.Gen2DFeatures;
 import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.ns.GEO;
 import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.VOID;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.io.WKTReader;
 
 public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
@@ -57,6 +61,7 @@ public class PositionalDictionaryWriterBuilder {
     private Quad[] quads = null;
     private final HashMap<Node,Node> bmap = new HashMap<>(10_000_000);
     private boolean spatial = false;
+    private boolean features = false;
     private int MaxX = Integer.MIN_VALUE;
     private int MaxY = Integer.MIN_VALUE;
    
@@ -186,11 +191,17 @@ public class PositionalDictionaryWriterBuilder {
         this.src = src;
         return this;
     }
+
     public PositionalDictionaryWriterBuilder setSpatial(boolean flag) {
         this.spatial = flag;
         return this;
     }
    
+    public PositionalDictionaryWriterBuilder setFeatures(boolean flag) {
+        this.features = flag;
+        return this;
+    }
+    
     public PositionalDictionaryWriterBuilder setDestination(File dest) {
         this.dest = dest;
         return this;
@@ -255,15 +266,34 @@ public class PositionalDictionaryWriterBuilder {
         }
         return intersectingURNs;
     }
+    
+    private boolean isDegeneratePolygon(String wkt) {
+    try {
+        Geometry g = new WKTReader().read(wkt);
+        if (!(g instanceof Polygon p)) return false;
+        return p.getExteriorRing().getNumPoints() < 4;
+    } catch (Exception e) {
+        return true;
+    }
+}
 
     private ArrayList<Quad> AddSpatial(Quad quad) {
-        final Polygon[] scales = PolygonScaler.toPolygons(quad.getObject().getLiteralLexicalForm());
         final ArrayList<Quad> qqq = new ArrayList<>();
-        try {
-        if (scales == null) {
+        String wkt = quad.getObject().getLiteralLexicalForm();
+        if (isDegeneratePolygon(wkt)) {
+            IO.println("Degenerate Polygon : "+wkt);
             return qqq;
         }
-        final String[] wktScales = PolygonScaler.toWKT(scales);
+        final Polygon[] scales;        
+        scales = PolygonScaler.toPolygons(wkt);
+        if (features) {
+            AddFeatures(qqq, quad);
+        }
+        try {
+            if (scales == null) {
+                return qqq;
+            }
+            final String[] wktScales = PolygonScaler.toWKT(scales);
         //List<GridCell> cells;
         /*
         if (scales.length>0) {
@@ -280,40 +310,47 @@ public class PositionalDictionaryWriterBuilder {
             logger.error("Bad polygon bro1 : {}", quad.getObject().getLiteralLexicalForm());
             return qqq;
         }*/
-        for (int s=0; s<scales.length; s++) {
-            List<Node> tiles = generateGridURNs(scales[s],s);
-            try {
-                for (int ii=0; ii<tiles.size(); ii++) {
-                    qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
-                }            
-            } catch (Throwable ex) {
+            for (int s=0; s<scales.length; s++) {
+                List<Node> tiles = generateGridURNs(scales[s],s);
+                try {
+                    for (int ii=0; ii<tiles.size(); ii++) {
+                        qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
+                    }            
+                } catch (Throwable ex) {
+                    logger.error(ex.getMessage());
+                }
+                long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
+                try {                
+                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
+                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
+                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
+                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
+                    qqq.add( Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
+                    /*
+                    for (int ss=0; ss<cells.size(); ss++) {
+                        StringBuilder sb = new StringBuilder();
+                        sb.append(Params.SPATIALSTRING).append("/").append(cells.get(ss));
+                        Node collection = NodeFactory.createURI(sb.toString());
+                        qqq.add( Quad.create(Params.SPATIAL, collection, member, quad.getSubject()));
+                    }*/
+                } catch (IllegalArgumentException ex) {
+                    logger.error("Bad polygon bro2 : {}", wkt);
+                    return qqq;
+                }  catch (Throwable ex) {
                 logger.error(ex.getMessage());
             }
-            long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
-            try {                
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
-                qqq.add( Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
-                /*
-                for (int ss=0; ss<cells.size(); ss++) {
-                    StringBuilder sb = new StringBuilder();
-                    sb.append(Params.SPATIALSTRING).append("/").append(cells.get(ss));
-                    Node collection = NodeFactory.createURI(sb.toString());
-                    qqq.add( Quad.create(Params.SPATIAL, collection, member, quad.getSubject()));
-                }*/
-            } catch (IllegalArgumentException ex) {
-                logger.error("Bad polygon bro2 : {}", quad.getObject().getLiteralLexicalForm());
-                return qqq;
-            }  catch (Throwable ex) {
-            logger.error(ex.getMessage());
-        }
-        }
+            }
         } catch (Throwable ex) {
             logger.error(ex.getMessage());
         }
         return qqq;
+    }
+    
+    private void AddFeatures(ArrayList<Quad> qqq, Quad quad) {
+        Node geo = quad.getSubject();
+        String wkt = quad.getObject().getLiteralLexicalForm();
+        Gen2DFeatures.Generate(qqq, geo, wkt);
+        MajorMinor.Add(qqq, geo, wkt);
     }
    
     private synchronized Quad AlignBnodes(Quad quad) {
@@ -425,6 +462,7 @@ public class PositionalDictionaryWriterBuilder {
                             this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
                             this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
                             this.stats.numDouble++;
+                            IO.println("Number : "+n);
                         } else if (dt.equals(XSD.xstring.getURI())) {
                             String wow = (String) o.getLiteralValue();                           
                             this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
@@ -487,7 +525,7 @@ public class PositionalDictionaryWriterBuilder {
                         } catch (Throwable ex) {
                             logger.error(ex.getMessage());
                         }
-                        xvoid.add(quad);
+                        xvoid.add(quad);                    
                         if (spatial && isGeoLiteral(quad)) {
                             StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad));
                             spatialTasks.add(task);
