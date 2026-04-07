@@ -131,8 +131,13 @@ public class BGIndex {
 
         LevelState l1 = new LevelState(), l2 = new LevelState(), l3 = new LevelState();
         Quad lastUnique = null;
+        long count = 0;
+        long totalQuads = allQuads.length;
 
         for (Quad curr : allQuads) {
+            if (++count % 1_000_000 == 0) {
+                System.out.println("  " + type.name() + " processed " + count + " / " + totalQuads + " quads...");
+            }
             // 1. Duplicate Check
             if (lastUnique != null && 
                 positions[0].getNode(lastUnique).equals(positions[0].getNode(curr)) &&

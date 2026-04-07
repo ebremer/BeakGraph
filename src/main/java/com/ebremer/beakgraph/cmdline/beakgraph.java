@@ -167,8 +167,8 @@ public class beakgraph {
         @Override
         public Model call() {
             Path dest = mapToDestinationWithNewExtension(src, params.src.toPath(), params.dest.toPath(), "h5");
-            if (dest.toFile().exists()) {
-                dest.toFile().delete();
+            if (dest.toFile().exists() && dest.toFile().length() > 0) {
+                return null;
             }
             dest.getParent().toFile().mkdirs();
             try {
