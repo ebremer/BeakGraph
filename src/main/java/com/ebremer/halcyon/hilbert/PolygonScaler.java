@@ -28,7 +28,6 @@ public class PolygonScaler {
         Polygon original;
         try {
             original = ImageTools.wktToPolygon(wkt);
-            // Snap to integers immediately after parsing
             original.apply(new IntSnapFilter());
             original = snapAndSimplify(original);
         } catch (Exception ex) {
@@ -138,7 +137,9 @@ public class PolygonScaler {
         String[] wktStrings = new String[polygons.length];        
         for (int i = 0; i < polygons.length; i++) {
             if (polygons[i] != null) {
-                wktStrings[i] = wktWriter.write(polygons[i]);
+                Polygon pp = polygons[i];
+                pp.apply(new IntSnapFilter());
+                wktStrings[i] = wktWriter.write(pp);
             } else {
                 wktStrings[i] = "POLYGON EMPTY";
             }
@@ -211,12 +212,10 @@ public class PolygonScaler {
 
     private static Polygon snapAndSimplify(Polygon poly) {
         poly.apply(new IntSnapFilter());
-
         poly = removeDuplicateAndCollinearVertices(poly);
         if (poly == null || poly.getNumPoints() < 4) {
             return null;
         }
-
         Geometry cleaned = poly.buffer(0);
         return (cleaned instanceof Polygon) ? (Polygon) cleaned : null;
     }

@@ -1,7 +1,7 @@
 package com.ebremer.beakgraph.turbo;
 
-import com.ebremer.beakgraph.core.lib.GEO;
-import com.ebremer.beakgraph.core.lib.HAL;
+import com.ebremer.ns.GEO;
+import com.ebremer.ns.HAL;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.jena.graph.Node;

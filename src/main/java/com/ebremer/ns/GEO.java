@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package com.ebremer.beakgraph.core.lib;
+package com.ebremer.ns;
 
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;

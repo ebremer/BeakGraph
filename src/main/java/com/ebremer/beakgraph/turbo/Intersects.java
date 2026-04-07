@@ -1,6 +1,6 @@
 package com.ebremer.beakgraph.turbo;
 
-import com.ebremer.beakgraph.core.lib.GEO;
+import com.ebremer.ns.GEO;
 import java.util.List;
 import org.apache.jena.atlas.lib.Lib;
 import org.apache.jena.query.QueryBuildException;

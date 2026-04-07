@@ -1,4 +1,4 @@
-package com.ebremer.beakgraph.core.lib;
+package com.ebremer.ns;
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one

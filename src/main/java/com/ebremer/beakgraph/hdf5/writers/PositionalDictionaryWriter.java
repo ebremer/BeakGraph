@@ -185,4 +185,24 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     public Stream<Node> streamGraphs() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
+
+    @Override
+    public Dictionary getGraphs() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Dictionary getSubjects() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Dictionary getPredicates() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    @Override
+    public Dictionary getObjects() {
+        throw new UnsupportedOperationException("Not supported yet.");
+    }
 }

@@ -2,8 +2,8 @@ package com.ebremer.beakgraph;
 
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.BGDatasetGraph;
-import com.ebremer.beakgraph.core.EXIF;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
+import com.ebremer.ns.EXIF;
 import java.io.File;
 import java.io.IOException;
 import org.apache.jena.query.Dataset;

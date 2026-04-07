@@ -1,10 +1,11 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.core.lib.GEOF;
+import com.ebremer.ns.GEOF;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Triple;
@@ -28,6 +29,7 @@ import org.apache.jena.sparql.expr.E_Function;
 public class PatternMatchBG {
 
     private static final String SF_INTERSECTS = GEOF.sfIntersects.getURI();
+    private static final AtomicBoolean ab = new AtomicBoolean(false);
 
     public static QueryIterator execute(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
         List<Triple> triples = new ArrayList<>(bgp.getList());
@@ -67,12 +69,13 @@ public class PatternMatchBG {
             ExprList filterToUse = (triggerTriple != null && triple.equals(triggerTriple)) ? null : modifiedFilter;
             chain = solve(bGraph, triple, filterToUse, chain, execCxt);
             chain = makeAbortable(chain, killList);
+            //chain = makeAbortable(chain, killList, ab);
         }
         
         // Convert back to Jena bindings
         Iterator<Binding> iterBinding = SolverLibBeak.convertToNodes(chain, bGraph);
-        iterBinding = makeAbortable(iterBinding, killList);
-        
+        //iterBinding = makeAbortable(iterBinding, killList, ab);
+        iterBinding = makeAbortable(iterBinding, killList);        
         return new QueryIterAbortable(iterBinding, killList, input, execCxt);
     }
 

@@ -1,4 +1,4 @@
-package com.ebremer.beakgraph.core.lib;
+package com.ebremer.ns;
 
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;

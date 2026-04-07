@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.12.0</version>
+    <version>0.13.0</version>
     <packaging>jar</packaging>
    
     <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
@@ -45,16 +45,15 @@
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-collections.version>4.5.0</commons-collections.version>
         <jaxb.version>2.4.0-b180830.0359</jaxb.version>
-        <jetty.version>11.0.26</jetty.version>
+        <!--<jetty.version>11.0.26</jetty.version>-->
         <log4j.version>3.0.0-beta2</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
         <jhdf.version>0.10.0</jhdf.version>
         <jcommander.version>3.0</jcommander.version>
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
-        <aircompressor.ver>3.5</aircompressor.ver>
+        <aircompressor.version>3.5</aircompressor.version>
         <commons.pool.ver>2.13.1</commons.pool.ver>
-        <zstd-jni.version>1.5.7-6</zstd-jni.version>
        
         <!-- Plugin versions -->
         <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
@@ -66,7 +65,11 @@
 
     <dependencyManagement>
         <dependencies>
-            <!-- Log4j dependencies with enforced versions -->
+            <dependency>
+                <groupId>org.ejml</groupId>
+                <artifactId>ejml-simple</artifactId>
+                <version>0.44.0</version>
+            </dependency>
             <dependency>
                 <groupId>org.apache.logging.log4j</groupId>
                 <artifactId>log4j-api</artifactId>
@@ -130,12 +133,12 @@
             <dependency>
                 <groupId>com.fasterxml.jackson.dataformat</groupId>
                 <artifactId>jackson-dataformat-yaml</artifactId>
-                <version>2.21.0</version>
+                <version>2.21.1</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
-                <version>2.21.0</version>
+                <version>2.21.1</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.logging.log4j</groupId>
@@ -145,8 +148,13 @@
             <dependency>
                 <groupId>io.airlift</groupId>
                 <artifactId>aircompressor-v3</artifactId>
-                <version>3.5</version>
-            </dependency>         
+                <version>${aircompressor.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-codec</groupId>
+                <artifactId>commons-codec</artifactId>
+                <version>1.20.0</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
    
@@ -331,6 +339,10 @@
     </profiles>
     <dependencies>
         <dependency>
+            <groupId>org.ejml</groupId>
+            <artifactId>ejml-simple</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
         </dependency>
@@ -345,7 +357,7 @@
         <dependency>
             <groupId>me.tongfei</groupId>
             <artifactId>progressbar</artifactId>
-            <version>0.10.1</version>
+            <version>0.10.2</version>
         </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
