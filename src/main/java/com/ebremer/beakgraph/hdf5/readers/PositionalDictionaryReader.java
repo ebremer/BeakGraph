@@ -7,75 +7,40 @@ import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 
 /**
- * A dictionary composed of five sections: shared, subjects, predicates, objects, and graphs.
+ * A dictionary composed of three monolithic sections: entities (G, S, O URIs + BNodes), 
+ * predicates (P URIs), and literals (O native values).
  * @author Erich Bremer
  */
 public class PositionalDictionaryReader implements GSPODictionary {
-    private final MultiTypeDictionaryReader graphs;
-    private final MultiTypeDictionaryReader subjects;
+    
+    private final MultiTypeDictionaryReader entities;
     private final MultiTypeDictionaryReader predicates;
-    private final MultiTypeDictionaryReader objects;
+    private final MultiTypeDictionaryReader literals;
+    private final long maxEntityId;
 
     public PositionalDictionaryReader(Group dictionary) {
-        Group graphsGroup = (Group) dictionary.getChild("graphs");
-        Group subjectsGroup = (Group) dictionary.getChild("subjects");
+        Group entitiesGroup = (Group) dictionary.getChild("entities");
         Group predicatesGroup = (Group) dictionary.getChild("predicates");
-        Group objectsGroup = (Group) dictionary.getChild("objects");
-        this.graphs = new MultiTypeDictionaryReader(graphsGroup);
-        this.subjects = new MultiTypeDictionaryReader(subjectsGroup);
-        this.predicates = new MultiTypeDictionaryReader(predicatesGroup);
-        this.objects = new MultiTypeDictionaryReader(objectsGroup);
-        //graphs.streamNodes().forEach(n->IO.println(n));
+        Group literalsGroup = (Group) dictionary.getChild("literals");        
+        this.entities = (entitiesGroup != null) ? new MultiTypeDictionaryReader(entitiesGroup) : null;
+        this.predicates = (predicatesGroup != null) ? new MultiTypeDictionaryReader(predicatesGroup) : null;
+        this.literals = (literalsGroup != null) ? new MultiTypeDictionaryReader(literalsGroup) : null;
+        this.maxEntityId = (entities != null) ? entities.getNumberOfNodes() : 0;
     }
 
     @Override
     public Dictionary getGraphs() {
-        return graphs;
+        return entities; // Graphs share the universal Entity ID space
     }
 
     @Override
     public Dictionary getSubjects() {
-        return new Dictionary() {
-            @Override
-            public long locate(Node element) {
-                long result = search(element);
-                return (result >= 0) ? result : -1;
-            }
-
-            @Override
-            public long search(Node element) {
-                long localId = subjects.search(element);
-                if (localId > 0) {
-                    return localId;
-                }                
-                // If strictly not found in either, we usually return the insertion point in the "Local" section
-                // offset by the Shared size, assuming Shared comes "before" or is a separate bucket.
-                // Returning the encoded insertion point relative to the combined ID space:
-                long localInsertionPoint = (-localId) - 1;
-                long combinedInsertionPoint = localInsertionPoint;
-                return -(combinedInsertionPoint) - 1;
-            }
-
-            @Override
-            public Node extract(long id) {
-                return subjects.extract(id);
-            }
-
-            @Override
-            public Stream<Node> streamNodes() {
-                return subjects.streamNodes();
-            }
-
-            @Override
-            public long getNumberOfNodes() {
-                return subjects.getNumberOfNodes();
-            }
-        };
+        return entities; // Subjects share the universal Entity ID space
     }
 
     @Override
     public Dictionary getPredicates() {
-        return predicates;
+        return predicates; // Predicates are isolated to save bit-width
     }
     
     @Override
@@ -90,99 +55,106 @@ public class PositionalDictionaryReader implements GSPODictionary {
             @Override
             public long search(Node element) {
                 if (element.isLiteral()) {
-                    long id = objects.search(element);
+                    if (literals == null) return -1;
+                    long id = literals.search(element);
                     if (id > 0) {
-                        return id;
+                        return id + maxEntityId; // Offset by the Entity block
                     }
+                    // Adjust the insertion point to account for the Entity block offset
                     long localInsertion = (-id) - 1;
-                    long combinedInsertion = localInsertion;
+                    long combinedInsertion = localInsertion + maxEntityId;
                     return -(combinedInsertion) - 1;
+                } else {
+                    if (entities == null) return -1;
+                    // URIs and BNodes just search the raw Entity space
+                    return entities.search(element);
                 }
-                long localId = objects.search(element);
-                if (localId > 0) {
-                    return localId;
-                }
-                long localInsertion = (-localId) - 1;
-                long combinedInsertion = localInsertion;
-                return -(combinedInsertion) - 1;
             }
 
             @Override
             public Node extract(long id) {
-                Node node = objects.extract( id );
-                if (node != null) return node;
+                if (id <= maxEntityId) {
+                    if (entities != null) return entities.extract(id);
+                } else {
+                    if (literals != null) return literals.extract(id - maxEntityId);
+                }
                 throw new Error("Cannot find Object ID: " + id);
             }
 
             @Override
             public Stream<Node> streamNodes() {
-                return objects.streamNodes();
+                Stream<Node> entityStream = (entities != null) ? entities.streamNodes() : Stream.empty();
+                Stream<Node> literalStream = (literals != null) ? literals.streamNodes() : Stream.empty();
+                return Stream.concat(entityStream, literalStream);
             }
 
             @Override
             public long getNumberOfNodes() {
-                return objects.getNumberOfNodes();
+                long eCount = (entities != null) ? entities.getNumberOfNodes() : 0;
+                long lCount = (literals != null) ? literals.getNumberOfNodes() : 0;
+                return eCount + lCount;
             }
         };
     }
     
     @Override
     public Stream<Node> streamGraphs() {
-        return graphs.streamNodes();
+        return (entities != null) ? entities.streamNodes() : Stream.empty();
     }    
 
     @Override
-    public long locateGraph(Node element) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public Object extractGraph(long id) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public long locateSubject(Node element) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public Object extractSubject(long id) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public long locatePredicate(Node element) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public Object extractPredicate(long id) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public long locateObject(Node element) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
-    public Object extractObject(long id) {
-        throw new UnsupportedOperationException("Not supported yet.");
-    }
-
-    @Override
     public Stream<Node> streamSubjects() {
-        return subjects.streamNodes();
+        return (entities != null) ? entities.streamNodes() : Stream.empty();
     }
 
     @Override
     public Stream<Node> streamPredicates() {
-        return predicates.streamNodes();
+        return (predicates != null) ? predicates.streamNodes() : Stream.empty();
     }
 
     @Override
     public Stream<Node> streamObjects() {
-        return objects.streamNodes();
+        return getObjects().streamNodes();
+    }
+
+    // Direct extraction and location mapping for convenience
+    @Override
+    public long locateGraph(Node element) {
+        return getGraphs().locate(element);
+    }
+
+    @Override
+    public Object extractGraph(long id) {
+        return getGraphs().extract(id);
+    }
+
+    @Override
+    public long locateSubject(Node element) {
+        return getSubjects().locate(element);
+    }
+
+    @Override
+    public Object extractSubject(long id) {
+        return getSubjects().extract(id);
+    }
+
+    @Override
+    public long locatePredicate(Node element) {
+        return getPredicates().locate(element);
+    }
+
+    @Override
+    public Object extractPredicate(long id) {
+        return getPredicates().extract(id);
+    }
+
+    @Override
+    public long locateObject(Node element) {
+        return getObjects().locate(element);
+    }
+
+    @Override
+    public Object extractObject(long id) {
+        return getObjects().extract(id);
     }
 }

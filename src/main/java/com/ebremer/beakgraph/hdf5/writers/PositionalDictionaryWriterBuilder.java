@@ -48,11 +48,12 @@ public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
     private File src;
     private File dest;
-    //private final HashSet<Node> shared = new HashSet<>();
-    private final HashSet<Node> graphs = new HashSet<>();
-    private final HashSet<Node> subjects = new HashSet<>();
-    private final HashSet<Node> predicates = new HashSet<>();
-    private final HashSet<Node> objects = new HashSet<>();
+    
+    // THE NEW MONOLITHIC ARCHITECTURE SETS
+    private final HashSet<Node> entities = new HashSet<>();   // URIs & BNodes from G, S, O
+    private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
+    private final HashSet<Node> literals = new HashSet<>();   // Literals from O
+
     private final HashSet<String> dataTypes = new HashSet<>();
     private final Stats stats = new Stats();
     private long numQuads;
@@ -64,189 +65,108 @@ public class PositionalDictionaryWriterBuilder {
     private boolean features = false;
     private int MaxX = Integer.MIN_VALUE;
     private int MaxY = Integer.MIN_VALUE;
-   
+    
     private static final Node[] asHilbert = {
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert2"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert3"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert4"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert5"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert6"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert7"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert8"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert9"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert10"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert11")
+        NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
+        NodeFactory.createURI("https://halcyon.is/ns/asHilbert2"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert3"),
+        NodeFactory.createURI("https://halcyon.is/ns/asHilbert4"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert5"),
+        NodeFactory.createURI("https://halcyon.is/ns/asHilbert6"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert7"),
+        NodeFactory.createURI("https://halcyon.is/ns/asHilbert8"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert9"),
+        NodeFactory.createURI("https://halcyon.is/ns/asHilbert10"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert11")
     };
     private static final Node[] low = {
-        NodeFactory.createURI("https://halcyon.is/ns/low0"),
-        NodeFactory.createURI("https://halcyon.is/ns/low1"),
-        NodeFactory.createURI("https://halcyon.is/ns/low2"),
-        NodeFactory.createURI("https://halcyon.is/ns/low3"),
-        NodeFactory.createURI("https://halcyon.is/ns/low4"),
-        NodeFactory.createURI("https://halcyon.is/ns/low5"),
-        NodeFactory.createURI("https://halcyon.is/ns/low6"),
-        NodeFactory.createURI("https://halcyon.is/ns/low7"),
-        NodeFactory.createURI("https://halcyon.is/ns/low8"),
-        NodeFactory.createURI("https://halcyon.is/ns/low9"),
-        NodeFactory.createURI("https://halcyon.is/ns/low10"),
-        NodeFactory.createURI("https://halcyon.is/ns/low11")
+        NodeFactory.createURI("https://halcyon.is/ns/low0"), NodeFactory.createURI("https://halcyon.is/ns/low1"),
+        NodeFactory.createURI("https://halcyon.is/ns/low2"), NodeFactory.createURI("https://halcyon.is/ns/low3"),
+        NodeFactory.createURI("https://halcyon.is/ns/low4"), NodeFactory.createURI("https://halcyon.is/ns/low5"),
+        NodeFactory.createURI("https://halcyon.is/ns/low6"), NodeFactory.createURI("https://halcyon.is/ns/low7"),
+        NodeFactory.createURI("https://halcyon.is/ns/low8"), NodeFactory.createURI("https://halcyon.is/ns/low9"),
+        NodeFactory.createURI("https://halcyon.is/ns/low10"), NodeFactory.createURI("https://halcyon.is/ns/low11")
     };
     private static final Node[] high = {
-        NodeFactory.createURI("https://halcyon.is/ns/high0"),
-        NodeFactory.createURI("https://halcyon.is/ns/high1"),
-        NodeFactory.createURI("https://halcyon.is/ns/high2"),
-        NodeFactory.createURI("https://halcyon.is/ns/high3"),
-        NodeFactory.createURI("https://halcyon.is/ns/high4"),
-        NodeFactory.createURI("https://halcyon.is/ns/high5"),
-        NodeFactory.createURI("https://halcyon.is/ns/high6"),
-        NodeFactory.createURI("https://halcyon.is/ns/high7"),
-        NodeFactory.createURI("https://halcyon.is/ns/high8"),
-        NodeFactory.createURI("https://halcyon.is/ns/high9"),
-        NodeFactory.createURI("https://halcyon.is/ns/high10"),
-        NodeFactory.createURI("https://halcyon.is/ns/high11")
+        NodeFactory.createURI("https://halcyon.is/ns/high0"), NodeFactory.createURI("https://halcyon.is/ns/high1"),
+        NodeFactory.createURI("https://halcyon.is/ns/high2"), NodeFactory.createURI("https://halcyon.is/ns/high3"),
+        NodeFactory.createURI("https://halcyon.is/ns/high4"), NodeFactory.createURI("https://halcyon.is/ns/high5"),
+        NodeFactory.createURI("https://halcyon.is/ns/high6"), NodeFactory.createURI("https://halcyon.is/ns/high7"),
+        NodeFactory.createURI("https://halcyon.is/ns/high8"), NodeFactory.createURI("https://halcyon.is/ns/high9"),
+        NodeFactory.createURI("https://halcyon.is/ns/high10"), NodeFactory.createURI("https://halcyon.is/ns/high11")
     };
     private static final Node[] hasRange = {
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange0"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange1"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange2"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange3"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange4"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange5"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange6"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange7"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange8"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange9"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange10"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange11")
+        NodeFactory.createURI("https://halcyon.is/ns/hasRange0"), NodeFactory.createURI("https://halcyon.is/ns/hasRange1"),
+        NodeFactory.createURI("https://halcyon.is/ns/hasRange2"), NodeFactory.createURI("https://halcyon.is/ns/hasRange3"),
+        NodeFactory.createURI("https://halcyon.is/ns/hasRange4"), NodeFactory.createURI("https://halcyon.is/ns/hasRange5"),
+        NodeFactory.createURI("https://halcyon.is/ns/hasRange6"), NodeFactory.createURI("https://halcyon.is/ns/hasRange7"),
+        NodeFactory.createURI("https://halcyon.is/ns/hasRange8"), NodeFactory.createURI("https://halcyon.is/ns/hasRange9"),
+        NodeFactory.createURI("https://halcyon.is/ns/hasRange10"), NodeFactory.createURI("https://halcyon.is/ns/hasRange11")
     };
     private static final Node[] asWKT = {
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT0"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT1"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT2"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT3"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT4"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT5"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT6"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT7"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT8"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT9"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT10"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT11"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT12"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT13"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT0"), NodeFactory.createURI("https://halcyon.is/ns/asWKT1"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT2"), NodeFactory.createURI("https://halcyon.is/ns/asWKT3"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT4"), NodeFactory.createURI("https://halcyon.is/ns/asWKT5"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT6"), NodeFactory.createURI("https://halcyon.is/ns/asWKT7"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT8"), NodeFactory.createURI("https://halcyon.is/ns/asWKT9"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT10"), NodeFactory.createURI("https://halcyon.is/ns/asWKT11"),
+        NodeFactory.createURI("https://halcyon.is/ns/asWKT12"), NodeFactory.createURI("https://halcyon.is/ns/asWKT13"),
         NodeFactory.createURI("https://halcyon.is/ns/asWKT14")
     };
     private static final Node[] hilbertCorner = {
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner0"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner1"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner2"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner3"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner4"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner5"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner6"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner7"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner8"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner9"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner10"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner11"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner12"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner13"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner0"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner1"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner2"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner3"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner4"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner5"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner6"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner7"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner8"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner9"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner10"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner11"),
+        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner12"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner13"),
         NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner14")
     };
     
-    //private static final Node low = HAL.low.asNode();
-    //private static final Node high = HAL.high.asNode();
-    //private static final Node hasRange = HAL.hasRange.asNode();
-    //private static final Node member = RDFS.member.asNode();
-    
     private BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
+    
+    public File getDestination() { return dest; }
+    public Quad[] getQuads() { return quads; }
    
-    public File getDestination() {
-        return dest;
-    }
-   
-    public Quad[] getQuads() {
-        return quads;
-    }
-  
-    public Set<Node> getSubjects() {
-        return subjects;
-    }
-   
-    public Set<Node> getPredicates() {
-        return predicates;
-    }
-   
-    public Set<Node> getObjects() {
-        return objects;
-    }
-   
-    public Set<Node> getGraphs() {
-        return graphs;
-    }
-   
+    public Set<Node> getEntities() { return entities; }
+    public Set<Node> getPredicates() { return predicates; }
+    public Set<Node> getLiterals() { return literals; }
+    
     public PositionalDictionaryWriterBuilder setSource(File src) {
-        this.src = src;
-        return this;
+        this.src = src; return this;
     }
 
     public PositionalDictionaryWriterBuilder setSpatial(boolean flag) {
-        this.spatial = flag;
-        return this;
+        this.spatial = flag; return this;
     }
-   
+    
     public PositionalDictionaryWriterBuilder setFeatures(boolean flag) {
-        this.features = flag;
-        return this;
+        this.features = flag; return this;
     }
     
     public PositionalDictionaryWriterBuilder setDestination(File dest) {
-        this.dest = dest;
-        return this;
-    }
-    public long getNumberOfQuads() {
-        return numQuads;
-    }
-    public Stats getStats() {
-        return stats;
-    }
-   
-    public String getName() {
-        return name;
+        this.dest = dest; return this;
     }
     
-    public Set<String> getDataTypes() {
-        return dataTypes;
-    }
-   
+    public long getNumberOfQuads() { return numQuads; }
+    public Stats getStats() { return stats; }
+    public String getName() { return name; }
+    public Set<String> getDataTypes() { return dataTypes; }
+    
     public PositionalDictionaryWriterBuilder setName(String name) {
-        this.name = name;
-        return this;
+        this.name = name; return this;
     }
-   
+    
     public void maxExtent(Polygon poly) {
         Envelope env = poly.getEnvelopeInternal();
         MaxX = Math.max(MaxX, (int) env.getMaxX());
         MaxY = Math.max(MaxY, (int) env.getMaxY());
     }
     
-    /*
-    private synchronized Node getSafeBnode() {
-        Node bnode = NodeFactory.createBlankNode(String.format("b%020d", bmap.size() ));
-        bmap.put(bnode, bnode);
-        return bnode;
-    }*/
-    
     private List<Node> generateGridURNs(Polygon polygon, int resolutionLevel) {
         List<Node> intersectingURNs = new ArrayList<>();
-        Envelope env = polygon.getEnvelopeInternal();    
-        double cellSize = Params.GRIDTILESIZE;    
+        Envelope env = polygon.getEnvelopeInternal();   
+        double cellSize = Params.GRIDTILESIZE;   
         long minTileX = (long) Math.floor(env.getMinX() / cellSize);
         long maxTileX = (long) Math.floor(env.getMaxX() / cellSize);
         long minTileY = (long) Math.floor(env.getMinY() / cellSize);
-        long maxTileY = (long) Math.floor(env.getMaxY() / cellSize);    
+        long maxTileY = (long) Math.floor(env.getMaxY() / cellSize);   
         GeometryFactory gf = polygon.getFactory();
         for (long x = minTileX; x <= maxTileX; x++) {
             double tileMinX = x * cellSize;
@@ -268,14 +188,14 @@ public class PositionalDictionaryWriterBuilder {
     }
     
     private boolean isDegeneratePolygon(String wkt) {
-    try {
-        Geometry g = new WKTReader().read(wkt);
-        if (!(g instanceof Polygon p)) return false;
-        return p.getExteriorRing().getNumPoints() < 4;
-    } catch (Exception e) {
-        return true;
+        try {
+            Geometry g = new WKTReader().read(wkt);
+            if (!(g instanceof Polygon p)) return false;
+            return p.getExteriorRing().getNumPoints() < 4;
+        } catch (Exception e) {
+            return true;
+        }
     }
-}
 
     private ArrayList<Quad> AddSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
@@ -294,22 +214,6 @@ public class PositionalDictionaryWriterBuilder {
                 return qqq;
             }
             final String[] wktScales = PolygonScaler.toWKT(scales);
-        //List<GridCell> cells;
-        /*
-        if (scales.length>0) {
-            cells = PolygonScaler.getGridCells(scales[0], scales.length);
-        } else {
-            logger.trace("NADA: {}", quad);
-            cells = new ArrayList<>();
-        }*/
-        
-        /*
-        try {
-            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), HAL.hilbertCentroid.asNode(), NodeFactory.createLiteralByValue(HilbertSpace.getCentroidHilbertIndex(scales[0]))));
-        } catch (IllegalArgumentException ex) {
-            logger.error("Bad polygon bro1 : {}", quad.getObject().getLiteralLexicalForm());
-            return qqq;
-        }*/
             for (int s=0; s<scales.length; s++) {
                 List<Node> tiles = generateGridURNs(scales[s],s);
                 try {
@@ -326,13 +230,6 @@ public class PositionalDictionaryWriterBuilder {
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
                     qqq.add( Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
-                    /*
-                    for (int ss=0; ss<cells.size(); ss++) {
-                        StringBuilder sb = new StringBuilder();
-                        sb.append(Params.SPATIALSTRING).append("/").append(cells.get(ss));
-                        Node collection = NodeFactory.createURI(sb.toString());
-                        qqq.add( Quad.create(Params.SPATIAL, collection, member, quad.getSubject()));
-                    }*/
                 } catch (IllegalArgumentException ex) {
                     logger.error("Bad polygon bro2 : {}", wkt);
                     return qqq;
@@ -352,7 +249,7 @@ public class PositionalDictionaryWriterBuilder {
         Gen2DFeatures.Generate(qqq, geo, wkt);
         MajorMinor.Add(qqq, geo, wkt);
     }
-   
+    
     private synchronized Quad AlignBnodes(Quad quad) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
@@ -388,13 +285,15 @@ public class PositionalDictionaryWriterBuilder {
         }
         return new Quad(g,s,quad.getPredicate(),o);
     }
-   
+    
     private void ProcessQuad(Quad quad) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node p = quad.getPredicate();
         Node o = quad.getObject();
-        if (!graphs.contains(g)) {
+
+        // 1. Graph is an Entity
+        if (!entities.contains(g)) {
             if (g.isBlank()) {
                 stats.numBlankNodes++;
             } else if (g.isURI()) {
@@ -402,102 +301,83 @@ public class PositionalDictionaryWriterBuilder {
             } else {
                 throw new Error("This shouldn't be in here : "+g);
             }
-            graphs.add(g);
+            entities.add(g);
         }
-        /*
-        if (!shared.contains(s)) {
-            if (objects.contains(s)) {
-                subjects.remove(s);
-                objects.remove(s);
-                shared.add(s);
-            } else {*/
-                if (s.isBlank()) {
-                    stats.numBlankNodes++;
-                } else if (s.isURI()) {
-                    stats.numIRI++;
-                }
-                subjects.add(s);
-       //     }
-        //}
+
+        // 2. Subject is an Entity
+        if (!entities.contains(s)) {
+            if (s.isBlank()) {
+                stats.numBlankNodes++;
+            } else if (s.isURI()) {
+                stats.numIRI++;
+            }
+            entities.add(s);
+        }
+
+        // 3. Predicate
         if (!predicates.contains(p)) {
             stats.numIRI++;
             predicates.add(p);
         }
-        //if (!shared.contains(o)) {
-         //   if (subjects.contains(o)) {
-           //     subjects.remove(o);
-             //   objects.remove(o);
-              //  shared.add(o);
-            //} else {
+
+        // 4. Object is a Literal OR an Entity
+        if (o.isLiteral()) {
+            if (!literals.contains(o)) {
+                String dt = o.getLiteralDatatypeURI();
+                dataTypes.add(dt);
+                if (dt.equals(XSD.xlong.getURI())) {
+                    Number n = (Number) o.getLiteralValue();
+                    this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
+                    this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
+                    this.stats.numLong++;
+                } else if (dt.equals(XSD.xint.getURI()) || dt.equals(XSD.integer.getURI())) {
+                    Number n = (Number) o.getLiteralValue();
+                    this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
+                    this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
+                    this.stats.numInteger++;
+                } else if (dt.equals(XSD.xfloat.getURI())) {
+                    Number n = (Number) o.getLiteralValue();
+                    this.stats.maxFloat = Math.max(this.stats.maxFloat, n.floatValue());
+                    this.stats.minFloat = Math.min(this.stats.minFloat, n.floatValue());
+                    this.stats.numFloat++;
+                } else if (dt.equals(XSD.xdouble.getURI())) {
+                    Number n = (Number) o.getLiteralValue();
+                    this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
+                    this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
+                    this.stats.numDouble++;
+                } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI())) {
+                    String wow = (String) o.getLiteralLexicalForm();                            
+                    this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
+                    this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
+                    this.stats.numStrings++;
+                } else if (dt.equals(XSD.dateTime.getURI())) {
+                    String lex = o.getLiteralLexicalForm(); 
+                    int t = lex.indexOf('T');
+                    String wow = (t > 0) ? lex.substring(0, t) : lex;
+                    this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
+                    this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
+                    this.stats.numStrings++;
+                } else {
+                    logger.error("I DON'T KNOW WHAT TO DO WITH : {}", o);
+                }
+                //if (!o.getLiteral().toString().contains("POLYGON")) IO.println(o);
+                literals.add(o);
+            }                  
+        } else {
+            // Object is a URI or BNode -> Add to Entities
+            if (!entities.contains(o)) {
                 if (o.isBlank()) {
                     stats.numBlankNodes++;
                 } else if (o.isURI()) {
                     stats.numIRI++;
-                } else if (o.isLiteral()) {
-                    if (!objects.contains(o)) {
-                        String dt = o.getLiteralDatatypeURI();
-                        dataTypes.add(dt);
-                        if (dt.equals(XSD.xlong.getURI())) {
-                            Number n = (Number) o.getLiteralValue();
-                            this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
-                            this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
-                            this.stats.numLong++;
-                        } else if (dt.equals(XSD.xint.getURI())) {
-                            Number n = (Number) o.getLiteralValue();
-                            this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
-                            this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
-                            this.stats.numInteger++;
-                        } else if (dt.equals(XSD.integer.getURI())) {
-                            Number n = (Number) o.getLiteralValue();
-                            this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
-                            this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
-                            this.stats.numInteger++;
-                        } else if (dt.equals(XSD.xfloat.getURI())) {
-                            Number n = (Number) o.getLiteralValue();
-                            this.stats.maxFloat = Math.max(this.stats.maxFloat, n.floatValue());
-                            this.stats.minFloat = Math.min(this.stats.minFloat, n.floatValue());
-                            this.stats.numFloat++;
-                        } else if (dt.equals(XSD.xdouble.getURI())) {
-                            Number n = (Number) o.getLiteralValue();
-                            this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
-                            this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
-                            this.stats.numDouble++;
-                            IO.println("Number : "+n);
-                        } else if (dt.equals(XSD.xstring.getURI())) {
-                            String wow = (String) o.getLiteralValue();                           
-                            this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
-                            this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
-                            this.stats.numStrings++;
-                        } else if (dt.equals(GEO.wktLiteral.getURI())) {
-                            String wow = o.getLiteralLexicalForm();
-                            this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
-                            this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
-                            this.stats.numStrings++;
-                        } else if (dt.equals(XSD.dateTime.getURI())) {
-                            //String wow = (String) o.getLiteralValue();
-                            String lex = o.getLiteralLexicalForm(); // e.g. "2024-11-23T15:17:39Z"
-                            int t = lex.indexOf('T');
-                            String wow = (t > 0) ? lex.substring(0, t) : lex;
-                            this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
-                            this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
-                            this.stats.numStrings++;
-                        } else if (dt.equals(XSD.xboolean.getURI())) {
-                            String wow = (String) o.getLiteralValue();
-                            this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
-                            this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
-                            this.stats.numStrings++;
-                        } else {
-                            logger.error("I DON'T KNOW WHAT TO DO WITH : {}", o);
-                        }
-                    }                    
                 } else {
                     throw new Error("WHAT THE HELL IS THIS : "+o);
                 }
-                objects.add(o);
-         //   }
-       // }
+                entities.add(o);
+            }
+        }
     }
-   
+    
     public PositionalDictionaryWriter build() throws IOException {
         final AtomicLong quadcount = new AtomicLong();
         logger.trace("Creating dictionary...");        
@@ -560,11 +440,13 @@ public class PositionalDictionaryWriterBuilder {
                 ProcessQuad(qqq);
                 quadslist.add(qqq);
             });
-            stats.numGraphs = graphs.size();
-            stats.numSubjects = subjects.size();
+            
+            // Set sum logic for backward compatibility in Stats object
+            stats.numGraphs = entities.size(); 
+            stats.numSubjects = entities.size();
             stats.numPredicates = predicates.size();
-            stats.numObjects = objects.size();
-            //stats.numShared = shared.size();
+            stats.numObjects = entities.size() + literals.size();
+            
         } catch (FileNotFoundException e) {
             throw new IOException("Source file not found: " + src, e);
         } catch (IOException e) {

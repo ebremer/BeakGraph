@@ -25,7 +25,7 @@ public class Test2 {
             String outputName = src.getName().replace(".ttl.h5", ".trig");
             File out = new File(src.getParentFile(), outputName);
             try (FileOutputStream fos = new FileOutputStream(out)) {
-                RDFDataMgr.write(fos, ds, RDFFormat.TRIG_PRETTY);
+                RDFDataMgr.write(fos, ds, RDFFormat.NQUADS);
             }
         }
     }

@@ -25,7 +25,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     private long j;
     private long gi, pi, oi;
     private boolean hasNext = false;    
-    private long minSubId = 0;
+    private long minSubId = 1; // Updated to 1 to gracefully skip dummy IDs
     private long maxSubId = Long.MAX_VALUE;
 
     public BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
@@ -49,7 +49,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
-        if (gi < 1) { IO.println("OS: Graph not found"); return; }
+        if (gi < 1) return; 
         
         // Resolve Predicate
         if (quad.getPredicate().isVariable()) {
@@ -58,7 +58,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         } else {
             pi = dict.getPredicates().locate(quad.getPredicate());
         }
-        if (pi < 1) { IO.println("OS: Predicate not found"); return; }
+        if (pi < 1) return;
 
         // Resolve Object
         if (quad.getObject().isVariable()) {
@@ -67,7 +67,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         } else {
             oi = dict.getObjects().locate(quad.getObject());
         }
-        if (oi < 1) { IO.println("OS: Object not found: " + quad.getObject()); return; }
+        if (oi < 1) return;
 
         // Resolve Subject Filter
         long specificSubId = -1;
@@ -76,7 +76,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
              if (quad.getSubject().isVariable()) specificSubId = bnid.get(Var.alloc(quad.getSubject())).getId();
              else specificSubId = dict.getSubjects().locate(quad.getSubject());
              
-             if (specificSubId < 1) { IO.println("OS: Bound Subject not found"); return; }
+             if (specificSubId < 1) return;
         }
 
         // --- Traverse GPOS ---
@@ -86,25 +86,26 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         long nextGraphStart = select1Safe(Bp, gi + 1);
         long pEnd = (nextGraphStart == -1) ? (Sp.getNumEntries() - 1) : (nextGraphStart - 1);
         
-        if (pStart == -1 || pStart > pEnd) { IO.println("OS: No Predicates for Graph"); return; }
+        if (pStart == -1 || pStart > pEnd) return;
         
         long pIndex = Sp.binarySearch(pStart, pEnd, pi);
-        if (pIndex < 0) { IO.println("OS: Predicate " + pi + " not found in Graph " + gi); return; }
+        if (pIndex < 0) return;
 
         // C. Level 3: Object Range for P
         long oStart = select1Safe(Bo, pIndex + 1);
         long nextPStart = select1Safe(Bo, pIndex + 2);
         long oEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);        
         if (oStart == -1 || oStart > oEnd) return;        
+        
         long oIndex = So.binarySearch(oStart, oEnd, oi);
-        if (oIndex < 0) { IO.println("OS: Object " + oi + " not found under Predicate " + pi); return; }
+        if (oIndex < 0) return;
 
         // E. Level 4: Subject Range for O
         long sStart = select1Safe(Bs, oIndex + 1);
         long nextOStart = select1Safe(Bs, oIndex + 2);
         long sEnd = (nextOStart == -1) ? (Ss.getNumEntries() - 1) : (nextOStart - 1);
         
-        if (sStart == -1 || sStart > sEnd) { IO.println("OS: No Subjects for Object " + oi); return; }
+        if (sStart == -1 || sStart > sEnd) return;
         
         this.i = sStart;
         this.j = sEnd + 1;
@@ -183,14 +184,14 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
                  if (Long.compareUnsigned(id, minSubId) > 0) minSubId = id;
             }
             case "<" -> {
-                 if (id == 0) { maxSubId = 0; minSubId = 1; } else {
+                 if (id <= 1) { maxSubId = 0; minSubId = 1; } else {
                      long target = id - 1;
                      if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
                  }
             }
             case "<=" -> {
                  long target = found ? id : id - 1;
-                 if (id == 0 && !found) { maxSubId = 0; minSubId = 1; } else {
+                 if (id <= 1 && !found) { maxSubId = 0; minSubId = 1; } else {
                      if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
                  }
             }

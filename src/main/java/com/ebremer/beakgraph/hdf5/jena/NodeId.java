@@ -21,7 +21,6 @@ final public class NodeId implements Comparable<NodeId> {
         return id;
     }
 
-    
     public static final boolean isAny(NodeId nodeId) {
         return nodeId == NodeIdAny || nodeId == null ;
     }

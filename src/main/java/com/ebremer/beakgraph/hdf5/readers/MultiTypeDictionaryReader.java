@@ -6,12 +6,10 @@ import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
-import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Optional;
-import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.apache.jena.datatypes.TypeMapper;
@@ -72,7 +70,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
         Group iriG = (Group) d.getChild("iri");
         this.iri = (iriG != null) ? new FCDReader(iriG) : null;
-
         buildTieredIndex();
     }
 
@@ -108,7 +105,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             case INTEGER -> NodeFactory.createLiteralByValue((int) integers.get(off));
             case LONG -> NodeFactory.createLiteralByValue(longs.get(off));
             case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat((int) (off * Float.BYTES)));
-            case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble((int) (off * Double.BYTES)));
+            case DOUBLE -> NodeFactory.createLiteralByValue( doubles.getDouble((int) (off * Double.BYTES)));
             case STRING -> NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(typedLiterals.get(idx)-1)));
             case IRI -> NodeFactory.createURI(iri.get(off));
             case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));

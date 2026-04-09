@@ -10,57 +10,58 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.List;
 import java.util.stream.Stream;
+import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 
 /**
- *
+ * Monolithic Entity Dictionary.
  * @author Erich Bremer
  */
 public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable, DictionaryWriter {
-    private final DictionaryWriter subjectsdict;
+    private final DictionaryWriter entitiesdict;
     private final DictionaryWriter predicatesdict;
-    private final DictionaryWriter objectsdict;
-    private final DictionaryWriter graphsdict;
+    private final DictionaryWriter literalsdict;    
     private final long numQuads;
     private final String name;
     private final Quad[] quads;
+    private final long maxEntityId;
    
     public PositionalDictionaryWriter(PositionalDictionaryWriterBuilder builder) throws FileNotFoundException, IOException {
         name = builder.getName();
         numQuads = builder.getNumberOfQuads();
         quads = builder.getQuads();
-        MultiTypeDictionaryWriter.Builder subjects = new MultiTypeDictionaryWriter.Builder();
-        MultiTypeDictionaryWriter.Builder predicates = new MultiTypeDictionaryWriter.Builder();
-        MultiTypeDictionaryWriter.Builder objects = new MultiTypeDictionaryWriter.Builder();
-        MultiTypeDictionaryWriter.Builder graphs = new MultiTypeDictionaryWriter.Builder();
+        
         Stats stats = builder.getStats();
         IO.println(stats);
-        graphsdict = graphs
-            .setName("graphs")
-            .setNodes(builder.getGraphs())
+        
+        // 1. Build the Monolithic Entity Dictionary (G, S, O URIs + BNodes)
+        entitiesdict = new MultiTypeDictionaryWriter.Builder()
+            .setName("entities")
+            .setNodes(builder.getEntities())
             .setStats(builder.getStats())
-            .enable(Types.IRI)
+            .enable(Types.IRI, Types.BNODE) // Add BNODE
             .build();
-        subjectsdict = subjects
-            .setName( "subjects")
-            .setNodes( builder.getSubjects() )
-            .setStats( builder.getStats() )
-            .enable( Types.IRI )
-            .build();
-        predicatesdict = predicates
+            
+        // 2. Build the Isolated Predicate Dictionary (P URIs)
+        predicatesdict = new MultiTypeDictionaryWriter.Builder()
             .setName("predicates")
             .setNodes(builder.getPredicates())
             .setStats(builder.getStats())
             .enable(Types.IRI)
             .build();
-        objectsdict = objects
-            .setName("objects")
-            .setNodes(builder.getObjects())
+            
+        // 3. Build the Isolated Literal Dictionary (O Native Literals)
+        literalsdict = new MultiTypeDictionaryWriter.Builder()
+            .setName("literals")
+            .setNodes(builder.getLiterals())
             .setDataTypes(builder.getDataTypes())
             .setStats(builder.getStats())
-            .enable( Types.IRI, Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING )
+            .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING)
             .build();
+            
+        // Cache this for fast offset math in locateObject
+        maxEntityId = entitiesdict.getNumberOfNodes();
     }
    
     public Quad[] getQuads() {
@@ -70,12 +71,14 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     public long getNumberOfQuads() {
         return numQuads;
     }
+    
+    // These reflect the max bounds for BGIndex Bit packing sizing.
     public long getNumberOfGraphs() {
-        return graphsdict.getNumberOfNodes();
+        return maxEntityId; 
     }
    
     public long getNumberOfSubjects() {
-        return subjectsdict.getNumberOfNodes();
+        return maxEntityId; 
     }
    
     public long getNumberOfPredicates() {
@@ -83,55 +86,58 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     }
    
     public long getNumberOfObjects() {
-        return objectsdict.getNumberOfNodes();
+        return maxEntityId + literalsdict.getNumberOfNodes();
     }
    
     @Override
     public long locateGraph(Node element) {
-        long c = ((Dictionary) graphsdict).locate(element);
-        if (c > 0) {
-            return c;
-        }
+        long c = ((Dictionary) entitiesdict).locate(element);
+        if (c > 0) return c;
         throw new Error("Cannot resolve Graph : "+element);
     }
-    
+   
     @Override
     public long locateSubject(Node element) {
-        long c = ((Dictionary) subjectsdict).locate(element);
-        if (c > 0) {
-            return c;
-        }        
+        long c = ((Dictionary) entitiesdict).locate(element);
+        if (c > 0) return c;
         throw new Error("Cannot resolve Subject : "+element);
     }
    
     @Override
     public long locatePredicate(Node element) {
         long c = ((Dictionary) predicatesdict).locate(element);
-        if (c > 0) {
-            return c;
-        }
+        if (c > 0) return c;
         throw new Error("Cannot resolve Predicate : "+element);
     }
-    
+   
     @Override
     public long locateObject(Node element) {
-        long c = ((Dictionary) objectsdict).locate(element);
-        if (c < 0) {
+     //   boolean isDouble = element.isLiteral() && XSDDatatype.XSDdouble.getURI().equals(element.getLiteralDatatypeURI());
+//        if (isDouble) {
+  //          IO.println(element);
+    //        int c = 0;
+      //  }
+        if (element.isLiteral()) {
+            long c = ((Dictionary) literalsdict).locate(element);
+            if (c > 0) return c + maxEntityId; // Offset by Entity block size
+            return -1;
+        } else {
+            long c = ((Dictionary) entitiesdict).locate(element);
+            if (c > 0) return c;
             return -1;
         }
-        return c;
     }
-    
+   
     @Override
     public Object extractGraph(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public Object extractSubject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public Object extractPredicate(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
@@ -141,46 +147,45 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     public Object extractObject(long id) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public void close() {
        
     }
-    
+   
     @Override
     public long getNumberOfNodes() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public List<Node> getNodes() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public void Add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);
-        if ( graphsdict.getNumberOfNodes() > 0 ) graphsdict.Add( dictionary );
-        if ( subjectsdict.getNumberOfNodes() > 0 ) subjectsdict.Add( dictionary );
+        if ( entitiesdict.getNumberOfNodes() > 0 ) entitiesdict.Add( dictionary );
         if ( predicatesdict.getNumberOfNodes() > 0 ) predicatesdict.Add( dictionary );
-        if ( objectsdict.getNumberOfNodes() > 0 ) objectsdict.Add( dictionary );
+        if ( literalsdict.getNumberOfNodes() > 0 ) literalsdict.Add( dictionary );
     }
-    
+   
     @Override
     public Stream<Node> streamSubjects() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public Stream<Node> streamPredicates() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public Stream<Node> streamObjects() {
         throw new UnsupportedOperationException("Not supported yet.");
     }
-    
+   
     @Override
     public Stream<Node> streamGraphs() {
         throw new UnsupportedOperationException("Not supported yet.");

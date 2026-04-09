@@ -16,7 +16,7 @@ public class NQToTriQ {
         RDFDataMgr.read(ds, in, Lang.NQUADS);
         IO.println("Writing...");
         try (OutputStream os = new FileOutputStream(out)) {
-            RDFDataMgr.write(os, ds, Lang.TRIG);
+            RDFDataMgr.write(os, ds, Lang.NQUADS);
         }
     }
 }

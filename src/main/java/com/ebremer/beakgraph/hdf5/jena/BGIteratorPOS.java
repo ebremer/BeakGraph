@@ -205,7 +205,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
         }
         curSIndex++;
-        IO.println(String.format("POS : %s --- %s ----> [%d] %s", dict.getSubjects().extract(currentSubjectId), dict.getPredicates().extract(pi), currentObjectId, dict.getObjects().extract(currentObjectId))); 
+       // IO.println(String.format("POS : %s --- %s ----> [%d] %s", dict.getSubjects().extract(currentSubjectId), dict.getPredicates().extract(pi), currentObjectId, dict.getObjects().extract(currentObjectId))); 
         advanceToNextValid();
         return result;
     }
