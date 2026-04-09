@@ -53,58 +53,85 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private int fcdBlockSize = 16;
     private final AtomicLong cc = new AtomicLong();
     private final boolean literalsPresent;
+    private boolean closed = false;
     
     protected MultiTypeDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         this.name = builder.getName();
         IO.println("Building Dictionary: " + name);
         IO.println("Total Nodes        : " + builder.getNodes().size());
-        
+
         Stats stats = builder.getStats();
         this.et = builder.getEnabledTypes();
-        
+
         // --- STEP 1: Strict Total Ordering ---
-        // We must sort using NodeComparator to ensure BNodes < URIs < Literals
-        // and that Literals are ordered mathematically (e.g. 2 < 10)
         System.out.print("Sorting nodes...");
         sorted = NodeSorter.parallelSort(builder.getNodes());
         System.out.println("Done.");
-        
+
         // --- STEP 2: Initialize Buffers ---
-        this.doubles = (!et.contains(Types.DOUBLE) || (stats.numDouble == 0)) ? null : new DataOutputBuffer(Path.of("doubles"));
-        this.floats = (!et.contains(Types.FLOAT) || (stats.numFloat == 0)) ? null : new DataOutputBuffer(Path.of("floats"));
+        // BitPackedUnSignedLongBuffer constructors do not throw; assign finals directly.
         this.offsets = new BitPackedUnSignedLongBuffer(Path.of("offsets"), null, 0, 1 + MinBits(builder.getNodes().size()));
-        
-        if (et.contains(Types.DOUBLE) || et.contains(Types.FLOAT) || et.contains(Types.INTEGER) || 
-            et.contains(Types.LONG) || et.contains(Types.STRING)) {
-            this.literalsPresent = true;
-            this.typedLiteralsDictionary = new FCDWriter(Path.of("typedLiteralsDictionary"), fcdBlockSize);
-            this.typedLiterals = new BitPackedUnSignedLongBuffer(Path.of("typedLiterals"), null, 0, 1 + MinBits(builder.getTypedLiterals().size()));            
-            builder.getTypedLiterals().stream()
-                .sorted()
-                .toList()
-                .forEach(s -> {
-                    try {
-                        typedLiteralsDictionary.add(s);
-                        dataTypesLookUp.put(s, typedLiteralsDictionary.getNumEntries());
-                    } catch (IOException ex) {
-                        logger.log(Level.SEVERE, "Failed to add datatype to dictionary", ex);
-                    }
-                });
-        } else {
-            this.typedLiteralsDictionary = null;
-            this.typedLiterals = null;
-            this.literalsPresent = false;
-        }
-                
-        this.integers = (!et.contains(Types.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), null, 0, 1 + MinBits(stats.maxInteger));
-        this.longs = (!et.contains(Types.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), null, 0, 1 + MinBits(stats.maxLong));
         this.nativedatatypes = new BitPackedUnSignedLongBuffer(Path.of("datatypes"), null, 0, 1 + MinBits(DataType.values().length));
-        this.iri = (!et.contains(Types.IRI) || (stats.numIRI == 0)) ? null : new FCDWriter(Path.of("iri"), fcdBlockSize);
-        this.strings = (!et.contains(Types.STRING) || (stats.numStrings == 0)) ? null : new FCDWriter(Path.of("strings"), fcdBlockSize);        
-        
+        // Signed-safe widths: when min is negative, use a fixed width (32 or 64) so the two's-complement
+        // bit pattern survives the unsigned mask round-trip in BitPackedUnSignedLongBuffer.
+        int intWidth = (stats.minInteger < 0) ? 32 : (1 + MinBits(stats.maxInteger));
+        int longWidth = (stats.minLong < 0) ? 64 : (1 + MinBits(stats.maxLong));
+        this.integers = (!et.contains(Types.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), null, 0, intWidth);
+        this.longs = (!et.contains(Types.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), null, 0, longWidth);
+
+        // FCDWriter and DataOutputBuffer constructors may throw IOException.
+        // Use temp variables so that already-opened handles can be closed on failure,
+        // preventing file handle leaks if initialization fails partway through.
+        FCDWriter tempTypedLiteralsDictionary = null;
+        BitPackedUnSignedLongBuffer tempTypedLiterals = null;
+        boolean tempLiteralsPresent = false;
+        FCDWriter tempIri = null;
+        FCDWriter tempStrings = null;
+        try {
+            this.doubles = (!et.contains(Types.DOUBLE) || (stats.numDouble == 0)) ? null : new DataOutputBuffer(Path.of("doubles"));
+            this.floats  = (!et.contains(Types.FLOAT)  || (stats.numFloat  == 0)) ? null : new DataOutputBuffer(Path.of("floats"));
+
+            if (et.contains(Types.DOUBLE) || et.contains(Types.FLOAT) || et.contains(Types.INTEGER) ||
+                et.contains(Types.LONG) || et.contains(Types.STRING)) {
+                tempLiteralsPresent = true;
+                tempTypedLiteralsDictionary = new FCDWriter(Path.of("typedLiteralsDictionary"), fcdBlockSize);
+                tempTypedLiterals = new BitPackedUnSignedLongBuffer(Path.of("typedLiterals"), null, 0, 1 + MinBits(builder.getTypedLiterals().size()));
+                final FCDWriter fcdTLD = tempTypedLiteralsDictionary;
+                builder.getTypedLiterals().stream()
+                    .sorted()
+                    .toList()
+                    .forEach(s -> {
+                        try {
+                            fcdTLD.add(s);
+                            dataTypesLookUp.put(s, fcdTLD.getNumEntries());
+                        } catch (IOException ex) {
+                            logger.log(Level.SEVERE, "Failed to add datatype to dictionary", ex);
+                        }
+                    });
+            }
+
+            tempIri     = (!et.contains(Types.IRI)    || (stats.numIRI     == 0)) ? null : new FCDWriter(Path.of("iri"),     fcdBlockSize);
+            tempStrings = (!et.contains(Types.STRING)  || (stats.numStrings == 0)) ? null : new FCDWriter(Path.of("strings"), fcdBlockSize);
+
+        } catch (IOException ex) {
+            closeQuietly(tempTypedLiteralsDictionary);
+            closeQuietly(tempIri);
+            closeQuietly(tempStrings);
+            closeQuietly(this.doubles);
+            closeQuietly(this.floats);
+            throw ex;
+        }
+
+        // Commit finals now that all allocations succeeded
+        this.typedLiteralsDictionary = tempTypedLiteralsDictionary;
+        this.typedLiterals           = tempTypedLiterals;
+        this.literalsPresent         = tempLiteralsPresent;
+        this.iri                     = tempIri;
+        this.strings                 = tempStrings;
+
         // --- STEP 3: Encode Data ---
-        this.sorted.forEach(this::addNodeInternal);                                                                   
-        
+        this.sorted.forEach(this::addNodeInternal);
+
         try {
             close();
         } catch (Exception ex) {
@@ -112,64 +139,73 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         }
     }
 
-    private void addNodeInternal(Node node) {        
+    private static void closeQuietly(AutoCloseable resource) {
+        if (resource != null) {
+            try { resource.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void addNodeInternal(Node node) {
         if (node.isBlank()) {
             // Rank-based BNodes: We write 0 for offset and regenerate label from ID during read
             nativedatatypes.writeInteger(DataType.BNODE.ordinal());
-            offsets.writeInteger(0);
-            if (literalsPresent) typedLiterals.writeInteger(0);
-        } 
-        else if (node.isURI()) {    
-            try {              
-                offsets.writeInteger((int) iri.getNumEntries());
-                nativedatatypes.writeInteger(DataType.IRI.ordinal());                
+            offsets.writeLong(0);
+            if (literalsPresent) typedLiterals.writeLong(0);
+        }
+        else if (node.isURI()) {
+            try {
+                offsets.writeLong(iri.getNumEntries());
+                nativedatatypes.writeInteger(DataType.IRI.ordinal());
                 iri.add(node.toString());
-                if (literalsPresent) typedLiterals.writeInteger(0);
+                if (literalsPresent) typedLiterals.writeLong(0);
             } catch (IOException ex) {
                 logger.log(Level.SEVERE, null, ex);
             }
-        } 
+        }
         else if (node.isLiteral()) {
             String dt = node.getLiteralDatatypeURI();
             long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
-            typedLiterals.writeInteger((int) dtId);
+            if (literalsPresent) typedLiterals.writeLong(dtId);
             Object val = node.getLiteralValue();
-            if (dt.equals(XSD.xlong.getURI())) {
-                offsets.writeInteger((int) longs.getNumEntries());
+            if (dt.equals(XSD.xlong.getURI()) && longs != null) {
+                offsets.writeLong(longs.getNumEntries());
                 nativedatatypes.writeInteger(DataType.LONG.ordinal());
                 long l = (val instanceof Number n) ? n.longValue() : Long.parseLong(node.getLiteralLexicalForm());
                 longs.writeLong(l);
-            } 
-            else if (dt.equals(XSD.xint.getURI()) || dt.equals(XSD.integer.getURI())) {
-                offsets.writeInteger((int) integers.getNumEntries());
+            }
+            else if ((dt.equals(XSD.xint.getURI()) || dt.equals(XSD.integer.getURI())) && integers != null) {
+                offsets.writeLong(integers.getNumEntries());
                 nativedatatypes.writeInteger(DataType.INTEGER.ordinal());
                 int i = (val instanceof Number n) ? n.intValue() : Integer.parseInt(node.getLiteralLexicalForm());
                 integers.writeInteger(i);
-            } 
-            else if (dt.equals(XSD.xdouble.getURI())) {
-                offsets.writeInteger((int) doubles.getNumEntries());
+            }
+            else if (dt.equals(XSD.xdouble.getURI()) && doubles != null) {
+                offsets.writeLong(doubles.getNumEntries());
                 nativedatatypes.writeInteger(DataType.DOUBLE.ordinal());
                 try {
                     double d = (val instanceof Number n) ? n.doubleValue() : Double.parseDouble(node.getLiteralLexicalForm());
                     doubles.writeDouble(d);
                 } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
-            } 
-            else if (dt.equals(XSD.xfloat.getURI())) {
-                offsets.writeInteger((int) floats.getNumEntries());
+            }
+            else if (dt.equals(XSD.xfloat.getURI()) && floats != null) {
+                offsets.writeLong(floats.getNumEntries());
                 nativedatatypes.writeInteger(DataType.FLOAT.ordinal());
                 try {
                     float f = (val instanceof Number n) ? n.floatValue() : Float.parseFloat(node.getLiteralLexicalForm());
                     floats.writeFloat(f);
                 } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
-            } 
-            else {
+            }
+            else if (strings != null) {
                 // Fallback for strings, booleans, dates, and custom types
                 String lex = node.getLiteralLexicalForm();
-                offsets.writeInteger((int) strings.getNumEntries());
+                offsets.writeLong(strings.getNumEntries());
                 nativedatatypes.writeInteger(DataType.STRING.ordinal());
                 try {
                     strings.add(lex);
                 } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
+            }
+            else {
+                logger.log(Level.SEVERE, "Literal with datatype {0} dropped: no matching writer buffer enabled", dt);
             }
         }
         cc.incrementAndGet();
@@ -177,9 +213,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
 
     @Override
     public void close() throws Exception {
+        if (closed) return;
+        closed = true;
         offsets.prepareForReading();
         if (typedLiterals != null) typedLiterals.prepareForReading();
-        if (iri != null) iri.close();        
+        if (iri != null) iri.close();
         if (integers != null) integers.prepareForReading();
         if (longs != null) longs.prepareForReading();
         nativedatatypes.prepareForReading();

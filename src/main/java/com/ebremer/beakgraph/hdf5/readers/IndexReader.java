@@ -48,8 +48,8 @@ public class IndexReader {
     }
     
     private BitPackedUnSignedLongBuffer loadBuffer(Group index, String name) {
-        if (index.getChild(name) == null) return null;
-        ContiguousDataset ds = (ContiguousDataset) index.getDatasetByPath(name);
+        ContiguousDataset ds = (ContiguousDataset) index.getChild(name);
+        if (ds == null) return null;
         long num = (Long) ds.getAttribute("numEntries").getData();
         int width = (Integer) ds.getAttribute("width").getData();
         return new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), num, width);

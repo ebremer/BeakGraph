@@ -2,7 +2,10 @@ package com.ebremer.beakgraph.hdf5.readers;
 
 import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.Dictionary;
+import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import io.jhdf.api.Group;
+import io.jhdf.api.dataset.ContiguousDataset;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 
@@ -17,6 +20,10 @@ public class PositionalDictionaryReader implements GSPODictionary {
     private final MultiTypeDictionaryReader predicates;
     private final MultiTypeDictionaryReader literals;
     private final long maxEntityId;
+    
+    private final BitPackedUnSignedLongBuffer graphs;
+    private final BitPackedUnSignedLongBuffer subjects;
+    private final BitPackedUnSignedLongBuffer objects;
 
     public PositionalDictionaryReader(Group dictionary) {
         Group entitiesGroup = (Group) dictionary.getChild("entities");
@@ -26,6 +33,17 @@ public class PositionalDictionaryReader implements GSPODictionary {
         this.predicates = (predicatesGroup != null) ? new MultiTypeDictionaryReader(predicatesGroup) : null;
         this.literals = (literalsGroup != null) ? new MultiTypeDictionaryReader(literalsGroup) : null;
         this.maxEntityId = (entities != null) ? entities.getNumberOfNodes() : 0;
+        
+        this.graphs = getDataSet(dictionary, "graphs").map(ds ->
+            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+        this.subjects = getDataSet(dictionary, "subjects").map(ds ->
+            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+        this.objects = getDataSet(dictionary, "objects").map(ds ->
+            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+    }
+    
+    private Optional<ContiguousDataset> getDataSet(Group g, String name) {
+        return (g.getChild(name) != null) ? Optional.of((ContiguousDataset) g.getChild(name)) : Optional.empty();
     }
 
     @Override
@@ -57,7 +75,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
                 if (element.isLiteral()) {
                     if (literals == null) return -1;
                     long id = literals.search(element);
-                    if (id > 0) {
+                    if (id >= 1) {
                         return id + maxEntityId; // Offset by the Entity block
                     }
                     // Adjust the insertion point to account for the Entity block offset
@@ -73,6 +91,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
             @Override
             public Node extract(long id) {
+                if (id < 1) throw new Error("Cannot find Object ID: " + id);
                 if (id <= maxEntityId) {
                     if (entities != null) return entities.extract(id);
                 } else {
@@ -99,8 +118,11 @@ public class PositionalDictionaryReader implements GSPODictionary {
     
     @Override
     public Stream<Node> streamGraphs() {
-        return (entities != null) ? entities.streamNodes() : Stream.empty();
-    }    
+        if (graphs == null || entities == null) {
+            return Stream.empty();
+        }    
+        return graphs.stream().mapToObj(entities::extract);
+    }
 
     @Override
     public Stream<Node> streamSubjects() {
@@ -117,7 +139,6 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return getObjects().streamNodes();
     }
 
-    // Direct extraction and location mapping for convenience
     @Override
     public long locateGraph(Node element) {
         return getGraphs().locate(element);

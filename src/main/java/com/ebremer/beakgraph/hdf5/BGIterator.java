@@ -10,7 +10,6 @@ import com.ebremer.beakgraph.core.NodeTable;
 import io.jhdf.api.Group;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.stream.LongStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;

@@ -151,13 +151,14 @@ public class BGIndex {
 
             long thisL0 = positions[0].locateInDictionary(w, curr);
 
-            // --- CRITICAL FIX: Pad Missing L0 IDs with Empty Lists (Consecutive 1s) ---
+            // --- CRITICAL FIX: Pad Missing L0 IDs with Empty Lists ---
+            // Each skipped L0 ID gets a dummy row at every level so all buffers stay
+            // in lockstep (B1.len == S1.len, B2.len == S2.len, B3.len == S3.len).
+            // Dummy ID value is 0; since real dictionary IDs are >=1, searches for real
+            // predicates/objects inside an empty graph's range always miss.
             if (changeL0) {
                 long skipped = (lastUnique == null) ? (thisL0 - 1) : (thisL0 - currentL0 - 1);
-                for (long k = 0; k < skipped; k++) {
-                    B1.writeInteger(1);
-                    advanceLevel(l1, 1, SB1, BB1);
-                }
+                padEmptyL0(skipped, l1, l2, l3);
                 currentL0 = thisL0;
             }
 
@@ -188,13 +189,32 @@ public class BGIndex {
 
         // --- FINAL FIX: Pad remaining IDs up to the Dictionary's maximum limit ---
         long skipped = maxL0Id - currentL0;
-        for (long k = 0; k < skipped; k++) {
-            B1.writeInteger(1);
-            advanceLevel(l1, 1, SB1, BB1);
-        }
+        padEmptyL0(skipped, l1, l2, l3);
 
         flushAllBuffers();
       }
+
+    /**
+     * Emit `count` full dummy rows across all three levels. Each dummy row occupies
+     * one slot in every S/B buffer with value 0 and bit 1, which preserves the
+     * invariant B_i.length == S_i.length while still advancing the select1 rank at
+     * L1 (so `Bp.select1(gi)` correctly identifies empty graph gi's slot).
+     */
+    private void padEmptyL0(long count, LevelState l1, LevelState l2, LevelState l3) {
+        for (long k = 0; k < count; k++) {
+            S1.writeLong(0);
+            B1.writeInteger(1);
+            advanceLevel(l1, 1, SB1, BB1);
+
+            S2.writeLong(0);
+            B2.writeInteger(1);
+            advanceLevel(l2, 1, SB2, BB2);
+
+            S3.writeLong(0);
+            B3.writeInteger(1);
+            advanceLevel(l3, 1, SB3, BB3);
+        }
+    }
 
     private void advanceLevel(LevelState state, int bitValue, BitPackedUnSignedLongBuffer SB, BitPackedUnSignedLongBuffer BB) {
         if (bitValue == 1) {

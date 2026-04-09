@@ -46,6 +46,7 @@ import org.locationtech.jts.io.WKTReader;
 
 public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
+    //private static final Node GRAPH_MARKER_PREDICATE = NodeFactory.createURI(HAL.NS + "GRAPH");
     private File src;
     private File dest;
     
@@ -53,6 +54,11 @@ public class PositionalDictionaryWriterBuilder {
     private final HashSet<Node> entities = new HashSet<>();   // URIs & BNodes from G, S, O
     private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
     private final HashSet<Node> literals = new HashSet<>();   // Literals from O
+
+    // NEW SETS: Tracking unique occurrences to prevent massive loops later
+    private final HashSet<Node> uniqueGraphs = new HashSet<>();
+    private final HashSet<Node> uniqueSubjects = new HashSet<>();
+    private final HashSet<Node> uniqueObjects = new HashSet<>();
 
     private final HashSet<String> dataTypes = new HashSet<>();
     private final Stats stats = new Stats();
@@ -127,6 +133,11 @@ public class PositionalDictionaryWriterBuilder {
     public Set<Node> getEntities() { return entities; }
     public Set<Node> getPredicates() { return predicates; }
     public Set<Node> getLiterals() { return literals; }
+
+    // GETTERS FOR THE NEW UNIQUE SETS
+    public Set<Node> getUniqueGraphs() { return uniqueGraphs; }
+    public Set<Node> getUniqueSubjects() { return uniqueSubjects; }
+    public Set<Node> getUniqueObjects() { return uniqueObjects; }
     
     public PositionalDictionaryWriterBuilder setSource(File src) {
         this.src = src; return this;
@@ -199,6 +210,10 @@ public class PositionalDictionaryWriterBuilder {
 
     private ArrayList<Quad> AddSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
+        
+        //Node marker = GRAPH_MARKER_PREDICATE;
+        String ss = Params.SPATIAL.getURI();
+        
         String wkt = quad.getObject().getLiteralLexicalForm();
         if (isDegeneratePolygon(wkt)) {
             IO.println("Degenerate Polygon : "+wkt);
@@ -214,10 +229,11 @@ public class PositionalDictionaryWriterBuilder {
                 return qqq;
             }
             final String[] wktScales = PolygonScaler.toWKT(scales);
-            for (int s=0; s<scales.length; s++) {
+            for (int s=0; s<Math.min(scales.length, asWKT.length); s++) {
                 List<Node> tiles = generateGridURNs(scales[s],s);
                 try {
                     for (int ii=0; ii<tiles.size(); ii++) {
+          //              qqq.add(Quad.create(tiles.get(ii), tiles.get(ii), marker, NodeFactory.createLiteralByValue("*"+tiles.get(ii).getURI()+"*")));
                         qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
                     }            
                 } catch (Throwable ex) {
@@ -229,7 +245,7 @@ public class PositionalDictionaryWriterBuilder {
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
-                    qqq.add( Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
+                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
                 } catch (IllegalArgumentException ex) {
                     logger.error("Bad polygon bro2 : {}", wkt);
                     return qqq;
@@ -239,7 +255,9 @@ public class PositionalDictionaryWriterBuilder {
             }
         } catch (Throwable ex) {
             logger.error(ex.getMessage());
-        }
+        }        
+      //  qqq.add(Quad.create(quad.getGraph(), quad.getGraph(), marker, NodeFactory.createLiteralByValue("**"+quad.getGraph().getURI()+"**")));
+      //  qqq.add(Quad.create(Params.SPATIAL, quad.getGraph(), marker, NodeFactory.createLiteralByValue("***"+ss+"***")));
         return qqq;
     }
     
@@ -287,12 +305,14 @@ public class PositionalDictionaryWriterBuilder {
     }
     
     private void ProcessQuad(Quad quad) {
+        //if (!quad.getGraph().equals(Quad.defaultGraphIRI)) IO.println(quad);
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node p = quad.getPredicate();
-        Node o = quad.getObject();
-
-        // 1. Graph is an Entity
+        Node o = quad.getObject();       
+        uniqueGraphs.add(g);
+        uniqueSubjects.add(s);
+        uniqueObjects.add(o);
         if (!entities.contains(g)) {
             if (g.isBlank()) {
                 stats.numBlankNodes++;
@@ -303,8 +323,6 @@ public class PositionalDictionaryWriterBuilder {
             }
             entities.add(g);
         }
-
-        // 2. Subject is an Entity
         if (!entities.contains(s)) {
             if (s.isBlank()) {
                 stats.numBlankNodes++;
@@ -313,14 +331,13 @@ public class PositionalDictionaryWriterBuilder {
             }
             entities.add(s);
         }
-
-        // 3. Predicate
+        //if (predicates.add(GRAPH_MARKER_PREDICATE)) {
+          //  stats.numIRI++;
+        //}
         if (!predicates.contains(p)) {
             stats.numIRI++;
             predicates.add(p);
         }
-
-        // 4. Object is a Literal OR an Entity
         if (o.isLiteral()) {
             if (!literals.contains(o)) {
                 String dt = o.getLiteralDatatypeURI();
@@ -360,11 +377,9 @@ public class PositionalDictionaryWriterBuilder {
                 } else {
                     logger.error("I DON'T KNOW WHAT TO DO WITH : {}", o);
                 }
-                //if (!o.getLiteral().toString().contains("POLYGON")) IO.println(o);
                 literals.add(o);
             }                  
         } else {
-            // Object is a URI or BNode -> Add to Entities
             if (!entities.contains(o)) {
                 if (o.isBlank()) {
                     stats.numBlankNodes++;
@@ -413,7 +428,8 @@ public class PositionalDictionaryWriterBuilder {
                     });
                 scope.join();
             } catch (InterruptedException ex) {
-                System.getLogger(PositionalDictionaryWriter.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
+                Thread.currentThread().interrupt();
+                logger.error("Interrupted while joining spatial task scope", ex);
             } catch (Throwable ex) {
                 logger.error(ex.getMessage());
             }
@@ -423,7 +439,7 @@ public class PositionalDictionaryWriterBuilder {
                     quadslist.add(q);
                     ProcessQuad(q);
                 });
-            }
+            }         
             Model xxx = xvoid.getModel();
             xxx.setNsPrefix("void", VOID.NS);
             xxx.setNsPrefix("sd", SD.getURI());
@@ -440,7 +456,6 @@ public class PositionalDictionaryWriterBuilder {
                 ProcessQuad(qqq);
                 quadslist.add(qqq);
             });
-            
             // Set sum logic for backward compatibility in Stats object
             stats.numGraphs = entities.size(); 
             stats.numSubjects = entities.size();

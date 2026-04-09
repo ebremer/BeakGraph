@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn -q -o compile)",
+      "Bash(where mvn:*)",
+      "Bash(where mvn.cmd)",
+      "Read(//c/Program Files/**)",
+      "Bash(mvn compile:*)"
+    ]
+  }
+}

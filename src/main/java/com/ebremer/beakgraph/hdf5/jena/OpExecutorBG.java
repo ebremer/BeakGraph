@@ -1,31 +1,40 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.BeakGraph;
+import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import org.apache.jena.graph.Graph;
+import org.apache.jena.graph.Node;
+import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.ARQInternalErrorException;
 import org.apache.jena.sparql.algebra.Op;
-import org.apache.jena.sparql.algebra.op.OpBGP;
-import org.apache.jena.sparql.algebra.op.OpFilter;
-import org.apache.jena.sparql.algebra.op.OpPropFunc;
-import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
+import org.apache.jena.sparql.algebra.op.*;
 import org.apache.jena.sparql.core.BasicPattern;
+import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Substitute;
+import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.ExecutionContext;
 import org.apache.jena.sparql.engine.QueryIterator;
+import org.apache.jena.sparql.engine.binding.Binding;
+import org.apache.jena.sparql.engine.binding.BindingFactory;
 import org.apache.jena.sparql.engine.iterator.QueryIterPeek;
+import org.apache.jena.sparql.engine.iterator.QueryIterPlainWrapper;
 import org.apache.jena.sparql.engine.main.OpExecutor;
 import org.apache.jena.sparql.engine.main.OpExecutorFactory;
 import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderProc;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.expr.ExprList;
+import java.util.Iterator;
+import java.util.stream.Stream;
+import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 
 /**
- *
+ * Custom OpExecutor for BeakGraph.
+ * Optimized for Big Data Triple patterns and Dictionary Streaming (SELECT DISTINCT ?p, ?g, etc.).
  * @author erich
  */
 public class OpExecutorBG extends OpExecutor {
-       
+        
     public final static OpExecutorFactory opExecFactoryBG = new OpExecutorFactory() {
         @Override
         public OpExecutor create(ExecutionContext execCxt) {
@@ -35,11 +44,105 @@ public class OpExecutorBG extends OpExecutor {
 
     private final boolean isForBeakGraph;
 
+    private enum Position { SUBJECT, PREDICATE, OBJECT, GRAPH, NONE }
+
     public OpExecutorBG(ExecutionContext execCtx) {
-	super(execCtx);
-	isForBeakGraph = execCtx.getActiveGraph() instanceof BeakGraph;
+        super(execCtx);
+        isForBeakGraph = execCtx.getActiveGraph() instanceof BeakGraph;
     }
-    
+
+    /**
+     * OPTIMIZATION: Overriding execute for OpDistinct to catch schema-listing queries.
+     * Logic: If we are asking for DISTINCT elements across a triple or quad pattern,
+     * we skip the index scan and stream directly from the specific Dictionary position.
+     * @param opDistinct
+     * @param input
+     * @return 
+     */
+    @Override
+    protected QueryIterator execute(OpDistinct opDistinct, QueryIterator input) {
+        if (!isForBeakGraph) {
+            return super.execute(opDistinct, input);
+        }
+
+        Op subOp = opDistinct.getSubOp();
+        
+        // Pattern: Distinct -> Project(?v) -> BGP(?s ?p ?o)
+        if (subOp instanceof OpProject project && project.getVars().size() == 1) {
+            Var targetVar = project.getVars().get(0);
+            Op innerOp = project.getSubOp();
+
+            Position pos = getFullScanPosition(innerOp, targetVar);
+
+            if (pos != Position.NONE) {
+                // Determine if we can resolve the BeakGraph
+                Graph active = execCxt.getActiveGraph();
+                if (active instanceof BeakGraph bg) {
+                    PositionalDictionaryReader dict = (PositionalDictionaryReader) bg.getReader().getDictionary();
+                    
+                    Stream<Node> stream = switch (pos) {
+                        case GRAPH -> dict.streamGraphs();
+                        case PREDICATE -> dict.streamPredicates();
+                        case SUBJECT -> dict.streamSubjects();
+                        case OBJECT -> dict.streamObjects();
+                        default -> null;
+                    };
+                    
+                    if (stream != null) {
+                        return new QueryIterDictionary(targetVar, stream, execCxt);
+                    }
+                }
+            }
+        }
+        
+        return super.execute(opDistinct, input);
+    }
+
+    /**
+     * Recursively checks if the pattern is a simple "?s ?p ?o" scan that encompasses 
+     * the entire space, and identifies the target variable's position.
+     */
+    private Position getFullScanPosition(Op op, Var targetVar) {
+        // Unwrap OpFilter (if any exists around the pattern)
+        if (op instanceof OpFilter filter) {
+            return getFullScanPosition(filter.getSubOp(), targetVar);
+        }
+        // Case 1: Triple { ?s ?p ?o }
+        if (op instanceof OpBGP bgp && bgp.getPattern().size() == 1) {
+            Triple t = bgp.getPattern().get(0);
+            if (t.getSubject().isVariable() && t.getPredicate().isVariable() && t.getObject().isVariable()) {
+                if (t.getPredicate().equals(targetVar)) return Position.PREDICATE;
+                if (t.getSubject().equals(targetVar)) return Position.SUBJECT;
+                if (t.getObject().equals(targetVar)) return Position.OBJECT;
+            }
+        }
+        // Case 2: Quad { GRAPH ?g { ?s ?p ?o } }       
+        if (op instanceof OpQuadPattern qp && qp.getPattern().size() == 1) {
+            Quad q = qp.getPattern().get(0);
+            if (q.getGraph().isVariable() && q.getSubject().isVariable() && 
+                q.getPredicate().isVariable() && q.getObject().isVariable()) {
+                if (q.getGraph().equals(targetVar)) return Position.GRAPH;
+                if (q.getPredicate().equals(targetVar)) return Position.PREDICATE;
+                if (q.getSubject().equals(targetVar)) return Position.SUBJECT;
+                if (q.getObject().equals(targetVar)) return Position.OBJECT;
+            }
+        }
+        // Case 3: OpGraph ?g { ?s ?p ?o }
+        if (op instanceof OpGraph opGraph && opGraph.getNode().isVariable()) {
+            if (opGraph.getNode().equals(targetVar)) {
+                if (opGraph.getSubOp() instanceof OpBGP bgp && bgp.getPattern().size() == 1) {
+                    Triple t = bgp.getPattern().get(0);
+                    if (t.getSubject().isVariable() && t.getPredicate().isVariable() && t.getObject().isVariable()) {
+                        return Position.GRAPH;
+                    }
+                }
+            } else {
+                return getFullScanPosition(opGraph.getSubOp(), targetVar);
+            }
+        }
+        return Position.NONE;
+    }
+
     @Override
     protected QueryIterator execute(OpPropFunc opPropFunc, QueryIterator input) {
         return super.execute(opPropFunc, input);
@@ -76,16 +179,15 @@ public class OpExecutorBG extends OpExecutor {
             return input;
         }
         if ( pattern.size() >= 2 ) {
-	    ReorderTransformation transform = graph.getReorderTransform();
-	    if ( transform != null ) {
-	        QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
-	        input = peek;
-	        pattern = reorder(pattern, peek, transform) ;
+            ReorderTransformation transform = graph.getReorderTransform();
+            if ( transform != null ) {
+                QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
+                input = peek;
+                pattern = reorder(pattern, peek, transform) ;
             }
         }
         if ( exprs == null ) {
-            BeakGraph g = (BeakGraph) execCxt.getActiveGraph();
-            return PatternMatchBG.execute(g, pattern, input, exprs, execCxt);
+            return PatternMatchBG.execute(graph, pattern, input, exprs, execCxt);
         }
         Op op = TransformFilterPlacement.transform(exprs, pattern);
         return plainExecute(op, input, execCxt) ;
@@ -112,14 +214,9 @@ public class OpExecutorBG extends OpExecutor {
     private static final OpExecutorFactory plainFactory = new OpExecutorPlainFactoryBeak();
     
     private static class OpExecutorPlainFactoryBeak implements OpExecutorFactory {
-        
         @Override
         public OpExecutor create(ExecutionContext execCxt) {
             return new OpExecutorPlainBeak(execCxt) ;
-        }
-        
-        public OpExecutor create(ExecutionContext execCxt, OpFilter op) {
-            return new OpExecutorPlainBeak(execCxt);
         }
     }
     
@@ -140,6 +237,24 @@ public class OpExecutorBG extends OpExecutor {
                 return PatternMatchBG.execute(graphRaptor, bgp, input, filter, execCxt);
             }
             return super.execute(opBGP, input) ;
+        }
+    }
+
+    /**
+     * Inner class to wrap the Dictionary Stream as a Jena QueryIterator.
+     */
+    private static class QueryIterDictionary extends QueryIterPlainWrapper {
+        public QueryIterDictionary(Var var, Stream<Node> nodes, ExecutionContext execCxt) {
+            super(convert(var, nodes.iterator()), execCxt);
+        }
+
+        private static Iterator<Binding> convert(Var var, Iterator<Node> nodes) {
+            return new Iterator<>() {
+                @Override public boolean hasNext() { return nodes.hasNext(); }
+                @Override public Binding next() {
+                    return BindingFactory.binding(var, nodes.next());
+                }
+            };
         }
     }
 }

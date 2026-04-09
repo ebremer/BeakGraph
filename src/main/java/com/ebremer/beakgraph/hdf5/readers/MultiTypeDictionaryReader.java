@@ -49,8 +49,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         ContiguousDataset datatypeDS = (ContiguousDataset) d.getDatasetByPath("datatypes");
         this.datatype = new BitPackedUnSignedLongBuffer(null, datatypeDS.getBuffer(), (Long) datatypeDS.getAttribute("numEntries").getData(), (Integer) datatypeDS.getAttribute("width").getData());
 
-        Object xxx = d.getChild("typedLiterals");
-        ContiguousDataset typedLiteralsDS = (xxx == null) ? null : (ContiguousDataset) d.getDatasetByPath("typedLiterals");
+        ContiguousDataset typedLiteralsDS = (ContiguousDataset) d.getChild("typedLiterals");
         this.typedLiterals = (typedLiteralsDS != null) ? new BitPackedUnSignedLongBuffer(null, typedLiteralsDS.getBuffer(), (Long) typedLiteralsDS.getAttribute("numEntries").getData(), (Integer) typedLiteralsDS.getAttribute("width").getData()) : null;
 
         this.doubles = getDataSet(d, "doubles").map(ds -> ds.getBuffer().order(ByteOrder.BIG_ENDIAN)).orElse(null);
@@ -93,20 +92,24 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     @Override
     public Node extract(long id) {
         long idx = id - 1;
-        if (idx < 0 || idx >= numEntries) return null;
+        if (idx < 0 || idx >= numEntries) throw new Error("id ["+id+"] must be from 1 to "+getNumberOfNodes());
         long off = offsets.get(idx);
         int typeOrdinal = (int) datatype.get(idx);
-        
+
         if (typeOrdinal < 0 || typeOrdinal >= DT_VALUES.length) {
              throw new RuntimeException("Corrupt HDF5: Unknown DataType ordinal " + typeOrdinal + " at ID " + id);
         }
-        DataType dt = DT_VALUES[typeOrdinal];        
+        DataType dt = DT_VALUES[typeOrdinal];
         Node na = switch (dt) {
             case INTEGER -> NodeFactory.createLiteralByValue((int) integers.get(off));
             case LONG -> NodeFactory.createLiteralByValue(longs.get(off));
-            case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat((int) (off * Float.BYTES)));
-            case DOUBLE -> NodeFactory.createLiteralByValue( doubles.getDouble((int) (off * Double.BYTES)));
-            case STRING -> NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(typedLiterals.get(idx)-1)));
+            case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat(Math.toIntExact(off * Float.BYTES)));
+            case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble(Math.toIntExact(off * Double.BYTES)));
+            case STRING -> {
+                long dtId = typedLiterals.get(idx);
+                if (dtId < 1) throw new RuntimeException("Corrupt HDF5: missing typed-literal datatype id at ID " + id);
+                yield NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(dtId - 1)));
+            }
             case IRI -> NodeFactory.createURI(iri.get(off));
             case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
@@ -159,7 +162,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
             int insertionPoint = -(tierIdx + 1);
             if (insertionPoint > 0) {
-                low = tieredIds[insertionPoint - 1];
+                // The element at tieredIds[insertionPoint-1] already compared < element,
+                // so the real match (if any) starts strictly after it.
+                low = tieredIds[insertionPoint - 1] + 1;
             }
             if (insertionPoint < tieredIds.length) {
                 high = tieredIds[insertionPoint] - 1;
