@@ -24,7 +24,6 @@ import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderProc;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.expr.ExprList;
-
 import java.util.Iterator;
 import java.util.stream.Stream;
 import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
@@ -54,6 +53,9 @@ public class OpExecutorBG extends OpExecutor {
      * OPTIMIZATION: Overriding execute for OpDistinct to catch schema-listing queries.
      * Logic: If we are asking for DISTINCT predicates across a triple or quad pattern,
      * we skip the index scan and stream directly from the Predicate Dictionary.
+     * @param opDistinct
+     * @param input
+     * @return 
      */
     @Override
     protected QueryIterator execute(OpDistinct opDistinct, QueryIterator input) {
