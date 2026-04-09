@@ -7,13 +7,7 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.ARQInternalErrorException;
 import org.apache.jena.sparql.algebra.Op;
-import org.apache.jena.sparql.algebra.op.OpBGP;
-import org.apache.jena.sparql.algebra.op.OpDistinct;
-import org.apache.jena.sparql.algebra.op.OpFilter;
-import org.apache.jena.sparql.algebra.op.OpProject;
-import org.apache.jena.sparql.algebra.op.OpPropFunc;
-import org.apache.jena.sparql.algebra.op.OpQuadPattern;
-import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
+import org.apache.jena.sparql.algebra.op.*;
 import org.apache.jena.sparql.core.BasicPattern;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Substitute;
@@ -30,12 +24,14 @@ import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderProc;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.expr.ExprList;
+
 import java.util.Iterator;
 import java.util.stream.Stream;
+import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 
 /**
  * Custom OpExecutor for BeakGraph.
- * Includes optimizations for Dictionary Streaming (SELECT DISTINCT ?p).
+ * Optimized for Big Data Triple patterns and Dictionary Streaming (SELECT DISTINCT ?p).
  * @author erich
  */
 public class OpExecutorBG extends OpExecutor {
@@ -56,10 +52,8 @@ public class OpExecutorBG extends OpExecutor {
 
     /**
      * OPTIMIZATION: Overriding execute for OpDistinct to catch schema-listing queries.
-     * Pattern: SELECT DISTINCT ?p WHERE { ?s ?p ?o } or { GRAPH ?g { ?s ?p ?o } }
-     * @param opDistinct
-     * @param input
-     * @return 
+     * Logic: If we are asking for DISTINCT predicates across a triple or quad pattern,
+     * we skip the index scan and stream directly from the Predicate Dictionary.
      */
     @Override
     protected QueryIterator execute(OpDistinct opDistinct, QueryIterator input) {
@@ -75,12 +69,12 @@ public class OpExecutorBG extends OpExecutor {
             Op innerOp = project.getSubOp();
 
             if (isFullPredicateScan(innerOp, pVar)) {
-                BeakGraph graph = (BeakGraph) execCxt.getActiveGraph();
-                // Access the dictionary via the reader
-                PositionalDictionaryReader dict = (PositionalDictionaryReader) graph.getReader().getDictionary();
-                
-                // Bypass index: stream predicates directly from dictionary
-                return new QueryIterDictionary(pVar, dict.getPredicates().streamNodes(), execCxt);
+                // Determine if we can resolve the BeakGraph
+                Graph active = execCxt.getActiveGraph();
+                if (active instanceof BeakGraph bg) {
+                    PositionalDictionaryReader dict = (PositionalDictionaryReader) bg.getReader().getDictionary();
+                    return new QueryIterDictionary(pVar, dict.getPredicates().streamNodes(), execCxt);
+                }
             }
         }
         
@@ -88,18 +82,24 @@ public class OpExecutorBG extends OpExecutor {
     }
 
     /**
-     * Helper to verify if the pattern is a simple "all predicates" scan.
+     * Recursively checks if the pattern is a simple "?s ?p ?o" scan that encompasses 
+     * the entire predicate space.
      */
     private boolean isFullPredicateScan(Op op, Var pVar) {
-        // Handle standard Triple Pattern: { ?s ?p ?o }
+        // Unwrap OpFilter (if any exists around the pattern)
+        if (op instanceof OpFilter filter) {
+            return isFullPredicateScan(filter.getSubOp(), pVar);
+        }
+
+        // Case 1: Triple { ?s ?p ?o }
         if (op instanceof OpBGP bgp && bgp.getPattern().size() == 1) {
             Triple t = bgp.getPattern().get(0);
             return t.getSubject().isVariable() && 
                    t.getPredicate().isVariable() && t.getPredicate().equals(pVar) && 
                    t.getObject().isVariable();
         }
-        // Handle Quad Pattern: { GRAPH ?g { ?s ?p ?o } }
-        // FIX: Jena uses getPattern() for OpQuadPattern
+
+        // Case 2: Quad { GRAPH ?g { ?s ?p ?o } }
         if (op instanceof OpQuadPattern qp && qp.getPattern().size() == 1) {
             Quad q = qp.getPattern().get(0);
             return q.getGraph().isVariable() && 
@@ -107,6 +107,12 @@ public class OpExecutorBG extends OpExecutor {
                    q.getPredicate().isVariable() && q.getPredicate().equals(pVar) && 
                    q.getObject().isVariable();
         }
+
+        // Case 3: OpGraph ?g { ... }
+        if (op instanceof OpGraph opGraph && opGraph.getNode().isVariable()) {
+            return isFullPredicateScan(opGraph.getSubOp(), pVar);
+        }
+
         return false;
     }
 
@@ -154,8 +160,7 @@ public class OpExecutorBG extends OpExecutor {
             }
         }
         if ( exprs == null ) {
-            BeakGraph g = (BeakGraph) execCxt.getActiveGraph();
-            return PatternMatchBG.execute(g, pattern, input, exprs, execCxt);
+            return PatternMatchBG.execute(graph, pattern, input, exprs, execCxt);
         }
         Op op = TransformFilterPlacement.transform(exprs, pattern);
         return plainExecute(op, input, execCxt) ;
