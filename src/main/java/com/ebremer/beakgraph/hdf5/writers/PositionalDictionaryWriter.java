@@ -80,12 +80,16 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), null, 0, sBits);
         this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), null, 0, oBits);
 
-        // 5. Populate ID lists from the quads array
-        System.out.println("Populating columnar ID lists...");
-        for (Quad q : quads) {
-            graphs.writeLong(locateGraph(q.getGraph()));
-            subjects.writeLong(locateSubject(q.getSubject()));
-            objects.writeLong(locateObject(q.getObject()));
+        // 5. Populate ID lists from the unique sets collected by the Builder
+        System.out.println("Populating columnar ID lists with unique entities...");
+        for (Node n : builder.getUniqueGraphs()) {
+            graphs.writeLong(locateGraph(n));
+        }
+        for (Node n : builder.getUniqueSubjects()) {
+            subjects.writeLong(locateSubject(n));
+        }
+        for (Node n : builder.getUniqueObjects()) {
+            objects.writeLong(locateObject(n));
         }
         
         // Finalize buffers for writing to HDF5

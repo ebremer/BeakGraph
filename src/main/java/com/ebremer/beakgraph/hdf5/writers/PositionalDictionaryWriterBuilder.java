@@ -54,6 +54,11 @@ public class PositionalDictionaryWriterBuilder {
     private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
     private final HashSet<Node> literals = new HashSet<>();   // Literals from O
 
+    // NEW SETS: Tracking unique occurrences to prevent massive loops later
+    private final HashSet<Node> uniqueGraphs = new HashSet<>();
+    private final HashSet<Node> uniqueSubjects = new HashSet<>();
+    private final HashSet<Node> uniqueObjects = new HashSet<>();
+
     private final HashSet<String> dataTypes = new HashSet<>();
     private final Stats stats = new Stats();
     private long numQuads;
@@ -127,6 +132,11 @@ public class PositionalDictionaryWriterBuilder {
     public Set<Node> getEntities() { return entities; }
     public Set<Node> getPredicates() { return predicates; }
     public Set<Node> getLiterals() { return literals; }
+
+    // GETTERS FOR THE NEW UNIQUE SETS
+    public Set<Node> getUniqueGraphs() { return uniqueGraphs; }
+    public Set<Node> getUniqueSubjects() { return uniqueSubjects; }
+    public Set<Node> getUniqueObjects() { return uniqueObjects; }
     
     public PositionalDictionaryWriterBuilder setSource(File src) {
         this.src = src; return this;
@@ -291,6 +301,11 @@ public class PositionalDictionaryWriterBuilder {
         Node s = quad.getSubject();
         Node p = quad.getPredicate();
         Node o = quad.getObject();
+
+        // Populate unique entities explicitly for the writer to use efficiently later
+        uniqueGraphs.add(g);
+        uniqueSubjects.add(s);
+        uniqueObjects.add(o);
 
         // 1. Graph is an Entity
         if (!entities.contains(g)) {
