@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.GSPODictionary;
+import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Types;
@@ -11,7 +12,10 @@ import io.jhdf.api.WritableGroup;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
@@ -82,20 +86,29 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
 
         // 5. Populate ID lists from the unique sets collected by the Builder
         System.out.println("Populating columnar ID lists with unique entities...");
-        for (Node n : builder.getUniqueGraphs()) {
+        ArrayList<Node> src = parallelSort(builder.getUniqueGraphs());
+        for (Node n : src) {
             graphs.writeLong(locateGraph(n));
         }
-        for (Node n : builder.getUniqueSubjects()) {
+        src = parallelSort(builder.getUniqueSubjects());
+        for (Node n : src) {
             subjects.writeLong(locateSubject(n));
         }
-        for (Node n : builder.getUniqueObjects()) {
+        src = parallelSort(builder.getUniqueObjects());
+        for (Node n : src) {
             objects.writeLong(locateObject(n));
         }
-        
+        src = null;
         // Finalize buffers for writing to HDF5
         graphs.prepareForReading();
         subjects.prepareForReading();
         objects.prepareForReading();
+    }
+    
+    private static ArrayList<Node> parallelSort(Set<Node> nodes) {
+        return nodes.parallelStream()
+            .sorted(NodeComparator.INSTANCE)
+            .collect(Collectors.toCollection(ArrayList::new));
     }
    
     public Quad[] getQuads() {
