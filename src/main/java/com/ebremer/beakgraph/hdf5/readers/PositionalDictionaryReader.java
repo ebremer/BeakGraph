@@ -119,8 +119,11 @@ public class PositionalDictionaryReader implements GSPODictionary {
     
     @Override
     public Stream<Node> streamGraphs() {
-        return (entities != null) ? entities.streamNodes() : Stream.empty();
-    }    
+        if (graphs == null || entities == null) {
+            return Stream.empty();
+        }    
+        return graphs.stream().mapToObj(entities::extract);
+    }
 
     @Override
     public Stream<Node> streamSubjects() {
@@ -137,7 +140,6 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return getObjects().streamNodes();
     }
 
-    // Direct extraction and location mapping for convenience
     @Override
     public long locateGraph(Node element) {
         return getGraphs().locate(element);

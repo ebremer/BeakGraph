@@ -30,7 +30,7 @@ import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 
 /**
  * Custom OpExecutor for BeakGraph.
- * Optimized for Big Data Triple patterns and Dictionary Streaming (SELECT DISTINCT ?p).
+ * Optimized for Big Data Triple patterns and Dictionary Streaming (SELECT DISTINCT ?p, ?g, etc.).
  * @author erich
  */
 public class OpExecutorBG extends OpExecutor {
@@ -44,6 +44,8 @@ public class OpExecutorBG extends OpExecutor {
 
     private final boolean isForBeakGraph;
 
+    private enum Position { SUBJECT, PREDICATE, OBJECT, GRAPH, NONE }
+
     public OpExecutorBG(ExecutionContext execCtx) {
         super(execCtx);
         isForBeakGraph = execCtx.getActiveGraph() instanceof BeakGraph;
@@ -51,8 +53,8 @@ public class OpExecutorBG extends OpExecutor {
 
     /**
      * OPTIMIZATION: Overriding execute for OpDistinct to catch schema-listing queries.
-     * Logic: If we are asking for DISTINCT predicates across a triple or quad pattern,
-     * we skip the index scan and stream directly from the Predicate Dictionary.
+     * Logic: If we are asking for DISTINCT elements across a triple or quad pattern,
+     * we skip the index scan and stream directly from the specific Dictionary position.
      * @param opDistinct
      * @param input
      * @return 
@@ -65,17 +67,30 @@ public class OpExecutorBG extends OpExecutor {
 
         Op subOp = opDistinct.getSubOp();
         
-        // Pattern: Distinct -> Project(?p) -> BGP(?s ?p ?o)
+        // Pattern: Distinct -> Project(?v) -> BGP(?s ?p ?o)
         if (subOp instanceof OpProject project && project.getVars().size() == 1) {
-            Var pVar = project.getVars().get(0);
+            Var targetVar = project.getVars().get(0);
             Op innerOp = project.getSubOp();
 
-            if (isFullPredicateScan(innerOp, pVar)) {
+            Position pos = getFullScanPosition(innerOp, targetVar);
+
+            if (pos != Position.NONE) {
                 // Determine if we can resolve the BeakGraph
                 Graph active = execCxt.getActiveGraph();
                 if (active instanceof BeakGraph bg) {
                     PositionalDictionaryReader dict = (PositionalDictionaryReader) bg.getReader().getDictionary();
-                    return new QueryIterDictionary(pVar, dict.getPredicates().streamNodes(), execCxt);
+                    
+                    Stream<Node> stream = switch (pos) {
+                        case GRAPH -> dict.streamGraphs();
+                        case PREDICATE -> dict.streamPredicates();
+                        case SUBJECT -> dict.streamSubjects();
+                        case OBJECT -> dict.streamObjects();
+                        default -> null;
+                    };
+                    
+                    if (stream != null) {
+                        return new QueryIterDictionary(targetVar, stream, execCxt);
+                    }
                 }
             }
         }
@@ -85,37 +100,51 @@ public class OpExecutorBG extends OpExecutor {
 
     /**
      * Recursively checks if the pattern is a simple "?s ?p ?o" scan that encompasses 
-     * the entire predicate space.
+     * the entire space, and identifies the target variable's position.
      */
-    private boolean isFullPredicateScan(Op op, Var pVar) {
+    private Position getFullScanPosition(Op op, Var targetVar) {
         // Unwrap OpFilter (if any exists around the pattern)
         if (op instanceof OpFilter filter) {
-            return isFullPredicateScan(filter.getSubOp(), pVar);
+            return getFullScanPosition(filter.getSubOp(), targetVar);
         }
 
         // Case 1: Triple { ?s ?p ?o }
         if (op instanceof OpBGP bgp && bgp.getPattern().size() == 1) {
             Triple t = bgp.getPattern().get(0);
-            return t.getSubject().isVariable() && 
-                   t.getPredicate().isVariable() && t.getPredicate().equals(pVar) && 
-                   t.getObject().isVariable();
+            if (t.getSubject().isVariable() && t.getPredicate().isVariable() && t.getObject().isVariable()) {
+                if (t.getPredicate().equals(targetVar)) return Position.PREDICATE;
+                if (t.getSubject().equals(targetVar)) return Position.SUBJECT;
+                if (t.getObject().equals(targetVar)) return Position.OBJECT;
+            }
         }
 
         // Case 2: Quad { GRAPH ?g { ?s ?p ?o } }
         if (op instanceof OpQuadPattern qp && qp.getPattern().size() == 1) {
             Quad q = qp.getPattern().get(0);
-            return q.getGraph().isVariable() && 
-                   q.getSubject().isVariable() && 
-                   q.getPredicate().isVariable() && q.getPredicate().equals(pVar) && 
-                   q.getObject().isVariable();
+            if (q.getGraph().isVariable() && q.getSubject().isVariable() && 
+                q.getPredicate().isVariable() && q.getObject().isVariable()) {
+                if (q.getGraph().equals(targetVar)) return Position.GRAPH;
+                if (q.getPredicate().equals(targetVar)) return Position.PREDICATE;
+                if (q.getSubject().equals(targetVar)) return Position.SUBJECT;
+                if (q.getObject().equals(targetVar)) return Position.OBJECT;
+            }
         }
 
-        // Case 3: OpGraph ?g { ... }
+        // Case 3: OpGraph ?g { ?s ?p ?o }
         if (op instanceof OpGraph opGraph && opGraph.getNode().isVariable()) {
-            return isFullPredicateScan(opGraph.getSubOp(), pVar);
+            if (opGraph.getNode().equals(targetVar)) {
+                if (opGraph.getSubOp() instanceof OpBGP bgp && bgp.getPattern().size() == 1) {
+                    Triple t = bgp.getPattern().get(0);
+                    if (t.getSubject().isVariable() && t.getPredicate().isVariable() && t.getObject().isVariable()) {
+                        return Position.GRAPH;
+                    }
+                }
+            } else {
+                return getFullScanPosition(opGraph.getSubOp(), targetVar);
+            }
         }
 
-        return false;
+        return Position.NONE;
     }
 
     @Override
