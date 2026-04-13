@@ -257,7 +257,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
 
     @Override
     public BindingNodeId next() {
-        Node ooooo = dict.getObjects().extract(resO);
         if (!hasNext) throw new NoSuchElementException();
         BindingNodeId result = new BindingNodeId(parentBinding);        
         if (queryQuad.getGraph().isVariable()) {

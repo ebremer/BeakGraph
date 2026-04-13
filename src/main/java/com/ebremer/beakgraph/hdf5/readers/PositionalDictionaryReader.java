@@ -20,7 +20,6 @@ public class PositionalDictionaryReader implements GSPODictionary {
     private final MultiTypeDictionaryReader predicates;
     private final MultiTypeDictionaryReader literals;
     private final long maxEntityId;
-    
     private final BitPackedUnSignedLongBuffer graphs;
     private final BitPackedUnSignedLongBuffer subjects;
     private final BitPackedUnSignedLongBuffer objects;

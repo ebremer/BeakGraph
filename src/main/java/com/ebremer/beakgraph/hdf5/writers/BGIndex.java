@@ -151,7 +151,7 @@ public class BGIndex {
 
             long thisL0 = positions[0].locateInDictionary(w, curr);
 
-            // --- CRITICAL FIX: Pad Missing L0 IDs with Empty Lists ---
+            // Pad Missing L0 IDs with Empty Lists ---
             // Each skipped L0 ID gets a dummy row at every level so all buffers stay
             // in lockstep (B1.len == S1.len, B2.len == S2.len, B3.len == S3.len).
             // Dummy ID value is 0; since real dictionary IDs are >=1, searches for real
@@ -187,7 +187,7 @@ public class BGIndex {
             lastUnique = curr;
         }
 
-        // --- FINAL FIX: Pad remaining IDs up to the Dictionary's maximum limit ---
+        // Pad remaining IDs up to the Dictionary's maximum limit ---
         long skipped = maxL0Id - currentL0;
         padEmptyL0(skipped, l1, l2, l3);
 

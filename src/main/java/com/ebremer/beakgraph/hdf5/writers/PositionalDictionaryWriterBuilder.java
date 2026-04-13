@@ -46,16 +46,11 @@ import org.locationtech.jts.io.WKTReader;
 
 public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
-    //private static final Node GRAPH_MARKER_PREDICATE = NodeFactory.createURI(HAL.NS + "GRAPH");
     private File src;
     private File dest;
-    
-    // THE NEW MONOLITHIC ARCHITECTURE SETS
     private final HashSet<Node> entities = new HashSet<>();   // URIs & BNodes from G, S, O
     private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
     private final HashSet<Node> literals = new HashSet<>();   // Literals from O
-
-    // NEW SETS: Tracking unique occurrences to prevent massive loops later
     private final HashSet<Node> uniqueGraphs = new HashSet<>();
     private final HashSet<Node> uniqueSubjects = new HashSet<>();
     private final HashSet<Node> uniqueObjects = new HashSet<>();
@@ -210,10 +205,6 @@ public class PositionalDictionaryWriterBuilder {
 
     private ArrayList<Quad> AddSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
-        
-        //Node marker = GRAPH_MARKER_PREDICATE;
-        String ss = Params.SPATIAL.getURI();
-        
         String wkt = quad.getObject().getLiteralLexicalForm();
         if (isDegeneratePolygon(wkt)) {
             IO.println("Degenerate Polygon : "+wkt);
@@ -233,7 +224,6 @@ public class PositionalDictionaryWriterBuilder {
                 List<Node> tiles = generateGridURNs(scales[s],s);
                 try {
                     for (int ii=0; ii<tiles.size(); ii++) {
-          //              qqq.add(Quad.create(tiles.get(ii), tiles.get(ii), marker, NodeFactory.createLiteralByValue("*"+tiles.get(ii).getURI()+"*")));
                         qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
                     }            
                 } catch (Throwable ex) {
@@ -255,9 +245,7 @@ public class PositionalDictionaryWriterBuilder {
             }
         } catch (Throwable ex) {
             logger.error(ex.getMessage());
-        }        
-      //  qqq.add(Quad.create(quad.getGraph(), quad.getGraph(), marker, NodeFactory.createLiteralByValue("**"+quad.getGraph().getURI()+"**")));
-      //  qqq.add(Quad.create(Params.SPATIAL, quad.getGraph(), marker, NodeFactory.createLiteralByValue("***"+ss+"***")));
+        }
         return qqq;
     }
     
@@ -305,7 +293,6 @@ public class PositionalDictionaryWriterBuilder {
     }
     
     private void ProcessQuad(Quad quad) {
-        //if (!quad.getGraph().equals(Quad.defaultGraphIRI)) IO.println(quad);
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node p = quad.getPredicate();
@@ -331,9 +318,6 @@ public class PositionalDictionaryWriterBuilder {
             }
             entities.add(s);
         }
-        //if (predicates.add(GRAPH_MARKER_PREDICATE)) {
-          //  stats.numIRI++;
-        //}
         if (!predicates.contains(p)) {
             stats.numIRI++;
             predicates.add(p);

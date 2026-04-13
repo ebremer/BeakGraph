@@ -18,6 +18,8 @@ import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.rdf.model.Statement;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 public class LWSStorageServlet extends HttpServlet {
     private static String BASE;
     private static Path STORAGE_ROOT;
@@ -28,6 +30,8 @@ public class LWSStorageServlet extends HttpServlet {
     private static final Property AS_MEDIA_TYPE = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#mediaType");
     private static final Property SCHEMA_SIZE = ResourceFactory.createProperty("https://schema.org/size");
     private static final Property AS_UPDATED = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#updated");
+    private static final Logger logger = LoggerFactory.getLogger(LWSStorageServlet.class);
+    
     public LWSStorageServlet(Model model) {
         this.MODEL = model;
     }
@@ -42,19 +46,29 @@ public class LWSStorageServlet extends HttpServlet {
         String name = file.getFileName().toString().toLowerCase();
         return name.endsWith(".h5");
     }
+    
     private boolean isSparqlRequest(HttpServletRequest req) {
         String method = req.getMethod();
         String ct = req.getContentType();
-        if ("POST".equals(method) && ct != null && ct.toLowerCase().startsWith("application/sparql-query")) return true;
-        return "GET".equals(method) && req.getParameter("query") != null;
-    }
+        if ("POST".equals(method) && ct != null) {
+            String ctl = ct.toLowerCase();
+            if (ctl.startsWith("application/sparql-query")) return true;
+            if (ctl.startsWith("application/x-www-form-urlencoded") && req.getParameter("query") != null) return true;
+      }
+      return "GET".equals(method) && req.getParameter("query") != null;
+  }
     private void handleSparqlQuery(HttpServletRequest req, HttpServletResponse resp, Path h5File) throws IOException {
         String queryStr = null;
         if ("GET".equals(req.getMethod())) {
             queryStr = req.getParameter("query");
         } else if ("POST".equals(req.getMethod())) {
-            try (InputStream in = req.getInputStream()) {
-                queryStr = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            String ct = req.getContentType();
+            if (ct != null && ct.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
+                queryStr = req.getParameter("query");
+            } else {
+                try (InputStream in = req.getInputStream()) {
+                    queryStr = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                }
             }
         }
         if (queryStr == null || queryStr.isBlank()) {
@@ -318,6 +332,9 @@ public class LWSStorageServlet extends HttpServlet {
     }
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        logger.info("LWS {} {} ct={} query-param={} bodyLen={}",
+        req.getMethod(), req.getRequestURI(), req.getContentType(),
+        req.getParameter("query") != null, req.getContentLengthLong());
         String reqPath = req.getRequestURI();
         if (reqPath.startsWith("/")) reqPath = reqPath.substring(1);
         if (reqPath.endsWith("/")) reqPath = reqPath.substring(0, reqPath.length()-1);

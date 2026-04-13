@@ -13,11 +13,11 @@ public class SimpleNodeTable implements NodeTable {
     // Caffeine LRU Caches for extreme high-performance concurrent caching
     // Adjust maximumSize based on your typical heap allocation
     private final Cache<NodeId, Node> nodeId2nodemap = Caffeine.newBuilder()
-            .maximumSize(100_000_000)
+            .maximumSize(1_000_000)
             .build();
             
     private final Cache<Node, NodeId> node2nodeIdmap = Caffeine.newBuilder()
-            .maximumSize(100_000_000)
+            .maximumSize(1_000_000)
             .build();
     
     public SimpleNodeTable(PositionalDictionaryReader dict) {

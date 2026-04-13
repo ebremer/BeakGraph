@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.hdf5;
 
-import io.jhdf.WritableDatasetImpl;
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
@@ -197,6 +196,7 @@ public class BitPackedUnSignedLongBuffer {
      * Finds the index (0-63) of the k-th set bit in a 64-bit word.
      * Uses CPU intrinsics (numberOfLeadingZeros) which is safer and faster than manual loops.
      */
+    /*
     private int selectInWordSafe2(long word, long k) {
         // Loop finding the next set bit until we find the k-th one.
         // Since max k is 64, this is extremely fast.
@@ -212,7 +212,7 @@ public class BitPackedUnSignedLongBuffer {
             k--;
         }
         return -1; // Should not happen given the logic in select1
-    }
+    }*/
     
     // --- WRITE METHODS ---
 
@@ -464,6 +464,7 @@ public class BitPackedUnSignedLongBuffer {
      * Returns a sequential LongStream of all entries in the buffer.
      * Note: This method duplicates the underlying buffer to ensure the stream 
      * doesn't interfere with the current read position of the buffer.
+     * @return 
      */
     public LongStream stream() {
         // Ensure the buffer is ready for reading (flipped, etc)

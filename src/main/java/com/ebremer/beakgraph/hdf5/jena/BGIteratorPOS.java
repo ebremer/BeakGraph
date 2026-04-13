@@ -193,11 +193,6 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         BindingNodeId result = new BindingNodeId(this.parentBinding);
         long currentObjectId = So.get(curOIndex);
         long currentSubjectId = Ss.get(curSIndex);
-       // IO.println("POS : "+dict.getSubjects().extract(currentSubjectId)+"   "+dict.getObjects().extract(currentObjectId));
-        //if (queryQuad.getGraph().isVariable()) result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
-        //if (queryQuad.getPredicate().isVariable()) result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
-        //if (queryQuad.getObject().isVariable()) result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));
-        //if (queryQuad.getSubject().isVariable()) result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
         if (queryQuad.getObject().isVariable()) {
             result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));
         }
@@ -205,7 +200,6 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
         }
         curSIndex++;
-       // IO.println(String.format("POS : %s --- %s ----> [%d] %s", dict.getSubjects().extract(currentSubjectId), dict.getPredicates().extract(pi), currentObjectId, dict.getObjects().extract(currentObjectId))); 
         advanceToNextValid();
         return result;
     }

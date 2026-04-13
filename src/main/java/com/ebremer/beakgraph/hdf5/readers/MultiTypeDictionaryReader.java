@@ -15,13 +15,11 @@ import java.util.stream.Stream;
 import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
-import org.apache.jena.sparql.core.Quad;
 
 public class MultiTypeDictionaryReader extends AbstractDictionary {
     private static final DataType[] DT_VALUES = DataType.values();
     private static final TypeMapper tm = TypeMapper.getInstance();
     private static final int TIER_SPACING = 1024;
-
     private final BitPackedUnSignedLongBuffer offsets;
     private final BitPackedUnSignedLongBuffer integers;
     private final BitPackedUnSignedLongBuffer longs;
@@ -119,13 +117,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
     @Override
     public long search(Node element) {
-        //return this.searchGood(element);
         return this.searchFAST(element);
     }
     
     /**
      * Original binary search implementation.
      */
+    /*
     private long searchGood(Node element) {
         long low = 1;
         long high = numEntries;
@@ -143,7 +141,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             }
         }
         return -low - 1;
-    }
+    }*/
 
     /**
      * OPTIMIZED Search Method (Reliable Version).
@@ -187,10 +185,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         return -low - 1;
     }
 
+    /*
     private boolean isDefaultGraph(Node n) {
         if (n == null) return true;
         return n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated);
-    }
+    }*/
 
     @Override
     public long locate(Node element) {
@@ -210,7 +209,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     
     public void setOffset(long off) {
         this.offset = off;
-        // Rebuild index because BNode labels might have changed due to offset
         buildTieredIndex();
     }
 }
