@@ -68,7 +68,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public Iterator<Node> listGraphNodes() {
-        return bg.getReader().getDictionary().streamGraphs().iterator();
+        return bg.getReader().getDictionary().streamGraphs()
+                .filter(n -> !Quad.isDefaultGraph(n) && !Quad.isUnionGraph(n))
+                .iterator();
     }
     
     @Override
