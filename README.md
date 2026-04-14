@@ -10,7 +10,7 @@
 
 Configuration file generation for native-image (already generated for current source code.  Only needed if extensive changes have been made)
 ```
-java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.11.0.jar
+java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.13.0.jar
 ```
 Native Command-line
 ```
