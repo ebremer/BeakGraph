@@ -25,6 +25,7 @@ import org.apache.jena.sparql.core.DatasetGraph;
  * @author erich
  */
 public class Raptor extends HttpServlet {
+    private static final long serialVersionUID = 1L;
     private final String hostname;
     
     public Raptor() {

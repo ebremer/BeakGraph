@@ -21,9 +21,10 @@ import org.apache.jena.rdf.model.Statement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 public class LWSStorageServlet extends HttpServlet {
+    private static final long serialVersionUID = 1L;
     private static String BASE;
     private static Path STORAGE_ROOT;
-    private final Model MODEL;
+    private final transient Model MODEL;
     private static final String HTTP_ROOT = "http://localhost:8888/HalcyonStorage";
     private static final Resource LWS_CONTAINER = ResourceFactory.createResource("https://www.w3.org/ns/lws#Container");
     private static final Property LWS_ITEMS = ResourceFactory.createProperty("https://www.w3.org/ns/lws#items");
