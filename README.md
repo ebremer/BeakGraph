@@ -1,10 +1,15 @@
 # BeakGraph<br>
 <img
   src="https://github.com/ebremer/BeakGraph/raw/master/beakgraph.png?raw=true"
-  width=300px height=300px
+  align="left"
+  width="300" height="300"
+  hspace="20" vspace="10"
   alt="BeakGraph"
-  title="BeakGraph"
-  style="display: inline-block; margin: 0 auto; max-width: 150px">
+  title="BeakGraph">
+
+Beakgraph is an [Apache Jena](https://jena.apache.org/) Graph Implmentation of [RDF HDT](https://www.rdfhdt.org/) technology pumped into a [HDF5](https://www.hdfgroup.org/solutions/hdf5/) file and extended to support a full RDF Dataset.
+
+<br clear="all">
 
 ## Building
 
@@ -48,7 +53,7 @@ HDF5Writer.Builder()
 ```
 
 BeakGraph is a [Apache Jena](https://jena.apache.org/) Graph implementation backed by [HDF5](https://www.hdfgroup.org/solutions/hdf5/).
-Beakgraph's HDF5 design is heavily inspired by [HDT](https://www.rdfhdt.org/).
+Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/).
 
 ### Limitations
 

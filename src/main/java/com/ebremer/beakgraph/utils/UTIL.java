@@ -141,6 +141,30 @@ public class UTIL {
         if (x == 0) return 1;
         return Long.SIZE - Long.numberOfLeadingZeros(x);
     }
+
+    /**
+     * True when {@code iri} is a relative reference (RFC 3986) - i.e. it has no
+     * scheme. The empty string (a same-document reference such as {@code <>}) is
+     * relative. An IRI is absolute when it begins with a valid scheme followed
+     * by ':' (ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"), e.g. "http:",
+     * "urn:", "file:". This is intentionally scheme-based rather than relying on
+     * {@code IRIx}, whose lenient parser misclassifies the empty string.
+     */
+    public static boolean isRelativeIRI(String iri) {
+        if (iri == null) return false;
+        int n = iri.length();
+        if (n == 0) return true;
+        char c0 = iri.charAt(0);
+        if (!((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z'))) return true;
+        for (int i = 1; i < n; i++) {
+            char c = iri.charAt(i);
+            if (c == ':') return false;
+            boolean schemeChar = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.';
+            if (!schemeChar) return true;
+        }
+        return true;
+    }
     
     public static String byteArrayToBinaryString(byte[] bytes) {
         if (bytes == null || bytes.length == 0) {

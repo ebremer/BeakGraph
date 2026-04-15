@@ -108,7 +108,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
                 if (dtId < 1) throw new RuntimeException("Corrupt HDF5: missing typed-literal datatype id at ID " + id);
                 yield NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(dtId - 1)));
             }
-            case IRI -> NodeFactory.createURI(iri.get(off));
+            // IRI and RELATIVE_IRI share the `iri` buffer and reconstruct
+            // identically - the stored string is returned verbatim as a
+            // Node_URI (a relative reference for RELATIVE_IRI). The distinct
+            // type is kept as an honest record of the source form; resolving a
+            // relative IRI to an absolute one happens at the serving boundary
+            // (RelativeIRIResolver), not here.
+            case IRI, RELATIVE_IRI -> NodeFactory.createURI(iri.get(off));
             case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };

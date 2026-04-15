@@ -22,6 +22,7 @@ import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
+import org.apache.jena.irix.IRIx;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.lang.LabelToNode;
@@ -66,6 +67,13 @@ public class PositionalDictionaryWriterBuilder {
     private boolean features = false;
     private int MaxX = Integer.MIN_VALUE;
     private int MaxY = Integer.MIN_VALUE;
+    // Sentinel base: relative references in the source are parsed against this
+    // stable, reserved (.invalid) host that survives IRI normalization, then
+    // stripped back to relative form for storage and resolved at query time
+    // against the URL the .h5 file is served from.
+    private static final String REL_BASE = "http://beakgraph.invalid/document";
+    private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
+    private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
     
     private static final Node[] asHilbert = {
         NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
@@ -292,7 +300,51 @@ public class PositionalDictionaryWriterBuilder {
         return new Quad(g,s,quad.getPredicate(),o);
     }
     
-    private void ProcessQuad(Quad quad) {
+    /**
+     * Restores document-relative IRIs to their relative form for storage.
+     * Relative references in the source were resolved against the sentinel base
+     * during parsing; here that base is stripped so the empty reference
+     * {@code <>} becomes "" and a sibling {@code <x.png>} becomes "x.png". They
+     * are resolved against the serving URL at query time.
+     */
+    private Quad relativize(Quad q) {
+        Node qg = q.getGraph();
+        Node qs = q.getSubject();
+        Node qp = q.getPredicate();
+        Node qo = q.getObject();
+        Node g = relativizeNode(qg);
+        Node s = relativizeNode(qs);
+        Node p = relativizeNode(qp);
+        Node o = relativizeNode(qo);
+        // relativizeNode returns the same Node when nothing changed; if no
+        // position held a document-relative IRI, reuse the quad as-is.
+        if (g == qg && s == qs && p == qp && o == qo) {
+            return q;
+        }
+        return new Quad(g, s, p, o);
+    }
+
+    private Node relativizeNode(Node n) {
+        if (n == null || !n.isURI() || !n.getURI().startsWith(REL_BASE_PREFIX)) {
+            return n;
+        }
+        String u = n.getURI();
+        try {
+            IRIx rel = REL_BASE_IRIX.relativize(IRIx.create(u));
+            if (rel != null && rel.isRelative()) {
+                return NodeFactory.createURI(rel.str());
+            }
+        } catch (RuntimeException ignore) {
+            // fall through to textual stripping
+        }
+        // IRIx relativization failed or was incomplete. Strip the sentinel
+        // textually so it can never leak into stored data. This loses correct
+        // <#fragment> / <../> handling - an acceptable trade for a rare case.
+        return NodeFactory.createURI(
+                u.equals(REL_BASE) ? "" : u.substring(REL_BASE_PREFIX.length()));
+    }
+
+    private void ProcessQuad(Quad quad) {        
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node p = quad.getPredicate();
@@ -383,7 +435,12 @@ public class PositionalDictionaryWriterBuilder {
         try (InputStream xis = src.toString().endsWith(".gz")
                 ? new GZIPInputStream(new FileInputStream(src))
                 : new FileInputStream(src)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, null);
+            // Parse relative references against a stable sentinel base so they
+            // resolve deterministically (not against the process working
+            // directory). The relativize() step below strips the sentinel back
+            // off; the relative form is resolved at query time against the URL
+            // the .h5 file is served from.
+            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, REL_BASE);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             final List<StructuredTaskScope.Subtask<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
@@ -392,6 +449,7 @@ public class PositionalDictionaryWriterBuilder {
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)
+                    .map(this::relativize)
                     .map(this::AlignBnodes)
                     .forEach(quad -> {
                         quadcount.incrementAndGet();

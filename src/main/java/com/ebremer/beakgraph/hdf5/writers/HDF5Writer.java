@@ -44,6 +44,7 @@ public class HDF5Writer implements BeakGraphWriter {
             try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
                 final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                 hdt.putAttribute("numQuads", w.getNumberOfQuads());
+                hdt.putAttribute("formatVersion", Params.FORMAT_VERSION);
                 w.Add(hdt);
                 gspo.Add(hdt);
                 gpos.Add(hdt);

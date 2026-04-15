@@ -86,12 +86,18 @@ public class SPARQLEndPoint {
             if (lwsModel == null) lwsModel = ModelFactory.createDefaultModel();
         }
 
-        server = FusekiServer.create()
-                .add("/rdf", ds)
+        boolean singleFile = !Files.isDirectory(endpointPath);
+        var serverBuilder = FusekiServer.create()
                 .addFilter("/*", new ProfileInterceptorFilter())
                 .port(params.port)
-                .loopback(false)
-                .build();
+                .loopback(false);
+        if (!singleFile) {
+            // Directory mode: /rdf serves the LWS metadata model (absolute IRIs).
+            // Single-file mode registers /rdf below via HDF5SparqlServlet instead,
+            // so document-relative IRIs in the HDF5 data get resolved.
+            serverBuilder.add("/rdf", ds);
+        }
+        server = serverBuilder.build();
 
         Server jettyServer = server.getJettyServer();
         ServletContextHandler context = (ServletContextHandler) jettyServer.getHandler();
@@ -106,6 +112,16 @@ public class SPARQLEndPoint {
 
         ServletHolder lwsHolder = new ServletHolder("lws-storage", new LWSStorageServlet(lwsModel));
         context.addServlet(lwsHolder, "/*");
+
+        if (singleFile) {
+            // Serve /rdf ourselves so document-relative IRIs in the HDF5 file are
+            // resolved (against the file's own URI) instead of leaking out raw,
+            // matching the behaviour of the LWS .h5 SPARQL path.
+            ServletHolder rdfHolder = new ServletHolder("hdf5-sparql",
+                    new HDF5SparqlServlet(ds, endpointPath.toUri().toString()));
+            context.addServlet(rdfHolder, "/rdf");
+            context.addServlet(rdfHolder, "/rdf/*");
+        }
 
         server.start();
         System.out.println("Fuseki server started successfully!");
@@ -171,6 +187,39 @@ public class SPARQLEndPoint {
             if (path.endsWith(".js")) return "application/javascript";
             if (path.endsWith(".json")) return "application/json";
             return "application/octet-stream";
+        }
+    }
+
+    /**
+     * SPARQL endpoint for single-file (HDF5) mode. Runs queries through
+     * {@link BGSparqlService} so document-relative IRIs are resolved against the
+     * .h5 file's own URI, instead of Fuseki serving the dataset raw.
+     */
+    private static class HDF5SparqlServlet extends HttpServlet {
+        private static final long serialVersionUID = 1L;
+        private final transient Dataset ds;
+        private final String baseURI;
+
+        HDF5SparqlServlet(Dataset ds, String baseURI) {
+            this.ds = ds;
+            this.baseURI = baseURI;
+        }
+
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            handle(req, resp);
+        }
+
+        @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            handle(req, resp);
+        }
+
+        private void handle(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            String queryStr = BGSparqlService.extractQuery(req);
+            if (queryStr == null || queryStr.isBlank()) {
+                resp.sendError(400, "No SPARQL query provided");
+                return;
+            }
+            BGSparqlService.execute(ds, queryStr, baseURI, req.getHeader("Accept"), resp);
         }
     }
 }

@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
+import static com.ebremer.beakgraph.utils.UTIL.isRelativeIRI;
 import org.apache.jena.graph.Node;
 import org.apache.jena.vocabulary.XSD;
 
@@ -154,9 +155,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         }
         else if (node.isURI()) {
             try {
+                boolean relative = isRelativeIRI(node.getURI());
                 offsets.writeLong(iri.getNumEntries());
-                nativedatatypes.writeInteger(DataType.IRI.ordinal());
-                iri.add(node.toString());
+                nativedatatypes.writeInteger((relative ? DataType.RELATIVE_IRI : DataType.IRI).ordinal());
+                iri.add(node.getURI());
                 if (literalsPresent) typedLiterals.writeLong(0);
             } catch (IOException ex) {
                 logger.log(Level.SEVERE, null, ex);
