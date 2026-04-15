@@ -53,7 +53,7 @@ Beakgraph's HDF5 design is heavily inspired by [HDT](https://www.rdfhdt.org/).
 ### Limitations
 
 * no support for language tags
-* extremely limited GeoSPARQL support (only
+* extremely limited GeoSPARQL support (only sfIntersects)
 
 ### Author's notes
 The first iteration of BeakGraph was backed by Apache Arrow instead of [HDF5](https://www.hdfgroup.org/solutions/hdf5/).  An Apache Arrow version will return.  Reasons for this are varied with some of these reasons being just experimentation.
