@@ -329,7 +329,7 @@
     <commons-collections.version>4.5.0</commons-collections.version>
     <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
     <java.version>25</java.version>
-    <aircompressor.version>3.5</aircompressor.version>
+    <aircompressor.version>3.6</aircompressor.version>
     <maven-shade-plugin.version>3.6.1</maven-shade-plugin.version>
     <jena.version>5.6.0</jena.version>
     <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>

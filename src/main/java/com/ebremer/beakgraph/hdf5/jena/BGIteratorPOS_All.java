@@ -70,10 +70,12 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         if (gi < 1) return;
 
         // Find Predicate Range for this Graph (L1)
-        long pStart = (gi == 1) ? 0 : Bp.select1(gi - 1) + 1;
+        long prevP = (gi == 1) ? -1 : Bp.select1(gi - 1);
+        if (gi > 1 && prevP == -1) return; // Prior graph boundary missing -> inconsistent index
+        long pStart = prevP + 1;
         long pEnd = Bp.select1(gi);
 
-        if (pStart == -1 || pEnd == -1 || pStart > pEnd) return;
+        if (pEnd == -1 || pStart > pEnd) return;
 
         // 3. Initialize Cursors
         this.idxP = pStart;
@@ -83,13 +85,26 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         // rank is 1-based. If pStart=0 (1st predicate), oStart=0.
         // Else, oStart is just after the end of the previous predicate's object block.
         long pRank = idxP + 1;
-        this.idxO = (pRank == 1) ? 0 : Bo.select1(pRank - 1) + 1;
+        if (pRank == 1) {
+            this.idxO = 0;
+        } else {
+            long prevO = Bo.select1(pRank - 1);
+            if (prevO == -1) return;
+            this.idxO = prevO + 1;
+        }
 
         // Calculate initial Subject Index based on Object Rank
         long oRank = idxO + 1;
-        this.idxS = (oRank == 1) ? 0 : Bs.select1(oRank - 1) + 1;
+        if (oRank == 1) {
+            this.idxS = 0;
+        } else {
+            long prevS = Bs.select1(oRank - 1);
+            if (prevS == -1) return;
+            this.idxS = prevS + 1;
+        }
 
         // 4. Load Initial Values
+        if (idxP >= Sp.getNumEntries() || idxO >= So.getNumEntries()) return;
         this.curPID = Sp.get(idxP);
         this.curOID = So.get(idxO);
         // Subject loaded in advance()
@@ -136,6 +151,7 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
 
             // --- Level 3: Subject Check ---
             // We are inside a specific Object block.
+            if (idxS >= Ss.getNumEntries()) return;
             this.curSID = Ss.get(idxS);
             
             // Check S bounds
@@ -206,18 +222,23 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         // Optimization: Scan locally because chunks are usually small?
         // Or use select1? To use select1, we need the current rank.
         // Rank = idxO + 1.
-        long nextSRank = idxO + 1; 
+        long nextSRank = idxO + 1;
         // The end of the current Object's subject list is at Bs.select1(nextSRank)
         long sEnd = Bs.select1(nextSRank);
-        
-        // Move S cursor to start of next block
-        idxS = sEnd + 1;
-        
-        // Move O cursor forward
-        long oBit = Bo.get(idxO);
-        idxO++;
-        
-        if (oBit == 1) {
+
+        // Move S cursor to start of next block; if select1 returns -1 (not found), jump past the end
+        idxS = (sEnd == -1) ? Bs.getNumEntries() : sEnd + 1;
+
+        // Move O cursor forward only if still in bounds (skip may have already fallen off the end)
+        if (idxO < Bo.getNumEntries()) {
+            long oBit = Bo.get(idxO);
+            idxO++;
+
+            if (oBit == 1) {
+                idxP++;
+                if (idxP <= endP) curPID = Sp.get(idxP);
+            }
+        } else {
             idxP++;
             if (idxP <= endP) curPID = Sp.get(idxP);
         }
@@ -229,16 +250,26 @@ public class BGIteratorPOS_All implements Iterator<BindingNodeId> {
         // The end of the current Predicate's object list is at Bo.select1(idxP + 1)
         long pRank = idxP + 1;
         long oEnd = Bo.select1(pRank);
-        
+
+        if (oEnd == -1) {
+            // No objects found for this predicate rank — jump cursors past all entries
+            idxS = Bs.getNumEntries();
+            idxO = So.getNumEntries();
+            idxP++;
+            if (idxP <= endP) curPID = Sp.get(idxP);
+            return;
+        }
+
         // The Subjects corresponding to this range also need to be skipped.
         // The number of subjects to skip is harder to calculate without chaining select1.
         // The end of the Subject list corresponds to the O-rank `oEnd + 1`.
         long sEnd = Bs.select1(oEnd + 1); // oEnd is 0-based index, rank is +1
-        
-        idxS = sEnd + 1;
+
+        // If select1 returns -1 (not found), jump past the end of the subject buffer
+        idxS = (sEnd == -1) ? Bs.getNumEntries() : sEnd + 1;
         idxO = oEnd + 1;
         idxP++;
-        
+
         if (idxP <= endP) curPID = Sp.get(idxP);
         if (idxO < So.getNumEntries()) curOID = So.get(idxO);
     }

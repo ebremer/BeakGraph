@@ -28,30 +28,27 @@ public class HDF5Writer implements BeakGraphWriter {
     public void write() throws IOException {
         IO.println("Writing...");
         PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
-        PositionalDictionaryWriter w = db
-            .setSource(builder.getSource())
-            .setDestination(builder.getDestination())
-            .setName("dictionary")
-            .setSpatial(builder.getSpatial())
-            .build();
-        Quad[] allQuads = w.getQuads();
-        BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
-        BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
-        //BGIndex gosp = new BGIndex(builder, w, Index.GOSP, allQuads);
-        
-        IO.print("Creating HDF5 File..."+builder.getDestination()+"...");
-        try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
-            final WritableGroup hdt = hdfFile.putGroup(builder.getName());            
-            hdt.putAttribute("numQuads", w.getNumberOfQuads() );
-            w.Add(hdt);
-            gspo.Add(hdt);
-            gpos.Add(hdt);
-            //gosp.Add(hdt);            
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            logger.error(ex.getMessage());
-        } catch (Throwable ex) {
-            logger.error(ex.getMessage());
+        try (PositionalDictionaryWriter w = db
+                .setSource(builder.getSource())
+                .setDestination(builder.getDestination())
+                .setName("dictionary")
+                .setSpatial(builder.getSpatial())
+                .setFeatures(builder.getFeatures())
+                .build()) {
+            Quad[] allQuads = w.getQuads();
+            BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
+            BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
+            //BGIndex gosp = new BGIndex(builder, w, Index.GOSP, allQuads);
+
+            IO.print("Creating HDF5 File..." + builder.getDestination() + "...");
+            try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
+                final WritableGroup hdt = hdfFile.putGroup(builder.getName());
+                hdt.putAttribute("numQuads", w.getNumberOfQuads());
+                w.Add(hdt);
+                gspo.Add(hdt);
+                gpos.Add(hdt);
+                //gosp.Add(hdt);
+            }
         }
         IO.println("Done.");
     }

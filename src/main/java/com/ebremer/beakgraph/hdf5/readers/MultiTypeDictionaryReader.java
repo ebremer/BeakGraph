@@ -6,24 +6,20 @@ import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
-import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Optional;
-import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
-import org.apache.jena.sparql.core.Quad;
 
 public class MultiTypeDictionaryReader extends AbstractDictionary {
     private static final DataType[] DT_VALUES = DataType.values();
     private static final TypeMapper tm = TypeMapper.getInstance();
     private static final int TIER_SPACING = 1024;
-
     private final BitPackedUnSignedLongBuffer offsets;
     private final BitPackedUnSignedLongBuffer integers;
     private final BitPackedUnSignedLongBuffer longs;
@@ -51,8 +47,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         ContiguousDataset datatypeDS = (ContiguousDataset) d.getDatasetByPath("datatypes");
         this.datatype = new BitPackedUnSignedLongBuffer(null, datatypeDS.getBuffer(), (Long) datatypeDS.getAttribute("numEntries").getData(), (Integer) datatypeDS.getAttribute("width").getData());
 
-        Object xxx = d.getChild("typedLiterals");
-        ContiguousDataset typedLiteralsDS = (xxx == null) ? null : (ContiguousDataset) d.getDatasetByPath("typedLiterals");
+        ContiguousDataset typedLiteralsDS = (ContiguousDataset) d.getChild("typedLiterals");
         this.typedLiterals = (typedLiteralsDS != null) ? new BitPackedUnSignedLongBuffer(null, typedLiteralsDS.getBuffer(), (Long) typedLiteralsDS.getAttribute("numEntries").getData(), (Integer) typedLiteralsDS.getAttribute("width").getData()) : null;
 
         this.doubles = getDataSet(d, "doubles").map(ds -> ds.getBuffer().order(ByteOrder.BIG_ENDIAN)).orElse(null);
@@ -72,7 +67,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
         Group iriG = (Group) d.getChild("iri");
         this.iri = (iriG != null) ? new FCDReader(iriG) : null;
-
         buildTieredIndex();
     }
 
@@ -96,43 +90,40 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     @Override
     public Node extract(long id) {
         long idx = id - 1;
-        if (idx < 0 || idx >= numEntries) return null;
+        if (idx < 0 || idx >= numEntries) throw new Error("id ["+id+"] must be from 1 to "+getNumberOfNodes());
         long off = offsets.get(idx);
         int typeOrdinal = (int) datatype.get(idx);
-        
+
         if (typeOrdinal < 0 || typeOrdinal >= DT_VALUES.length) {
              throw new RuntimeException("Corrupt HDF5: Unknown DataType ordinal " + typeOrdinal + " at ID " + id);
         }
-        DataType dt = DT_VALUES[typeOrdinal];        
+        DataType dt = DT_VALUES[typeOrdinal];
         Node na = switch (dt) {
             case INTEGER -> NodeFactory.createLiteralByValue((int) integers.get(off));
             case LONG -> NodeFactory.createLiteralByValue(longs.get(off));
-            case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat((int) (off * Float.BYTES)));
-            case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble((int) (off * Double.BYTES)));
-            case STRING -> NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(typedLiterals.get(idx)-1)));
+            case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat(Math.toIntExact(off * Float.BYTES)));
+            case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble(Math.toIntExact(off * Double.BYTES)));
+            case STRING -> {
+                long dtId = typedLiterals.get(idx);
+                if (dtId < 1) throw new RuntimeException("Corrupt HDF5: missing typed-literal datatype id at ID " + id);
+                yield NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(dtId - 1)));
+            }
             case IRI -> NodeFactory.createURI(iri.get(off));
             case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
-        /*
-        if (typedLiterals!=null) {
-            long xxx = typedLiterals.get(idx);
-            if (xxx>0) {
-                IO.println("XXXXSTA : "+idx+" ] "+off+"  ===>  "+na+" LTT : "+typedLiterals.get(idx)+" ************* "+typedLiteralsDictionary.get(typedLiterals.get(idx)-1));
-            }
-        }*/
         return na;
     }
 
     @Override
     public long search(Node element) {
-        //return this.searchGood(element);
         return this.searchFAST(element);
     }
     
     /**
      * Original binary search implementation.
      */
+    /*
     private long searchGood(Node element) {
         long low = 1;
         long high = numEntries;
@@ -150,7 +141,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             }
         }
         return -low - 1;
-    }
+    }*/
 
     /**
      * OPTIMIZED Search Method (Reliable Version).
@@ -169,7 +160,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
             int insertionPoint = -(tierIdx + 1);
             if (insertionPoint > 0) {
-                low = tieredIds[insertionPoint - 1];
+                // The element at tieredIds[insertionPoint-1] already compared < element,
+                // so the real match (if any) starts strictly after it.
+                low = tieredIds[insertionPoint - 1] + 1;
             }
             if (insertionPoint < tieredIds.length) {
                 high = tieredIds[insertionPoint] - 1;
@@ -192,10 +185,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         return -low - 1;
     }
 
+    /*
     private boolean isDefaultGraph(Node n) {
         if (n == null) return true;
         return n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated);
-    }
+    }*/
 
     @Override
     public long locate(Node element) {
@@ -215,7 +209,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     
     public void setOffset(long off) {
         this.offset = off;
-        // Rebuild index because BNode labels might have changed due to offset
         buildTieredIndex();
     }
 }

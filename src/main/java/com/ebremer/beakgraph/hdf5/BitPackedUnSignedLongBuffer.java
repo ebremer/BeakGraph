@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.hdf5;
 
-import io.jhdf.WritableDatasetImpl;
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
@@ -9,6 +8,10 @@ import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.stream.LongStream;
+import java.util.stream.StreamSupport;
 
 /**
  * A buffer that supports writing and reading bit-packed unsigned integers/longs.
@@ -93,10 +96,13 @@ public class BitPackedUnSignedLongBuffer {
         if (rank < 0) return -1;
         if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
         long currentRank = 0;
-        long maxIndex = numEntries;        
-        // Optimization: Read directly from buffer limit to avoid Boundary Checks in the loop
-        // We stop 8 bytes before the end to safely use getLong() without BufferUnderflow
-        int safeLimit = buffer.limit() - 8; 
+        long maxIndex = numEntries;
+        // Clamp fast-path byte range to the bytes that actually hold live bits (numEntries/64 full words),
+        // so trailing padding / arena tail bytes can't inflate popcount and skew the rank.
+        long fullWords = maxIndex / 64;
+        long fullWordBytes = fullWords * 8;
+        int bufferLimit = buffer.limit();
+        int safeLimit = (int) Math.min(fullWordBytes, bufferLimit) - 8;
         int bufferOffset = 0;
         long i = 0;
         // FAST PATH: Iterate over full 64-bit words directly from buffer
@@ -190,6 +196,7 @@ public class BitPackedUnSignedLongBuffer {
      * Finds the index (0-63) of the k-th set bit in a 64-bit word.
      * Uses CPU intrinsics (numberOfLeadingZeros) which is safer and faster than manual loops.
      */
+    /*
     private int selectInWordSafe2(long word, long k) {
         // Loop finding the next set bit until we find the k-th one.
         // Since max k is 64, this is extremely fast.
@@ -205,7 +212,7 @@ public class BitPackedUnSignedLongBuffer {
             k--;
         }
         return -1; // Should not happen given the logic in select1
-    }
+    }*/
     
     // --- WRITE METHODS ---
 
@@ -451,5 +458,70 @@ public class BitPackedUnSignedLongBuffer {
             }
         }
         return result;
+    }
+    
+    /**
+     * Returns a sequential LongStream of all entries in the buffer.
+     * Note: This method duplicates the underlying buffer to ensure the stream 
+     * doesn't interfere with the current read position of the buffer.
+     * @return 
+     */
+    public LongStream stream() {
+        // Ensure the buffer is ready for reading (flipped, etc)
+        // If the user hasn't called prepareForReading, you might want to call it here,
+        // but typically it's safer to assume the object is in a read-state.
+        
+        ByteBuffer readOnlyCopy = buffer.duplicate();
+        readOnlyCopy.order(ByteOrder.BIG_ENDIAN);
+        // Rewind so the stream reads from byte 0 regardless of the live buffer's current
+        // position (e.g. if sequential getValue()/getLong() calls have advanced it).
+        readOnlyCopy.rewind();
+        // If we are using an internal stream and haven't 'prepared' yet,
+        // this stream will be empty. Usually, complete() should be called first.
+
+        return StreamSupport.longStream(new BitPackedSpliterator(readOnlyCopy, numEntries, bitWidth), false);
+    }
+
+    private static class BitPackedSpliterator extends Spliterators.AbstractLongSpliterator {
+        private final ByteBuffer localBuf;
+        private final int bitWidth;
+        private final long totalEntries;
+        private long entriesRead = 0;
+        
+        private long acc = 0L;
+        private int accCount = 0;
+
+        BitPackedSpliterator(ByteBuffer buffer, long totalEntries, int bitWidth) {
+            super(totalEntries, Spliterator.IMMUTABLE | Spliterator.ORDERED | Spliterator.SIZED | Spliterator.NONNULL);
+            this.localBuf = buffer;
+            this.totalEntries = totalEntries;
+            this.bitWidth = bitWidth;
+        }
+
+        @Override
+        public boolean tryAdvance(java.util.function.LongConsumer action) {
+            if (entriesRead >= totalEntries) {
+                return false;
+            }
+
+            while (accCount < bitWidth) {
+                if (!localBuf.hasRemaining()) {
+                    // This handles potential padding/truncation issues
+                    break; 
+                }
+                acc = (acc << 8) | (localBuf.get() & 0xFFL);
+                accCount += 8;
+            }
+
+            int shift = accCount - bitWidth;
+            long value = acc >>> shift;
+            
+            acc &= (1L << shift) - 1;
+            accCount -= bitWidth;
+            
+            action.accept(value);
+            entriesRead++;
+            return true;
+        }
     }
 }

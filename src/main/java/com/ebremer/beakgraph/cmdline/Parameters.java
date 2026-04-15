@@ -28,6 +28,9 @@ public class Parameters {
     @Parameter(names = {"-spatial"}, converter = BooleanConverter.class)
     public boolean spatial = false;
     
+    @Parameter(names = {"-features"}, converter = BooleanConverter.class)
+    public boolean features = false;
+    
     @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)
     public boolean version = false;
 

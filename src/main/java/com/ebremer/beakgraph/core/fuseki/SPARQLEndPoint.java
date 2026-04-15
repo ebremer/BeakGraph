@@ -151,6 +151,8 @@ public class SPARQLEndPoint {
     }
 
     private static class SparqlWebPageServlet extends HttpServlet {
+        private static final long serialVersionUID = 1L;
+
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             String pathInfo = req.getPathInfo();
             String resourcePath = (pathInfo == null || pathInfo.equals("/") || pathInfo.isEmpty()) ? "/META-INF/sparql/index.html" : "/META-INF/sparql" + pathInfo;

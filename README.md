@@ -10,7 +10,7 @@
 
 Configuration file generation for native-image (already generated for current source code.  Only needed if extensive changes have been made)
 ```
-java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.11.0.jar
+java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.13.0.jar
 ```
 Native Command-line
 ```
@@ -53,7 +53,7 @@ Beakgraph's HDF5 design is heavily inspired by [HDT](https://www.rdfhdt.org/).
 ### Limitations
 
 * no support for language tags
-* extremely limited GeoSPARQL support (only
+* extremely limited GeoSPARQL support (only sfIntersects)
 
 ### Author's notes
 The first iteration of BeakGraph was backed by Apache Arrow instead of [HDF5](https://www.hdfgroup.org/solutions/hdf5/).  An Apache Arrow version will return.  Reasons for this are varied with some of these reasons being just experimentation.

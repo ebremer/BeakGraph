@@ -10,9 +10,9 @@
                 <goal>org.codehaus.mojo:exec-maven-plugin:3.0.0:exec</goal>
             </goals>
             <properties>
-                <exec.vmArgs>-XX:+UseCompactObjectHeaders --enable-preview -Xmx110G</exec.vmArgs>
+                <exec.vmArgs>-XX:+UseCompactObjectHeaders --enable-preview -Xmx50G</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-src D:\utah\bg\src -dest D:\HalcyonStorage\utah\hdf5 -spatial</exec.appArgs>
+                <exec.appArgs>-src src -dest dest -spatial -features</exec.appArgs>
                 <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <exec.workingdir>/beakgraph</exec.workingdir>
@@ -28,9 +28,9 @@
                 <goal>org.codehaus.mojo:exec-maven-plugin:3.0.0:exec</goal>
             </goals>
             <properties>
-                <exec.vmArgs>-XX:+UseCompactObjectHeaders --enable-preview -Xmx110G -agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
+                <exec.vmArgs>-XX:+UseCompactObjectHeaders --enable-preview -Xmx50G -agentlib:jdwp=transport=dt_socket,server=n,address=${jpda.address}</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
-                <exec.appArgs>-src D:\utah\bg\src -dest D:\HalcyonStorage\utah\hdf5 -spatial</exec.appArgs>
+                <exec.appArgs>-src src -dest dest -spatial -features</exec.appArgs>
                 <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
                 <exec.executable>java</exec.executable>
                 <jpda.listen>true</jpda.listen>
@@ -47,11 +47,11 @@
                 <goal>org.codehaus.mojo:exec-maven-plugin:3.0.0:exec</goal>
             </goals>
             <properties>
-                <exec.vmArgs>-XX:+UseCompactObjectHeaders --enable-preview -Xmx110G</exec.vmArgs>
+                <exec.vmArgs>-XX:+UseCompactObjectHeaders --enable-preview -Xmx50G</exec.vmArgs>
                 <exec.args>${exec.vmArgs} -classpath %classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
                 <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
                 <exec.executable>java</exec.executable>
-                <exec.appArgs>-src D:\utah\bg\src -dest D:\HalcyonStorage\utah\hdf5 -spatial</exec.appArgs>
+                <exec.appArgs>-src src -dest dest -spatial -features</exec.appArgs>
                 <exec.workingdir>/beakgraph</exec.workingdir>
             </properties>
         </action>

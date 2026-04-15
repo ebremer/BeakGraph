@@ -47,9 +47,8 @@ public class DataOutputBuffer implements HDF5Buffer, AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        try (baos) {
-            baos.flush();
-        }
+        dos.flush();
+        baos.flush();
     }
 
     @Override
@@ -64,7 +63,11 @@ public class DataOutputBuffer implements HDF5Buffer, AutoCloseable {
 
     @Override
     public void Add(WritableGroup group) {
-        WritableDataset ds = group.putDataset(path.toString(), baos.toByteArray());
+        byte[] data = baos.toByteArray();
+        if (data.length == 0 && numEntries > 0) {
+            throw new RuntimeException("CRITICAL ERROR: Attempting to write empty dataset " + path + " but numEntries is " + numEntries);
+        }
+        WritableDataset ds = group.putDataset(path.toString(), data);
         ds.putAttribute("numEntries", numEntries);
-    }   
+    } 
 }

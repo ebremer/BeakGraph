@@ -56,11 +56,6 @@ public class BGIndex {
         }
 
         int getBitSize(PositionalDictionaryWriter w) {
-            // IDs are 1-based (1..N). The maximum integer value to store is N.
-            // MinBits(N) typically calculates bits for cardinality N (0..N-1).
-            // Example: Count=256. MaxID=256. MinBits(256) -> 8 bits. 
-            // 8 bits can only store up to 255. Value 256 overflows to 0.
-            // MinBits(257) -> 9 bits. Correct.
             int needed = switch (component) {
                 case 'G' -> MinBits(w.getNumberOfGraphs() + 1);
                 case 'S' -> MinBits(w.getNumberOfSubjects() + 1);
@@ -68,9 +63,6 @@ public class BGIndex {
                 case 'O' -> MinBits(w.getNumberOfObjects() + 1);
                 default -> throw new IllegalStateException();
             };
-            
-            // This prevents bit-packing corruption for non-aligned widths (e.g. 9 bits)
-            // and neutralizes endianness issues during HDF5 I/O.
             if (needed == 0) return 8;
             return (int) (Math.ceil(needed / 8.0) * 8);
         }
@@ -134,6 +126,17 @@ public class BGIndex {
         long count = 0;
         long totalQuads = allQuads.length;
 
+        // Establish the Maximum ID for Level 0 so we know how far to pad at the end
+        long maxL0Id = switch (type.name().charAt(0)) {
+            case 'G' -> w.getNumberOfGraphs();
+            case 'S' -> w.getNumberOfSubjects();
+            case 'P' -> w.getNumberOfPredicates();
+            case 'O' -> w.getNumberOfObjects();
+            default -> throw new IllegalStateException();
+        };
+
+        long currentL0 = 1;
+
         for (Quad curr : allQuads) {
             if (++count % 1_000_000 == 0) {
                 System.out.println("  " + type.name() + " processed " + count + " / " + totalQuads + " quads...");
@@ -147,30 +150,41 @@ public class BGIndex {
                 continue;
             }
 
-            // 2. Determine if this quad starts a new list at each level
-            // The very first unique quad ALWAYS starts a new list (change = true)
             boolean changeL0 = (lastUnique == null) || !positions[0].getNode(lastUnique).equals(positions[0].getNode(curr));
             boolean changeL1 = (lastUnique == null) || changeL0 || !positions[1].getNode(lastUnique).equals(positions[1].getNode(curr));
             boolean changeL2 = (lastUnique == null) || changeL1 || !positions[2].getNode(lastUnique).equals(positions[2].getNode(curr));
 
-            // 3. Level 3 (Objects) - One entry for every unique Quad
+            long thisL0 = positions[0].locateInDictionary(w, curr);
+
+            // Pad Missing L0 IDs with Empty Lists ---
+            // Each skipped L0 ID gets a dummy row at every level so all buffers stay
+            // in lockstep (B1.len == S1.len, B2.len == S2.len, B3.len == S3.len).
+            // Dummy ID value is 0; since real dictionary IDs are >=1, searches for real
+            // predicates/objects inside an empty graph's range always miss.
+            if (changeL0) {
+                long skipped = (lastUnique == null) ? (thisL0 - 1) : (thisL0 - currentL0 - 1);
+                padEmptyL0(skipped, l1, l2, l3);
+                currentL0 = thisL0;
+            }
+
+            // 3. Level 3 (Objects)
             S3.writeLong(positions[3].locateInDictionary(w, curr));
-            int bit3 = changeL2 ? 1 : 0; // 1 if this is the first object for this Predicate
+            int bit3 = changeL2 ? 1 : 0; 
             B3.writeInteger(bit3);
             advanceLevel(l3, bit3, SB3, BB3);
 
-            // 4. Level 2 (Predicates) - One entry per unique Subject-Predicate pair
+            // 4. Level 2 (Predicates)
             if (changeL2) {
                 S2.writeLong(positions[2].locateInDictionary(w, curr));
-                int bit2 = changeL1 ? 1 : 0; // 1 if this is the first predicate for this Subject
+                int bit2 = changeL1 ? 1 : 0; 
                 B2.writeInteger(bit2);
                 advanceLevel(l2, bit2, SB2, BB2);
             }
 
-            // 5. Level 1 (Subjects) - One entry per unique Graph-Subject pair
+            // 5. Level 1 (Subjects)
             if (changeL1) {
                 S1.writeLong(positions[1].locateInDictionary(w, curr));
-                int bit1 = changeL0 ? 1 : 0; // 1 if this is the first subject for this Graph
+                int bit1 = changeL0 ? 1 : 0; 
                 B1.writeInteger(bit1);
                 advanceLevel(l1, bit1, SB1, BB1);
             }
@@ -178,8 +192,34 @@ public class BGIndex {
             lastUnique = curr;
         }
 
+        // Pad remaining IDs up to the Dictionary's maximum limit ---
+        long skipped = maxL0Id - currentL0;
+        padEmptyL0(skipped, l1, l2, l3);
+
         flushAllBuffers();
       }
+
+    /**
+     * Emit `count` full dummy rows across all three levels. Each dummy row occupies
+     * one slot in every S/B buffer with value 0 and bit 1, which preserves the
+     * invariant B_i.length == S_i.length while still advancing the select1 rank at
+     * L1 (so `Bp.select1(gi)` correctly identifies empty graph gi's slot).
+     */
+    private void padEmptyL0(long count, LevelState l1, LevelState l2, LevelState l3) {
+        for (long k = 0; k < count; k++) {
+            S1.writeLong(0);
+            B1.writeInteger(1);
+            advanceLevel(l1, 1, SB1, BB1);
+
+            S2.writeLong(0);
+            B2.writeInteger(1);
+            advanceLevel(l2, 1, SB2, BB2);
+
+            S3.writeLong(0);
+            B3.writeInteger(1);
+            advanceLevel(l3, 1, SB3, BB3);
+        }
+    }
 
     private void advanceLevel(LevelState state, int bitValue, BitPackedUnSignedLongBuffer SB, BitPackedUnSignedLongBuffer BB) {
         if (bitValue == 1) {

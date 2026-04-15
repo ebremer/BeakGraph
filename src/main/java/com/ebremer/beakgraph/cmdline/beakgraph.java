@@ -176,6 +176,7 @@ public class beakgraph {
                     .setSource(src.toFile())
                     .setDestination(dest.toFile())
                     .setSpatial(params.spatial)
+                     .setFeatures(params.features)
                     .build()
                     .write();
             } catch (IOException ex) {

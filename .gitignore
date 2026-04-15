@@ -1,3 +1,4 @@
 /target/
-hs_err*.log
+*.log
+
 
