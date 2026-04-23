@@ -4,7 +4,7 @@
   width=300px height=300px
   alt="BeakGraph"
   title="BeakGraph"
-  style="display: inline-block; margin: 0 auto; max-width: 150px">
+  style="float: left; margin: 0 20px 10px 0;">
 
 ## Building
 

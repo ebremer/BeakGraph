@@ -4,7 +4,7 @@
   <groupId>com.ebremer</groupId>
   <artifactId>BeakGraph</artifactId>
   <name>BeakGraph</name>
-  <version>0.13.0</version>
+  <version>0.14.0</version>
   <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
   <issueManagement>
     <system>github</system>
@@ -265,22 +265,22 @@
       <dependency>
         <groupId>commons-io</groupId>
         <artifactId>commons-io</artifactId>
-        <version>2.21.0</version>
+        <version>${commons.io.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-pool2</artifactId>
-        <version>2.13.1</version>
+        <version>${commons.pool.ver}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-compress</artifactId>
-        <version>1.28.0</version>
+        <version>${commons-compress.version}</version>
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>
         <artifactId>slf4j-api</artifactId>
-        <version>2.0.17</version>
+        <version>${slf4j.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>
@@ -332,8 +332,7 @@
     <aircompressor.version>3.6</aircompressor.version>
     <maven-shade-plugin.version>3.6.1</maven-shade-plugin.version>
     <jena.version>5.6.0</jena.version>
-    <maven-compiler-plugin.version>3.14.1</maven-compiler-plugin.version>
-    <jaxb.version>2.4.0-b180830.0359</jaxb.version>
+    <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
     <commons-compress.version>1.28.0</commons-compress.version>
     <jts.ver>1.20.0</jts.ver>
     <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
@@ -345,6 +344,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <log4j.version>3.0.0-beta2</log4j.version>
     <jcommander.version>3.0</jcommander.version>
+    <commons.io.version>2.21.0</commons.io.version>
     <jhdf.version>0.10.0</jhdf.version>
   </properties>
 </project>
