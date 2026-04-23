@@ -1,10 +1,11 @@
 # BeakGraph<br>
 <img
   src="https://github.com/ebremer/BeakGraph/raw/master/beakgraph.png?raw=true"
-  width=300px height=300px
+  align="left"
+  width="300" height="300"
+  hspace="20" vspace="10"
   alt="BeakGraph"
-  title="BeakGraph"
-  style="float: left; margin: 0 20px 10px 0;">
+  title="BeakGraph">
 
 ## Building
 
