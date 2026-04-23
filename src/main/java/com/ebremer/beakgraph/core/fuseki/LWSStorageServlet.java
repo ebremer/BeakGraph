@@ -235,7 +235,7 @@ public class LWSStorageServlet extends HttpServlet {
             try (PrintWriter out = resp.getWriter()) {
                 out.println("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LWS Storage – /" + (reqPath.isEmpty() ? "" : reqPath) + "</title>");
                 out.println("<style>body{font-family:sans-serif;margin:40px} ul{list-style:none;padding:0} a{color:#0066cc}</style></head><body>");
-                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> LWS Container: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
+                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> Linked Web Storage: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
                 out.println("<p><a href=\"" + BASE + "description\">Storage Description</a> | ");
                 out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
                 out.println("<a href=\"/sparql/index.html\" target=\"_blank\">SPARQL Endpoint</a></p><hr>");
