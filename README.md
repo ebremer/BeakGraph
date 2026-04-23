@@ -9,6 +9,8 @@
 
 Beakgraph is an [Apache Jena](https://jena.apache.org/) Graph Implmentation of [RDF HDT](https://www.rdfhdt.org/) technology pumped into a [HDF5](https://www.hdfgroup.org/solutions/hdf5/) file and extended to support a full RDF Dataset.
 
+<br clear="all">
+
 ## Building
 
 Configuration file generation for native-image (already generated for current source code.  Only needed if extensive changes have been made)
