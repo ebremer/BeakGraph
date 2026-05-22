@@ -15,7 +15,7 @@ public class Params {
     // HDF5Reader rejects files whose version exceeds this. Files written before
     // versioning have no attribute and are treated as version 1.
     public static final int FORMAT_VERSION = 2;
-    public static final String VERSION = "0.13.0";
+    public static final String VERSION = "0.15.0";
     public static final int BLOCKSIZE = 64;
     public static final int SUPERBLOCKSIZE = 512;
     public static final String BGURN = "x-beakgraph";
