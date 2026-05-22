@@ -10,6 +10,11 @@ import org.apache.jena.graph.NodeFactory;
 public class Params {
     public static final String BG = ".BG";
     public static final String DICTIONARY = "dictionary";
+    // HDF5 on-disk format version, written as the "formatVersion" attribute on
+    // the .BG group. Bump on any change older readers cannot understand;
+    // HDF5Reader rejects files whose version exceeds this. Files written before
+    // versioning have no attribute and are treated as version 1.
+    public static final int FORMAT_VERSION = 2;
     public static final String VERSION = "0.13.0";
     public static final int BLOCKSIZE = 64;
     public static final int SUPERBLOCKSIZE = 512;

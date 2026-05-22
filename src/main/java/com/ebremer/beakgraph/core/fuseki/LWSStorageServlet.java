@@ -59,65 +59,24 @@ public class LWSStorageServlet extends HttpServlet {
       return "GET".equals(method) && req.getParameter("query") != null;
   }
     private void handleSparqlQuery(HttpServletRequest req, HttpServletResponse resp, Path h5File) throws IOException {
-        String queryStr = null;
-        if ("GET".equals(req.getMethod())) {
-            queryStr = req.getParameter("query");
-        } else if ("POST".equals(req.getMethod())) {
-            String ct = req.getContentType();
-            if (ct != null && ct.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
-                queryStr = req.getParameter("query");
-            } else {
-                try (InputStream in = req.getInputStream()) {
-                    queryStr = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                }
-            }
-        }
+        String queryStr = BGSparqlService.extractQuery(req);
         if (queryStr == null || queryStr.isBlank()) {
             resp.sendError(400, "No SPARQL query provided");
             return;
         }
-        BeakGraph bg = null;
         URI fileUri = h5File.toUri();
+        BeakGraph bg = null;
         try {
-            Query query = QueryFactory.create(queryStr);
             bg = BeakGraphPool.getPool().borrowObject(fileUri);
-            Dataset ds = bg.getDataset();
-            try (QueryExecution qexec = QueryExecution.dataset(ds).query(query).build()) {
-                String accept = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase() : "";
-                if (query.isSelectType()) {
-                    ResultSet rs = qexec.execSelect();
-                    if (accept.contains("json")) {
-                        resp.setContentType("application/sparql-results+json");
-                        ResultSetFormatter.outputAsJSON(resp.getOutputStream(), rs);
-                    } else if (accept.contains("csv")) {
-                        resp.setContentType("text/csv");
-                        ResultSetFormatter.outputAsCSV(resp.getOutputStream(), rs);
-                    } else {
-                        resp.setContentType("application/sparql-results+xml");
-                        ResultSetFormatter.outputAsXML(resp.getOutputStream(), rs);
-                    }
-                } else if (query.isAskType()) {
-                    boolean b = qexec.execAsk();
-                    resp.setContentType("application/sparql-results+json");
-                    resp.getWriter().write("{\"boolean\":" + b + "}");
-                } else if (query.isConstructType() || query.isDescribeType()) {
-                    Model m = query.isConstructType() ? qexec.execConstruct() : qexec.execDescribe();
-                    if (accept.contains("json")) {
-                        resp.setContentType("application/ld+json");
-                        RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.JSONLD);
-                    } else if (accept.contains("turtle")) {
-                        resp.setContentType("text/turtle");
-                        RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.TURTLE);
-                    } else {
-                        resp.setContentType("application/rdf+xml");
-                        RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.RDFXML);
-                    }
-                }
-            }
+            // resolve document-relative IRIs against the URL this .h5 is served from
+            BGSparqlService.execute(bg.getDataset(), queryStr,
+                    req.getRequestURL().toString(), req.getHeader("Accept"), resp);
         } catch (Exception ex) {
             resp.sendError(400, "Query error: " + ex.getMessage());
         } finally {
-            if (bg != null) BeakGraphPool.getPool().returnObject(fileUri, bg);
+            if (bg != null) {
+                BeakGraphPool.getPool().returnObject(fileUri, bg);
+            }
         }
     }
     private String getParentURI(String resourceURI) {
@@ -235,7 +194,7 @@ public class LWSStorageServlet extends HttpServlet {
             try (PrintWriter out = resp.getWriter()) {
                 out.println("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LWS Storage – /" + (reqPath.isEmpty() ? "" : reqPath) + "</title>");
                 out.println("<style>body{font-family:sans-serif;margin:40px} ul{list-style:none;padding:0} a{color:#0066cc}</style></head><body>");
-                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> LWS Container: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
+                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> Linked Web Storage: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
                 out.println("<p><a href=\"" + BASE + "description\">Storage Description</a> | ");
                 out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
                 out.println("<a href=\"/sparql/index.html\" target=\"_blank\">SPARQL Endpoint</a></p><hr>");

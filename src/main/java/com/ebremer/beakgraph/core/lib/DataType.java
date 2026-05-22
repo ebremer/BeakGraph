@@ -15,7 +15,11 @@ public enum DataType {
     FLOAT(Float.class, 4),
     DOUBLE(Double.class, 8),
     BIG_INTEGER(BigInteger.class, -1),
-    BIG_DECIMAL(BigDecimal.class, -1);
+    BIG_DECIMAL(BigDecimal.class, -1),
+    // A document-relative IRI (no scheme), e.g. <> or <sibling.png>. Stored
+    // verbatim and resolved at query time against the file's serving URL.
+    // MUST stay last so existing ordinals in older .h5 files are unaffected.
+    RELATIVE_IRI(String.class, -1);
 
     private final Class<?> clazz;
     private final int sizeInBytes;

@@ -12,6 +12,7 @@ import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.jena.SimpleNodeTable;
 import com.ebremer.beakgraph.turbo.Spatial;
 import io.jhdf.HdfFile;
+import io.jhdf.api.Attribute;
 import io.jhdf.api.Group;
 import java.io.File;
 import java.net.URI;
@@ -53,6 +54,14 @@ public class HDF5Reader implements BGReader {
     public HDF5Reader(File src) {
         this.hdf = new HdfFile(src.toPath());
         this.hdt = (Group) hdf.getChild(Params.BG);
+        long fileVersion = readFormatVersion(hdt);
+        if (fileVersion > Params.FORMAT_VERSION) {
+            hdf.close();
+            throw new IllegalStateException(
+                    "BeakGraph HDF5 format version " + fileVersion + " in " + src
+                  + " is newer than this build supports (max " + Params.FORMAT_VERSION
+                  + "). Upgrade BeakGraph.");
+        }
         Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
         this.dict = new PositionalDictionaryReader(dictionary);
         //this.totalQuads = (long) hdt.getAttribute("numQuads").getData();
@@ -60,7 +69,23 @@ public class HDF5Reader implements BGReader {
         nodeTable = new SimpleNodeTable(dict);
         this.uri = src.toURI();
     }
-    
+
+    /**
+     * Reads the on-disk format version from the .BG group. Files written before
+     * format versioning have no attribute and are treated as version 1.
+     */
+    private static long readFormatVersion(Group hdt) {
+        try {
+            Attribute a = hdt.getAttribute("formatVersion");
+            if (a != null && a.getData() instanceof Number n) {
+                return n.longValue();
+            }
+        } catch (Exception ignore) {
+            // unreadable attribute - treat as a legacy (pre-versioning) file
+        }
+        return 1L;
+    }
+
     @Override
     public URI getURI() {
         return uri;

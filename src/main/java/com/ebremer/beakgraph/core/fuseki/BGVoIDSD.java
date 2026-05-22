@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.core.fuseki;
 
 import com.ebremer.beakgraph.sniff.SD;
+import com.ebremer.beakgraph.utils.UTIL;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -124,7 +125,9 @@ public class BGVoIDSD {
             predicateCounts.forEach((pNode, count) -> {
                 if (pNode.isURI()) {
                     Property prop = ResourceFactory.createProperty(pNode.getURI());
-                    vocabNamespaces.add(getNamespaceBase(pNode.getURI()));
+                    if (!UTIL.isRelativeIRI(pNode.getURI())) {
+                        vocabNamespaces.add(getNamespaceBase(pNode.getURI()));
+                    }
                     graphRes.addProperty(VOID.propertyPartition,
                         graphRes.getModel().createResource()
                             .addProperty(VOID.property, prop)
@@ -143,7 +146,7 @@ public class BGVoIDSD {
             });
             // Evaluate Distinct Objects to grab the remaining namespaces
             distinctObjects.forEach(oNode -> {
-                if (oNode.isURI()) {
+                if (oNode.isURI() && !UTIL.isRelativeIRI(oNode.getURI())) {
                     vocabNamespaces.add(getNamespaceBase(oNode.getURI()));
                 }
             });
@@ -172,7 +175,9 @@ public class BGVoIDSD {
             if (distinctSubjects.isEmpty()) return null;
             String prefix = null;
             for (Node sNode : distinctSubjects) {
-                if (sNode.isURI()) {
+                // Only absolute IRIs have a stable uriSpace; document-relative
+                // storage-form IRIs resolve per serving URL, so skip them.
+                if (sNode.isURI() && !UTIL.isRelativeIRI(sNode.getURI())) {
                     String uri = sNode.getURI();
                     if (prefix == null) {
                         prefix = uri;

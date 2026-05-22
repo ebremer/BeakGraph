@@ -51,6 +51,23 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         gi = dict.getGraphs().locate(quad.getGraph());
         if (gi < 1) return;
 
+        // Honour concrete subject / object terms named directly in the triple
+        // pattern. This iterator otherwise scans every S and O in the graph, so
+        // a concrete "<subject> ?p ?o" would wrongly return every triple.
+        long concreteSubId = -1;
+        if (quad.getSubject().isConcrete()) {
+            concreteSubId = dict.getSubjects().locate(quad.getSubject());
+            if (concreteSubId < 1) return;
+            minSubId = Math.max(minSubId, concreteSubId);
+            maxSubId = Math.min(maxSubId, concreteSubId);
+        }
+        if (quad.getObject().isConcrete()) {
+            long oid = dict.getObjects().locate(quad.getObject());
+            if (oid < 1) return;
+            minObjId = Math.max(minObjId, oid);
+            maxObjId = Math.min(maxObjId, oid);
+        }
+
         // -----------------------------------------------------------------
         // LEVEL 1: Subject Range (Graph Scope)
         // -----------------------------------------------------------------
@@ -64,7 +81,14 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
 
         if (sStart == -1 || sStart > sEnd) return;
 
-        this.idxS = sStart;
+        // For a concrete subject, binary-search the (ascending) subject list
+        // for it instead of scanning the graph's subjects one block at a time.
+        long firstS = sStart;
+        if (concreteSubId > 0) {
+            firstS = binarySearchSubject(concreteSubId, sStart, sEnd);
+            if (firstS == -1) return;   // subject not present in this graph
+        }
+        this.idxS = firstS;
         this.endS = sEnd;
 
         // -----------------------------------------------------------------
@@ -97,6 +121,22 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private long select1Safe(BitPackedUnSignedLongBuffer buffer, long rank) {
         if (rank < 1) return -1; // 1-based rank must be >= 1
         return buffer.select1(rank);
+    }
+
+    /**
+     * Binary search the subject-id buffer Ss (ascending within a graph) for
+     * {@code sid} in the inclusive position range [lo, hi]. Returns the buffer
+     * position, or -1 if the subject is not present in that range.
+     */
+    private long binarySearchSubject(long sid, long lo, long hi) {
+        while (lo <= hi) {
+            long mid = (lo + hi) >>> 1;
+            long v = Ss.get(mid);
+            if (v == sid) return mid;
+            if (v < sid) lo = mid + 1;
+            else hi = mid - 1;
+        }
+        return -1;
     }
 
     private void advance() {
