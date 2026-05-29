@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.core.lib;
 
-import static com.ebremer.beakgraph.utils.UTIL.byteArrayToBinaryString;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.IOException;
@@ -185,13 +184,4 @@ public class VByte {
         }
     }
 
-    /** Simple demo of unsigned VByte encoding
-     * @param args
-     * @throws java.io.IOException */
-    public static void main(String[] args) throws IOException {
-        byte[] buffer = new byte[50];
-        int len = VByte.encode(buffer, 0, 131);
-        IO.println("Bytes written: " + len);
-        IO.println(byteArrayToBinaryString(buffer, len));
-    }
 }

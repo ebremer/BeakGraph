@@ -55,24 +55,4 @@ public class NumScale {
         
         return (int) Math.ceil(stepsExact - epsilon);
     }
-
-    public static void main(String[] args) {
-        // Test comparing both methods
-        testBoth(100, 100, 100);       // Fits exactly
-        testBoth(1024, 768, 256);      // Power of 2 (1024 -> 512 -> 256), should be 2 steps
-        testBoth(1000, 1000, 500);     // Exactly half (1000 -> 500), should be 1 step
-        testBoth(1024, 1024, 1000);    // Edge case: Power of 2 slightly larger than box. 1024->512. 1 step.
-    }
-
-    private static void testBoth(int w, int h, int box) {
-        int loopResult = calculateScaleSteps(w, h, box);
-        int logResult = calculateScaleStepsLog(w, h, box);
-        
-        System.out.printf("Img [%d x %d] Box [%d] -> Loop: %d | Log: %d", w, h, box, loopResult, logResult);
-        
-        if (loopResult != logResult) {
-            System.out.print(" [MISMATCH!]");
-        }
-        System.out.println();
-    }
 }

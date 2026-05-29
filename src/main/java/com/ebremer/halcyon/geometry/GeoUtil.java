@@ -44,11 +44,4 @@ public class GeoUtil {
 
         return prettyPrint(job.build());
     }
-    
-    public static void main(String[] args) {
-        int x[] = {  10,  30, 40, 50, 110, 140 }; 
-        int y[] = { 140, 110, 50, 40,  30,  10 };
-        Polygon p = new Polygon(x, y, x.length); 
-        System.out.println(Poly2Json(p));
-    }   
 }

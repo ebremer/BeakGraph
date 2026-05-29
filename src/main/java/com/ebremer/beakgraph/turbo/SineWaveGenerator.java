@@ -38,26 +38,4 @@ public class SineWaveGenerator {
 
         return geomFactory.createLineString(coords);
     }
-
-    public static void main(String[] args) {
-        // Wave Parameters
-        double amplitude = 20000.0;
-        double width = 100000.0;
-        double cycles = 5.0;
-        int smoothness = 1000;
-
-        // Shift Parameters
-        double offX = 20000.0;  // Shift right
-        double offY = 20000.0; // Shift up
-
-        // 1. Generate the Sine Wave with Offset
-        LineString sineWave = createSinePolyline(amplitude, width, cycles, smoothness, offX, offY);
-        
-        // 2. Apply the buffer
-        double bufferDistance = 2.0;
-        var envelope = sineWave.buffer(bufferDistance);
-
-        System.out.println("Sine Wave WKT: " + sineWave.toText());
-        // System.out.println("Envelope WKT: " + envelope.toText()); 
-    }
 }

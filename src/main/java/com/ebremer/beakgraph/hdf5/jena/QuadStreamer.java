@@ -1,12 +1,9 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
-import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
-import io.jhdf.HdfFile;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
-import java.io.File;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 
@@ -164,39 +161,5 @@ public class QuadStreamer {
         long num = (Long) ds.getAttribute("numEntries").getData();
         int width = (Integer) ds.getAttribute("width").getData();
         return new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), num, width);
-    }
-
-    public static void main(String[] args) {
-        File src = new File("/data/dX.h5");
-        if (!src.exists()) {
-            System.err.println("File not found: " + src.getAbsolutePath());
-            return;
-        }
-
-        try (HdfFile hdf = new HdfFile(src.toPath())) {
-            Group hdt = (Group) hdf.getChild(Params.BG);
-            if (hdt == null) {
-                System.err.println("HDT Group not found");
-                return;
-            }
-            
-            Group dictGroup = (Group) hdt.getChild(Params.DICTIONARY);
-            if (dictGroup == null) {
-                System.err.println("Dictionary Group not found");
-                return;
-            }
-            
-            PositionalDictionaryReader dict = new PositionalDictionaryReader(dictGroup);
-            QuadStreamer streamer = new QuadStreamer(hdt, dict);
-            
-            System.out.println("=== Testing GSPO Stream ===");
-            streamer.streamQuadsGSPO();
-            
-            System.out.println("\n=== Testing GPOS Stream ===");
-            streamer.streamQuadsGPOS();
-            
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
     }
 }
