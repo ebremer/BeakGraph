@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.lws;
 
+import com.ebremer.ns.LWS;
 import org.apache.jena.rdf.model.*;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.OWL;
@@ -13,7 +14,6 @@ import java.util.zip.GZIPOutputStream;
 
 public class LWSMetadataGenerator {
 
-    private static final String LWS_NS = "https://www.w3.org/ns/lws#";
     private static final String AS_NS = "https://www.w3.org/ns/activitystreams#";
     private static final String SCHEMA_NS = "https://schema.org/";
 
@@ -49,20 +49,20 @@ public class LWSMetadataGenerator {
 
     public static Model generateLWSModel(Path rootPath) throws IOException {
         Model model = ModelFactory.createDefaultModel();
-        model.setNsPrefix("lws", LWS_NS);
+        model.setNsPrefix("lws", LWS.NS);
         model.setNsPrefix("as", AS_NS);
         model.setNsPrefix("sdo", SCHEMA_NS);
         model.setNsPrefix("xsd", XSD.NS);
         model.setNsPrefix("owl", OWL.NS);
 
-        Property items = model.createProperty(LWS_NS, "items");
+        Property items = LWS.items;
         Property totalItems = model.createProperty(AS_NS, "totalItems");
         Property mediaType = model.createProperty(AS_NS, "mediaType");
         Property size = model.createProperty(SCHEMA_NS, "size");
         Property modified = model.createProperty(AS_NS, "updated");
 
-        Resource containerType = model.createResource(LWS_NS + "Container");
-        Resource dataType = model.createResource(LWS_NS + "DataResource");
+        Resource containerType = LWS.Container;
+        Resource dataType = LWS.DataResource;
 
         Resource rootResource = model.createResource(CANONICAL_BASE);
         rootResource.addProperty(RDF.type, containerType);

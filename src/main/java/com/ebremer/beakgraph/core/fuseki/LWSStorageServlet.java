@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.core.fuseki;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import com.ebremer.beakgraph.pool.BeakGraphPool;
+import com.ebremer.ns.LWS;
 import org.apache.jena.query.*;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
@@ -27,8 +28,8 @@ public class LWSStorageServlet extends HttpServlet {
     private static Path STORAGE_ROOT;
     private final transient Model MODEL;
     private static final String HTTP_ROOT = LWSMetadataGenerator.CANONICAL_BASE;
-    private static final Resource LWS_CONTAINER = ResourceFactory.createResource("https://www.w3.org/ns/lws#Container");
-    private static final Property LWS_ITEMS = ResourceFactory.createProperty("https://www.w3.org/ns/lws#items");
+    private static final Resource LWS_CONTAINER = LWS.Container;
+    private static final Property LWS_ITEMS = LWS.items;
     private static final Property AS_MEDIA_TYPE = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#mediaType");
     private static final Property SCHEMA_SIZE = ResourceFactory.createProperty("https://schema.org/size");
     private static final Property AS_UPDATED = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#updated");
@@ -96,8 +97,8 @@ public class LWSStorageServlet extends HttpServlet {
             return;
         }
         String typeHref = r.hasProperty(RDF.type, LWS_CONTAINER)
-            ? "https://www.w3.org/ns/lws#Container"
-            : "https://www.w3.org/ns/lws#DataResource";
+            ? LWS.Container.getURI()
+            : LWS.DataResource.getURI();
         String relations = "";
         String parent = getParentURI(resourceURI);
         if (parent != null) {
@@ -240,7 +241,7 @@ public class LWSStorageServlet extends HttpServlet {
                     List<Resource> paged = items.subList(start, Math.min(start+size, total));
                     Resource pageR = out.createResource(BASE + (reqPath.isEmpty() ? "" : reqPath) + (reqPath.isEmpty() ? "" : "/") + "?page=" + page);
                     r.listProperties().forEachRemaining(s -> { if (!s.getPredicate().equals(LWS_ITEMS)) pageR.addProperty(s.getPredicate(), s.getObject()); });
-                    pageR.addProperty(RDF.type, ResourceFactory.createResource("https://www.w3.org/ns/lws#ContainerPage"));
+                    pageR.addProperty(RDF.type, LWS.ContainerPage);
                     pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#first"), BASE + (reqPath.isEmpty() ? "" : reqPath) + "?page=1");
                     int pages = (total + size - 1) / size;
                     pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#last"), BASE + (reqPath.isEmpty() ? "" : reqPath) + "?page=" + pages);

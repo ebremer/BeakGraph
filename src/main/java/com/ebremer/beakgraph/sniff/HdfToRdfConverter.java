@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.sniff;
 
+import com.ebremer.ns.LWS;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Dataset;
 import io.jhdf.api.Group;
