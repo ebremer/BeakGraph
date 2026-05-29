@@ -29,6 +29,7 @@ import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
+import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.XSD;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -398,8 +399,10 @@ public class PositionalDictionaryWriterBuilder {
                     this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
                     this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
                     this.stats.numDouble++;
-                } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI())) {
-                    String wow = (String) o.getLiteralLexicalForm();                            
+                } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
+                    // rdf:langString shares the strings buffer; its language tag is
+                    // stored separately by MultiTypeDictionaryWriter (langs/langTags).
+                    String wow = (String) o.getLiteralLexicalForm();
                     this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
                     this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
                     this.stats.numStrings++;

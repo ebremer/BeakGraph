@@ -30,6 +30,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final FCDReader iri;
     private final FCDReader strings;
     private final FCDReader typedLiteralsDictionary;
+    // rdf:langString support: dictionary of distinct language tags + per-node
+    // 1-based id buffer (0 = no tag). Both null for files written before
+    // language-tag support, so those reconstruct exactly as before.
+    private final FCDReader langs;
+    private final BitPackedUnSignedLongBuffer langTags;
     private final long numEntries;
     private final String name;
     private long offset = 0;
@@ -67,6 +72,12 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
         Group iriG = (Group) d.getChild("iri");
         this.iri = (iriG != null) ? new FCDReader(iriG) : null;
+
+        Group langsG = (Group) d.getChild("langs");
+        this.langs = (langsG != null) ? new FCDReader(langsG) : null;
+        ContiguousDataset langTagsDS = (ContiguousDataset) d.getChild("langTags");
+        this.langTags = (langTagsDS != null) ? new BitPackedUnSignedLongBuffer(null, langTagsDS.getBuffer(), (Long) langTagsDS.getAttribute("numEntries").getData(), (Integer) langTagsDS.getAttribute("width").getData()) : null;
+
         buildTieredIndex();
     }
 
@@ -104,6 +115,12 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat(Math.toIntExact(off * Float.BYTES)));
             case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble(Math.toIntExact(off * Double.BYTES)));
             case STRING -> {
+                // A language tag takes precedence: rdf:langString is reconstructed
+                // as a lang-tagged literal (term-exact per RDF semantics).
+                long langId = (langTags != null) ? langTags.get(idx) : 0;
+                if (langId > 0 && langs != null) {
+                    yield NodeFactory.createLiteralLang(strings.get(off), langs.get(langId - 1));
+                }
                 long dtId = typedLiterals.get(idx);
                 if (dtId < 1) throw new RuntimeException("Corrupt HDF5: missing typed-literal datatype id at ID " + id);
                 yield NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(dtId - 1)));
