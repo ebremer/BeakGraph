@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.core.fuseki;
 
 import com.ebremer.beakgraph.cmdline.Parameters;
 import com.ebremer.beakgraph.core.BeakGraph;
+import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import com.ebremer.beakgraph.pool.BeakGraphPool;
 import com.ebremer.beakgraph.turbo.Spatial;
 import org.apache.jena.fuseki.main.FusekiServer;
@@ -49,19 +50,27 @@ public class SPARQLEndPoint {
         if (Files.isDirectory(endpointPath)) {
             System.out.println("Directory mode (LWS) – metadata becomes default graph");
             storageRoot = endpointPath;
-            Path ttlGzFile = endpointPath.resolve("beakgraph.ttl.gz");
+            Path ttlGzFile = endpointPath.resolve(LWSMetadataGenerator.CACHE_FILE_NAME);
             if (Files.exists(ttlGzFile)) {
                 try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
                     lwsModel = ModelFactory.createDefaultModel();
                     RDFDataMgr.read(lwsModel, is, RDFFormat.TURTLE.getLang());
                     System.out.println("Loaded LWS metadata from " + ttlGzFile);
                 } catch (Exception ex) {
-                    logger.error("Failed to load beakgraph.ttl.gz", ex);
+                    logger.error("Failed to load " + LWSMetadataGenerator.CACHE_FILE_NAME, ex);
                     lwsModel = ModelFactory.createDefaultModel();
                 }
             } else {
-                logger.warn("beakgraph.ttl.gz not found – empty metadata");
-                lwsModel = ModelFactory.createDefaultModel();
+                System.out.println(LWSMetadataGenerator.CACHE_FILE_NAME
+                        + " not found – generating LWS metadata from " + endpointPath);
+                try {
+                    lwsModel = LWSMetadataGenerator.generateLWSModel(endpointPath);
+                    LWSMetadataGenerator.writeModelToGZ(lwsModel, ttlGzFile);
+                    System.out.println("Generated and cached LWS metadata to " + ttlGzFile);
+                } catch (Exception ex) {
+                    logger.error("Failed to generate LWS metadata for " + endpointPath, ex);
+                    lwsModel = ModelFactory.createDefaultModel();
+                }
             }
             ds = DatasetFactory.create(lwsModel);
         } else {

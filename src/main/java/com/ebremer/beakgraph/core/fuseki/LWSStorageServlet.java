@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.core.fuseki;
 import com.ebremer.beakgraph.core.BeakGraph;
+import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import com.ebremer.beakgraph.pool.BeakGraphPool;
 import org.apache.jena.query.*;
 import org.apache.jena.rdf.model.Model;
@@ -25,7 +26,7 @@ public class LWSStorageServlet extends HttpServlet {
     private static String BASE;
     private static Path STORAGE_ROOT;
     private final transient Model MODEL;
-    private static final String HTTP_ROOT = "http://localhost:8888/HalcyonStorage";
+    private static final String HTTP_ROOT = LWSMetadataGenerator.CANONICAL_BASE;
     private static final Resource LWS_CONTAINER = ResourceFactory.createResource("https://www.w3.org/ns/lws#Container");
     private static final Property LWS_ITEMS = ResourceFactory.createProperty("https://www.w3.org/ns/lws#items");
     private static final Property AS_MEDIA_TYPE = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#mediaType");

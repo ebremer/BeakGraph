@@ -17,9 +17,26 @@ public class LWSMetadataGenerator {
     private static final String AS_NS = "https://www.w3.org/ns/activitystreams#";
     private static final String SCHEMA_NS = "https://schema.org/";
 
+    /**
+     * Canonical base IRI for generated LWS resources. This is a stable namespace,
+     * NOT a real host: {@code LWSStorageServlet} rewrites it to the live host/port
+     * at serve time, so the generated metadata is portable across machines.
+     */
+    public static final String CANONICAL_BASE = "http://localhost:8888/HalcyonStorage";
+
+    /** Default file name used to cache generated metadata inside a storage folder. */
+    public static final String CACHE_FILE_NAME = "beakgraph.ttl.gz";
+
     public static void main(String[] args) {
-        Path rootPath = Paths.get("D:\\HalcyonStorage");
-        Path outputPath = Paths.get("D:\\HalcyonStorage\\beakgraph.ttl.gz");
+        if (args.length < 1) {
+            System.err.println("Usage: LWSMetadataGenerator <storageRootDir> [outputFile]");
+            System.err.println("  Generates LWS metadata (" + CACHE_FILE_NAME + ") for the given storage folder.");
+            System.exit(1);
+        }
+        Path rootPath = Paths.get(args[0]);
+        Path outputPath = (args.length >= 2)
+                ? Paths.get(args[1])
+                : rootPath.resolve(CACHE_FILE_NAME);
 
         try {
             Model model = generateLWSModel(rootPath);
@@ -47,7 +64,7 @@ public class LWSMetadataGenerator {
         Resource containerType = model.createResource(LWS_NS + "Container");
         Resource dataType = model.createResource(LWS_NS + "DataResource");
 
-        Resource rootResource = model.createResource("http://localhost:8888/HalcyonStorage");
+        Resource rootResource = model.createResource(CANONICAL_BASE);
         rootResource.addProperty(RDF.type, containerType);
 
         Files.walkFileTree(rootPath, new SimpleFileVisitor<Path>() {
@@ -75,9 +92,9 @@ public class LWSMetadataGenerator {
     }
 
     private static String toHttpUri(Path rootPath, Path path) {
-        if (path.equals(rootPath)) return "http://localhost:8888/HalcyonStorage";
+        if (path.equals(rootPath)) return CANONICAL_BASE;
         String relative = rootPath.relativize(path).toString().replace('\\', '/');
-        return "http://localhost:8888/HalcyonStorage/" + relative;
+        return CANONICAL_BASE + "/" + relative;
     }
 
     private static void processResource(Model model, String uri, Path realPath, BasicFileAttributes attrs,
@@ -124,7 +141,7 @@ public class LWSMetadataGenerator {
         }
     }
 
-    private static void writeModelToGZ(Model model, Path outputPath) throws IOException {
+    public static void writeModelToGZ(Model model, Path outputPath) throws IOException {
         try (OutputStream fos = Files.newOutputStream(outputPath);
              GZIPOutputStream gzos = new GZIPOutputStream(fos)) {
             model.write(gzos, "TURTLE");
