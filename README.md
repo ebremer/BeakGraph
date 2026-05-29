@@ -15,7 +15,7 @@ Beakgraph is an [Apache Jena](https://jena.apache.org/) Graph Implmentation of [
 
 Configuration file generation for native-image (already generated for current source code.  Only needed if extensive changes have been made)
 ```
-java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.13.0.jar
+java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.15.0.jar
 ```
 Native Command-line
 ```
@@ -57,7 +57,6 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 
 ### Limitations
 
-* no support for language tags
 * extremely limited GeoSPARQL support (only sfIntersects)
 
 ### Author's notes
