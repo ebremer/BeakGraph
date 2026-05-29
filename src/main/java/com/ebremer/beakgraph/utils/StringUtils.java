@@ -1,7 +1,11 @@
 package com.ebremer.beakgraph.utils;
 
+import io.airlift.compress.v3.zstd.ZstdCompressor;
+import io.airlift.compress.v3.zstd.ZstdDecompressor;
 import io.airlift.compress.v3.zstd.ZstdJavaCompressor;
 import io.airlift.compress.v3.zstd.ZstdJavaDecompressor;
+import io.airlift.compress.v3.zstd.ZstdNativeCompressor;
+import io.airlift.compress.v3.zstd.ZstdNativeDecompressor;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -11,11 +15,25 @@ import java.util.Arrays;
  * Use as: byte[] compressed = StringUtils.compress("my data");
  */
 public final class StringUtils {
-    private final ZstdJavaCompressor COMPRESSOR = new ZstdJavaCompressor();
-    private final ZstdJavaDecompressor DECOMPRESSOR = new ZstdJavaDecompressor();
+    private final ZstdCompressor COMPRESSOR;
+    private final ZstdDecompressor DECOMPRESSOR;
     private static final int HEADER_SIZE = 4; // To store uncompressed length
 
-    public StringUtils() {}
+    /**
+     * Selects the Zstd implementation: the native (Foreign Function and Memory
+     * API) binding when its bundled library is available, otherwise the
+     * pure-Java port. The native path avoids sun.misc.Unsafe (deprecated for
+     * removal); the Java path remains the portable fallback.
+     */
+    public StringUtils() {
+        if (ZstdNativeCompressor.isEnabled()) {
+            COMPRESSOR = new ZstdNativeCompressor();
+            DECOMPRESSOR = new ZstdNativeDecompressor();
+        } else {
+            COMPRESSOR = new ZstdJavaCompressor();
+            DECOMPRESSOR = new ZstdJavaDecompressor();
+        }
+    }
 
     /**
      * Compresses a String into a byte array with a 4-byte length header.

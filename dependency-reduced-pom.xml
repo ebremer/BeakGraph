@@ -50,7 +50,7 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.5</version>
         <configuration>
-          <argLine>--enable-preview -Xmx2g</argLine>
+          <argLine>--enable-preview --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xmx2g</argLine>
         </configuration>
       </plugin>
     </plugins>
@@ -79,6 +79,7 @@
                   <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
                   <manifestEntries>
                     <Multi-Release>true</Multi-Release>
+                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
                   </manifestEntries>
                 </transformer>
                 <transformer />
@@ -186,6 +187,7 @@
                   <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
                   <manifestEntries>
                     <Multi-Release>true</Multi-Release>
+                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
                   </manifestEntries>
                 </transformer>
                 <transformer />
