@@ -42,31 +42,31 @@ public class SPARQLEndPoint {
     }
 
     private SPARQLEndPoint(Parameters params) throws Exception {
-        System.out.println("Starting Fuseki SPARQL Endpoint...");
+        logger.info("Starting Fuseki SPARQL Endpoint...");
 
         Path endpointPath = params.sparqlendpoint.toPath().normalize().toAbsolutePath();
         Dataset ds;
 
         if (Files.isDirectory(endpointPath)) {
-            System.out.println("Directory mode (LWS) – metadata becomes default graph");
+            logger.info("Directory mode (LWS) – metadata becomes default graph");
             storageRoot = endpointPath;
             Path ttlGzFile = endpointPath.resolve(LWSMetadataGenerator.CACHE_FILE_NAME);
             if (Files.exists(ttlGzFile)) {
                 try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
                     lwsModel = ModelFactory.createDefaultModel();
                     RDFDataMgr.read(lwsModel, is, RDFFormat.TURTLE.getLang());
-                    System.out.println("Loaded LWS metadata from " + ttlGzFile);
+                    logger.info("Loaded LWS metadata from {}", ttlGzFile);
                 } catch (Exception ex) {
                     logger.error("Failed to load " + LWSMetadataGenerator.CACHE_FILE_NAME, ex);
                     lwsModel = ModelFactory.createDefaultModel();
                 }
             } else {
-                System.out.println(LWSMetadataGenerator.CACHE_FILE_NAME
-                        + " not found – generating LWS metadata from " + endpointPath);
+                logger.info("{} not found – generating LWS metadata from {}",
+                        LWSMetadataGenerator.CACHE_FILE_NAME, endpointPath);
                 try {
                     lwsModel = LWSMetadataGenerator.generateLWSModel(endpointPath);
                     LWSMetadataGenerator.writeModelToGZ(lwsModel, ttlGzFile);
-                    System.out.println("Generated and cached LWS metadata to " + ttlGzFile);
+                    logger.info("Generated and cached LWS metadata to {}", ttlGzFile);
                 } catch (Exception ex) {
                     logger.error("Failed to generate LWS metadata for " + endpointPath, ex);
                     lwsModel = ModelFactory.createDefaultModel();
@@ -74,7 +74,7 @@ public class SPARQLEndPoint {
             }
             ds = DatasetFactory.create(lwsModel);
         } else {
-            System.out.println("Single-file mode (HDF5)");
+            logger.info("Single-file mode (HDF5)");
             BeakGraph bg = BeakGraphPool.getPool().borrowObject(params.sparqlendpoint.toURI());
             ds = bg.getDataset();
 
@@ -85,7 +85,7 @@ public class SPARQLEndPoint {
                     try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
                         lwsModel = ModelFactory.createDefaultModel();
                         RDFDataMgr.read(lwsModel, is, RDFFormat.TURTLE.getLang());
-                        System.out.println("Loaded LWS metadata from " + ttlGzFile);
+                        logger.info("Loaded LWS metadata from {}", ttlGzFile);
                     } catch (Exception ex) {
                         logger.error("Failed to load beakgraph.ttl.gz", ex);
                         lwsModel = ModelFactory.createDefaultModel();
@@ -133,9 +133,9 @@ public class SPARQLEndPoint {
         }
 
         server.start();
-        System.out.println("Fuseki server started successfully!");
-        System.out.println("SPARQL: http://localhost:" + params.port + "/rdf/query");
-        System.out.println("LWS: " + BASE_URL);
+        logger.info("Fuseki server started successfully!");
+        logger.info("SPARQL: http://localhost:{}/rdf/query", params.port);
+        logger.info("LWS: {}", BASE_URL);
     }
 
     public static SPARQLEndPoint getSPARQLEndPoint(Parameters params) throws Exception {

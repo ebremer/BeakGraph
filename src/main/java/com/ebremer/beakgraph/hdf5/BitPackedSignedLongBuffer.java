@@ -8,6 +8,8 @@ import java.nio.BufferOverflowException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A buffer for storing integers or longs packed into a fixed number of bits.
@@ -36,6 +38,7 @@ import java.nio.file.Path;
  * </ol>
  */
 public class BitPackedSignedLongBuffer implements HDF5Buffer {
+    private static final Logger logger = LoggerFactory.getLogger(BitPackedSignedLongBuffer.class);
     private ByteBuffer buffer; // Can be the user-provided buffer or one wrapped from internalByteStream
     private final int bitWidth;
     private long writeAccumulator;
@@ -179,7 +182,7 @@ public class BitPackedSignedLongBuffer implements HDF5Buffer {
             // This case should ideally be handled by ensuring prepareForReading was called.
             // If prepareForReading wasn't called, this.buffer might be the dummy one.
             // For robustness, one might re-wrap here, but it's better to enforce prepareForReading.
-             System.err.println("Warning: Reading from BitPackedIntBuffer that might not have been prepared for reading after using internal stream.");
+             logger.warn("Reading from BitPackedIntBuffer that might not have been prepared for reading after using internal stream.");
         }
         while (readAccumulatorCount < this.bitWidth) {
             if (!buffer.hasRemaining()) { // Check the current this.buffer
