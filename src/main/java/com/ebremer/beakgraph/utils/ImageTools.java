@@ -22,6 +22,11 @@ import java.util.List;
  * @author erich
  */
 public class ImageTools {
+    // Safe to share across threads: JTS WKTReader.read() (>= 1.19) creates its
+    // StreamTokenizer locally and passes it through as a method parameter, and only reads
+    // its construction-time fields - so concurrent reads (e.g. parallel AddSpatial tasks)
+    // don't interfere. Do not call configuration setters on it after construction, and note
+    // that JTS < 1.19 kept the tokenizer in an instance field and was NOT thread-safe.
     private static final WKTReader WKT_READER = new WKTReader();
 
     public static void drawPolygonsOnImage(List<Polygon> polygons, BufferedImage image, Color strokeColor, int offX, int offY) {

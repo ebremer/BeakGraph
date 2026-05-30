@@ -229,10 +229,14 @@ public class ShapeAnalysis {
         int height = (int) Math.round(c[2].y - c[0].y);
         AffineTransformation af = new AffineTransformation();
         af.setToTranslation(-c[0].x, -c[0].y);
-        af.transform(p);
+        // transform() returns a translated copy (it does not mutate p, which the caller
+        // still uses for its other feature calcs). Draw that copy, shifted so the polygon's
+        // bounding-box corner sits at (0,0) and lands inside the width x height image -
+        // drawing the original p would place it off-canvas, leaving the image blank.
+        Geometry moved = af.transform(p);
         BufferedImage bi = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         ShapeWriter sw = new ShapeWriter();
-        Shape s = sw.toShape(p);
+        Shape s = sw.toShape(moved);
         Graphics2D g = bi.createGraphics();
         g.draw(s);
         return bi;
