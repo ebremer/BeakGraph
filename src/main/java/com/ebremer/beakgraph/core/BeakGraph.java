@@ -100,7 +100,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         try {
             reader.close();
         } catch (Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("Error closing BeakGraph reader for {}", uri, ex);
         }
     }
     

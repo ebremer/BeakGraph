@@ -99,13 +99,13 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
             @Override
             public Node extract(long id) {
-                if (id < 1) throw new Error("Cannot find Object ID: " + id);
+                if (id < 1) throw new IllegalArgumentException("Cannot find Object ID: " + id);
                 if (id <= maxEntityId) {
                     if (entities != null) return entities.extract(id);
                 } else {
                     if (literals != null) return literals.extract(id - maxEntityId);
                 }
-                throw new Error("Cannot find Object ID: " + id);
+                throw new IllegalArgumentException("Cannot find Object ID: " + id);
             }
 
             @Override

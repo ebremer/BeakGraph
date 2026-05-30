@@ -101,7 +101,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     @Override
     public Node extract(long id) {
         long idx = id - 1;
-        if (idx < 0 || idx >= numEntries) throw new Error("id ["+id+"] must be from 1 to "+getNumberOfNodes());
+        if (idx < 0 || idx >= numEntries) throw new IllegalArgumentException("id [" + id + "] must be from 1 to " + getNumberOfNodes());
         long off = offsets.get(idx);
         int typeOrdinal = (int) datatype.get(idx);
 
@@ -153,7 +153,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         while (low <= high) {
             long midId = low + (high - low) / 2;
             Node midNode = extract(midId);
-            if (midNode == null) throw new Error("Dictionary Corruption at ID: " + midId);
+            if (midNode == null) throw new IllegalStateException("Dictionary corruption at ID: " + midId);
             int cmp = NodeComparator.INSTANCE.compare(midNode, element);
             if (cmp == 0) {
                 return midId;
@@ -197,7 +197,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         while (low <= high) {
             long midId = low + (high - low) / 2;
             Node midNode = extract(midId);
-            if (midNode == null) throw new Error("Dictionary Corruption at ID: " + midId);
+            if (midNode == null) throw new IllegalStateException("Dictionary corruption at ID: " + midId);
             
             int cmp = NodeComparator.INSTANCE.compare(midNode, element);
 

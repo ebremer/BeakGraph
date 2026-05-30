@@ -235,8 +235,8 @@ public class PositionalDictionaryWriterBuilder {
                     for (int ii=0; ii<tiles.size(); ii++) {
                         qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
                     }            
-                } catch (Throwable ex) {
-                    logger.error(ex.getMessage());
+                } catch (Exception ex) {
+                    logger.error("Failed to add spatial tile quads for {}", wkt, ex);
                 }
                 long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
                 try {                
@@ -246,14 +246,14 @@ public class PositionalDictionaryWriterBuilder {
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
                 } catch (IllegalArgumentException ex) {
-                    logger.error("Bad polygon bro2 : {}", wkt);
+                    logger.error("Bad polygon, skipping hilbert corners for {}", wkt, ex);
                     return qqq;
-                }  catch (Throwable ex) {
-                logger.error(ex.getMessage());
+                } catch (Exception ex) {
+                    logger.error("Failed to add hilbert corner quads for {}", wkt, ex);
+                }
             }
-            }
-        } catch (Throwable ex) {
-            logger.error(ex.getMessage());
+        } catch (Exception ex) {
+            logger.error("Failed to add spatial data for {}", wkt, ex);
         }
         return qqq;
     }
@@ -359,7 +359,7 @@ public class PositionalDictionaryWriterBuilder {
             } else if (g.isURI()) {
                 stats.numIRI++;
             } else {
-                throw new Error("This shouldn't be in here : "+g);
+                throw new IllegalStateException("Unexpected graph node type (not URI or blank): " + g);
             }
             entities.add(g);
         }
@@ -438,7 +438,7 @@ public class PositionalDictionaryWriterBuilder {
                 } else if (o.isURI()) {
                     stats.numIRI++;
                 } else {
-                    throw new Error("WHAT THE HELL IS THIS : "+o);
+                    throw new IllegalStateException("Unexpected object node type (not URI, blank, or literal): " + o);
                 }
                 entities.add(o);
             }
@@ -473,12 +473,11 @@ public class PositionalDictionaryWriterBuilder {
                             System.out.println("Loaded " + quadcount.get() + " quads...");
                         }
                         quadslist.add(quad);
-                        try {
-                           ProcessQuad(quad);
-                        } catch (Throwable ex) {
-                            logger.error(ex.getMessage());
-                        }
-                        xvoid.add(quad);                    
+                        // Let an invalid quad abort the write rather than silently skipping
+                        // its dictionary accounting (the quad is already in quadslist, so a
+                        // skip would only fail later, opaquely, when the index can't locate it).
+                        ProcessQuad(quad);
+                        xvoid.add(quad);
                         if (spatial && isGeoLiteral(quad)) {
                             StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad));
                             spatialTasks.add(task);
@@ -487,9 +486,11 @@ public class PositionalDictionaryWriterBuilder {
                 scope.join();
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
-                logger.error("Interrupted while joining spatial task scope", ex);
-            } catch (Throwable ex) {
-                logger.error(ex.getMessage());
+                throw new IOException("Interrupted while parsing RDF source: " + src, ex);
+            } catch (Exception ex) {
+                // Don't swallow a parse/processing failure - that would leave a silently
+                // truncated dictionary. Abort the write; Error/OOM still propagate.
+                throw new IOException("Failed while parsing/processing RDF source: " + src, ex);
             }
             for (var task : spatialTasks) {
                 ArrayList<Quad> extraQuads = task.get();

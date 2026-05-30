@@ -31,7 +31,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                     if (gspo != null) {
                          its.add(new BGIteratorSO(dict, gspo, bnid, quad, filter, nodeTable));
                     } else {
-                        IO.println("  ERROR: GSPO IndexReader is NULL");
+                        throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
                     }
                 } else {
                     if (oBound) {
@@ -40,7 +40,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         if (gpos != null) {
                             its.add(new BGIteratorOS(dict, gpos, bnid, quad, filter, nodeTable));
                         } else {
-                            IO.println("  ERROR: GPOS IndexReader is NULL");
+                            throw new IllegalStateException("Required GPOS index is missing from this BeakGraph file");
                         }
                     } else {
                         // G, P bound -> Find S, O (Index: GPOS)
@@ -48,7 +48,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         if (gpos != null) {
                             its.add(new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable));
                         } else {
-                            IO.println("  ERROR: GPOS IndexReader is NULL");
+                            throw new IllegalStateException("Required GPOS index is missing from this BeakGraph file");
                         }
                     }
                 }
@@ -58,7 +58,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                 if (gspo != null) {
                     its.add(new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable));
                 } else {
-                    IO.println("  ERROR: GSPO IndexReader is NULL");
+                    throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
                 }
             }
         } else {

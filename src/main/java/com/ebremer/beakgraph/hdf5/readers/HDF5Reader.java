@@ -94,12 +94,16 @@ public class HDF5Reader implements BGReader {
     
     public IndexReader getIndexReader(Index indexType) {
         return indexCache.computeIfAbsent(indexType, type -> {
+            Group indexGroup = (Group) hdt.getChild(type.name());
+            if (indexGroup == null) {
+                return null; // index not present in this file; the caller falls back
+            }
             try {
-                Group indexGroup = (Group) hdt.getChild(type.name());
-                return (indexGroup == null) ? null : new IndexReader(indexGroup, type, formatVersion);
+                return new IndexReader(indexGroup, type, formatVersion);
             } catch (Exception e) {
-                e.printStackTrace();
-                return null;
+                // A present-but-unreadable index means a corrupt/incompatible file - fail
+                // loudly rather than returning null (which reads as "index absent").
+                throw new IllegalStateException("Failed to load index " + type + " from " + uri, e);
             }
         });
     }

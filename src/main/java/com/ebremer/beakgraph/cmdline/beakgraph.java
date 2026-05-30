@@ -179,13 +179,10 @@ public class beakgraph {
                      .setFeatures(params.features)
                     .build()
                     .write();
-            } catch (IOException ex) {
+            } catch (Exception ex) {
                 fc.incrementFailedConversionFileCount();
-                throw new Error(ex.getMessage());
-            } catch (Throwable ex) {
-                IO.println("***********************************************************************************\n" + ex.getMessage() + "\n*******************************************");
-                ex.printStackTrace();
-                throw new Error(ex.getMessage());
+                logger.error("Failed to convert {} -> {}", src, dest, ex);
+                throw new RuntimeException("Failed to convert " + src + " -> " + dest, ex);
             }
             return null;
         }

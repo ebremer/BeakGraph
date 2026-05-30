@@ -139,21 +139,21 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     public long locateGraph(Node element) {
         long c = ((Dictionary) entitiesdict).locate(element);
         if (c > 0) return c;
-        throw new Error("Cannot resolve Graph : " + element);
+        throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
     }
    
     @Override
     public long locateSubject(Node element) {
         long c = ((Dictionary) entitiesdict).locate(element);
         if (c > 0) return c;
-        throw new Error("Cannot resolve Subject : " + element);
+        throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
     }
    
     @Override
     public long locatePredicate(Node element) {
         long c = ((Dictionary) predicatesdict).locate(element);
         if (c > 0) return c;
-        throw new Error("Cannot resolve Predicate : " + element);
+        throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
     }
    
     @Override
@@ -161,12 +161,13 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         if (element.isLiteral()) {
             long c = ((Dictionary) literalsdict).locate(element);
             if (c > 0) return c + maxEntityId; // Offset by Entity block size
-            return -1;
         } else {
             long c = ((Dictionary) entitiesdict).locate(element);
             if (c > 0) return c;
-            return -1;
         }
+        // Consistent with the other locate* methods: during a write every quad's nodes
+        // are already in the dictionary, so a miss is a build-invariant violation.
+        throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
     }
    
     @Override

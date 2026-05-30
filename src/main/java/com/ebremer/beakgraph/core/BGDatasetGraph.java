@@ -51,7 +51,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
         try {
             return new BeakGraph(node, bg.getReader());
         } catch (IOException ex) {
-            logger.error(ex.getMessage());
+            logger.error("Failed to open named graph {}", node, ex);
         }
         return Graph.emptyGraph;
     }

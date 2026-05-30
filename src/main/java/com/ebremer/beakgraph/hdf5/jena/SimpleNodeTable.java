@@ -96,7 +96,7 @@ public class SimpleNodeTable implements NodeTable {
 
     @Override
     public Node getNodeForNodeId(NodeId id) {
-        if (id == null) throw new Error("getNodeForNodeId : null ID");
+        if (id == null) throw new IllegalArgumentException("getNodeForNodeId: null NodeId");
         
         Node cachedNode = nodeId2nodemap.getIfPresent(id);
         if (cachedNode != null) {
@@ -109,7 +109,7 @@ public class SimpleNodeTable implements NodeTable {
             case NodeType.SUBJECT, NodeType.GRAPH -> dict.getSubjects().extract(id.getId());
             case NodeType.PREDICATE -> dict.getPredicates().extract(id.getId());
             case NodeType.OBJECT -> dict.getObjects().extract(id.getId());
-            default -> throw new Error("Unknown Node Type ID: " + id.getType());
+            default -> throw new IllegalStateException("Unknown NodeType: " + id.getType());
         };
         
         if (node != null) {

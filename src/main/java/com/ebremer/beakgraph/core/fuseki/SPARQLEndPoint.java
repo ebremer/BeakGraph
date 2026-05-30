@@ -1,9 +1,9 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.cmdline.Parameters;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
-import com.ebremer.beakgraph.pool.BeakGraphPool;
 import com.ebremer.beakgraph.turbo.Spatial;
 import org.apache.jena.fuseki.main.FusekiServer;
 import org.apache.jena.query.Dataset;
@@ -34,6 +34,7 @@ public class SPARQLEndPoint {
     private static String BASE_URL;
     private Model lwsModel;
     private Path storageRoot = null;
+    private BeakGraph singleFileGraph;
 
     static {
         JenaSystem.init();
@@ -75,8 +76,11 @@ public class SPARQLEndPoint {
             ds = DatasetFactory.create(lwsModel);
         } else {
             logger.info("Single-file mode (HDF5)");
-            BeakGraph bg = BeakGraphPool.getPool().borrowObject(params.sparqlendpoint.toURI());
-            ds = bg.getDataset();
+            // A single-file endpoint serves one graph for the whole server lifetime, so open
+            // it directly and close it on shutdown - rather than borrowing it from the pool and
+            // never returning it (which leaks the handle and permanently ties up a pool slot).
+            singleFileGraph = BG.getBeakGraph(params.sparqlendpoint);
+            ds = singleFileGraph.getDataset();
 
             Path parent = endpointPath.getParent();
             if (parent != null) {
@@ -149,6 +153,10 @@ public class SPARQLEndPoint {
 
     public void shutdown() {
         if (server != null) server.stop();
+        if (singleFileGraph != null) {
+            singleFileGraph.close();
+            singleFileGraph = null;
+        }
     }
 
     public boolean isRunning() { return server != null; }
