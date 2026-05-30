@@ -39,8 +39,4 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
         super.destroyObject(uri, p, mode);               
     }  
     
-    @Override
-    public boolean validateObject(URI uri, PooledObject<BeakGraph> bg) {      
-        return true;        
-    }
 }

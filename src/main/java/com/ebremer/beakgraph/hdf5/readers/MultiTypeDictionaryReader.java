@@ -37,7 +37,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final BitPackedUnSignedLongBuffer langTags;
     private final long numEntries;
     private final String name;
-    private long offset = 0;
 
     // Tiered Index Storage
     private long[] tieredIds;
@@ -132,7 +131,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             // relative IRI to an absolute one happens at the serving boundary
             // (RelativeIRIResolver), not here.
             case IRI, RELATIVE_IRI -> NodeFactory.createURI(iri.get(off));
-            case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
+            case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", id));
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
         return na;
@@ -199,8 +198,4 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         return numEntries;
     }
     
-    public void setOffset(long off) {
-        this.offset = off;
-        buildTieredIndex();
-    }
 }

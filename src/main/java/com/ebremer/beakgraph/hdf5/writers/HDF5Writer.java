@@ -68,10 +68,6 @@ public class HDF5Writer implements BeakGraphWriter {
         public HDF5Writer build() {
             return new HDF5Writer(this);
         }
-
-        public Builder setCompressionLevel(int level) {
-            return this;
-        }
     }
 
     public static Builder Builder() {

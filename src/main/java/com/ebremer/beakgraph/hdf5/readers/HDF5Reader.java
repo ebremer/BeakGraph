@@ -7,7 +7,6 @@ import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.NodeId;
 import com.ebremer.beakgraph.core.NodeTable;
-import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.jena.SimpleNodeTable;
 import com.ebremer.beakgraph.turbo.Spatial;
@@ -207,7 +206,4 @@ public class HDF5Reader implements BGReader {
         return (dict.getGraphs().locate(graphNode) != -1);
     }
     
-    public BitPackedUnSignedLongBuffer getBitmapBuffer(char type) {
-        throw new UnsupportedOperationException("Access via IndexReader");
-    }
 }
