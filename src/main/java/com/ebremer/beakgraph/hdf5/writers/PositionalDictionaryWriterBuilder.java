@@ -215,7 +215,7 @@ public class PositionalDictionaryWriterBuilder {
         }
     }
 
-    private ArrayList<Quad> AddSpatial(Quad quad) {
+    private ArrayList<Quad> addSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
         String wkt = quad.getObject().getLiteralLexicalForm();
         if (isDegeneratePolygon(wkt)) {
@@ -225,7 +225,7 @@ public class PositionalDictionaryWriterBuilder {
         final Polygon[] scales;        
         scales = PolygonScaler.toPolygons(wkt);
         if (features) {
-            AddFeatures(qqq, quad);
+            addFeatures(qqq, quad);
         }
         try {
             if (scales == null) {
@@ -261,15 +261,15 @@ public class PositionalDictionaryWriterBuilder {
         return qqq;
     }
     
-    private void AddFeatures(ArrayList<Quad> qqq, Quad quad) {
+    private void addFeatures(ArrayList<Quad> qqq, Quad quad) {
         Node geo = quad.getSubject();
         String wkt = quad.getObject().getLiteralLexicalForm();
-        Gen2DFeatures.Generate(qqq, geo, wkt);
+        Gen2DFeatures.generate(qqq, geo, wkt);
         MajorMinor.add(qqq, geo, wkt);
     }
     
     // Not synchronized: called only from the sequential streamQuads().forEach pipeline
-    // (one consumer thread), like the other per-quad steps; the concurrent AddSpatial
+    // (one consumer thread), like the other per-quad steps; the concurrent addSpatial
     // tasks never touch bmap.
     private Quad AlignBnodes(Quad quad) {
         Node g = quad.getGraph();
@@ -489,7 +489,7 @@ public class PositionalDictionaryWriterBuilder {
                         ProcessQuad(quad);
                         xvoid.add(quad);
                         if (spatial && isGeoLiteral(quad)) {
-                            spatialTasks.add(scope.submit(() -> AddSpatial(quad)));
+                            spatialTasks.add(scope.submit(() -> addSpatial(quad)));
                         }
                     });
             } catch (Exception ex) {

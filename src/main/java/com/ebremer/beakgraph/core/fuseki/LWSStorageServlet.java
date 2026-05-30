@@ -173,7 +173,19 @@ public class LWSStorageServlet extends HttpServlet {
         }
         Path base = root.toAbsolutePath().normalize();
         Path resolved = base.resolve(reqPath).normalize();
-        return resolved.startsWith(base) ? resolved : null;
+        if (!resolved.startsWith(base)) {
+            return null;                     // lexical check: blocks ".." and absolute paths
+        }
+        // Defence in depth: if the target exists, resolve symlinks and re-check containment so a
+        // symlink planted inside the storage root cannot point outside it.
+        try {
+            if (Files.exists(resolved) && !resolved.toRealPath().startsWith(base.toRealPath())) {
+                return null;
+            }
+        } catch (IOException e) {
+            return null;                     // cannot verify -> refuse
+        }
+        return resolved;
     }
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {

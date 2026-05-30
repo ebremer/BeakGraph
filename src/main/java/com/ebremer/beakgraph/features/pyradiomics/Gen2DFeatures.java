@@ -11,7 +11,7 @@ import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.io.WKTReader;
 
 public class Gen2DFeatures {
-    public static void Generate(Resource geo, String wktPolygon) {
+    public static void generate(Resource geo, String wktPolygon) {
         try {
             GeometryFactory gf = new GeometryFactory();
             Polygon p = (Polygon) new WKTReader(gf).read(wktPolygon);
@@ -30,7 +30,7 @@ public class Gen2DFeatures {
         } catch (Exception e) {}
     }
     
-    public static void Generate(ArrayList<Quad> quads, Node geo, String wkt) {
+    public static void generate(ArrayList<Quad> quads, Node geo, String wkt) {
         try {
             GeometryFactory gf = new GeometryFactory();
             Polygon p = (Polygon) new WKTReader(gf).read(wkt);

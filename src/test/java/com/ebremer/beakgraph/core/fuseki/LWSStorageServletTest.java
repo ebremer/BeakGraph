@@ -3,9 +3,11 @@ package com.ebremer.beakgraph.core.fuseki;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
+import java.io.IOException;
 import java.io.StringReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -67,5 +69,19 @@ class LWSStorageServletTest {
         assertNull(LWSStorageServlet.resolveWithin(root, base.getParent().resolve("evil.h5").toString()));
         // No storage root configured -> no local file.
         assertNull(LWSStorageServlet.resolveWithin(null, "anything"));
+    }
+
+    @Test
+    void resolveWithinRejectsSymlinkEscape() throws Exception {
+        Path root = Files.createTempDirectory("lws-sym").toRealPath();
+        Path outside = Files.createTempFile("lws-outside", ".txt");   // a real file outside the root
+        Path link = root.resolve("escape");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (IOException | UnsupportedOperationException e) {
+            Assumptions.abort("symbolic links not supported in this environment: " + e.getMessage());
+        }
+        // The link is lexically inside the root but really points outside, so it must be rejected.
+        assertNull(LWSStorageServlet.resolveWithin(root, "escape"));
     }
 }

@@ -78,7 +78,7 @@ public class BeakGraphCLI {
                     } else if (params.src != null && params.src.exists()) {
                         JenaSystem.init();
                         BeakGraphCLI bg = new BeakGraphCLI(params);
-                        bg.Traverse();
+                        bg.traverse();
                     } else if (params.src != null) {
                         System.out.println("Source does not exist! " + params.src);
                     }
@@ -93,7 +93,7 @@ public class BeakGraphCLI {
         }
     }
 
-    public void Traverse() {
+    public void traverse() {
         try (ThreadPoolExecutor engine = new ThreadPoolExecutor(params.threads, params.threads, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>())) {
             engine.prestartAllCoreThreads();
             Files.walk(params.src.toPath())
