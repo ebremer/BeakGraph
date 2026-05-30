@@ -34,6 +34,16 @@ class ShapeAnalysisRenderTest {
     }
 
     @Test
+    void rasterizedRegionIsFilledNotJustOutlined() throws Exception {
+        int side = 150;
+        int lit = ShapeAnalysis.Area(ShapeAnalysis.getBufferedImage(square(0, 0, side)));
+        // A filled side x side square lights ~side^2 pixels (the region); a stroked outline would
+        // light only ~perimeter (~4*side). The half-area floor cleanly separates the two.
+        assertTrue(lit > side * side / 2,
+            "expected a filled region (~" + (side * side) + " px) but got " + lit + " - shape was only outlined");
+    }
+
+    @Test
     void rasterizationIsPositionIndependent() throws Exception {
         // The same shape at two very different locations must rasterize identically once it is
         // translated to the origin. At (0,0) the dropped translation is a no-op (identity), so

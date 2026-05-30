@@ -238,7 +238,11 @@ public class ShapeAnalysis {
         ShapeWriter sw = new ShapeWriter();
         Shape s = sw.toShape(moved);
         Graphics2D g = bi.createGraphics();
-        g.draw(s);
+        // Fill (not stroke) so the raster represents the polygon's REGION: PixelSurface counts lit
+        // pixels as the area and the PCA axis features sample the filled region - stroking would
+        // measure the perimeter instead. (createGraphics() defaults to a white foreground, so filled
+        // pixels register as lit in Area().)
+        g.fill(s);
         return bi;
     }
 }
