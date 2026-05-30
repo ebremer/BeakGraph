@@ -20,6 +20,7 @@ import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.main.StageBuilder;
 import org.apache.jena.sparql.engine.main.StageGenerator;
+import org.apache.jena.sparql.engine.optimizer.reorder.ReorderLib;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.sys.JenaSystem;
@@ -41,6 +42,8 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     // Lazily-computed triple count for this graph. -1 = not yet computed; the graph
     // is read-only so the value is stable once counted.
     private int cachedSize = -1;
+    // Lazily-built join-reorder transform (read-only graph -> built once, then reused).
+    private volatile ReorderTransformation reorderTransform;
 
     static {
         JenaSystem.init();
@@ -173,7 +176,35 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         StageBuilder.setGenerator(ARQ.getContext(), stageGenerator) ;
     }
 
+    /**
+     * Join-reordering transform for BGP optimization. Built lazily from the persisted VoID stats
+     * (BeakGraph-/index-aware selectivity) and cached, falling back to Jena's fixed heuristic when
+     * no stats are available. Returns a usable transform rather than null so multi-pattern BGPs are
+     * reordered most-selective-first.
+     */
     public ReorderTransformation getReorderTransform() {
-        return null;
+        ReorderTransformation r = reorderTransform;
+        if (r == null) {
+            synchronized (this) {
+                r = reorderTransform;
+                if (r == null) {
+                    reorderTransform = r = buildReorderTransform();
+                }
+            }
+        }
+        return r;
+    }
+
+    private ReorderTransformation buildReorderTransform() {
+        try {
+            VoidStats stats = VoidStats.load(reader);
+            if (stats.usable()) {
+                return new BGReorderTransform(stats);
+            }
+            logger.debug("No VoID stats for {}; using fixed reorder heuristic", uri);
+        } catch (RuntimeException ex) {
+            logger.warn("Failed to load VoID stats for {}; using fixed reorder heuristic", uri, ex);
+        }
+        return ReorderLib.fixed();
     }
 }
