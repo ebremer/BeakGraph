@@ -16,7 +16,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
@@ -459,8 +462,12 @@ public class PositionalDictionaryWriterBuilder {
             AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, REL_BASE);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
-            final List<StructuredTaskScope.Subtask<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
-            try (var scope = StructuredTaskScope.open()) {
+            final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
+            // A per-task virtual-thread executor (final API since JDK 21). Its
+            // try-with-resources close() blocks until every submitted spatial task finishes,
+            // giving the same "join all forked work" guarantee as a structured task scope -
+            // without depending on a preview API.
+            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor()) {
                 parserBuilder.streamQuads()
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
@@ -479,26 +486,29 @@ public class PositionalDictionaryWriterBuilder {
                         ProcessQuad(quad);
                         xvoid.add(quad);
                         if (spatial && isGeoLiteral(quad)) {
-                            StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad));
-                            spatialTasks.add(task);
+                            spatialTasks.add(scope.submit(() -> AddSpatial(quad)));
                         }
                     });
-                scope.join();
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted while parsing RDF source: " + src, ex);
             } catch (Exception ex) {
                 // Don't swallow a parse/processing failure - that would leave a silently
                 // truncated dictionary. Abort the write; Error/OOM still propagate.
                 throw new IOException("Failed while parsing/processing RDF source: " + src, ex);
             }
-            for (var task : spatialTasks) {
-                ArrayList<Quad> extraQuads = task.get();
+            for (Future<ArrayList<Quad>> task : spatialTasks) {
+                ArrayList<Quad> extraQuads;
+                try {
+                    extraQuads = task.get();
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Interrupted while collecting spatial results: " + src, ex);
+                } catch (ExecutionException ex) {
+                    throw new IOException("Spatial processing failed for " + src, ex.getCause());
+                }
                 extraQuads.forEach(q -> {
                     quadslist.add(q);
                     ProcessQuad(q);
                 });
-            }         
+            }
             Model xxx = xvoid.getModel();
             xxx.setNsPrefix("void", VOID.NS);
             xxx.setNsPrefix("sd", SD.getURI());
