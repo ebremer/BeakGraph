@@ -142,8 +142,12 @@ public class SPARQLEndPoint {
         logger.info("LWS: {}", BASE_URL);
     }
 
-    public static SPARQLEndPoint getSPARQLEndPoint(Parameters params) throws Exception {
-        if (sep == null) sep = new SPARQLEndPoint(params);
+    // synchronized so the lazy init is atomic: two concurrent callers must not each build
+    // a SPARQLEndPoint (which would start two Fuseki servers on the same port and fail).
+    public static synchronized SPARQLEndPoint getSPARQLEndPoint(Parameters params) throws Exception {
+        if (sep == null) {
+            sep = new SPARQLEndPoint(params);
+        }
         return sep;
     }
 
