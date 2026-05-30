@@ -23,6 +23,10 @@ public class PositionalDictionaryReader implements GSPODictionary {
     private final BitPackedUnSignedLongBuffer graphs;
     private final BitPackedUnSignedLongBuffer subjects;
     private final BitPackedUnSignedLongBuffer objects;
+    // The object "dictionary" is a thin, stateless view over the entity + literal
+    // dictionaries (it reads only final fields), so build it once and reuse it instead
+    // of allocating a fresh wrapper on every getObjects() call in the query hot path.
+    private final Dictionary objectsDict;
 
     public PositionalDictionaryReader(Group dictionary) {
         Group entitiesGroup = (Group) dictionary.getChild("entities");
@@ -39,6 +43,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
             new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objects = getDataSet(dictionary, "objects").map(ds ->
             new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+        this.objectsDict = makeObjectsDictionary();
     }
     
     private Optional<ContiguousDataset> getDataSet(Group g, String name) {
@@ -62,6 +67,10 @@ public class PositionalDictionaryReader implements GSPODictionary {
     
     @Override
     public Dictionary getObjects() {
+        return objectsDict;
+    }
+
+    private Dictionary makeObjectsDictionary() {
         return new Dictionary() {
             @Override
             public long locate(Node element) {
