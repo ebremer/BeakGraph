@@ -144,32 +144,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     }
     
     /**
-     * Original binary search implementation.
-     */
-    /*
-    private long searchGood(Node element) {
-        long low = 1;
-        long high = numEntries;
-        while (low <= high) {
-            long midId = low + (high - low) / 2;
-            Node midNode = extract(midId);
-            if (midNode == null) throw new IllegalStateException("Dictionary corruption at ID: " + midId);
-            int cmp = NodeComparator.INSTANCE.compare(midNode, element);
-            if (cmp == 0) {
-                return midId;
-            } else if (cmp < 0) {
-                low = midId + 1;
-            } else {
-                high = midId - 1;
-            }
-        }
-        return -low - 1;
-    }*/
-
-    /**
-     * OPTIMIZED Search Method (Reliable Version).
-     * 1. Uses Tiered Index to narrow the binary search range to ~1024 items.
-     * 2. Uses extract() + NodeComparator to guarantee identical behavior to searchGood().
+     * Tiered binary search: narrows the id range to ~1024 via the tiered index, then
+     * binary-searches with extract() + NodeComparator for a correct total ordering.
      */
     private long searchFAST(Node element) {
         long low = 1;
@@ -192,8 +168,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             }
         }
 
-        // 2. Binary Search within the narrowed range
-        // Strictly uses extract() and NodeComparator.INSTANCE to match searchGood() behavior exactly.
+        // 2. Binary search within the narrowed range, comparing via extract() + NodeComparator.
         while (low <= high) {
             long midId = low + (high - low) / 2;
             Node midNode = extract(midId);
@@ -207,12 +182,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         }
         return -low - 1;
     }
-
-    /*
-    private boolean isDefaultGraph(Node n) {
-        if (n == null) return true;
-        return n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated);
-    }*/
 
     @Override
     public long locate(Node element) {

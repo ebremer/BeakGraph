@@ -38,7 +38,6 @@ public class HDF5Writer implements BeakGraphWriter {
             Quad[] allQuads = w.getQuads();
             BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
             BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
-            //BGIndex gosp = new BGIndex(builder, w, Index.GOSP, allQuads);
 
             IO.print("Creating HDF5 File..." + builder.getDestination() + "...");
             try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
@@ -48,7 +47,6 @@ public class HDF5Writer implements BeakGraphWriter {
                 w.Add(hdt);
                 gspo.Add(hdt);
                 gpos.Add(hdt);
-                //gosp.Add(hdt);
             }
         }
         IO.println("Done.");

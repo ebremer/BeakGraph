@@ -44,7 +44,6 @@ public class Point {
    @Override
     public int hashCode() {
         int wow = Arrays.hashCode(new Object[]{x, y});
-        //System.out.println(wow+" -> "+x+", "+y);
         return wow;
     }
 

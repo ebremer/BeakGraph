@@ -26,7 +26,6 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     // Accelerated rank/select directories (one per traversed component) used for
     // select1; the raw B*/S* buffers above are still used for get()/binarySearch().
     private final HDTBitmapDirectory dirS, dirP, dirO;
-    //private final PositionalDictionaryReader dict;
     
     private long i;  // current object index
     private long j;  // end object index (inclusive)
@@ -39,7 +38,6 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
         this.queryQuad = quad;
-        //this.dict = dict;
 
         // GSPO Structure mapping
         this.Bs = reader.getBitmapBuffer('S'); 

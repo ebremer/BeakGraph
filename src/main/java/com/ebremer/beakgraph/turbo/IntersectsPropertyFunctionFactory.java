@@ -39,17 +39,3 @@ class WithinPropertyFunction extends PFuncSimple {
         return IterLib.noResults(execCxt);
     }
 }
-
-/*
-public class RegisterWithinFunction {
-    public static void main(String[] args) {
-        // Get the global registry
-        PropertyFunctionRegistry registry = PropertyFunctionRegistry.get(ARQConstants.getGlobalContext());
-        
-        // Register the custom property function with a URI
-        registry.put("http://example.org/spatial#within", new WithinPropertyFunctionFactory());
-        
-        // Alternatively, for dataset-specific registration, use Dataset.getContext()
-    }
-}
-*/

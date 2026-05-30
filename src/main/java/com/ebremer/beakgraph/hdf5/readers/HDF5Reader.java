@@ -37,7 +37,6 @@ public class HDF5Reader implements BGReader {
     private final HdfFile hdf;
     private final Group hdt;
     private final PositionalDictionaryReader dict;
-    //private final long totalQuads;
     private final Node defaultGraph;
     private final SimpleNodeTable nodeTable;
     private final Map<Index, IndexReader> indexCache = new ConcurrentHashMap<>();
@@ -66,7 +65,6 @@ public class HDF5Reader implements BGReader {
         }
         Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
         this.dict = new PositionalDictionaryReader(dictionary);
-        //this.totalQuads = (long) hdt.getAttribute("numQuads").getData();
         this.defaultGraph = Quad.defaultGraphIRI;
         nodeTable = new SimpleNodeTable(dict);
         this.uri = src.toURI();

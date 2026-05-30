@@ -34,7 +34,6 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private PositionalDictionaryReader dict;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        //IO.println("BGIteratorPOS : " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         this.dict = dict;

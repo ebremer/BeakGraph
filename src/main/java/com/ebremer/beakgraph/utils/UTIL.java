@@ -82,23 +82,7 @@ public class UTIL {
             buffer.position(currentPosition);
         }
     }
-    /*
-    
-    public static String readNullTerminatedString(ByteBuffer buffer) {
-        int limit = buffer.limit();
-        int startPosition = buffer.position();
-        int endPosition = startPosition;
-        while ((endPosition < limit) && buffer.get(endPosition) != 0) {
-            endPosition++;
-        }
-        //if (endPosition == limit && buffer.get(endPosition -1) != 0) {}
-        byte[] stringBytes = new byte[endPosition - startPosition];
-        buffer.position(startPosition);
-        buffer.get(stringBytes);
-        buffer.position(endPosition+1);
-        return new String(stringBytes, StandardCharsets.UTF_8);
-    }*/
-    
+
     public static String readNullTerminatedString(ByteBuffer buffer) {
         if (!buffer.hasRemaining()) {
             return "";

@@ -44,9 +44,7 @@ public final class HilbertSpace {
     public static final byte SW = 5;
     public static final byte W = 6;
     public static final byte NW = 7;
-    //public static enum DIR {N, NE, E, SE, S, SW, W, NW};
-    
-    
+
     private HilbertSpace() {}
     
     public static boolean inRange(ArrayList<Range> rr, Point p, Byte neighbor) {
@@ -458,7 +456,6 @@ public final class HilbertSpace {
                 return getSkinnyPoint(r.low());
             }
         }
-        //Ranges big = Fatten(rr);
         Ranges big = rr;
         Point sp = GetUpperLeft(big);
         Polygon p = new Polygon();

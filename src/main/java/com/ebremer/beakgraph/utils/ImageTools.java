@@ -30,8 +30,6 @@ public class ImageTools {
         }
         Graphics2D g2d = image.createGraphics();
         try {
-            //g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            //g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
             if (strokeColor != null) {
                 g2d.setColor(strokeColor);
                 g2d.setStroke(new BasicStroke(1f));

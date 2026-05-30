@@ -51,11 +51,8 @@ public class SolverLibBeak {
             // Rely on the node table cache for efficency - we will likely be
             // repeatedly looking up the same node in different bindings.
             NodeId id = bGraph.getReader().getNodeTable().getNodeIdForNode(n);
-            // Even put in "does not exist" for a node now known not to be in the DB.
-            // Optional: whether to put in "known missing"
-            // Currently, we do. The rest of the code should work with either choice.
-
-            // if ( ! NodeId.isDoesNotExist(id) )
+            // Record even a "does not exist" id: HDF5Reader.Read short-circuits a pattern
+            // bound to it to no rows, and BindingBG falls back to the parent term for output.
             b.put(v, id);
         }
         return b;

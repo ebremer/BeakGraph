@@ -62,36 +62,7 @@ public class BitPackedUnSignedLongBuffer {
     }
 
     // --- QUERY METHODS ---
-/*
-    public long select1(long rank) {
-        if (rank <= 0) return -1;
-        if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
 
-        long currentRank = 0;
-        long maxIndex = numEntries;
-        
-        // Optimized scan
-        for (long i = 0; i < maxIndex; i += 64) {
-            long word = getWord64(i);
-            int pop = Long.bitCount(word);
-            
-            if (currentRank + pop >= rank) {
-                for (int b = 0; b < 64; b++) {
-                    if (i + b >= maxIndex) return -1;
-                    long bit = (word >>> (63 - b)) & 1L;
-                    if (bit == 1) {
-                        currentRank++;
-                        if (currentRank == rank) {
-                            return i + b;
-                        }
-                    }
-                }
-            }
-            currentRank += pop;
-        }
-        return -1;
-    }*/
-        
     public long select1(long rank) {
         if (rank < 0) return -1;
         if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
@@ -192,28 +163,6 @@ public class BitPackedUnSignedLongBuffer {
         return result;
     }
 
-    /**
-     * Finds the index (0-63) of the k-th set bit in a 64-bit word.
-     * Uses CPU intrinsics (numberOfLeadingZeros) which is safer and faster than manual loops.
-     */
-    /*
-    private int selectInWordSafe2(long word, long k) {
-        // Loop finding the next set bit until we find the k-th one.
-        // Since max k is 64, this is extremely fast.
-        while (k > 0) {
-            // Find position of the first set bit (MSB 0-indexed)
-            int lz = Long.numberOfLeadingZeros(word);        
-            if (k == 1) {
-                return lz;
-            }            
-            // Clear the bit we just found so we can find the next one
-            // (1L << (63 - lz)) creates a mask with only that bit set.
-            word &= ~(1L << (63 - lz));
-            k--;
-        }
-        return -1; // Should not happen given the logic in select1
-    }*/
-    
     // --- WRITE METHODS ---
 
     public void writeInteger(int value) {

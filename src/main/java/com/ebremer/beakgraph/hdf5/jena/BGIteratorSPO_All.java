@@ -37,7 +37,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private final PositionalDictionaryReader dict;
 
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-       // IO.println("BGIteratorSPO_All (GSPO) Init: " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         this.dict = dict;
