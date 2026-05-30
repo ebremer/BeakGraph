@@ -268,7 +268,10 @@ public class PositionalDictionaryWriterBuilder {
         MajorMinor.Add(qqq, geo, wkt);
     }
     
-    private synchronized Quad AlignBnodes(Quad quad) {
+    // Not synchronized: called only from the sequential streamQuads().forEach pipeline
+    // (one consumer thread), like the other per-quad steps; the concurrent AddSpatial
+    // tasks never touch bmap.
+    private Quad AlignBnodes(Quad quad) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node o = quad.getObject();
