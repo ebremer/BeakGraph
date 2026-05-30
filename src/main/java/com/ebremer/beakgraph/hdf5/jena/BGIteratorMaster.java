@@ -8,6 +8,7 @@ import com.ebremer.beakgraph.hdf5.readers.IndexReader;
 import java.util.ArrayList;
 import java.util.Iterator;
 import org.apache.commons.collections4.iterators.IteratorChain;
+import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.ExprList;
@@ -61,10 +62,18 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                 }
             }
         } else {
-            // G Variable -> Scan Graphs
-            dict.getGraphs().streamNodes().forEach(n ->
-                its.add(new BGIteratorMaster(reader, dict, bnid, new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable))
-            );                    
+            // G is an unbound variable. Scan only the actual graphs (the columnar
+            // `graphs` list), not every entity: getGraphs().streamNodes() would also
+            // yield every URI/BNode in S/O positions, creating one (almost always empty)
+            // sub-iterator per entity. Bind the graph variable to each graph too, since
+            // each per-graph sub-iterator only ever sees a concrete graph.
+            Var gVar = Var.alloc(quad.getGraph());
+            dict.streamGraphs().forEach(n -> {
+                Iterator<BindingNodeId> sub = new BGIteratorMaster(reader, dict, bnid,
+                        new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable);
+                NodeId gId = new NodeId(dict.getGraphs().locate(n), NodeType.GRAPH);
+                its.add(Iter.map(sub, b -> { b.put(gVar, gId); return b; }));
+            });
         }
         chain = new IteratorChain<>(its);
     }
