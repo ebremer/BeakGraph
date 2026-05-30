@@ -125,7 +125,13 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
     @Override
     public Stream<Node> streamSubjects() {
-        return (entities != null) ? entities.streamNodes() : Stream.empty();
+        // Stream only the entities that actually occur as a subject (the `subjects`
+        // columnar id list), not every entity. Streaming all entities would make
+        // SELECT DISTINCT ?s over-report nodes that appear only as object or graph.
+        if (subjects == null || entities == null) {
+            return Stream.empty();
+        }
+        return subjects.stream().mapToObj(entities::extract);
     }
 
     @Override
@@ -135,7 +141,14 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
     @Override
     public Stream<Node> streamObjects() {
-        return getObjects().streamNodes();
+        // Stream only the ids that actually occur as an object (the `objects`
+        // columnar id list), not the entire entity+literal dictionary. The latter
+        // would make SELECT DISTINCT ?o over-report nodes that never appear as object.
+        if (objects == null) {
+            return Stream.empty();
+        }
+        Dictionary objs = getObjects();
+        return objects.stream().mapToObj(objs::extract);
     }
 
     @Override

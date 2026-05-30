@@ -213,7 +213,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 long l = (val instanceof Number n) ? n.longValue() : Long.parseLong(node.getLiteralLexicalForm());
                 longs.writeLong(l);
             }
-            else if ((dt.equals(XSD.xint.getURI()) || dt.equals(XSD.integer.getURI())) && integers != null) {
+            else if (dt.equals(XSD.xint.getURI()) && integers != null) {
+                // Only xsd:int is bit-packed (32-bit). xsd:integer is unbounded and is
+                // stored via the strings branch below so its value and datatype survive.
                 offsets.writeLong(integers.getNumEntries());
                 nativedatatypes.writeInteger(DataType.INTEGER.ordinal());
                 int i = (val instanceof Number n) ? n.intValue() : Integer.parseInt(node.getLiteralLexicalForm());
@@ -245,7 +247,15 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
             }
             else {
-                logger.log(Level.SEVERE, "Literal with datatype {0} dropped: no matching writer buffer enabled", dt);
+                // Unreachable in normal operation: every string-stored datatype is
+                // counted in stats.numStrings (PositionalDictionaryWriterBuilder.ProcessQuad),
+                // which forces the strings buffer to be allocated above. Reaching here
+                // means a stats/allocation mismatch. Fail loudly rather than skip the
+                // node, which would leave offsets/datatypes one entry short and corrupt
+                // every subsequent node in the dictionary.
+                throw new IllegalStateException(
+                    "No writer buffer for literal datatype " + dt + " (strings buffer not allocated); "
+                  + "refusing to write a misaligned dictionary entry.");
             }
         }
         cc.incrementAndGet();

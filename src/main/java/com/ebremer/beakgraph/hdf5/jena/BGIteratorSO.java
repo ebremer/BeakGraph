@@ -5,6 +5,7 @@ import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
+import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
@@ -22,6 +23,9 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
     private final Quad queryQuad;
     private final BitPackedUnSignedLongBuffer Bs, Ss, Bp, Sp, Bo, So;
+    // Accelerated rank/select directories (one per traversed component) used for
+    // select1; the raw B*/S* buffers above are still used for get()/binarySearch().
+    private final HDTBitmapDirectory dirS, dirP, dirO;
     //private final PositionalDictionaryReader dict;
     
     private long i;  // current object index
@@ -45,10 +49,14 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         this.Bo = reader.getBitmapBuffer('O'); 
         this.So = reader.getIDBuffer('O');     
         
+        this.dirS = reader.getDirectory('S');
+        this.dirP = reader.getDirectory('P');
+        this.dirO = reader.getDirectory('O');
+
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
         }
-        
+
         // Resolve Graph
         gi = resolveNode(quad.getGraph(), dict.getGraphs(), bnid);
         if (gi < 1) return;
@@ -64,8 +72,8 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         // --- Traverse GSPO ---
 
         // A. Find Subject Index under Graph
-        long sStart = select1Safe(Bs, gi);
-        long nextGraphStart = select1Safe(Bs, gi + 1);
+        long sStart = select1Safe(dirS, Bs,gi);
+        long nextGraphStart = select1Safe(dirS, Bs,gi + 1);
         long sEnd = (nextGraphStart == -1) ? (Ss.getNumEntries() - 1) : (nextGraphStart - 1);
         
         if (sStart == -1 || sStart > sEnd) return;
@@ -73,8 +81,8 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (sIndex < 0) return;
 
         // B. Find Predicate Index under Subject
-        long pStart = select1Safe(Bp, sIndex + 1);
-        long nextSStart = select1Safe(Bp, sIndex + 2);
+        long pStart = select1Safe(dirP, Bp,sIndex + 1);
+        long nextSStart = select1Safe(dirP, Bp,sIndex + 2);
         long pEnd = (nextSStart == -1) ? (Sp.getNumEntries() - 1) : (nextSStart - 1);
         
         if (pStart == -1 || pStart > pEnd) return;
@@ -82,8 +90,8 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (pIndex < 0) return;
 
         // C. Find Object Range for Predicate
-        long rawOStart = select1Safe(Bo, pIndex + 1);
-        long nextPStart = select1Safe(Bo, pIndex + 2);
+        long rawOStart = select1Safe(dirO, Bo,pIndex + 1);
+        long nextPStart = select1Safe(dirO, Bo,pIndex + 2);
         long rawOEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);
         
         if (rawOStart == -1 || rawOStart > rawOEnd) return;
@@ -121,9 +129,11 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         return dictionary.locate(node);
     }
 
-    private long select1Safe(BitPackedUnSignedLongBuffer buffer, long rank) {
+    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
         if (rank < 1) return -1;
-        return buffer.select1(rank);
+        // Accelerated O(log n) select via the superblock/block directory when present;
+        // fall back to the buffer's linear scan only for indexes written without it.
+        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
     }
 
     private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {

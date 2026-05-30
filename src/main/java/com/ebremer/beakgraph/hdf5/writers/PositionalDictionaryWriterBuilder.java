@@ -384,7 +384,11 @@ public class PositionalDictionaryWriterBuilder {
                     this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
                     this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
                     this.stats.numLong++;
-                } else if (dt.equals(XSD.xint.getURI()) || dt.equals(XSD.integer.getURI())) {
+                } else if (dt.equals(XSD.xint.getURI())) {
+                    // Only xsd:int (32-bit bounded) is bit-packed here. xsd:integer is
+                    // unbounded, so it is handled by the string fallback below instead;
+                    // bit-packing it would truncate large values and change the datatype
+                    // to xsd:int on read-back.
                     Number n = (Number) o.getLiteralValue();
                     this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
                     this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
@@ -414,7 +418,16 @@ public class PositionalDictionaryWriterBuilder {
                     this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
                     this.stats.numStrings++;
                 } else {
-                    logger.error("I DON'T KNOW WHAT TO DO WITH : {}", o);
+                    // Any other datatype (xsd:integer, xsd:decimal, xsd:date, custom
+                    // datatypes, ...) is stored verbatim in the strings buffer by
+                    // MultiTypeDictionaryWriter, tagged with its datatype IRI. Count it
+                    // toward numStrings so that buffer is always allocated; otherwise the
+                    // writer would have nowhere to put it and would drop the node,
+                    // desynchronising the offset/datatype buffers and corrupting the dictionary.
+                    String wow = o.getLiteralLexicalForm();
+                    this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
+                    this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
+                    this.stats.numStrings++;
                 }
                 literals.add(o);
             }                  

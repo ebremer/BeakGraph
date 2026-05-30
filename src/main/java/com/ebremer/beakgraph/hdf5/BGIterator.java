@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5;
 
+import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
@@ -290,7 +291,7 @@ public class BGIterator implements Iterator<BindingNodeId> {
     private IndexReader getIndexReader(Index indexType) {
         try {
             Group indexGroup = (Group) hdt.getChild(indexType.name());
-            return (indexGroup == null) ? null : new IndexReader(indexGroup, indexType);
+            return (indexGroup == null) ? null : new IndexReader(indexGroup, indexType, Params.FORMAT_VERSION);
         } catch (Exception e) { return null; }
     }
 

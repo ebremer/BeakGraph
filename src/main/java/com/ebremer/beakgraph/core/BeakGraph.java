@@ -39,7 +39,10 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     private final BGReader reader;
     private static final Logger logger = LoggerFactory.getLogger(BeakGraph.class);
     private final URI uri;
-    
+    // Lazily-computed triple count for this graph. -1 = not yet computed; the graph
+    // is read-only so the value is stable once counted.
+    private int cachedSize = -1;
+
     static {
         JenaSystem.init();
         Spatial.init();
@@ -142,7 +145,26 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     @Override
     protected int graphBaseSize() {
-        return reader.getNumberOfTriples("");
+        int size = cachedSize;
+        if (size >= 0) {
+            return size;
+        }
+        // No per-graph count is stored, so count this graph's distinct triples by
+        // scanning it once. Quads are de-duplicated in the index, so each triple is
+        // visited exactly once. Cached because the graph is read-only.
+        long count = 0;
+        ExtendedIterator<Triple> it = graphBaseFind(Triple.create(Node.ANY, Node.ANY, Node.ANY));
+        try {
+            while (it.hasNext()) {
+                it.next();
+                count++;
+            }
+        } finally {
+            it.close();
+        }
+        size = (count > Integer.MAX_VALUE) ? Integer.MAX_VALUE : (int) count;
+        cachedSize = size;
+        return size;
     }
     
     private static void wireIntoExecution() {

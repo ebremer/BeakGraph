@@ -41,6 +41,7 @@ public class HDF5Reader implements BGReader {
     private final SimpleNodeTable nodeTable;
     private final Map<Index, IndexReader> indexCache = new HashMap<>();
     private final URI uri;
+    private final long formatVersion;
     
     static {
         JenaSystem.init();
@@ -54,11 +55,11 @@ public class HDF5Reader implements BGReader {
     public HDF5Reader(File src) {
         this.hdf = new HdfFile(src.toPath());
         this.hdt = (Group) hdf.getChild(Params.BG);
-        long fileVersion = readFormatVersion(hdt);
-        if (fileVersion > Params.FORMAT_VERSION) {
+        this.formatVersion = readFormatVersion(hdt);
+        if (formatVersion > Params.FORMAT_VERSION) {
             hdf.close();
             throw new IllegalStateException(
-                    "BeakGraph HDF5 format version " + fileVersion + " in " + src
+                    "BeakGraph HDF5 format version " + formatVersion + " in " + src
                   + " is newer than this build supports (max " + Params.FORMAT_VERSION
                   + "). Upgrade BeakGraph.");
         }
@@ -95,7 +96,7 @@ public class HDF5Reader implements BGReader {
         return indexCache.computeIfAbsent(indexType, type -> {
             try {
                 Group indexGroup = (Group) hdt.getChild(type.name());
-                return (indexGroup == null) ? null : new IndexReader(indexGroup, type);
+                return (indexGroup == null) ? null : new IndexReader(indexGroup, type, formatVersion);
             } catch (Exception e) {
                 e.printStackTrace();
                 return null;

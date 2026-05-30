@@ -162,15 +162,18 @@ public class HDTBitmapDirectory {
     }
 
     private long findNthSetBitInWord(long word, long n) {
-        if (n == 1) return Long.numberOfLeadingZeros(word);
-        for (int i = 0; i < 64; i++) {
-            // MSB first check
-            if ((word & (1L << (63 - i))) != 0) {
-                n--;
-                if (n == 0) return i;
-            }
-        }
-        return -1;
+        // Broadword selection: 0-based index (from MSB) of the n-th set bit (n >= 1),
+        // O(1) via 6 popcount narrowing steps. Replaces an O(64) bit-by-bit loop; the
+        // result is identical to the linear select1's selectInWordSafe.
+        long result = 0;
+        int cnt;
+        cnt = Long.bitCount(word >>> 32); if (n > cnt) { word <<= 32; result += 32; n -= cnt; }
+        cnt = Long.bitCount(word >>> 48); if (n > cnt) { word <<= 16; result += 16; n -= cnt; }
+        cnt = Long.bitCount(word >>> 56); if (n > cnt) { word <<= 8;  result += 8;  n -= cnt; }
+        cnt = Long.bitCount(word >>> 60); if (n > cnt) { word <<= 4;  result += 4;  n -= cnt; }
+        cnt = Long.bitCount(word >>> 62); if (n > cnt) { word <<= 2;  result += 2;  n -= cnt; }
+        cnt = Long.bitCount(word >>> 63); if (n > cnt) { result += 1; }
+        return result;
     }
 
     public BitPackedUnSignedLongBuffer getIds() { return ids; }
