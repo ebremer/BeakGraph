@@ -19,7 +19,7 @@ public interface BGReader extends AutoCloseable {
     public GSPODictionary getDictionary();
     public int getNumberOfTriples(String ng);
     public NodeTable getNodeTable();
-    public Iterator<BindingNodeId> Read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable);
+    public Iterator<BindingNodeId> read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable);
     public ExtendedIterator<Triple> graphBaseFind(Node graph, Triple tp);
     public Iterator<Node> listGraphNodes();
     public Stream<Quad> streamQuads();

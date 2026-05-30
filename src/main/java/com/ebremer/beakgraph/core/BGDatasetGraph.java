@@ -112,7 +112,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
         NodeTable nodeTable = bg.getReader().getNodeTable();
 
         // Execute Read against the specific graph
-        Iterator<BindingNodeId> it = bg.getReader().Read(g, new BindingNodeId(), triplePattern, null, nodeTable);
+        Iterator<BindingNodeId> it = bg.getReader().read(g, new BindingNodeId(), triplePattern, null, nodeTable);
 
         // Convert Bindings to Quads
         return WrappedIterator.create(it).mapWith(bnid -> {

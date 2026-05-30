@@ -107,7 +107,7 @@ public class HDF5Reader implements BGReader {
     }
     
     @Override
-    public Iterator<BindingNodeId> Read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+    public Iterator<BindingNodeId> read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
         // A pattern variable already bound to a node that does not exist in this store
         // (e.g. a VALUES/BIND term not present here) cannot match anything, so the pattern
         // yields no solutions - rather than failing to resolve the missing id.
@@ -174,7 +174,7 @@ public class HDF5Reader implements BGReader {
         Triple pattern = Triple.create(s, p, o);
 
         // Execute against the specific graph requested by BeakGraph
-        Iterator<BindingNodeId> it = Read(graph, new BindingNodeId(), pattern, null, nodeTable);
+        Iterator<BindingNodeId> it = read(graph, new BindingNodeId(), pattern, null, nodeTable);
 
         return WrappedIterator.create(it).mapWith(bnid -> {
             Node sRes = tp.getSubject().isConcrete() ? tp.getSubject() : nodeTable.getNodeForNodeId(bnid.get(sVar));

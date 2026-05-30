@@ -37,7 +37,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
-        <exec.mainClass>com.ebremer.beakgraph.cmdline.beakgraph</exec.mainClass>
+        <exec.mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</exec.mainClass>
        
         <!-- Dependency versions -->
         <jena.version>5.6.0</jena.version>
@@ -223,7 +223,7 @@
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
+                                    <mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</mainClass>
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
                                         <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
@@ -293,7 +293,7 @@
                         </executions>
                         <configuration>
                             <imageName>beakgraph</imageName>
-                            <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
+                            <mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</mainClass>
                             <debug>true</debug>
                             <skipNativeTests>true</skipNativeTests>
                             <verbose>true</verbose>
@@ -332,7 +332,7 @@
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
+                                    <mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</mainClass>
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
                                         <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>

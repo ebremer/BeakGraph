@@ -337,7 +337,7 @@ public class BitPackedUnSignedLongBuffer {
         return path;
     }
 
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         ByteBuffer dup = buffer.duplicate();
         dup.rewind();
         byte[] data = new byte[dup.remaining()];

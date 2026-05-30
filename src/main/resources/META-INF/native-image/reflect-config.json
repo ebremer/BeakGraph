@@ -1,6 +1,6 @@
 [
   {
-    "name": "com.ebremer.beakgraph.cmdline.beakgraph",
+    "name": "com.ebremer.beakgraph.cmdline.BeakGraphCLI",
     "allDeclaredConstructors": true,
     "allPublicConstructors": true,
     "allDeclaredMethods": true,

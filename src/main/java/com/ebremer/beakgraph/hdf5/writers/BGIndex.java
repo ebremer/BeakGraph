@@ -275,11 +275,11 @@ public class BGIndex {
         BB1.prepareForReading(); BB2.prepareForReading(); BB3.prepareForReading();
     }
 
-    public void Add(WritableGroup hdt) {
+    public void add(WritableGroup hdt) {
         WritableGroup index = hdt.putGroup(type.name());
-        S1.Add(index); S2.Add(index); S3.Add(index);
-        B1.Add(index); B2.Add(index); B3.Add(index);
-        SB1.Add(index); SB2.Add(index); SB3.Add(index);
-        BB1.Add(index); BB2.Add(index); BB3.Add(index);
+        S1.add(index); S2.add(index); S3.add(index);
+        B1.add(index); B2.add(index); B3.add(index);
+        SB1.add(index); SB2.add(index); SB3.add(index);
+        BB1.add(index); BB2.add(index); BB3.add(index);
     }
 }

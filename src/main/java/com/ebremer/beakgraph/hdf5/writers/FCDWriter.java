@@ -103,7 +103,7 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     }
 
     @Override
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         WritableGroup strings = group.putGroup(path.toString());
         strings.putAttribute("blockSize", blockSize);
         long validBlocks = (stringsInCurrentBlock == 0 && numEntries > 0) ? numBlocks : numBlocks + 1;
@@ -111,8 +111,8 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
         strings.putAttribute("numEntries", numEntries);
         strings.putAttribute("compression_threshold", COMPRESSION_THRESHOLD);        
         strings.putDataset("stringbuffer", baos.toByteArray());
-        offsets.Add(strings);
+        offsets.add(strings);
         compressed.prepareForReading();
-        compressed.Add(strings);
+        compressed.add(strings);
     }
 }

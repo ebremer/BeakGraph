@@ -78,7 +78,7 @@ public class PatternMatchBG {
     
     private static Iterator<BindingNodeId> find(BeakGraph bGraph, BindingNodeId bnid, Triple xPattern, 
                                                 ExprList filter, ExecutionContext execCxt) {
-        return bGraph.getReader().Read(bGraph.getNamedGraph(), bnid, xPattern, filter, 
+        return bGraph.getReader().read(bGraph.getNamedGraph(), bnid, xPattern, filter, 
                                        bGraph.getReader().getNodeTable());
     }
 

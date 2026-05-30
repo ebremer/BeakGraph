@@ -265,7 +265,7 @@ public class PositionalDictionaryWriterBuilder {
         Node geo = quad.getSubject();
         String wkt = quad.getObject().getLiteralLexicalForm();
         Gen2DFeatures.Generate(qqq, geo, wkt);
-        MajorMinor.Add(qqq, geo, wkt);
+        MajorMinor.add(qqq, geo, wkt);
     }
     
     // Not synchronized: called only from the sequential streamQuads().forEach pipeline

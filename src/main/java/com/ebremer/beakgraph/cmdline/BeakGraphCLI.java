@@ -24,16 +24,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * Command-line entry point for BeakGraph ("beakgraph" command): converts RDF source trees to
+ * HDF5-backed graphs, or starts the SPARQL/LWS endpoint.
  *
  * @author Erich Bremer
  */
-public class beakgraph {
-    private static final Logger logger = LoggerFactory.getLogger(beakgraph.class);
+public class BeakGraphCLI {
+    private static final Logger logger = LoggerFactory.getLogger(BeakGraphCLI.class);
     private static ProgressBar progressBar = null;
     private final FileCounter fc;
-    private Parameters params;   // ← fixed: instance field
+    private Parameters params;
 
-    public beakgraph(Parameters params) {
+    public BeakGraphCLI(Parameters params) {
         JenaSystem.init();
         this.params = params;
         this.fc = new FileCounter();
@@ -75,7 +77,7 @@ public class beakgraph {
                         }
                     } else if (params.src != null && params.src.exists()) {
                         JenaSystem.init();
-                        beakgraph bg = new beakgraph(params);
+                        BeakGraphCLI bg = new BeakGraphCLI(params);
                         bg.Traverse();
                     } else if (params.src != null) {
                         System.out.println("Source does not exist! " + params.src);
@@ -131,7 +133,7 @@ public class beakgraph {
                 }
             }
         } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(beakgraph.class.getName()).log(Level.SEVERE, null, ex);
+            java.util.logging.Logger.getLogger(BeakGraphCLI.class.getName()).log(Level.SEVERE, null, ex);
         }
         if (params.status) {
             System.out.println(fc);

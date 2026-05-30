@@ -171,19 +171,19 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     }
    
     @Override
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);
         
         // Add Sub-dictionaries
-        if (entitiesdict.getNumberOfNodes() > 0) entitiesdict.Add(dictionary);
-        if (predicatesdict.getNumberOfNodes() > 0) predicatesdict.Add(dictionary);
-        if (literalsdict.getNumberOfNodes() > 0) literalsdict.Add(dictionary);
+        if (entitiesdict.getNumberOfNodes() > 0) entitiesdict.add(dictionary);
+        if (predicatesdict.getNumberOfNodes() > 0) predicatesdict.add(dictionary);
+        if (literalsdict.getNumberOfNodes() > 0) literalsdict.add(dictionary);
         
         // Add columnar ID lists
         if (numQuads > 0) {
-            graphs.Add(dictionary);
-            subjects.Add(dictionary);
-            objects.Add(dictionary);
+            graphs.add(dictionary);
+            subjects.add(dictionary);
+            objects.add(dictionary);
         }
     }
 

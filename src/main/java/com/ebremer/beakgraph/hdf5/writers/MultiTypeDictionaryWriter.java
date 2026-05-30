@@ -288,20 +288,20 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     }
 
     @Override
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         WritableGroup subGroup = group.putGroup(name);
-        if (typedLiterals != null) typedLiterals.Add(subGroup);
-        if (offsets != null) offsets.Add(subGroup);        
-        if (typedLiteralsDictionary != null) typedLiteralsDictionary.Add(subGroup);
-        if (integers != null) integers.Add(subGroup);
-        if (longs != null) longs.Add(subGroup);
-        if (floats != null) floats.Add(subGroup);
-        if (doubles != null) doubles.Add(subGroup);
-        if (iri != null && iri.getNumEntries() > 0) iri.Add(subGroup);
-        if (strings != null) strings.Add(subGroup);
-        if (langs != null && langs.getNumEntries() > 0) langs.Add(subGroup);
-        if (langTags != null) langTags.Add(subGroup);
-        if (nativedatatypes.getNumEntries() > 0) nativedatatypes.Add(subGroup);
+        if (typedLiterals != null) typedLiterals.add(subGroup);
+        if (offsets != null) offsets.add(subGroup);        
+        if (typedLiteralsDictionary != null) typedLiteralsDictionary.add(subGroup);
+        if (integers != null) integers.add(subGroup);
+        if (longs != null) longs.add(subGroup);
+        if (floats != null) floats.add(subGroup);
+        if (doubles != null) doubles.add(subGroup);
+        if (iri != null && iri.getNumEntries() > 0) iri.add(subGroup);
+        if (strings != null) strings.add(subGroup);
+        if (langs != null && langs.getNumEntries() > 0) langs.add(subGroup);
+        if (langTags != null) langTags.add(subGroup);
+        if (nativedatatypes.getNumEntries() > 0) nativedatatypes.add(subGroup);
     }
 
     @Override public List<Node> getNodes() { return sorted; }
