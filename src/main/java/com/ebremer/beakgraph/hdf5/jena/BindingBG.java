@@ -31,10 +31,17 @@ public class BindingBG extends BindingBase {
     @Override
     protected Node get1(Var var) {
         if (idBinding.containsKey(var)) {
-            return bGraph.getReader().getNodeTable().getNodeForNodeId(idBinding.get(var));
+            NodeId id = idBinding.get(var);
+            // A var bound to "does not exist" (e.g. a VALUES/BIND term not in this store)
+            // has no node here; return null so BindingBase falls back to the parent binding,
+            // which still carries the original term.
+            if (NodeId.isDoesNotExist(id)) {
+                return null;
+            }
+            return bGraph.getReader().getNodeTable().getNodeForNodeId(id);
         }
         return null;
-    }   
+    }
 
     @Override
     protected Iterator<Var> vars1() {

@@ -17,6 +17,7 @@ import io.jhdf.api.Group;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -110,13 +111,30 @@ public class HDF5Reader implements BGReader {
     
     @Override
     public Iterator<BindingNodeId> Read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        // A pattern variable already bound to a node that does not exist in this store
+        // (e.g. a VALUES/BIND term not present here) cannot match anything, so the pattern
+        // yields no solutions - rather than failing to resolve the missing id.
+        if (boundToMissing(triple.getSubject(), bnid)
+                || boundToMissing(triple.getPredicate(), bnid)
+                || boundToMissing(triple.getObject(), bnid)) {
+            return Collections.emptyIterator();
+        }
         boolean isDefault = ng.equals(Quad.defaultGraphNodeGenerated) || ng.equals(Quad.defaultGraphIRI);
         Node g = isDefault ? this.defaultGraph : ng;
         Node s = substitute(triple.getSubject(), bnid, nodeTable);
         Node p = substitute(triple.getPredicate(), bnid, nodeTable);
-        Node o = substitute(triple.getObject(), bnid, nodeTable);        
+        Node o = substitute(triple.getObject(), bnid, nodeTable);
         Quad quadPattern = new Quad(g, s, p, o);
         return new BGIteratorMaster(this, dict, bnid, quadPattern, filter, nodeTable);
+    }
+
+    /** True when {@code n} is a variable already bound to a node that does not exist here. */
+    private static boolean boundToMissing(Node n, BindingNodeId bnid) {
+        if (bnid != null && n.isVariable()) {
+            NodeId id = bnid.get(Var.alloc(n));
+            return id != null && NodeId.isDoesNotExist(id);
+        }
+        return false;
     }
 
     /**

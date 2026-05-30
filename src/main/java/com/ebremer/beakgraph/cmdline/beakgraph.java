@@ -102,7 +102,7 @@ public class beakgraph {
                         return false;
                     }
                     if (p.toFile().length() == 0) {
-                        fc.getZeroFileCount();
+                        fc.incrementZeroLengthFileCount();
                         return false;
                     }
                     if (p.toFile().toString().toLowerCase().endsWith(".ttl.gz") || p.toFile().toString().toLowerCase().endsWith(".ttl")) {
