@@ -10,6 +10,11 @@ import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.riot.RDFFormat;
 import org.apache.jena.vocabulary.RDF;
 import jakarta.servlet.http.*;
+import jakarta.json.Json;
+import jakarta.json.JsonArrayBuilder;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonObjectBuilder;
+import jakarta.json.JsonWriter;
 import java.io.*;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -99,45 +104,76 @@ public class LWSStorageServlet extends HttpServlet {
         String typeHref = r.hasProperty(RDF.type, LWS_CONTAINER)
             ? LWS.Container.getURI()
             : LWS.DataResource.getURI();
-        String relations = "";
-        String parent = getParentURI(resourceURI);
-        if (parent != null) {
-            relations += """
-                "up": [{"href": "%s"}],
-                """.formatted(parent);
-        }
-        if (r.hasProperty(AS_MEDIA_TYPE)) {
-            String media = r.getProperty(AS_MEDIA_TYPE).getString().replace("\\","\\\\").replace("\"","\\\"");
-            relations += """
-                "mediaType": [{"href": "%s"}],
-                """.formatted(media);
-        }
-        if (r.hasProperty(SCHEMA_SIZE)) {
-            String size = r.getProperty(SCHEMA_SIZE).getString();
-            relations += """
-                "size": [{"href": "%s"}],
-                """.formatted(size);
-        }
-        if (r.hasProperty(AS_UPDATED)) {
-            String updated = r.getProperty(AS_UPDATED).getString();
-            relations += """
-                "updated": [{"href": "%s"}],
-                """.formatted(updated);
-        }
-        if (relations.endsWith(",\n")) relations = relations.substring(0, relations.length() - 2);
-        String json = """
-            {
-              "linkset": [
-                {
-                  "anchor": "%s",
-                  "type": [{"href": "%s"}]%s
-                }
-              ]
-            }
-            """.formatted(resourceURI, typeHref, relations.isEmpty() ? "" : ",\n" + relations);
+        String up = getParentURI(resourceURI);
+        String media = r.hasProperty(AS_MEDIA_TYPE) ? r.getProperty(AS_MEDIA_TYPE).getString() : null;
+        String size = r.hasProperty(SCHEMA_SIZE) ? r.getProperty(SCHEMA_SIZE).getString() : null;
+        String updated = r.hasProperty(AS_UPDATED) ? r.getProperty(AS_UPDATED).getString() : null;
         resp.setContentType("application/linkset+json");
         resp.setCharacterEncoding("UTF-8");
-        resp.getWriter().write(json);
+        resp.getWriter().write(linksetJson(resourceURI, typeHref, up, media, size, updated));
+    }
+
+    /**
+     * Build an RFC 9264 linkset+json document. Every value is emitted through jakarta.json, so a
+     * quote/backslash/newline in a URI or media type is escaped rather than breaking (or injecting
+     * into) the JSON. Null relation values are omitted.
+     */
+    static String linksetJson(String anchor, String typeHref, String up,
+                              String mediaType, String size, String updated) {
+        JsonObjectBuilder link = Json.createObjectBuilder()
+            .add("anchor", anchor)
+            .add("type", hrefArray(typeHref));
+        if (up != null)        link.add("up", hrefArray(up));
+        if (mediaType != null) link.add("mediaType", hrefArray(mediaType));
+        if (size != null)      link.add("size", hrefArray(size));
+        if (updated != null)   link.add("updated", hrefArray(updated));
+        JsonObject root = Json.createObjectBuilder()
+            .add("linkset", Json.createArrayBuilder().add(link))
+            .build();
+        return writeJson(root);
+    }
+
+    /** The LWS service-description document (application/ld+json). */
+    static String descriptionJson(String base) {
+        JsonObject doc = Json.createObjectBuilder()
+            .add("@context", "https://www.w3.org/ns/lws/v1")
+            .add("@id", base)
+            .add("type", "Storage")
+            .add("service", Json.createArrayBuilder()
+                .add(Json.createObjectBuilder()
+                    .add("type", "StorageDescription")
+                    .add("serviceEndpoint", base + "description"))
+                .add(Json.createObjectBuilder()
+                    .add("type", "SparqlService")
+                    .add("serviceEndpoint", base + "sparql")))
+            .build();
+        return writeJson(doc);
+    }
+
+    /** A {@code [{"href": <href>}]} array, the shape each linkset relation uses. */
+    private static JsonArrayBuilder hrefArray(String href) {
+        return Json.createArrayBuilder().add(Json.createObjectBuilder().add("href", href));
+    }
+
+    private static String writeJson(JsonObject obj) {
+        StringWriter sw = new StringWriter();
+        try (JsonWriter w = Json.createWriter(sw)) {
+            w.writeObject(obj);
+        }
+        return sw.toString();
+    }
+
+    /**
+     * Resolve a request path against the storage root, rejecting anything that escapes it via "..",
+     * an absolute path, etc. Returns null when {@code root} is null or the path would leave the root.
+     */
+    static Path resolveWithin(Path root, String reqPath) {
+        if (root == null) {
+            return null;
+        }
+        Path base = root.toAbsolutePath().normalize();
+        Path resolved = base.resolve(reqPath).normalize();
+        return resolved.startsWith(base) ? resolved : null;
     }
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -159,7 +195,7 @@ public class LWSStorageServlet extends HttpServlet {
             resp.setHeader("Link", "<" + BASE + "description>; rel=\"storageDescription\"");
             resp.setHeader("Link", "<" + getLinksetURI(BASE + "description") + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
             resp.setHeader("Vary", "Accept");
-            resp.getWriter().write("{\"@context\":\"https://www.w3.org/ns/lws/v1\",\"@id\":\"" + BASE + "\",\"type\":\"Storage\",\"service\":[{\"type\":\"StorageDescription\",\"serviceEndpoint\":\"" + BASE + "description\"},{\"type\":\"SparqlService\",\"serviceEndpoint\":\"" + BASE + "sparql\"}]}");
+            resp.getWriter().write(descriptionJson(BASE));
             return;
         }
         if (reqPath.startsWith("HalcyonStorage")) {
@@ -173,12 +209,11 @@ public class LWSStorageServlet extends HttpServlet {
             return;
         }
         // SPARQL on .h5 files now checked FIRST (fixes Jena Accept header triggering metadata instead of query)
-        if (STORAGE_ROOT != null) {
-            Path localFile = STORAGE_ROOT.resolve(reqPath);
-            if (Files.exists(localFile) && !Files.isDirectory(localFile) && isHDF5(localFile) && isSparqlRequest(req)) {
-                handleSparqlQuery(req, resp, localFile);
-                return;
-            }
+        Path h5Candidate = resolveWithin(STORAGE_ROOT, reqPath);
+        if (h5Candidate != null && Files.exists(h5Candidate) && !Files.isDirectory(h5Candidate)
+                && isHDF5(h5Candidate) && isSparqlRequest(req)) {
+            handleSparqlQuery(req, resp, h5Candidate);
+            return;
         }
         String linksetURI = getLinksetURI(resourceURI);
         resp.addHeader("Link", "<" + linksetURI + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
@@ -289,7 +324,8 @@ public class LWSStorageServlet extends HttpServlet {
         }
         if (isContainer) { resp.sendError(406); return; }
         if (STORAGE_ROOT == null) { resp.sendError(500, "Storage root not set"); return; }
-        Path localFile = STORAGE_ROOT.resolve(reqPath);
+        Path localFile = resolveWithin(STORAGE_ROOT, reqPath);
+        if (localFile == null) { resp.sendError(403, "Forbidden"); return; }
         if (!Files.exists(localFile) || Files.isDirectory(localFile)) { resp.sendError(404); return; }
         if (isHDF5(localFile) && isSparqlRequest(req)) {
             handleSparqlQuery(req, resp, localFile);
@@ -327,7 +363,8 @@ public class LWSStorageServlet extends HttpServlet {
         boolean isContainer = r.hasProperty(RDF.type, LWS_CONTAINER);
         if (isContainer) { resp.sendError(406); return; }
         if (STORAGE_ROOT == null) { resp.sendError(500); return; }
-        Path localFile = STORAGE_ROOT.resolve(reqPath);
+        Path localFile = resolveWithin(STORAGE_ROOT, reqPath);
+        if (localFile == null) { resp.sendError(403, "Forbidden"); return; }
         if (!Files.exists(localFile) || Files.isDirectory(localFile)) { resp.sendError(404); return; }
         if (isHDF5(localFile) && isSparqlRequest(req)) {
             handleSparqlQuery(req, resp, localFile);
