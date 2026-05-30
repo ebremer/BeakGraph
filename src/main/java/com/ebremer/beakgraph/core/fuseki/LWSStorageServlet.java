@@ -233,12 +233,20 @@ public class LWSStorageServlet extends HttpServlet {
                 List<Resource> items = r.listProperties(LWS_ITEMS).mapWith(Statement::getResource).toList();
                 String pageStr = req.getParameter("page");
                 if (pageStr != null) {
-                    int page = Integer.parseInt(pageStr);
+                    int page;
+                    try {
+                        page = Integer.parseInt(pageStr.trim());
+                    } catch (NumberFormatException e) {
+                        resp.sendError(400, "Invalid 'page' parameter: " + pageStr);
+                        return;
+                    }
+                    if (page < 1) { resp.sendError(400, "'page' must be >= 1"); return; }
                     int size = 20;
                     int total = items.size();
-                    int start = (page-1)*size;
+                    long start = (long)(page-1) * size;   // long: a huge page must not overflow to a negative index
                     if (start >= total) { resp.sendError(404); return; }
-                    List<Resource> paged = items.subList(start, Math.min(start+size, total));
+                    int startIdx = (int) start;
+                    List<Resource> paged = items.subList(startIdx, Math.min(startIdx+size, total));
                     Resource pageR = out.createResource(BASE + (reqPath.isEmpty() ? "" : reqPath) + (reqPath.isEmpty() ? "" : "/") + "?page=" + page);
                     r.listProperties().forEachRemaining(s -> { if (!s.getPredicate().equals(LWS_ITEMS)) pageR.addProperty(s.getPredicate(), s.getObject()); });
                     pageR.addProperty(RDF.type, LWS.ContainerPage);
@@ -287,7 +295,13 @@ public class LWSStorageServlet extends HttpServlet {
             handleSparqlQuery(req, resp, localFile);
             return;
         }
-        String media = r.getProperty(AS_MEDIA_TYPE).getString();
+        Statement mediaStmt = r.getProperty(AS_MEDIA_TYPE);
+        String media = (mediaStmt != null) ? mediaStmt.getString() : null;
+        if (media == null || media.isBlank()) {
+            // Resource metadata didn't declare a media type; probe the file, else fall back.
+            media = Files.probeContentType(localFile);
+            if (media == null) media = "application/octet-stream";
+        }
         resp.setContentType(media);
         resp.setContentLengthLong(Files.size(localFile));
         Files.copy(localFile, resp.getOutputStream());

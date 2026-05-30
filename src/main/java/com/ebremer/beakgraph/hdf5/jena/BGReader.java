@@ -9,16 +9,18 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.expr.ExprList;
+import org.apache.jena.util.iterator.ExtendedIterator;
 
 /**
  *
  * @author Erich Bremer
  */
-public interface BGReader extends AutoCloseable {   
+public interface BGReader extends AutoCloseable {
     public GSPODictionary getDictionary();
     public int getNumberOfTriples(String ng);
     public NodeTable getNodeTable();
     public Iterator<BindingNodeId> Read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable);
+    public ExtendedIterator<Triple> graphBaseFind(Node graph, Triple tp);
     public Iterator<Node> listGraphNodes();
     public Stream<Quad> streamQuads();
     public boolean containsGraph(Node graphNode);

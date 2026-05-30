@@ -35,8 +35,16 @@ public class BitPackedUnSignedLongBuffer {
 
     public BitPackedUnSignedLongBuffer(Path path, ByteBuffer buffer, long numEntries, int bitWidth) {
         this.path = path;
-        if (bitWidth <= 0 || bitWidth > 64) {
-            throw new IllegalArgumentException("Bit width must be between 1 and 64. Got: " + bitWidth);
+        // The pack/unpack accumulators (putValue/getValue/get/stream) hold a value together with its
+        // <=7-bit sub-byte offset in a single 64-bit long. That fits only for width <= 57 (7 + 57 = 64);
+        // width 64 is also safe because it is byte-aligned (offset always 0). Widths 58..63 would
+        // silently drop high bits on both read and write, so reject them up front rather than corrupt
+        // data. Unreachable in practice: width is MinBits(id count) and 57 bits already addresses
+        // > 1.4e17 ids.
+        boolean supported = (bitWidth >= 1 && bitWidth <= 57) || bitWidth == 64;
+        if (!supported) {
+            throw new IllegalArgumentException(
+                "Unsupported bit width: " + bitWidth + ". Supported: 1..57, or 64 (byte-aligned).");
         }
         this.bitWidth = bitWidth;
         if (buffer == null) {
@@ -64,7 +72,9 @@ public class BitPackedUnSignedLongBuffer {
     // --- QUERY METHODS ---
 
     public long select1(long rank) {
-        if (rank < 0) return -1;
+        // select1 is 1-based: rank 1 = first set bit. rank < 1 (including 0) is not a valid query,
+        // so return -1 instead of a misleading index 0 (matches the rank<1 guard in the iterators).
+        if (rank < 1) return -1;
         if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
         long currentRank = 0;
         long maxIndex = numEntries;

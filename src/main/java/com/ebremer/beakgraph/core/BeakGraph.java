@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.core;
 
-import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import com.ebremer.beakgraph.hdf5.jena.QueryEngineBeak;
@@ -115,7 +114,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     @Override
     protected ExtendedIterator<Triple> graphBaseFind(Triple tp) {
-        return ((HDF5Reader) reader).graphBaseFind(namedgraph, tp);
+        return reader.graphBaseFind(namedgraph, tp);
     }
     
     @Override

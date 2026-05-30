@@ -153,8 +153,9 @@ public class HDF5Reader implements BGReader {
         return n;
     }
 
+    @Override
     public ExtendedIterator<Triple> graphBaseFind(Node graph, Triple tp) {
-        // Map Node.ANY (wildcards) to specific Variables        
+        // Map Node.ANY (wildcards) to specific Variables
         Var sVar = Var.alloc("s");
         Var pVar = Var.alloc("p");
         Var oVar = Var.alloc("o");
@@ -180,12 +181,13 @@ public class HDF5Reader implements BGReader {
             Node sRes = tp.getSubject().isConcrete() ? tp.getSubject() : nodeTable.getNodeForNodeId(bnid.get(sVar));
             Node pRes = tp.getPredicate().isConcrete() ? tp.getPredicate() : nodeTable.getNodeForNodeId(bnid.get(pVar));
             Node oRes = tp.getObject().isConcrete() ? tp.getObject() : nodeTable.getNodeForNodeId(bnid.get(oVar));
-            try {
-                return Triple.create(sRes, pRes, oRes);
-            } catch (UnsupportedOperationException ex) {
+            // An unresolvable id resolves to null; Triple.create would NPE on it. Map such a row to
+            // null and drop it below rather than emit a malformed (or null) triple to the consumer.
+            if (sRes == null || pRes == null || oRes == null) {
                 return null;
             }
-        });
+            return Triple.create(sRes, pRes, oRes);
+        }).filterDrop(t -> t == null);
     }
 
     @Override
