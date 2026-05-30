@@ -61,9 +61,9 @@ public class PositionalDictionaryWriterBuilder {
     private final Stats stats = new Stats();
     private long numQuads;
     private String name;
-    private final ArrayList<Quad> quadslist = new ArrayList<>(100_000_000);
+    private final ArrayList<Quad> quadslist = new ArrayList<>();
     private Quad[] quads = null;
-    private final HashMap<Node,Node> bmap = new HashMap<>(10_000_000);
+    private final HashMap<Node,Node> bmap = new HashMap<>();
     private boolean spatial = false;
     private boolean features = false;
     private int MaxX = Integer.MIN_VALUE;

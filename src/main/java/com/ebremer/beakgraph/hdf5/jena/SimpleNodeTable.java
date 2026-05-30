@@ -25,7 +25,18 @@ public class SimpleNodeTable implements NodeTable {
     }
     
     /**
-     * Optimized search using the Monolithic Dictionary layout.
+     * Resolves a Node to its NodeId. Predicates and entities (G/S/O URIs and blank
+     * nodes) occupy SEPARATE id-spaces, so a URI used in both roles - e.g. {@code :p}
+     * in {@code :p a rdf:Property} (entity) and in {@code :a :p :b} (predicate) - has a
+     * distinct id in each dictionary. With no position context available here, a
+     * dual-role URI is resolved predicate-first and returned as a single NodeId.
+     * <p>
+     * That single answer is safe because a NodeId is always consumed position-aware: a
+     * bound variable is turned back into its Node via {@link #getNodeForNodeId} (keyed
+     * by the full NodeId, so it returns the correct URI no matter which role's id it
+     * carries) and then re-located in the dictionary for the position it is used at -
+     * see {@code HDF5Reader.substitute}. The raw id is never indexed directly into a
+     * different id-space.
      */
     private NodeId findInDictionaries(Node n) {
         if (n == null || n.isVariable()) {
@@ -77,9 +88,9 @@ public class SimpleNodeTable implements NodeTable {
         
         if (nid != NodeId.NodeDoesNotExist) {
             nodeId2nodemap.put(nid, n);
-            node2nodeIdmap.put(n, nid);
+            node2nodeIdmap.put(n, nid); // authoritative, deterministic Node -> NodeId mapping
         }
-        
+
         return nid;
     }
 
@@ -103,9 +114,15 @@ public class SimpleNodeTable implements NodeTable {
         
         if (node != null) {
             nodeId2nodemap.put(id, node);
-            node2nodeIdmap.put(node, id);
+            // Deliberately NOT seeding node2nodeIdmap here. A dual-role URI has two valid
+            // NodeIds (predicate vs entity id-space); writing the reverse mapping from
+            // whichever role was reconstructed first would make getNodeIdForNode flip
+            // between roles on successive lookups. Leaving the Node -> NodeId mapping
+            // owned solely by getNodeIdForNode keeps it deterministic (predicate-first).
+            // nodeId2nodemap above is keyed by the full NodeId, so it stays correct for
+            // both roles.
         }
-        
+
         return node;
     }
     
