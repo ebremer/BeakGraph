@@ -172,6 +172,27 @@ public class VByte {
     }
 
     /**
+     * Decode an unsigned long from a ByteBuffer at an absolute offset, WITHOUT moving the
+     * buffer's position. This lets a single buffer be read by concurrent threads safely.
+     * @param buffer the buffer to read from
+     * @param offset the absolute byte offset to start decoding at
+     * @return value and nextOffset (the absolute position just past the encoded value)
+     */
+    public static DecodeResult decodeAt(ByteBuffer buffer, int offset) {
+        long result = 0;
+        int shift = 0;
+        int pos = offset;
+        byte b;
+        do {
+            if (shift >= 64) throw new IllegalArgumentException("VByte sequence too long");
+            b = buffer.get(pos++);
+            result |= (long)(b & 0x7F) << shift;
+            shift += 7;
+        } while ((b & 0x80) == 0);
+        return new DecodeResult(result, pos);
+    }
+
+    /**
      * Holder for decoded value and next offset/bytesConsumed.
      */
     public static class DecodeResult {

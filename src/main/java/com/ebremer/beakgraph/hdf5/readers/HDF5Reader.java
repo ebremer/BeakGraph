@@ -17,9 +17,9 @@ import io.jhdf.api.Group;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
@@ -39,7 +39,7 @@ public class HDF5Reader implements BGReader {
     //private final long totalQuads;
     private final Node defaultGraph;
     private final SimpleNodeTable nodeTable;
-    private final Map<Index, IndexReader> indexCache = new HashMap<>();
+    private final Map<Index, IndexReader> indexCache = new ConcurrentHashMap<>();
     private final URI uri;
     private final long formatVersion;
     
