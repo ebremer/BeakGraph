@@ -15,7 +15,6 @@ public class hsPolygon {
     
     public hsPolygon(Ranges r) {
         ranges = r.toList();
-        //FindMixMax();
     }
     
     private long getMin() {

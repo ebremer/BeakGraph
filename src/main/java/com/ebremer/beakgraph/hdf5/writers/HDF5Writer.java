@@ -38,17 +38,15 @@ public class HDF5Writer implements BeakGraphWriter {
             Quad[] allQuads = w.getQuads();
             BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
             BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
-            //BGIndex gosp = new BGIndex(builder, w, Index.GOSP, allQuads);
 
             IO.print("Creating HDF5 File..." + builder.getDestination() + "...");
             try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
                 final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                 hdt.putAttribute("numQuads", w.getNumberOfQuads());
                 hdt.putAttribute("formatVersion", Params.FORMAT_VERSION);
-                w.Add(hdt);
-                gspo.Add(hdt);
-                gpos.Add(hdt);
-                //gosp.Add(hdt);
+                w.add(hdt);
+                gspo.add(hdt);
+                gpos.add(hdt);
             }
         }
         IO.println("Done.");
@@ -69,10 +67,6 @@ public class HDF5Writer implements BeakGraphWriter {
         @Override
         public HDF5Writer build() {
             return new HDF5Writer(this);
-        }
-
-        public Builder setCompressionLevel(int level) {
-            return this;
         }
     }
 

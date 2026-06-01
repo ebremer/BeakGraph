@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
+import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
@@ -21,7 +22,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
     private final Quad queryQuad;
     private final BitPackedUnSignedLongBuffer Bp, Sp, Bo, So, Bs, Ss;
-    private long i; 
+    // Accelerated rank/select directories used for select1; raw B*/S* still used for get().
+    private final HDTBitmapDirectory dirP, dirO, dirS;
+    private long i;
     private long j;
     private long gi, pi, oi;
     private boolean hasNext = false;    
@@ -40,6 +43,10 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         this.Bs = reader.getBitmapBuffer('S'); 
         this.Ss = reader.getIDBuffer('S');     
         
+        this.dirP = reader.getDirectory('P');
+        this.dirO = reader.getDirectory('O');
+        this.dirS = reader.getDirectory('S');
+
         if (filter != null && !filter.isEmpty()) analyzeFilters(filter, dict, quad);
         
         // Resolve Graph
@@ -82,8 +89,8 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         // --- Traverse GPOS ---
 
         // A. Level 2: Predicate Range for G
-        long pStart = select1Safe(Bp, gi);
-        long nextGraphStart = select1Safe(Bp, gi + 1);
+        long pStart = select1Safe(dirP, Bp,gi);
+        long nextGraphStart = select1Safe(dirP, Bp,gi + 1);
         long pEnd = (nextGraphStart == -1) ? (Sp.getNumEntries() - 1) : (nextGraphStart - 1);
         
         if (pStart == -1 || pStart > pEnd) return;
@@ -92,8 +99,8 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (pIndex < 0) return;
 
         // C. Level 3: Object Range for P
-        long oStart = select1Safe(Bo, pIndex + 1);
-        long nextPStart = select1Safe(Bo, pIndex + 2);
+        long oStart = select1Safe(dirO, Bo,pIndex + 1);
+        long nextPStart = select1Safe(dirO, Bo,pIndex + 2);
         long oEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);        
         if (oStart == -1 || oStart > oEnd) return;        
         
@@ -101,8 +108,8 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (oIndex < 0) return;
 
         // E. Level 4: Subject Range for O
-        long sStart = select1Safe(Bs, oIndex + 1);
-        long nextOStart = select1Safe(Bs, oIndex + 2);
+        long sStart = select1Safe(dirS, Bs,oIndex + 1);
+        long nextOStart = select1Safe(dirS, Bs,oIndex + 2);
         long sEnd = (nextOStart == -1) ? (Ss.getNumEntries() - 1) : (nextOStart - 1);
         
         if (sStart == -1 || sStart > sEnd) return;
@@ -126,9 +133,11 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         }
     }
 
-    private long select1Safe(BitPackedUnSignedLongBuffer buffer, long rank) {
+    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
         if (rank < 1) return -1;
-        return buffer.select1(rank);
+        // Accelerated O(log n) select via the superblock/block directory when present;
+        // fall back to the buffer's linear scan only for indexes written without it.
+        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
     }
     
     private void advanceToNextValid() {

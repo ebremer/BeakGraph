@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
+import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
@@ -23,7 +24,9 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private final Quad queryQuad;
     
     private final BitPackedUnSignedLongBuffer Bs, Ss, Bp, Sp, Bo, So;
-    private long idxS, endS, idxP, idxO; 
+    // Accelerated rank/select directories used for select1; raw B*/S* still used for get().
+    private final HDTBitmapDirectory dirS, dirP, dirO;
+    private long idxS, endS, idxP, idxO;
     private long curSID, curPID, curOID;
     private long resS, resP, resO;
     private final long gi; 
@@ -34,7 +37,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private final PositionalDictionaryReader dict;
 
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-       // IO.println("BGIteratorSPO_All (GSPO) Init: " + quad);
         this.parentBinding = bnid;
         this.queryQuad = quad;
         this.dict = dict;
@@ -44,6 +46,10 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         this.Sp = reader.getIDBuffer('P');
         this.Bo = reader.getBitmapBuffer('O');
         this.So = reader.getIDBuffer('O');
+        this.dirS = reader.getDirectory('S');
+        this.dirP = reader.getDirectory('P');
+        this.dirO = reader.getDirectory('O');
+
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
         }
@@ -73,10 +79,10 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // -----------------------------------------------------------------
         // select1 is 1-based.
         // Start of Graph gi is the gi-th '1' in Bs.
-        long sStart = select1Safe(Bs, gi);
+        long sStart = select1Safe(dirS, Bs,gi);
         
         // Start of Next Graph is the (gi+1)-th '1'.
-        long nextGraphStart = select1Safe(Bs, gi + 1);
+        long nextGraphStart = select1Safe(dirS, Bs,gi + 1);
         long sEnd = (nextGraphStart == -1) ? (Ss.getNumEntries() - 1) : (nextGraphStart - 1);
 
         if (sStart == -1 || sStart > sEnd) return;
@@ -95,13 +101,13 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // LEVEL 2: Predicate Cursor
         // -----------------------------------------------------------------
         // Start of Predicates for Subject `idxS` is the (idxS + 1)-th '1' in Bp.
-        this.idxP = select1Safe(Bp, idxS + 1);
+        this.idxP = select1Safe(dirP, Bp,idxS + 1);
 
         // -----------------------------------------------------------------
         // LEVEL 3: Object Cursor
         // -----------------------------------------------------------------
         // Start of Objects for Predicate `idxP` is the (idxP + 1)-th '1' in Bo.
-        this.idxO = select1Safe(Bo, idxP + 1);
+        this.idxO = select1Safe(dirO, Bo,idxP + 1);
 
         // --- Safety Checks ---
         // If idxP or idxO are -1 (not found), it means the lists are empty or we overshot.
@@ -118,9 +124,11 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         advance();
     }
 
-    private long select1Safe(BitPackedUnSignedLongBuffer buffer, long rank) {
+    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
         if (rank < 1) return -1; // 1-based rank must be >= 1
-        return buffer.select1(rank);
+        // Accelerated O(log n) select via the superblock/block directory when present;
+        // fall back to the buffer's linear scan only for indexes written without it.
+        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
     }
 
     /**
@@ -195,7 +203,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // Find start of NEXT predicate block
         // Current Predicate is idxP. Its start was select1(idxP+1).
         // Next Predicate is idxP+1. Its start is select1(idxP+2).
-        long nextPStart = select1Safe(Bo, idxP + 2);
+        long nextPStart = select1Safe(dirO, Bo,idxP + 2);
         idxO = (nextPStart == -1) ? So.getNumEntries() : nextPStart;
         
         idxP++;
@@ -213,7 +221,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // Find start of NEXT Subject block
         // Current Subject idxS. Start was select1(idxS+1).
         // Next Subject idxS+1. Start is select1(idxS+2).
-        long nextSStartP = select1Safe(Bp, idxS + 2);
+        long nextSStartP = select1Safe(dirP, Bp,idxS + 2);
         
         if (nextSStartP == -1) {
             idxP = Sp.getNumEntries();
@@ -221,7 +229,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         } else {
             idxP = nextSStartP;
             // Now align Object cursor to the new Predicate
-            long nextSStartO = select1Safe(Bo, idxP + 1);
+            long nextSStartO = select1Safe(dirO, Bo,idxP + 1);
             idxO = (nextSStartO == -1) ? So.getNumEntries() : nextSStartO;
         }
 

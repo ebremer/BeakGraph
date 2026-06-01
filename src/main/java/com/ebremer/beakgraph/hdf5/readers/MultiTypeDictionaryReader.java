@@ -30,9 +30,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final FCDReader iri;
     private final FCDReader strings;
     private final FCDReader typedLiteralsDictionary;
+    // rdf:langString support: dictionary of distinct language tags + per-node
+    // 1-based id buffer (0 = no tag). Both null for files written before
+    // language-tag support, so those reconstruct exactly as before.
+    private final FCDReader langs;
+    private final BitPackedUnSignedLongBuffer langTags;
     private final long numEntries;
     private final String name;
-    private long offset = 0;
 
     // Tiered Index Storage
     private long[] tieredIds;
@@ -67,6 +71,12 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
         Group iriG = (Group) d.getChild("iri");
         this.iri = (iriG != null) ? new FCDReader(iriG) : null;
+
+        Group langsG = (Group) d.getChild("langs");
+        this.langs = (langsG != null) ? new FCDReader(langsG) : null;
+        ContiguousDataset langTagsDS = (ContiguousDataset) d.getChild("langTags");
+        this.langTags = (langTagsDS != null) ? new BitPackedUnSignedLongBuffer(null, langTagsDS.getBuffer(), (Long) langTagsDS.getAttribute("numEntries").getData(), (Integer) langTagsDS.getAttribute("width").getData()) : null;
+
         buildTieredIndex();
     }
 
@@ -90,7 +100,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     @Override
     public Node extract(long id) {
         long idx = id - 1;
-        if (idx < 0 || idx >= numEntries) throw new Error("id ["+id+"] must be from 1 to "+getNumberOfNodes());
+        if (idx < 0 || idx >= numEntries) throw new IllegalArgumentException("id [" + id + "] must be from 1 to " + getNumberOfNodes());
         long off = offsets.get(idx);
         int typeOrdinal = (int) datatype.get(idx);
 
@@ -104,6 +114,12 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat(Math.toIntExact(off * Float.BYTES)));
             case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble(Math.toIntExact(off * Double.BYTES)));
             case STRING -> {
+                // A language tag takes precedence: rdf:langString is reconstructed
+                // as a lang-tagged literal (term-exact per RDF semantics).
+                long langId = (langTags != null) ? langTags.get(idx) : 0;
+                if (langId > 0 && langs != null) {
+                    yield NodeFactory.createLiteralLang(strings.get(off), langs.get(langId - 1));
+                }
                 long dtId = typedLiterals.get(idx);
                 if (dtId < 1) throw new RuntimeException("Corrupt HDF5: missing typed-literal datatype id at ID " + id);
                 yield NodeFactory.createLiteralDT(strings.get(off), tm.getSafeTypeByName(typedLiteralsDictionary.get(dtId - 1)));
@@ -115,7 +131,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             // relative IRI to an absolute one happens at the serving boundary
             // (RelativeIRIResolver), not here.
             case IRI, RELATIVE_IRI -> NodeFactory.createURI(iri.get(off));
-            case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", (id + offset)));
+            case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", id));
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
         return na;
@@ -127,32 +143,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     }
     
     /**
-     * Original binary search implementation.
-     */
-    /*
-    private long searchGood(Node element) {
-        long low = 1;
-        long high = numEntries;
-        while (low <= high) {
-            long midId = low + (high - low) / 2;
-            Node midNode = extract(midId);
-            if (midNode == null) throw new Error("Dictionary Corruption at ID: " + midId);
-            int cmp = NodeComparator.INSTANCE.compare(midNode, element);
-            if (cmp == 0) {
-                return midId;
-            } else if (cmp < 0) {
-                low = midId + 1;
-            } else {
-                high = midId - 1;
-            }
-        }
-        return -low - 1;
-    }*/
-
-    /**
-     * OPTIMIZED Search Method (Reliable Version).
-     * 1. Uses Tiered Index to narrow the binary search range to ~1024 items.
-     * 2. Uses extract() + NodeComparator to guarantee identical behavior to searchGood().
+     * Tiered binary search: narrows the id range to ~1024 via the tiered index, then
+     * binary-searches with extract() + NodeComparator for a correct total ordering.
      */
     private long searchFAST(Node element) {
         long low = 1;
@@ -175,12 +167,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             }
         }
 
-        // 2. Binary Search within the narrowed range
-        // Strictly uses extract() and NodeComparator.INSTANCE to match searchGood() behavior exactly.
+        // 2. Binary search within the narrowed range, comparing via extract() + NodeComparator.
         while (low <= high) {
             long midId = low + (high - low) / 2;
             Node midNode = extract(midId);
-            if (midNode == null) throw new Error("Dictionary Corruption at ID: " + midId);
+            if (midNode == null) throw new IllegalStateException("Dictionary corruption at ID: " + midId);
             
             int cmp = NodeComparator.INSTANCE.compare(midNode, element);
 
@@ -190,12 +181,6 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         }
         return -low - 1;
     }
-
-    /*
-    private boolean isDefaultGraph(Node n) {
-        if (n == null) return true;
-        return n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated);
-    }*/
 
     @Override
     public long locate(Node element) {
@@ -213,8 +198,4 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         return numEntries;
     }
     
-    public void setOffset(long off) {
-        this.offset = off;
-        buildTieredIndex();
-    }
 }

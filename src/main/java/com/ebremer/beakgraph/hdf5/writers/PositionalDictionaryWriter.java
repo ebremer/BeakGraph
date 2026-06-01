@@ -139,21 +139,21 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     public long locateGraph(Node element) {
         long c = ((Dictionary) entitiesdict).locate(element);
         if (c > 0) return c;
-        throw new Error("Cannot resolve Graph : " + element);
+        throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
     }
    
     @Override
     public long locateSubject(Node element) {
         long c = ((Dictionary) entitiesdict).locate(element);
         if (c > 0) return c;
-        throw new Error("Cannot resolve Subject : " + element);
+        throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
     }
    
     @Override
     public long locatePredicate(Node element) {
         long c = ((Dictionary) predicatesdict).locate(element);
         if (c > 0) return c;
-        throw new Error("Cannot resolve Predicate : " + element);
+        throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
     }
    
     @Override
@@ -161,28 +161,29 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         if (element.isLiteral()) {
             long c = ((Dictionary) literalsdict).locate(element);
             if (c > 0) return c + maxEntityId; // Offset by Entity block size
-            return -1;
         } else {
             long c = ((Dictionary) entitiesdict).locate(element);
             if (c > 0) return c;
-            return -1;
         }
+        // Consistent with the other locate* methods: during a write every quad's nodes
+        // are already in the dictionary, so a miss is a build-invariant violation.
+        throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
     }
    
     @Override
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);
         
         // Add Sub-dictionaries
-        if (entitiesdict.getNumberOfNodes() > 0) entitiesdict.Add(dictionary);
-        if (predicatesdict.getNumberOfNodes() > 0) predicatesdict.Add(dictionary);
-        if (literalsdict.getNumberOfNodes() > 0) literalsdict.Add(dictionary);
+        if (entitiesdict.getNumberOfNodes() > 0) entitiesdict.add(dictionary);
+        if (predicatesdict.getNumberOfNodes() > 0) predicatesdict.add(dictionary);
+        if (literalsdict.getNumberOfNodes() > 0) literalsdict.add(dictionary);
         
         // Add columnar ID lists
         if (numQuads > 0) {
-            graphs.Add(dictionary);
-            subjects.Add(dictionary);
-            objects.Add(dictionary);
+            graphs.add(dictionary);
+            subjects.add(dictionary);
+            objects.add(dictionary);
         }
     }
 

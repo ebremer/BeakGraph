@@ -24,7 +24,7 @@ public class EmptyDictionaryWriter extends AbstractDictionary implements Diction
     }
 
     @Override
-    public void Add(WritableGroup group) {}
+    public void add(WritableGroup group) {}
 
     @Override
     public long locate(Node element) {

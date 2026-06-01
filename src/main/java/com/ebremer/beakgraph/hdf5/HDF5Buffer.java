@@ -10,5 +10,5 @@ import java.nio.file.Path;
 public interface HDF5Buffer {
     public Path getName();
     public long getNumEntries();
-    public void Add(WritableGroup group);
+    public void add(WritableGroup group);
 }

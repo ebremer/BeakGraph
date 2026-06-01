@@ -47,7 +47,13 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private final FCDWriter iri;
     private HashMap<String, Long> dataTypesLookUp = new HashMap<>();
     private final FCDWriter typedLiteralsDictionary;
-    private final FCDWriter strings;  
+    private final FCDWriter strings;
+    // rdf:langString support: a dictionary of distinct language tags (e.g. "en",
+    // "fr-CA") plus a per-node id buffer (1-based id into `langs`, 0 = no tag).
+    // Both are null when the source has no language-tagged literals.
+    private final FCDWriter langs;
+    private final BitPackedUnSignedLongBuffer langTags;
+    private final HashMap<String, Long> langLookUp = new HashMap<>();
     private String name;
     private final ArrayList<Node> sorted;
     private Set<Types> et;
@@ -88,6 +94,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         boolean tempLiteralsPresent = false;
         FCDWriter tempIri = null;
         FCDWriter tempStrings = null;
+        FCDWriter tempLangs = null;
+        BitPackedUnSignedLongBuffer tempLangTags = null;
         try {
             this.doubles = (!et.contains(Types.DOUBLE) || (stats.numDouble == 0)) ? null : new DataOutputBuffer(Path.of("doubles"));
             this.floats  = (!et.contains(Types.FLOAT)  || (stats.numFloat  == 0)) ? null : new DataOutputBuffer(Path.of("floats"));
@@ -114,10 +122,32 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             tempIri     = (!et.contains(Types.IRI)    || (stats.numIRI     == 0)) ? null : new FCDWriter(Path.of("iri"),     fcdBlockSize);
             tempStrings = (!et.contains(Types.STRING)  || (stats.numStrings == 0)) ? null : new FCDWriter(Path.of("strings"), fcdBlockSize);
 
+            // Build the language-tag dictionary from the distinct tags present
+            // among the literals. Skipped entirely when there are none, so files
+            // without language-tagged strings carry no langs/langTags datasets.
+            if (tempLiteralsPresent) {
+                java.util.TreeSet<String> langSet = new java.util.TreeSet<>();
+                for (Node n : sorted) {
+                    if (n.isLiteral()) {
+                        String lang = n.getLiteralLanguage();
+                        if (lang != null && !lang.isEmpty()) langSet.add(lang);
+                    }
+                }
+                if (!langSet.isEmpty()) {
+                    tempLangs = new FCDWriter(Path.of("langs"), fcdBlockSize);
+                    for (String lang : langSet) {
+                        tempLangs.add(lang);
+                        langLookUp.put(lang, tempLangs.getNumEntries()); // 1-based id
+                    }
+                    tempLangTags = new BitPackedUnSignedLongBuffer(Path.of("langTags"), null, 0, 1 + MinBits(langSet.size()));
+                }
+            }
+
         } catch (IOException ex) {
             closeQuietly(tempTypedLiteralsDictionary);
             closeQuietly(tempIri);
             closeQuietly(tempStrings);
+            closeQuietly(tempLangs);
             closeQuietly(this.doubles);
             closeQuietly(this.floats);
             throw ex;
@@ -129,6 +159,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         this.literalsPresent         = tempLiteralsPresent;
         this.iri                     = tempIri;
         this.strings                 = tempStrings;
+        this.langs                   = tempLangs;
+        this.langTags                = tempLangTags;
 
         // --- STEP 3: Encode Data ---
         this.sorted.forEach(this::addNodeInternal);
@@ -152,6 +184,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             nativedatatypes.writeInteger(DataType.BNODE.ordinal());
             offsets.writeLong(0);
             if (literalsPresent) typedLiterals.writeLong(0);
+            if (langTags != null) langTags.writeLong(0);
         }
         else if (node.isURI()) {
             try {
@@ -160,6 +193,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 nativedatatypes.writeInteger((relative ? DataType.RELATIVE_IRI : DataType.IRI).ordinal());
                 iri.add(node.getURI());
                 if (literalsPresent) typedLiterals.writeLong(0);
+                if (langTags != null) langTags.writeLong(0);
             } catch (IOException ex) {
                 logger.log(Level.SEVERE, null, ex);
             }
@@ -168,6 +202,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             String dt = node.getLiteralDatatypeURI();
             long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
             if (literalsPresent) typedLiterals.writeLong(dtId);
+            if (langTags != null) {
+                String lang = node.getLiteralLanguage();
+                langTags.writeLong((lang == null || lang.isEmpty()) ? 0L : langLookUp.getOrDefault(lang, 0L));
+            }
             Object val = node.getLiteralValue();
             if (dt.equals(XSD.xlong.getURI()) && longs != null) {
                 offsets.writeLong(longs.getNumEntries());
@@ -175,7 +213,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 long l = (val instanceof Number n) ? n.longValue() : Long.parseLong(node.getLiteralLexicalForm());
                 longs.writeLong(l);
             }
-            else if ((dt.equals(XSD.xint.getURI()) || dt.equals(XSD.integer.getURI())) && integers != null) {
+            else if (dt.equals(XSD.xint.getURI()) && integers != null) {
+                // Only xsd:int is bit-packed (32-bit). xsd:integer is unbounded and is
+                // stored via the strings branch below so its value and datatype survive.
                 offsets.writeLong(integers.getNumEntries());
                 nativedatatypes.writeInteger(DataType.INTEGER.ordinal());
                 int i = (val instanceof Number n) ? n.intValue() : Integer.parseInt(node.getLiteralLexicalForm());
@@ -207,7 +247,15 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
             }
             else {
-                logger.log(Level.SEVERE, "Literal with datatype {0} dropped: no matching writer buffer enabled", dt);
+                // Unreachable in normal operation: every string-stored datatype is
+                // counted in stats.numStrings (PositionalDictionaryWriterBuilder.ProcessQuad),
+                // which forces the strings buffer to be allocated above. Reaching here
+                // means a stats/allocation mismatch. Fail loudly rather than skip the
+                // node, which would leave offsets/datatypes one entry short and corrupt
+                // every subsequent node in the dictionary.
+                throw new IllegalStateException(
+                    "No writer buffer for literal datatype " + dt + " (strings buffer not allocated); "
+                  + "refusing to write a misaligned dictionary entry.");
             }
         }
         cc.incrementAndGet();
@@ -227,6 +275,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (doubles != null) doubles.close();
         if (typedLiteralsDictionary != null) typedLiteralsDictionary.close();
         if (strings != null) strings.close();
+        if (langs != null) langs.close();
+        if (langTags != null) langTags.prepareForReading();
     }
     
     @Override public long getNumberOfNodes() { return sorted.size(); }
@@ -238,18 +288,20 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     }
 
     @Override
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         WritableGroup subGroup = group.putGroup(name);
-        if (typedLiterals != null) typedLiterals.Add(subGroup);
-        if (offsets != null) offsets.Add(subGroup);        
-        if (typedLiteralsDictionary != null) typedLiteralsDictionary.Add(subGroup);
-        if (integers != null) integers.Add(subGroup);
-        if (longs != null) longs.Add(subGroup);
-        if (floats != null) floats.Add(subGroup);
-        if (doubles != null) doubles.Add(subGroup);
-        if (iri != null && iri.getNumEntries() > 0) iri.Add(subGroup);
-        if (strings != null) strings.Add(subGroup);
-        if (nativedatatypes.getNumEntries() > 0) nativedatatypes.Add(subGroup);
+        if (typedLiterals != null) typedLiterals.add(subGroup);
+        if (offsets != null) offsets.add(subGroup);        
+        if (typedLiteralsDictionary != null) typedLiteralsDictionary.add(subGroup);
+        if (integers != null) integers.add(subGroup);
+        if (longs != null) longs.add(subGroup);
+        if (floats != null) floats.add(subGroup);
+        if (doubles != null) doubles.add(subGroup);
+        if (iri != null && iri.getNumEntries() > 0) iri.add(subGroup);
+        if (strings != null) strings.add(subGroup);
+        if (langs != null && langs.getNumEntries() > 0) langs.add(subGroup);
+        if (langTags != null) langTags.add(subGroup);
+        if (nativedatatypes.getNumEntries() > 0) nativedatatypes.add(subGroup);
     }
 
     @Override public List<Node> getNodes() { return sorted; }

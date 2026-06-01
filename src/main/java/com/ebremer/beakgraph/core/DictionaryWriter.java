@@ -11,5 +11,5 @@ import org.apache.jena.graph.Node;
 public interface DictionaryWriter {
     public long getNumberOfNodes();
     public List<Node> getNodes();
-    public void Add( WritableGroup group );
+    public void add( WritableGroup group );
 }

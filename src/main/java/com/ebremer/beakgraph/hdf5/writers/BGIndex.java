@@ -73,8 +73,11 @@ public class BGIndex {
         long onesSoFar = 0;
         long onesInCurrentSuperblock = 0;
         long onesInCurrentBlock = 0;
-        long lastSuperblockWritten = 0; 
-        long lastBlockWritten = -1;     
+        long lastSuperblockWritten = 0;
+        // Start at 0 (not -1) and pair with a seeded BB[0]=0 below, so the first real
+        // block-boundary write lands at BB[1]. This keeps BB[k] = ones-before-block-k
+        // (within its superblock) - the layout HDTBitmapDirectory.select1/rank1 assume.
+        long lastBlockWritten = 0;
     }
 
     public BGIndex(HDF5Writer.Builder builder, PositionalDictionaryWriter dictWriter, Index type, Quad[] allQuads) {
@@ -89,7 +92,14 @@ public class BGIndex {
             new IndexPosition(indexName.charAt(3)) 
         };
 
-        int sbBits = MinBits(dictWriter.getNumberOfQuads() + 128); 
+        // Superblock entries store the cumulative count of set bits; the largest such
+        // value is the bitmap length. Every level writes at most one row per unique quad
+        // plus one padding row per L0 id, so (allQuads.length + maxL0Id) bounds it. Sizing
+        // from getNumberOfQuads() alone overflowed once the entity space - or the VOID /
+        // spatial quads that numQuads does not count - exceeded the quad count, silently
+        // corrupting the rank/select directory now used for query navigation.
+        long maxCumulativeOnes = (long) allQuads.length + computeMaxL0Id(dictWriter) + 128L;
+        int sbBits = MinBits(maxCumulativeOnes);
         sbBits = (int) (Math.ceil(sbBits / 8.0) * 8);
         int bbBits = MinBits(SUPERBLOCKSIZE);
         bbBits = (int) (Math.ceil(bbBits / 8.0) * 8);
@@ -110,10 +120,27 @@ public class BGIndex {
         BB2 = new BitPackedUnSignedLongBuffer(Path.of("BB" + positions[2].name), null, 0, bbBits);
         BB3 = new BitPackedUnSignedLongBuffer(Path.of("BB" + positions[3].name), null, 0, bbBits);
 
+        // Seed the "ones before the first superblock/block" directory entries to 0.
         SB1.writeLong(0); SB2.writeLong(0); SB3.writeLong(0);
+        BB1.writeLong(0); BB2.writeLong(0); BB3.writeLong(0);
 
         processQuads(dictWriter, allQuads);
         prepareForReading();
+    }
+
+    /**
+     * Maximum id of this index's first (L0) component. The L0 dimension is padded up to
+     * this value so that select1(id) addresses each L0 id's slot directly; it therefore
+     * also bounds the cumulative set-bit count stored in the superblock directory.
+     */
+    private long computeMaxL0Id(PositionalDictionaryWriter w) {
+        return switch (type.name().charAt(0)) {
+            case 'G' -> w.getNumberOfGraphs();
+            case 'S' -> w.getNumberOfSubjects();
+            case 'P' -> w.getNumberOfPredicates();
+            case 'O' -> w.getNumberOfObjects();
+            default -> throw new IllegalStateException();
+        };
     }
 
     private void processQuads(PositionalDictionaryWriter w, Quad[] allQuads) {
@@ -127,13 +154,7 @@ public class BGIndex {
         long totalQuads = allQuads.length;
 
         // Establish the Maximum ID for Level 0 so we know how far to pad at the end
-        long maxL0Id = switch (type.name().charAt(0)) {
-            case 'G' -> w.getNumberOfGraphs();
-            case 'S' -> w.getNumberOfSubjects();
-            case 'P' -> w.getNumberOfPredicates();
-            case 'O' -> w.getNumberOfObjects();
-            default -> throw new IllegalStateException();
-        };
+        long maxL0Id = computeMaxL0Id(w);
 
         long currentL0 = 1;
 
@@ -259,11 +280,11 @@ public class BGIndex {
         BB1.prepareForReading(); BB2.prepareForReading(); BB3.prepareForReading();
     }
 
-    public void Add(WritableGroup hdt) {
+    public void add(WritableGroup hdt) {
         WritableGroup index = hdt.putGroup(type.name());
-        S1.Add(index); S2.Add(index); S3.Add(index);
-        B1.Add(index); B2.Add(index); B3.Add(index);
-        SB1.Add(index); SB2.Add(index); SB3.Add(index);
-        BB1.Add(index); BB2.Add(index); BB3.Add(index);
+        S1.add(index); S2.add(index); S3.add(index);
+        B1.add(index); B2.add(index); B3.add(index);
+        SB1.add(index); SB2.add(index); SB3.add(index);
+        BB1.add(index); BB2.add(index); BB3.add(index);
     }
 }

@@ -34,6 +34,7 @@ public class BeakGraphKeyedPool extends GenericKeyedObjectPool<URI, BeakGraph> {
                Active Objects  : %d
                Idle Objects    : %d
                Total Borrowed  : %d
+               Created Count   : %d
                Destroyed Count : %d
                """,
                 getNumActive(),

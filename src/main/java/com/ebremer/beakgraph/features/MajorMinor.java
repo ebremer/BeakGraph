@@ -18,7 +18,7 @@ import org.locationtech.jts.io.WKTReader;
  * Adds centroid, major axis and minor axis as WKT literals to a geo:Feature
  */
 public class MajorMinor {
-    public static void Add(Resource f, String wkt) {
+    public static void add(Resource f, String wkt) {
         try {
             WKTReader reader = new WKTReader();
             Geometry geom = reader.read(wkt);
@@ -71,7 +71,7 @@ public class MajorMinor {
         } catch (ParseException ignored) {}
     }
     
-    public static void Add(ArrayList<Quad> quads, Node f, String wkt) {
+    public static void add(ArrayList<Quad> quads, Node f, String wkt) {
         try {
             WKTReader reader = new WKTReader();
             Geometry geom = reader.read(wkt);

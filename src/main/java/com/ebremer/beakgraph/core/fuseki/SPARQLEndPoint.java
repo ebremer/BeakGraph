@@ -1,8 +1,9 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.cmdline.Parameters;
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.pool.BeakGraphPool;
+import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import com.ebremer.beakgraph.turbo.Spatial;
 import org.apache.jena.fuseki.main.FusekiServer;
 import org.apache.jena.query.Dataset;
@@ -33,6 +34,7 @@ public class SPARQLEndPoint {
     private static String BASE_URL;
     private Model lwsModel;
     private Path storageRoot = null;
+    private BeakGraph singleFileGraph;
 
     static {
         JenaSystem.init();
@@ -41,33 +43,44 @@ public class SPARQLEndPoint {
     }
 
     private SPARQLEndPoint(Parameters params) throws Exception {
-        System.out.println("Starting Fuseki SPARQL Endpoint...");
+        logger.info("Starting Fuseki SPARQL Endpoint...");
 
         Path endpointPath = params.sparqlendpoint.toPath().normalize().toAbsolutePath();
         Dataset ds;
 
         if (Files.isDirectory(endpointPath)) {
-            System.out.println("Directory mode (LWS) – metadata becomes default graph");
+            logger.info("Directory mode (LWS) – metadata becomes default graph");
             storageRoot = endpointPath;
-            Path ttlGzFile = endpointPath.resolve("beakgraph.ttl.gz");
+            Path ttlGzFile = endpointPath.resolve(LWSMetadataGenerator.CACHE_FILE_NAME);
             if (Files.exists(ttlGzFile)) {
                 try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
                     lwsModel = ModelFactory.createDefaultModel();
                     RDFDataMgr.read(lwsModel, is, RDFFormat.TURTLE.getLang());
-                    System.out.println("Loaded LWS metadata from " + ttlGzFile);
+                    logger.info("Loaded LWS metadata from {}", ttlGzFile);
                 } catch (Exception ex) {
-                    logger.error("Failed to load beakgraph.ttl.gz", ex);
+                    logger.error("Failed to load " + LWSMetadataGenerator.CACHE_FILE_NAME, ex);
                     lwsModel = ModelFactory.createDefaultModel();
                 }
             } else {
-                logger.warn("beakgraph.ttl.gz not found – empty metadata");
-                lwsModel = ModelFactory.createDefaultModel();
+                logger.info("{} not found – generating LWS metadata from {}",
+                        LWSMetadataGenerator.CACHE_FILE_NAME, endpointPath);
+                try {
+                    lwsModel = LWSMetadataGenerator.generateLWSModel(endpointPath);
+                    LWSMetadataGenerator.writeModelToGZ(lwsModel, ttlGzFile);
+                    logger.info("Generated and cached LWS metadata to {}", ttlGzFile);
+                } catch (Exception ex) {
+                    logger.error("Failed to generate LWS metadata for " + endpointPath, ex);
+                    lwsModel = ModelFactory.createDefaultModel();
+                }
             }
             ds = DatasetFactory.create(lwsModel);
         } else {
-            System.out.println("Single-file mode (HDF5)");
-            BeakGraph bg = BeakGraphPool.getPool().borrowObject(params.sparqlendpoint.toURI());
-            ds = bg.getDataset();
+            logger.info("Single-file mode (HDF5)");
+            // A single-file endpoint serves one graph for the whole server lifetime, so open
+            // it directly and close it on shutdown - rather than borrowing it from the pool and
+            // never returning it (which leaks the handle and permanently ties up a pool slot).
+            singleFileGraph = BG.getBeakGraph(params.sparqlendpoint);
+            ds = singleFileGraph.getDataset();
 
             Path parent = endpointPath.getParent();
             if (parent != null) {
@@ -76,7 +89,7 @@ public class SPARQLEndPoint {
                     try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
                         lwsModel = ModelFactory.createDefaultModel();
                         RDFDataMgr.read(lwsModel, is, RDFFormat.TURTLE.getLang());
-                        System.out.println("Loaded LWS metadata from " + ttlGzFile);
+                        logger.info("Loaded LWS metadata from {}", ttlGzFile);
                     } catch (Exception ex) {
                         logger.error("Failed to load beakgraph.ttl.gz", ex);
                         lwsModel = ModelFactory.createDefaultModel();
@@ -124,13 +137,17 @@ public class SPARQLEndPoint {
         }
 
         server.start();
-        System.out.println("Fuseki server started successfully!");
-        System.out.println("SPARQL: http://localhost:" + params.port + "/rdf/query");
-        System.out.println("LWS: " + BASE_URL);
+        logger.info("Fuseki server started successfully!");
+        logger.info("SPARQL: http://localhost:{}/rdf/query", params.port);
+        logger.info("LWS: {}", BASE_URL);
     }
 
-    public static SPARQLEndPoint getSPARQLEndPoint(Parameters params) throws Exception {
-        if (sep == null) sep = new SPARQLEndPoint(params);
+    // synchronized so the lazy init is atomic: two concurrent callers must not each build
+    // a SPARQLEndPoint (which would start two Fuseki servers on the same port and fail).
+    public static synchronized SPARQLEndPoint getSPARQLEndPoint(Parameters params) throws Exception {
+        if (sep == null) {
+            sep = new SPARQLEndPoint(params);
+        }
         return sep;
     }
 
@@ -140,6 +157,10 @@ public class SPARQLEndPoint {
 
     public void shutdown() {
         if (server != null) server.stop();
+        if (singleFileGraph != null) {
+            singleFileGraph.close();
+            singleFileGraph = null;
+        }
     }
 
     public boolean isRunning() { return server != null; }

@@ -32,21 +32,4 @@ public class Visits {
         }
         return visits.get(key);
     }
-    
-    public static void main(String[] args) {
-        Visits ha = new Visits();
-        Point a = new Point(122,213);
-        Point b = new Point(122,213);
-        Point c = new Point(22,113);
-        ha.visited(a);
-        ha.visited(a);
-        ha.visited(a);
-        ha.visited(a);
-        ha.visited(a);
-        ha.visited(b);
-        ha.visited(b);
-        ha.visited(b);
-        ha.visited(b);
-        
-    }
 }

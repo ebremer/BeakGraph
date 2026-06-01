@@ -51,7 +51,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
         try {
             return new BeakGraph(node, bg.getReader());
         } catch (IOException ex) {
-            logger.error(ex.getMessage());
+            logger.error("Failed to open named graph {}", node, ex);
         }
         return Graph.emptyGraph;
     }
@@ -112,7 +112,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
         NodeTable nodeTable = bg.getReader().getNodeTable();
 
         // Execute Read against the specific graph
-        Iterator<BindingNodeId> it = bg.getReader().Read(g, new BindingNodeId(), triplePattern, null, nodeTable);
+        Iterator<BindingNodeId> it = bg.getReader().read(g, new BindingNodeId(), triplePattern, null, nodeTable);
 
         // Convert Bindings to Quads
         return WrappedIterator.create(it).mapWith(bnid -> {

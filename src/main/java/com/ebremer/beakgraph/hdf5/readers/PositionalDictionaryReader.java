@@ -23,6 +23,10 @@ public class PositionalDictionaryReader implements GSPODictionary {
     private final BitPackedUnSignedLongBuffer graphs;
     private final BitPackedUnSignedLongBuffer subjects;
     private final BitPackedUnSignedLongBuffer objects;
+    // The object "dictionary" is a thin, stateless view over the entity + literal
+    // dictionaries (it reads only final fields), so build it once and reuse it instead
+    // of allocating a fresh wrapper on every getObjects() call in the query hot path.
+    private final Dictionary objectsDict;
 
     public PositionalDictionaryReader(Group dictionary) {
         Group entitiesGroup = (Group) dictionary.getChild("entities");
@@ -39,6 +43,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
             new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objects = getDataSet(dictionary, "objects").map(ds ->
             new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+        this.objectsDict = makeObjectsDictionary();
     }
     
     private Optional<ContiguousDataset> getDataSet(Group g, String name) {
@@ -62,6 +67,10 @@ public class PositionalDictionaryReader implements GSPODictionary {
     
     @Override
     public Dictionary getObjects() {
+        return objectsDict;
+    }
+
+    private Dictionary makeObjectsDictionary() {
         return new Dictionary() {
             @Override
             public long locate(Node element) {
@@ -90,13 +99,13 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
             @Override
             public Node extract(long id) {
-                if (id < 1) throw new Error("Cannot find Object ID: " + id);
+                if (id < 1) throw new IllegalArgumentException("Cannot find Object ID: " + id);
                 if (id <= maxEntityId) {
                     if (entities != null) return entities.extract(id);
                 } else {
                     if (literals != null) return literals.extract(id - maxEntityId);
                 }
-                throw new Error("Cannot find Object ID: " + id);
+                throw new IllegalArgumentException("Cannot find Object ID: " + id);
             }
 
             @Override
@@ -125,7 +134,13 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
     @Override
     public Stream<Node> streamSubjects() {
-        return (entities != null) ? entities.streamNodes() : Stream.empty();
+        // Stream only the entities that actually occur as a subject (the `subjects`
+        // columnar id list), not every entity. Streaming all entities would make
+        // SELECT DISTINCT ?s over-report nodes that appear only as object or graph.
+        if (subjects == null || entities == null) {
+            return Stream.empty();
+        }
+        return subjects.stream().mapToObj(entities::extract);
     }
 
     @Override
@@ -135,7 +150,14 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
     @Override
     public Stream<Node> streamObjects() {
-        return getObjects().streamNodes();
+        // Stream only the ids that actually occur as an object (the `objects`
+        // columnar id list), not the entire entity+literal dictionary. The latter
+        // would make SELECT DISTINCT ?o over-report nodes that never appear as object.
+        if (objects == null) {
+            return Stream.empty();
+        }
+        Dictionary objs = getObjects();
+        return objects.stream().mapToObj(objs::extract);
     }
 
     @Override

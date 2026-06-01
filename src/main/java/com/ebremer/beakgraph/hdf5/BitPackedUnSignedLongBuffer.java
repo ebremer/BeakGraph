@@ -35,8 +35,16 @@ public class BitPackedUnSignedLongBuffer {
 
     public BitPackedUnSignedLongBuffer(Path path, ByteBuffer buffer, long numEntries, int bitWidth) {
         this.path = path;
-        if (bitWidth <= 0 || bitWidth > 64) {
-            throw new IllegalArgumentException("Bit width must be between 1 and 64. Got: " + bitWidth);
+        // The pack/unpack accumulators (putValue/getValue/get/stream) hold a value together with its
+        // <=7-bit sub-byte offset in a single 64-bit long. That fits only for width <= 57 (7 + 57 = 64);
+        // width 64 is also safe because it is byte-aligned (offset always 0). Widths 58..63 would
+        // silently drop high bits on both read and write, so reject them up front rather than corrupt
+        // data. Unreachable in practice: width is MinBits(id count) and 57 bits already addresses
+        // > 1.4e17 ids.
+        boolean supported = (bitWidth >= 1 && bitWidth <= 57) || bitWidth == 64;
+        if (!supported) {
+            throw new IllegalArgumentException(
+                "Unsupported bit width: " + bitWidth + ". Supported: 1..57, or 64 (byte-aligned).");
         }
         this.bitWidth = bitWidth;
         if (buffer == null) {
@@ -62,38 +70,11 @@ public class BitPackedUnSignedLongBuffer {
     }
 
     // --- QUERY METHODS ---
-/*
-    public long select1(long rank) {
-        if (rank <= 0) return -1;
-        if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
 
-        long currentRank = 0;
-        long maxIndex = numEntries;
-        
-        // Optimized scan
-        for (long i = 0; i < maxIndex; i += 64) {
-            long word = getWord64(i);
-            int pop = Long.bitCount(word);
-            
-            if (currentRank + pop >= rank) {
-                for (int b = 0; b < 64; b++) {
-                    if (i + b >= maxIndex) return -1;
-                    long bit = (word >>> (63 - b)) & 1L;
-                    if (bit == 1) {
-                        currentRank++;
-                        if (currentRank == rank) {
-                            return i + b;
-                        }
-                    }
-                }
-            }
-            currentRank += pop;
-        }
-        return -1;
-    }*/
-        
     public long select1(long rank) {
-        if (rank < 0) return -1;
+        // select1 is 1-based: rank 1 = first set bit. rank < 1 (including 0) is not a valid query,
+        // so return -1 instead of a misleading index 0 (matches the rank<1 guard in the iterators).
+        if (rank < 1) return -1;
         if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
         long currentRank = 0;
         long maxIndex = numEntries;
@@ -192,28 +173,6 @@ public class BitPackedUnSignedLongBuffer {
         return result;
     }
 
-    /**
-     * Finds the index (0-63) of the k-th set bit in a 64-bit word.
-     * Uses CPU intrinsics (numberOfLeadingZeros) which is safer and faster than manual loops.
-     */
-    /*
-    private int selectInWordSafe2(long word, long k) {
-        // Loop finding the next set bit until we find the k-th one.
-        // Since max k is 64, this is extremely fast.
-        while (k > 0) {
-            // Find position of the first set bit (MSB 0-indexed)
-            int lz = Long.numberOfLeadingZeros(word);        
-            if (k == 1) {
-                return lz;
-            }            
-            // Clear the bit we just found so we can find the next one
-            // (1L << (63 - lz)) creates a mask with only that bit set.
-            word &= ~(1L << (63 - lz));
-            k--;
-        }
-        return -1; // Should not happen given the logic in select1
-    }*/
-    
     // --- WRITE METHODS ---
 
     public void writeInteger(int value) {
@@ -378,7 +337,7 @@ public class BitPackedUnSignedLongBuffer {
         return path;
     }
 
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         ByteBuffer dup = buffer.duplicate();
         dup.rewind();
         byte[] data = new byte[dup.remaining()];

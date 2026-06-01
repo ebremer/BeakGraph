@@ -26,12 +26,15 @@ import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author erich
  */
 public final class HilbertSpace {
+    private static final Logger logger = LoggerFactory.getLogger(HilbertSpace.class);
     public static final SmallHilbertCurve hc = HilbertCurve.small().bits(31).dimensions(2);
     public static final byte N = 0;
     public static final byte NE = 1;
@@ -41,9 +44,7 @@ public final class HilbertSpace {
     public static final byte SW = 5;
     public static final byte W = 6;
     public static final byte NW = 7;
-    //public static enum DIR {N, NE, E, SE, S, SW, W, NW};
-    
-    
+
     private HilbertSpace() {}
     
     public static boolean inRange(ArrayList<Range> rr, Point p, Byte neighbor) {
@@ -365,13 +366,13 @@ public final class HilbertSpace {
                 bb.TopLeft = Vector2D.SmallestMag(bb.TopLeft, new Point(px[k],py[k]));
             }
         }
-        System.out.println((System.nanoTime()-start)/1000000d);
-        System.out.println(bb.toString());
+        logger.debug("BoundingBox computed in {} ms", (System.nanoTime()-start)/1000000d);
+        logger.debug("{}", bb);
         return bb;
     }
     
     public static String JsonPolygons(int px, int py, int width, int height, HashMap<Integer,ArrayList<Range>> ranges, HashMap<Integer,Float> values, HashMap<Integer,Integer> classids) {      
-        System.out.println("Convert to JSON String...");
+        logger.debug("Convert to JSON String...");
         long start = System.nanoTime();
         JsonArrayBuilder jab = Json.createArrayBuilder();
         for (Integer id : ranges.keySet()) {
@@ -389,34 +390,34 @@ public final class HilbertSpace {
                 if (values.containsKey(id)) {
                     job.add("hasValue", values.get(id));
                 } else {
-                    System.out.println("something seriously wrong here....");
+                    logger.warn("Missing value for polygon id {}", id);
                 }
                 if (classids.containsKey(id)) {
                     job.add("hasClass", classids.get(id));
                 } else {
-                    System.out.println("something seriously wrong here with ClassIDS....");
+                    logger.warn("Missing classid for polygon id {}", id);
                 }
                 jab.add(job);
             }
         }
         long delta = System.nanoTime() - start;
         delta = delta / 1000000000;
-        System.out.println("DONE!!! "+delta);
+        logger.debug("JsonPolygons done in {} s", delta);
         return jab.build().toString();
     }
         
     public static void Print(Ranges rr) {
         for (Range r : rr) {
-            System.out.println(r.low()+" "+r.high()+" "+(r.high()-r.low()));
-            System.out.println("X");
+            logger.debug("{} {} {}", r.low(), r.high(), (r.high()-r.low()));
+            logger.debug("X");
             for (long wow = r.low(); wow<=r.high(); wow++) {
                 long[] p = hc.point(wow);
-                System.out.println(p[0]);
+                logger.debug("{}", p[0]);
             }
-            System.out.println("Y");
+            logger.debug("Y");
             for (long wow = r.low(); wow<=r.high(); wow++) {
                 long[] p = hc.point(wow);
-                System.out.println(p[1]);
+                logger.debug("{}", p[1]);
             }
         }
     }
@@ -455,10 +456,8 @@ public final class HilbertSpace {
                 return getSkinnyPoint(r.low());
             }
         }
-        //Ranges big = Fatten(rr);
         Ranges big = rr;
         Point sp = GetUpperLeft(big);
-        //System.out.println("STARTING POINT : "+(sp.x-65536)+", "+(sp.y-28672));
         Polygon p = new Polygon();
         Point cp = sp.clone();
         Visits v = new Visits();
@@ -497,7 +496,7 @@ public final class HilbertSpace {
                 cp.x--; cp.y--; cd = NW;
             } else {
                 if (v.getNumVisits(cp)>10) {
-                    System.out.println("OBSURD ISSUE FAILOUT "+cp);
+                    logger.warn("Absurd issue failout at {}", cp);
                     return getSkinnyPoint(cp.x,cp.y);
                 }
                 jumped = false;
@@ -600,7 +599,7 @@ public final class HilbertSpace {
     public static void print(ArrayList<Range> list) {
         Iterator<Range> i = list.iterator();
         while (i.hasNext()) {
-            System.out.println(i.next());
+            logger.debug("{}", i.next());
         }
     }
     
@@ -663,7 +662,7 @@ public final class HilbertSpace {
         try {
             geom = reader.read(wkt);
             if (!(geom instanceof org.locationtech.jts.geom.Polygon)) {
-                IO.println("WKT is not a Polygon: " + geom.getGeometryType());
+                logger.error("WKT is not a Polygon: {}", geom.getGeometryType());
                 throw new Error("WKT is not a Polygon: " + geom.getGeometryType());
             }
             return (org.locationtech.jts.geom.Polygon) geom;
@@ -718,7 +717,7 @@ public final class HilbertSpace {
     
     public static void Hexes(long si[]) {
         for (int i=0; i<si.length; i++) {
-            System.out.println(si[i]+" "+SpaceIT(Long.toBinaryString(si[i])));
+            logger.debug("{} {}", si[i], SpaceIT(Long.toBinaryString(si[i])));
         }
     }
 }

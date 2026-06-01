@@ -62,7 +62,7 @@ public class DataOutputBuffer implements HDF5Buffer, AutoCloseable {
     }
 
     @Override
-    public void Add(WritableGroup group) {
+    public void add(WritableGroup group) {
         byte[] data = baos.toByteArray();
         if (data.length == 0 && numEntries > 0) {
             throw new RuntimeException("CRITICAL ERROR: Attempting to write empty dataset " + path + " but numEntries is " + numEntries);

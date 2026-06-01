@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.readers;
 
+import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
@@ -21,27 +22,31 @@ public class IndexReader {
     private final Map<Character, HDTBitmapDirectory> componentDirectories = new HashMap<>();
     private final char[] positions;
     
-    public IndexReader(Group index, Index indexType) {
+    public IndexReader(Group index, Index indexType, long formatVersion) {
         this.indexType = indexType;
         String indexName = indexType.name();
         this.positions = new char[4];
         for (int i = 0; i < 4; i++) {
             positions[i] = indexName.charAt(i);
         }
+        // Only build the accelerated rank/select directory for files whose directory
+        // layout is correct (v3+). For older files it is left absent, so the iterators
+        // fall back to the linear (slower but correct) select1 scan over the bitmap.
+        boolean directoryUsable = formatVersion >= Params.RANK_DIRECTORY_MIN_VERSION;
         for (int i = 1; i < 4; i++) {
             char component = positions[i];
-            String suffix = String.valueOf(component).toLowerCase(); 
-            
+            String suffix = String.valueOf(component).toLowerCase();
+
             BitPackedUnSignedLongBuffer bitmap = loadBuffer(index, "B" + suffix);
             BitPackedUnSignedLongBuffer idBuffer = loadBuffer(index, "S" + suffix);
-            
+
             BitPackedUnSignedLongBuffer sb = loadBuffer(index, "SB" + suffix);
             BitPackedUnSignedLongBuffer bb = loadBuffer(index, "BB" + suffix);
-            
+
             bitmaps.put(component, bitmap);
             ids.put(component, idBuffer);
-            
-            if (bitmap != null && idBuffer != null && sb != null && bb != null) {
+
+            if (directoryUsable && bitmap != null && idBuffer != null && sb != null && bb != null) {
                 componentDirectories.put(component, new HDTBitmapDirectory(sb, bb, bitmap, idBuffer));
             }
         }

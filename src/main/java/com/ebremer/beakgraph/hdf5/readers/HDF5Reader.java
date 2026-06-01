@@ -7,7 +7,6 @@ import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.NodeId;
 import com.ebremer.beakgraph.core.NodeTable;
-import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.jena.SimpleNodeTable;
 import com.ebremer.beakgraph.turbo.Spatial;
@@ -17,9 +16,10 @@ import io.jhdf.api.Group;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
@@ -36,11 +36,11 @@ public class HDF5Reader implements BGReader {
     private final HdfFile hdf;
     private final Group hdt;
     private final PositionalDictionaryReader dict;
-    //private final long totalQuads;
     private final Node defaultGraph;
     private final SimpleNodeTable nodeTable;
-    private final Map<Index, IndexReader> indexCache = new HashMap<>();
+    private final Map<Index, IndexReader> indexCache = new ConcurrentHashMap<>();
     private final URI uri;
+    private final long formatVersion;
     
     static {
         JenaSystem.init();
@@ -54,17 +54,16 @@ public class HDF5Reader implements BGReader {
     public HDF5Reader(File src) {
         this.hdf = new HdfFile(src.toPath());
         this.hdt = (Group) hdf.getChild(Params.BG);
-        long fileVersion = readFormatVersion(hdt);
-        if (fileVersion > Params.FORMAT_VERSION) {
+        this.formatVersion = readFormatVersion(hdt);
+        if (formatVersion > Params.FORMAT_VERSION) {
             hdf.close();
             throw new IllegalStateException(
-                    "BeakGraph HDF5 format version " + fileVersion + " in " + src
+                    "BeakGraph HDF5 format version " + formatVersion + " in " + src
                   + " is newer than this build supports (max " + Params.FORMAT_VERSION
                   + "). Upgrade BeakGraph.");
         }
         Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
         this.dict = new PositionalDictionaryReader(dictionary);
-        //this.totalQuads = (long) hdt.getAttribute("numQuads").getData();
         this.defaultGraph = Quad.defaultGraphIRI;
         nodeTable = new SimpleNodeTable(dict);
         this.uri = src.toURI();
@@ -93,25 +92,46 @@ public class HDF5Reader implements BGReader {
     
     public IndexReader getIndexReader(Index indexType) {
         return indexCache.computeIfAbsent(indexType, type -> {
+            Group indexGroup = (Group) hdt.getChild(type.name());
+            if (indexGroup == null) {
+                return null; // index not present in this file; the caller falls back
+            }
             try {
-                Group indexGroup = (Group) hdt.getChild(type.name());
-                return (indexGroup == null) ? null : new IndexReader(indexGroup, type);
+                return new IndexReader(indexGroup, type, formatVersion);
             } catch (Exception e) {
-                e.printStackTrace();
-                return null;
+                // A present-but-unreadable index means a corrupt/incompatible file - fail
+                // loudly rather than returning null (which reads as "index absent").
+                throw new IllegalStateException("Failed to load index " + type + " from " + uri, e);
             }
         });
     }
     
     @Override
-    public Iterator<BindingNodeId> Read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+    public Iterator<BindingNodeId> read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        // A pattern variable already bound to a node that does not exist in this store
+        // (e.g. a VALUES/BIND term not present here) cannot match anything, so the pattern
+        // yields no solutions - rather than failing to resolve the missing id.
+        if (boundToMissing(triple.getSubject(), bnid)
+                || boundToMissing(triple.getPredicate(), bnid)
+                || boundToMissing(triple.getObject(), bnid)) {
+            return Collections.emptyIterator();
+        }
         boolean isDefault = ng.equals(Quad.defaultGraphNodeGenerated) || ng.equals(Quad.defaultGraphIRI);
         Node g = isDefault ? this.defaultGraph : ng;
         Node s = substitute(triple.getSubject(), bnid, nodeTable);
         Node p = substitute(triple.getPredicate(), bnid, nodeTable);
-        Node o = substitute(triple.getObject(), bnid, nodeTable);        
+        Node o = substitute(triple.getObject(), bnid, nodeTable);
         Quad quadPattern = new Quad(g, s, p, o);
         return new BGIteratorMaster(this, dict, bnid, quadPattern, filter, nodeTable);
+    }
+
+    /** True when {@code n} is a variable already bound to a node that does not exist here. */
+    private static boolean boundToMissing(Node n, BindingNodeId bnid) {
+        if (bnid != null && n.isVariable()) {
+            NodeId id = bnid.get(Var.alloc(n));
+            return id != null && NodeId.isDoesNotExist(id);
+        }
+        return false;
     }
 
     /**
@@ -132,8 +152,9 @@ public class HDF5Reader implements BGReader {
         return n;
     }
 
+    @Override
     public ExtendedIterator<Triple> graphBaseFind(Node graph, Triple tp) {
-        // Map Node.ANY (wildcards) to specific Variables        
+        // Map Node.ANY (wildcards) to specific Variables
         Var sVar = Var.alloc("s");
         Var pVar = Var.alloc("p");
         Var oVar = Var.alloc("o");
@@ -153,18 +174,19 @@ public class HDF5Reader implements BGReader {
         Triple pattern = Triple.create(s, p, o);
 
         // Execute against the specific graph requested by BeakGraph
-        Iterator<BindingNodeId> it = Read(graph, new BindingNodeId(), pattern, null, nodeTable);
+        Iterator<BindingNodeId> it = read(graph, new BindingNodeId(), pattern, null, nodeTable);
 
         return WrappedIterator.create(it).mapWith(bnid -> {
             Node sRes = tp.getSubject().isConcrete() ? tp.getSubject() : nodeTable.getNodeForNodeId(bnid.get(sVar));
             Node pRes = tp.getPredicate().isConcrete() ? tp.getPredicate() : nodeTable.getNodeForNodeId(bnid.get(pVar));
             Node oRes = tp.getObject().isConcrete() ? tp.getObject() : nodeTable.getNodeForNodeId(bnid.get(oVar));
-            try {
-                return Triple.create(sRes, pRes, oRes);
-            } catch (UnsupportedOperationException ex) {
+            // An unresolvable id resolves to null; Triple.create would NPE on it. Map such a row to
+            // null and drop it below rather than emit a malformed (or null) triple to the consumer.
+            if (sRes == null || pRes == null || oRes == null) {
                 return null;
             }
-        });
+            return Triple.create(sRes, pRes, oRes);
+        }).filterDrop(t -> t == null);
     }
 
     @Override
@@ -184,7 +206,4 @@ public class HDF5Reader implements BGReader {
         return (dict.getGraphs().locate(graphNode) != -1);
     }
     
-    public BitPackedUnSignedLongBuffer getBitmapBuffer(char type) {
-        throw new UnsupportedOperationException("Access via IndexReader");
-    }
 }

@@ -1,5 +1,14 @@
 /target/
 *.log
 .claude/settings.local.json
+*.h5
+
+# maven-shade artifact
+dependency-reduced-pom.xml
+
+# NetBeans IDE files (per-developer)
+nb-configuration.xml
+nbactions.xml
+nbactions-*.xml
 
 

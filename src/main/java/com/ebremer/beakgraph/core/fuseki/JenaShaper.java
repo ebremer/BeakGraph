@@ -14,6 +14,8 @@ import org.apache.jena.riot.writer.JsonLD11Writer;
 import org.apache.jena.sparql.core.DatasetGraph;
 import org.apache.jena.sparql.core.DatasetGraphFactory;
 import org.apache.jena.sparql.util.Context;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.io.OutputStream;
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -21,6 +23,8 @@ import java.io.Writer;
 import java.util.Collections;
 
 public class JenaShaper {
+
+    private static final Logger logger = LoggerFactory.getLogger(JenaShaper.class);
 
     public static final ThreadLocal<Boolean> USE_PROFILE = ThreadLocal.withInitial(() -> false);
 
@@ -92,7 +96,7 @@ public class JenaShaper {
         RDFWriterRegistry.register(RDFFormat.JSONLD_PRETTY, datasetFactory);
         RDFWriterRegistry.register(RDFFormat.JSONLD11_PRETTY, datasetFactory);
 
-        System.out.println("JenaShaper: Native Titanium framing logic initialized.");
+        logger.info("JenaShaper: Native Titanium framing logic initialized.");
     }
 
     private static void applyFrame(DatasetGraph dataset, PrefixMap prefixMap, String baseURI, Context context, String frameStr, OutputStream outStream, Writer outWriter) {

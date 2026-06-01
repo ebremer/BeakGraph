@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.14.0</version>
+    <version>0.15.0</version>
     <packaging>jar</packaging>
    
     <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
@@ -37,7 +37,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
-        <exec.mainClass>com.ebremer.beakgraph.BeakGraph</exec.mainClass>
+        <exec.mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</exec.mainClass>
        
         <!-- Dependency versions -->
         <jena.version>5.6.0</jena.version>
@@ -55,6 +55,9 @@
         <aircompressor.version>3.6</aircompressor.version>
         <commons.pool.ver>2.13.1</commons.pool.ver>
         <commons.io.version>2.21.0</commons.io.version>
+        <!-- Matches the version Jena pulls in transitively; declared explicitly because
+             SimpleNodeTable uses Caffeine directly (so don't rely on a transitive dep). -->
+        <caffeine.version>3.2.2</caffeine.version>
        
         <!-- Plugin versions -->
         <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
@@ -79,11 +82,6 @@
             <dependency>
                 <groupId>org.apache.logging.log4j</groupId>
                 <artifactId>log4j-core</artifactId>
-                <version>${log4j.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.logging.log4j</groupId>
-                <artifactId>log4j-slf4j-impl</artifactId>
                 <version>${log4j.version}</version>
             </dependency>
             <dependency>
@@ -156,16 +154,33 @@
                 <artifactId>commons-codec</artifactId>
                 <version>1.20.0</version>
             </dependency>
-            <!--
             <dependency>
                 <groupId>com.github.ben-manes.caffeine</groupId>
                 <artifactId>caffeine</artifactId>
-                <version>3.2.3</version>
-            </dependency>            -->
+                <version>${caffeine.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
    
     <build>
+        <resources>
+            <!-- Filter only the version properties file (so Params reads the POM version);
+                 everything else (images, yasgui, log4j config, ...) is copied verbatim. -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>beakgraph-version.properties</exclude>
+                </excludes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>beakgraph-version.properties</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <artifactId>maven-dependency-plugin</artifactId>
@@ -178,10 +193,6 @@
                 <configuration>
                     <release>25</release>
                     <fork>true</fork>
-                    <compilerArgs>
-                        <arg>--enable-preview</arg>
-                    </compilerArgs>
-                    <compilerArgument>--enable-preview</compilerArgument>
                     <executable>${java.home}/bin/javac</executable>
                 </configuration>
             </plugin>
@@ -190,9 +201,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.5</version>
                 <configuration>
-                    <!-- the project compiles with preview features, so the
-                         test JVM must enable them to load those classes -->
-                    <argLine>--enable-preview -Xmx2g</argLine>
+                    <argLine>--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xmx2g</argLine>
                 </configuration>
             </plugin>
         </plugins>
@@ -214,9 +223,10 @@
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
+                                    <mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</mainClass>
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
+                                        <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
                                     </manifestEntries>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
@@ -283,12 +293,11 @@
                         </executions>
                         <configuration>
                             <imageName>beakgraph</imageName>
-                            <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
+                            <mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</mainClass>
                             <debug>true</debug>
                             <skipNativeTests>true</skipNativeTests>
                             <verbose>true</verbose>
                             <buildArgs>
-                                <buildArg>--enable-preview</buildArg>
                                 <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
                                 <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>                           
                                 <buildArg>--no-fallback</buildArg>
@@ -297,7 +306,7 @@
                                 <buildArg>-march=native</buildArg>
                                 <buildArg>-J-Xmx32G</buildArg>
                                 <buildArg>-H:IncludeResources=META-INF/sparql/.*</buildArg>
-                                <buildArg>-H:IncludeResources=log4j2.yaml</buildArg>
+                                <buildArg>-H:IncludeResources=log4j2.yml</buildArg>
                                 <buildArg>-H:IncludeResources=META-INF/services/.*</buildArg>
                                 <buildArg>-H:IncludeResourceBundles=org.apache.jena.ext.xerces.impl.msg.XMLSchemaMessages</buildArg>
                                 <buildArg>-H:IncludeResourceBundles=org.apache.jena.ext.xerces.impl.msg.XMLMessages</buildArg>
@@ -323,9 +332,10 @@
                             <shadedArtifactAttached>false</shadedArtifactAttached>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.ebremer.beakgraph.cmdline.beakgraph</mainClass>
+                                    <mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</mainClass>
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
+                                        <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
                                     </manifestEntries>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
@@ -417,10 +427,6 @@
             <artifactId>log4j-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-slf4j-impl</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
@@ -464,11 +470,18 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-pool2</artifactId>
         </dependency>      
-        <!-- 
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
-        </dependency>-->
+            <exclusions>
+                <!-- Compile-time-only annotations; not needed at runtime, and excluding
+                     them avoids dragging in an extra error_prone version. -->
+                <exclusion>
+                    <groupId>com.google.errorprone</groupId>
+                    <artifactId>error_prone_annotations</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
     </dependencies>
     <repositories>
         <repository>

@@ -44,7 +44,6 @@ public class Point {
    @Override
     public int hashCode() {
         int wow = Arrays.hashCode(new Object[]{x, y});
-        //System.out.println(wow+" -> "+x+", "+y);
         return wow;
     }
 
@@ -64,14 +63,5 @@ public class Point {
             return false;
         }
         return this.y == other.y;
-    }
-    
-    public static void main(String[] args) {
-        Point a = new Point(122,213);
-        Point b = new Point(122,213);
-        Point c = new Point(22,113);
-        System.out.println(a.equals(b));
-        System.out.println(a.equals(c));
-        System.out.println(b.equals(c));
     }
 }

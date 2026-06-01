@@ -16,7 +16,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.StructuredTaskScope;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
@@ -29,6 +32,7 @@ import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
+import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.XSD;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -60,9 +64,9 @@ public class PositionalDictionaryWriterBuilder {
     private final Stats stats = new Stats();
     private long numQuads;
     private String name;
-    private final ArrayList<Quad> quadslist = new ArrayList<>(100_000_000);
+    private final ArrayList<Quad> quadslist = new ArrayList<>();
     private Quad[] quads = null;
-    private final HashMap<Node,Node> bmap = new HashMap<>(10_000_000);
+    private final HashMap<Node,Node> bmap = new HashMap<>();
     private boolean spatial = false;
     private boolean features = false;
     private int MaxX = Integer.MIN_VALUE;
@@ -211,7 +215,7 @@ public class PositionalDictionaryWriterBuilder {
         }
     }
 
-    private ArrayList<Quad> AddSpatial(Quad quad) {
+    private ArrayList<Quad> addSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
         String wkt = quad.getObject().getLiteralLexicalForm();
         if (isDegeneratePolygon(wkt)) {
@@ -221,7 +225,7 @@ public class PositionalDictionaryWriterBuilder {
         final Polygon[] scales;        
         scales = PolygonScaler.toPolygons(wkt);
         if (features) {
-            AddFeatures(qqq, quad);
+            addFeatures(qqq, quad);
         }
         try {
             if (scales == null) {
@@ -234,8 +238,8 @@ public class PositionalDictionaryWriterBuilder {
                     for (int ii=0; ii<tiles.size(); ii++) {
                         qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
                     }            
-                } catch (Throwable ex) {
-                    logger.error(ex.getMessage());
+                } catch (Exception ex) {
+                    logger.error("Failed to add spatial tile quads for {}", wkt, ex);
                 }
                 long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
                 try {                
@@ -245,26 +249,29 @@ public class PositionalDictionaryWriterBuilder {
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
                     qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
                 } catch (IllegalArgumentException ex) {
-                    logger.error("Bad polygon bro2 : {}", wkt);
+                    logger.error("Bad polygon, skipping hilbert corners for {}", wkt, ex);
                     return qqq;
-                }  catch (Throwable ex) {
-                logger.error(ex.getMessage());
+                } catch (Exception ex) {
+                    logger.error("Failed to add hilbert corner quads for {}", wkt, ex);
+                }
             }
-            }
-        } catch (Throwable ex) {
-            logger.error(ex.getMessage());
+        } catch (Exception ex) {
+            logger.error("Failed to add spatial data for {}", wkt, ex);
         }
         return qqq;
     }
     
-    private void AddFeatures(ArrayList<Quad> qqq, Quad quad) {
+    private void addFeatures(ArrayList<Quad> qqq, Quad quad) {
         Node geo = quad.getSubject();
         String wkt = quad.getObject().getLiteralLexicalForm();
-        Gen2DFeatures.Generate(qqq, geo, wkt);
-        MajorMinor.Add(qqq, geo, wkt);
+        Gen2DFeatures.generate(qqq, geo, wkt);
+        MajorMinor.add(qqq, geo, wkt);
     }
     
-    private synchronized Quad AlignBnodes(Quad quad) {
+    // Not synchronized: called only from the sequential streamQuads().forEach pipeline
+    // (one consumer thread), like the other per-quad steps; the concurrent addSpatial
+    // tasks never touch bmap.
+    private Quad AlignBnodes(Quad quad) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node o = quad.getObject();
@@ -358,7 +365,7 @@ public class PositionalDictionaryWriterBuilder {
             } else if (g.isURI()) {
                 stats.numIRI++;
             } else {
-                throw new Error("This shouldn't be in here : "+g);
+                throw new IllegalStateException("Unexpected graph node type (not URI or blank): " + g);
             }
             entities.add(g);
         }
@@ -383,7 +390,11 @@ public class PositionalDictionaryWriterBuilder {
                     this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
                     this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
                     this.stats.numLong++;
-                } else if (dt.equals(XSD.xint.getURI()) || dt.equals(XSD.integer.getURI())) {
+                } else if (dt.equals(XSD.xint.getURI())) {
+                    // Only xsd:int (32-bit bounded) is bit-packed here. xsd:integer is
+                    // unbounded, so it is handled by the string fallback below instead;
+                    // bit-packing it would truncate large values and change the datatype
+                    // to xsd:int on read-back.
                     Number n = (Number) o.getLiteralValue();
                     this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
                     this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
@@ -398,8 +409,10 @@ public class PositionalDictionaryWriterBuilder {
                     this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
                     this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
                     this.stats.numDouble++;
-                } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI())) {
-                    String wow = (String) o.getLiteralLexicalForm();                            
+                } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
+                    // rdf:langString shares the strings buffer; its language tag is
+                    // stored separately by MultiTypeDictionaryWriter (langs/langTags).
+                    String wow = (String) o.getLiteralLexicalForm();
                     this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
                     this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
                     this.stats.numStrings++;
@@ -411,7 +424,16 @@ public class PositionalDictionaryWriterBuilder {
                     this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
                     this.stats.numStrings++;
                 } else {
-                    logger.error("I DON'T KNOW WHAT TO DO WITH : {}", o);
+                    // Any other datatype (xsd:integer, xsd:decimal, xsd:date, custom
+                    // datatypes, ...) is stored verbatim in the strings buffer by
+                    // MultiTypeDictionaryWriter, tagged with its datatype IRI. Count it
+                    // toward numStrings so that buffer is always allocated; otherwise the
+                    // writer would have nowhere to put it and would drop the node,
+                    // desynchronising the offset/datatype buffers and corrupting the dictionary.
+                    String wow = o.getLiteralLexicalForm();
+                    this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
+                    this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
+                    this.stats.numStrings++;
                 }
                 literals.add(o);
             }                  
@@ -422,7 +444,7 @@ public class PositionalDictionaryWriterBuilder {
                 } else if (o.isURI()) {
                     stats.numIRI++;
                 } else {
-                    throw new Error("WHAT THE HELL IS THIS : "+o);
+                    throw new IllegalStateException("Unexpected object node type (not URI, blank, or literal): " + o);
                 }
                 entities.add(o);
             }
@@ -443,8 +465,12 @@ public class PositionalDictionaryWriterBuilder {
             AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, REL_BASE);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
-            final List<StructuredTaskScope.Subtask<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
-            try (var scope = StructuredTaskScope.open()) {
+            final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
+            // A per-task virtual-thread executor (final API since JDK 21). Its
+            // try-with-resources close() blocks until every submitted spatial task finishes,
+            // giving the same "join all forked work" guarantee as a structured task scope -
+            // without depending on a preview API.
+            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor()) {
                 parserBuilder.streamQuads()
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
@@ -457,31 +483,35 @@ public class PositionalDictionaryWriterBuilder {
                             System.out.println("Loaded " + quadcount.get() + " quads...");
                         }
                         quadslist.add(quad);
-                        try {
-                           ProcessQuad(quad);
-                        } catch (Throwable ex) {
-                            logger.error(ex.getMessage());
-                        }
-                        xvoid.add(quad);                    
+                        // Let an invalid quad abort the write rather than silently skipping
+                        // its dictionary accounting (the quad is already in quadslist, so a
+                        // skip would only fail later, opaquely, when the index can't locate it).
+                        ProcessQuad(quad);
+                        xvoid.add(quad);
                         if (spatial && isGeoLiteral(quad)) {
-                            StructuredTaskScope.Subtask<ArrayList<Quad>> task = scope.fork(() -> AddSpatial(quad));
-                            spatialTasks.add(task);
+                            spatialTasks.add(scope.submit(() -> addSpatial(quad)));
                         }
                     });
-                scope.join();
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                logger.error("Interrupted while joining spatial task scope", ex);
-            } catch (Throwable ex) {
-                logger.error(ex.getMessage());
+            } catch (Exception ex) {
+                // Don't swallow a parse/processing failure - that would leave a silently
+                // truncated dictionary. Abort the write; Error/OOM still propagate.
+                throw new IOException("Failed while parsing/processing RDF source: " + src, ex);
             }
-            for (var task : spatialTasks) {
-                ArrayList<Quad> extraQuads = task.get();
+            for (Future<ArrayList<Quad>> task : spatialTasks) {
+                ArrayList<Quad> extraQuads;
+                try {
+                    extraQuads = task.get();
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Interrupted while collecting spatial results: " + src, ex);
+                } catch (ExecutionException ex) {
+                    throw new IOException("Spatial processing failed for " + src, ex.getCause());
+                }
                 extraQuads.forEach(q -> {
                     quadslist.add(q);
                     ProcessQuad(q);
                 });
-            }         
+            }
             Model xxx = xvoid.getModel();
             xxx.setNsPrefix("void", VOID.NS);
             xxx.setNsPrefix("sd", SD.getURI());

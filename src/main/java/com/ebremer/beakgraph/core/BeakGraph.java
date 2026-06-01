@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.core;
 
-import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import com.ebremer.beakgraph.hdf5.jena.QueryEngineBeak;
@@ -21,6 +20,7 @@ import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.main.StageBuilder;
 import org.apache.jena.sparql.engine.main.StageGenerator;
+import org.apache.jena.sparql.engine.optimizer.reorder.ReorderLib;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.sys.JenaSystem;
@@ -39,7 +39,12 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     private final BGReader reader;
     private static final Logger logger = LoggerFactory.getLogger(BeakGraph.class);
     private final URI uri;
-    
+    // Lazily-computed triple count for this graph. -1 = not yet computed; the graph
+    // is read-only so the value is stable once counted.
+    private int cachedSize = -1;
+    // Lazily-built join-reorder transform (read-only graph -> built once, then reused).
+    private volatile ReorderTransformation reorderTransform;
+
     static {
         JenaSystem.init();
         Spatial.init();
@@ -97,7 +102,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         try {
             reader.close();
         } catch (Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("Error closing BeakGraph reader for {}", uri, ex);
         }
     }
     
@@ -112,7 +117,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     @Override
     protected ExtendedIterator<Triple> graphBaseFind(Triple tp) {
-        return ((HDF5Reader) reader).graphBaseFind(namedgraph, tp);
+        return reader.graphBaseFind(namedgraph, tp);
     }
     
     @Override
@@ -142,7 +147,26 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     @Override
     protected int graphBaseSize() {
-        return reader.getNumberOfTriples("");
+        int size = cachedSize;
+        if (size >= 0) {
+            return size;
+        }
+        // No per-graph count is stored, so count this graph's distinct triples by
+        // scanning it once. Quads are de-duplicated in the index, so each triple is
+        // visited exactly once. Cached because the graph is read-only.
+        long count = 0;
+        ExtendedIterator<Triple> it = graphBaseFind(Triple.create(Node.ANY, Node.ANY, Node.ANY));
+        try {
+            while (it.hasNext()) {
+                it.next();
+                count++;
+            }
+        } finally {
+            it.close();
+        }
+        size = (count > Integer.MAX_VALUE) ? Integer.MAX_VALUE : (int) count;
+        cachedSize = size;
+        return size;
     }
     
     private static void wireIntoExecution() {
@@ -152,7 +176,35 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         StageBuilder.setGenerator(ARQ.getContext(), stageGenerator) ;
     }
 
+    /**
+     * Join-reordering transform for BGP optimization. Built lazily from the persisted VoID stats
+     * (BeakGraph-/index-aware selectivity) and cached, falling back to Jena's fixed heuristic when
+     * no stats are available. Returns a usable transform rather than null so multi-pattern BGPs are
+     * reordered most-selective-first.
+     */
     public ReorderTransformation getReorderTransform() {
-        return null;
+        ReorderTransformation r = reorderTransform;
+        if (r == null) {
+            synchronized (this) {
+                r = reorderTransform;
+                if (r == null) {
+                    reorderTransform = r = buildReorderTransform();
+                }
+            }
+        }
+        return r;
+    }
+
+    private ReorderTransformation buildReorderTransform() {
+        try {
+            VoidStats stats = VoidStats.load(reader);
+            if (stats.usable()) {
+                return new BGReorderTransform(stats);
+            }
+            logger.debug("No VoID stats for {}; using fixed reorder heuristic", uri);
+        } catch (RuntimeException ex) {
+            logger.warn("Failed to load VoID stats for {}; using fixed reorder heuristic", uri, ex);
+        }
+        return ReorderLib.fixed();
     }
 }

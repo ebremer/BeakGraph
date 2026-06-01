@@ -162,15 +162,18 @@ public class HDTBitmapDirectory {
     }
 
     private long findNthSetBitInWord(long word, long n) {
-        if (n == 1) return Long.numberOfLeadingZeros(word);
-        for (int i = 0; i < 64; i++) {
-            // MSB first check
-            if ((word & (1L << (63 - i))) != 0) {
-                n--;
-                if (n == 0) return i;
-            }
-        }
-        return -1;
+        // Broadword selection: 0-based index (from MSB) of the n-th set bit (n >= 1),
+        // O(1) via 6 popcount narrowing steps. Replaces an O(64) bit-by-bit loop; the
+        // result is identical to the linear select1's selectInWordSafe.
+        long result = 0;
+        int cnt;
+        cnt = Long.bitCount(word >>> 32); if (n > cnt) { word <<= 32; result += 32; n -= cnt; }
+        cnt = Long.bitCount(word >>> 48); if (n > cnt) { word <<= 16; result += 16; n -= cnt; }
+        cnt = Long.bitCount(word >>> 56); if (n > cnt) { word <<= 8;  result += 8;  n -= cnt; }
+        cnt = Long.bitCount(word >>> 60); if (n > cnt) { word <<= 4;  result += 4;  n -= cnt; }
+        cnt = Long.bitCount(word >>> 62); if (n > cnt) { word <<= 2;  result += 2;  n -= cnt; }
+        cnt = Long.bitCount(word >>> 63); if (n > cnt) { result += 1; }
+        return result;
     }
 
     public BitPackedUnSignedLongBuffer getIds() { return ids; }
@@ -183,52 +186,4 @@ public class HDTBitmapDirectory {
     }
 
     public long getBitCount() { return rank1(numBitmapEntries); }
-    
-    // ... dumpDirectories and printBitmapPrefix unchanged ...
-    public void dumpDirectories() {
-        System.out.println("=== HDTBitmapDirectory Dump ===");
-        System.out.printf("Bitmap entries      : %,d%n", numBitmapEntries);
-        System.out.printf("Superblock size     : %,d bits%n", superblockSize);
-        System.out.printf("Block size          : %,d bits%n", blockSize);
-        System.out.printf("Superblocks         : %,d%n", numSuperblockEntries);
-        System.out.printf("Blocks              : %,d%n", numBlockEntries);
-        System.out.printf("Total 1s            : %,d%n%n", getBitCount());
-
-        System.out.println("Superblock Directory (SB – absolute rank at superblock boundary):");
-        System.out.println("Idx    StartBit         EndBit           AbsRank");
-        System.out.println("----------------------------------------------------------");
-        for (long i = 0; i < numSuperblockEntries; i++) {
-            long start = i * superblockSize;
-            long end = Math.min((i + 1) * superblockSize, numBitmapEntries);
-            long rank = superblock.get(i);
-            System.out.printf("%3d    %,12d   -> %,12d     %,10d%n", i, start, end - 1, rank);
-        }
-        System.out.println();
-
-        System.out.println("Block Directory (BB – relative rank within superblock):");
-        System.out.println("BlkIdx  Superblock  StartBit         EndBit       RelRank AbsRank");
-        System.out.println("---------------------------------------------------------------------");
-        for (long i = 0; i < numBlockEntries; i++) {
-            long sbIdx = i / blocksPerSuperblock;
-            long absRankAtSB = (sbIdx < numSuperblockEntries) ? superblock.get(sbIdx) : superblock.get(numSuperblockEntries - 1);
-            long relRank = block.get(i);
-            long absRank = absRankAtSB + relRank;
-
-            long start = i * blockSize;
-            long end = Math.min((i + 1) * blockSize, numBitmapEntries);
-
-            System.out.printf("%6d  %9d    %,12d   -> %,12d     %,8d %,10d%n",
-                    i, sbIdx, start, end - 1, relRank, absRank);
-        }
-        System.out.println("=== End Dump ===\n");
-    }
-
-    public void printBitmapPrefix(long n) {
-        long max = Math.min(n, numBitmapEntries);
-        System.out.print("Bitmap prefix [" + max + "]: ");
-        for (long i = 0; i < max; i++) {
-            System.out.print(bitmap.get(i));
-        }
-        System.out.println();
-    }
 }

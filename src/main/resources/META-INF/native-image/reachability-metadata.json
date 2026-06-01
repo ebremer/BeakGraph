@@ -83,7 +83,7 @@
       ]
     },
     {
-      "type": "com.ebremer.beakgraph.cmdline.beakgraph",
+      "type": "com.ebremer.beakgraph.cmdline.BeakGraphCLI",
       "jniAccessible": true,
       "methods": [
         {

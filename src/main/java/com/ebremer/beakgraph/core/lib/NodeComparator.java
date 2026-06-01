@@ -46,10 +46,19 @@ public class NodeComparator implements Comparator<Node> {
             try {
                 NodeValue nv1 = NodeValue.makeNode(n1);
                 NodeValue nv2 = NodeValue.makeNode(n2);
-                
-                // compareAlways provides a strict SPARQL "ORDER BY" total ordering, 
+
+                // compareAlways provides a strict SPARQL "ORDER BY" ordering by VALUE,
                 // handling mixed datatypes safely without throwing exceptions.
-                return NodeValue.compareAlways(nv1, nv2);
+                int byValue = NodeValue.compareAlways(nv1, nv2);
+                if (byValue != 0) {
+                    return byValue;
+                }
+                // Value-equal but possibly term-distinct (e.g. "1"^^xsd:int vs
+                // "1"^^xsd:integer, "1.0" vs "1.00", or an int equal to a double).
+                // Break the tie on the exact RDF term so distinct terms get distinct,
+                // stable dictionary positions instead of collapsing onto one id (which
+                // would make locate() return the wrong term).
+                return NodeCmp.compareRDFTerms(n1, n2);
             } catch (Exception e) {
                 // Absolute fallback if Jena fails to parse a highly malformed literal
                 return NodeCmp.compareRDFTerms(n1, n2);
