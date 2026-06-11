@@ -235,7 +235,13 @@ public class SPARQLEndPoint {
         }
 
         private void handle(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-            String queryStr = BGSparqlService.extractQuery(req);
+            String queryStr;
+            try {
+                queryStr = BGSparqlService.extractQuery(req);
+            } catch (BGSparqlService.QueryBodyTooLargeException e) {
+                resp.sendError(413, e.getMessage());
+                return;
+            }
             if (queryStr == null || queryStr.isBlank()) {
                 resp.sendError(400, "No SPARQL query provided");
                 return;

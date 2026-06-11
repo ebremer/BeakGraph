@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 import org.apache.jena.query.Dataset;
 import org.apache.jena.query.Query;
 import org.apache.jena.query.QueryExecution;
@@ -29,6 +30,20 @@ import org.apache.jena.sparql.syntax.syntaxtransform.QueryTransformOps;
  */
 public final class BGSparqlService {
 
+    /** Maximum accepted SPARQL request body. Real queries are tiny; an unbounded
+     *  readAllBytes lets a single request allocate arbitrary heap. */
+    static final int MAX_QUERY_BODY_BYTES = 1 << 20; // 1 MiB
+
+    /** Hard wall-clock limit per query so one pathological query cannot pin the server. */
+    private static final long QUERY_TIMEOUT_SECONDS = 30;
+
+    /** Thrown when a POST body exceeds {@link #MAX_QUERY_BODY_BYTES}; callers map it to HTTP 413. */
+    public static final class QueryBodyTooLargeException extends IOException {
+        QueryBodyTooLargeException(String message) {
+            super(message);
+        }
+    }
+
     private BGSparqlService() {
     }
 
@@ -43,10 +58,19 @@ public final class BGSparqlService {
                 return req.getParameter("query");
             }
             try (InputStream in = req.getInputStream()) {
-                return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                return readBody(in, MAX_QUERY_BODY_BYTES);
             }
         }
         return null;
+    }
+
+    /** Read at most {@code max} bytes as UTF-8; reject anything larger. */
+    static String readBody(InputStream in, int max) throws IOException {
+        byte[] body = in.readNBytes(max + 1);
+        if (body.length > max) {
+            throw new QueryBodyTooLargeException("SPARQL query body exceeds " + max + " bytes");
+        }
+        return new String(body, StandardCharsets.UTF_8);
     }
 
     /**
@@ -65,7 +89,8 @@ public final class BGSparqlService {
             Query execQuery = resolver.isActive()
                     ? QueryTransformOps.transform(query, resolver.absoluteToStorage())
                     : query;
-            try (QueryExecution qexec = QueryExecution.dataset(ds).query(execQuery).build()) {
+            try (QueryExecution qexec = QueryExecution.dataset(ds).query(execQuery)
+                    .timeout(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS).build()) {
                 if (execQuery.isSelectType()) {
                     ResultSet rs = resolver.resolve(qexec.execSelect());
                     if (accept.contains("json")) {

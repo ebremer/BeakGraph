@@ -1,8 +1,10 @@
 package com.ebremer.beakgraph.core;
 
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
+import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import org.apache.commons.collections4.iterators.IteratorChain;
@@ -16,7 +18,11 @@ import org.apache.jena.riot.system.PrefixMap;
 import org.apache.jena.sparql.core.DatasetGraphBase;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
+import org.apache.jena.sparql.engine.main.QC;
+import org.apache.jena.sparql.pfunction.PropertyFunctionRegistry;
+import org.apache.jena.sparql.util.Context;
 import org.apache.jena.util.iterator.WrappedIterator;
+import org.apache.jena.vocabulary.RDFS;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,11 +31,43 @@ import org.slf4j.LoggerFactory;
  * @author erich
  */
 public class BGDatasetGraph extends DatasetGraphBase {
-    private static final Logger logger = LoggerFactory.getLogger(BGDatasetGraph.class);        
+    private static final Logger logger = LoggerFactory.getLogger(BGDatasetGraph.class);
     private final BeakGraph bg;
-    
+    // Per-dataset execution wiring (the TDB pattern): the engine merges this context
+    // over the global ARQ context when a query runs against this dataset, so BG's
+    // OpExecutor and property-function scoping apply here and ONLY here - never to
+    // other datasets in the JVM.
+    private final Context context = Context.create();
+
+    /**
+     * The standard property-function registry minus rdfs:member. BG stores use
+     * rdfs:member as a plain stored predicate; Jena's container-membership property
+     * function would rewrite those patterns into rdf:_1/rdf:_2... lookups and answer
+     * nothing. Scoped here per dataset - the global registry is left untouched.
+     */
+    private static final class BGPropertyFunctions {
+        static final PropertyFunctionRegistry INSTANCE = build();
+        private static PropertyFunctionRegistry build() {
+            PropertyFunctionRegistry global = PropertyFunctionRegistry.get();
+            PropertyFunctionRegistry reg = new PropertyFunctionRegistry();
+            global.keys().forEachRemaining(uri -> {
+                if (!RDFS.member.getURI().equals(uri)) {
+                    reg.put(uri, global.get(uri));
+                }
+            });
+            return reg;
+        }
+    }
+
     public BGDatasetGraph(BeakGraph g) {
         this.bg = g;
+        QC.setFactory(context, OpExecutorBG.opExecFactoryBG);
+        PropertyFunctionRegistry.set(context, BGPropertyFunctions.INSTANCE);
+    }
+
+    @Override
+    public Context getContext() {
+        return context;
     }
     
     @Override
@@ -75,6 +113,12 @@ public class BGDatasetGraph extends DatasetGraphBase {
     
     @Override
     public boolean containsGraph(Node graphNode) {
+        // The union and default graphs are synthetic names that never appear in
+        // the stored graphs list, but ARQ gates GRAPH <g> execution on this
+        // method - they must answer true here (the TDB convention).
+        if (Quad.isUnionGraph(graphNode) || Quad.isDefaultGraph(graphNode)) {
+            return true;
+        }
         return bg.getReader().containsGraph(graphNode);
     }
 
@@ -93,9 +137,23 @@ public class BGDatasetGraph extends DatasetGraphBase {
     
     @Override
     public Iterator<Quad> findNG(Node g, Node s, Node p, Node o) {
-        // Same logic as find, but specifically for Named Graphs.
-        // Since HDF5Reader includes all graphs in listGraphNodes, logic is identical.
-        return find(g, s, p, o);
+        // findNG matches NAMED graphs only - unlike find(ANY,...), the default
+        // graph's quads are excluded.
+        if (Quad.isUnionGraph(g)) {
+            return findInSpecificGraph(g, s, p, o); // read() handles the union semantics
+        }
+        if (g == null || Node.ANY.equals(g)) {
+            List<Iterator<Quad>> iterators = new ArrayList<>();
+            Iterator<Node> graphs = listGraphNodes();
+            while (graphs.hasNext()) {
+                iterators.add(findInSpecificGraph(graphs.next(), s, p, o));
+            }
+            return new IteratorChain<>(iterators);
+        }
+        if (Quad.isDefaultGraph(g)) {
+            return Collections.emptyIterator();
+        }
+        return findInSpecificGraph(g, s, p, o);
     }
 
     private Iterator<Quad> findInSpecificGraph(Node g, Node s, Node p, Node o) {

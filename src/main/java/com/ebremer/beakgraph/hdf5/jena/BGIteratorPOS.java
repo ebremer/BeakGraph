@@ -32,11 +32,13 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private long maxObjId = Long.MAX_VALUE;
     private boolean hasNext = false;
     private PositionalDictionaryReader dict;
+    private final NodeTable nodeTable;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
         this.queryQuad = quad;
         this.dict = dict;
+        this.nodeTable = nodeTable;
         
         this.Bp = reader.getBitmapBuffer('P'); 
         this.Sp = reader.getIDBuffer('P');     
@@ -91,8 +93,11 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         if (rawOStart == -1 || rawOStart > rawOEnd) return;
 
         // C. APPLY FILTER: Narrow the Object Range using Binary Search
+        // upperBound already returns the last index whose value is <= maxObjId
+        // (inclusive), so it is used as oEnd directly - subtracting 1 dropped the
+        // boundary object group from FILTER(?o <= X) results.
         this.oStart = (minObjId <= 0) ? rawOStart : So.lowerBound(rawOStart, rawOEnd, minObjId);
-        this.oEnd = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId) - 1;
+        this.oEnd = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId);
 
         if (oStart > oEnd || oStart < 0) return;
         
@@ -154,31 +159,26 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
 
     private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
         if (!var.equals(quad.getObject())) return;
-        long rawResult = dict.getObjects().search(value);
-        long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
-        boolean found = (rawResult >= 0);
-        
+        // Snap the bound to the edges of the whole value-equal cluster: value-equal
+        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
+        // adjacent distinct ids, and the raw exact-term insertion point can land
+        // inside that cluster, silently dropping qualifying boundary rows.
+        long[] c = ValueCluster.of(dict.getObjects(), value);
         switch (op) {
             case ">" -> {
-                 long target = found ? id + 1 : id;
+                 long target = c[1] + 1;
                  if (Long.compareUnsigned(target, minObjId) > 0) minObjId = target;
             }
             case ">=" -> {
-                 if (Long.compareUnsigned(id, minObjId) > 0) minObjId = id;
+                 if (Long.compareUnsigned(c[0], minObjId) > 0) minObjId = c[0];
             }
             case "<" -> {
-                 if (id == 0) { maxObjId = 0; minObjId = 1; } 
-                 else {
-                     long target = id - 1;
-                     if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-                 }
+                 long target = c[0] - 1;
+                 if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
             }
             case "<=" -> {
-                 long target = found ? id : id - 1;
-                 if (id == 0 && !found) { maxObjId = 0; minObjId = 1; } 
-                 else {
-                     if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-                 }
+                 long target = c[1];
+                 if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
             }
         }
     }
@@ -190,25 +190,56 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
     }
 
+    // Look-ahead: the next deliverable row, or null. Rows whose repeated-variable
+    // bindings conflict are skipped here, so hasNext() only answers true when
+    // next() really has a row to return.
+    private BindingNodeId pending = null;
+    private boolean primed = false;
+
+    /**
+     * Builds the next row whose bindings are all compatible. A variable repeated in
+     * the pattern (e.g. ?x <p> ?x as subject and object) must bind to the same term
+     * in both positions; putCompatible reports the conflict and the row is skipped
+     * rather than emitted with the first value.
+     */
+    private BindingNodeId computeNext() {
+        while (hasNext) {
+            BindingNodeId result = new BindingNodeId(this.parentBinding);
+            long currentObjectId = So.get(curOIndex);
+            long currentSubjectId = Ss.get(curSIndex);
+            boolean ok = true;
+            if (queryQuad.getObject().isVariable()) {
+                ok = result.putCompatible(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT), nodeTable);
+            }
+            if (ok && queryQuad.getSubject().isVariable()) {
+                ok = result.putCompatible(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT), nodeTable);
+            }
+            curSIndex++;
+            advanceToNextValid();
+            if (ok) return result;
+        }
+        return null;
+    }
+
+    private void prime() {
+        if (!primed) {
+            primed = true;
+            pending = computeNext();
+        }
+    }
+
     @Override
     public boolean hasNext() {
-        return hasNext;
+        prime();
+        return pending != null;
     }
 
     @Override
     public BindingNodeId next() {
-        if (!hasNext) throw new NoSuchElementException();
-        BindingNodeId result = new BindingNodeId(this.parentBinding);
-        long currentObjectId = So.get(curOIndex);
-        long currentSubjectId = Ss.get(curSIndex);
-        if (queryQuad.getObject().isVariable()) {
-            result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT));
-        }
-        if (queryQuad.getSubject().isVariable()) {
-            result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
-        }
-        curSIndex++;
-        advanceToNextValid();
-        return result;
+        prime();
+        if (pending == null) throw new NoSuchElementException();
+        BindingNodeId r = pending;
+        pending = computeNext();
+        return r;
     }
 }

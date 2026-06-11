@@ -6,6 +6,7 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.Binding;
 import org.apache.jena.sparql.engine.binding.BindingBase;
+import org.apache.jena.sparql.engine.binding.BindingBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,8 +64,35 @@ public class BindingBG extends BindingBase {
         return idBinding.containsKey(var);
     }
 
+    /**
+     * Detaching must materialize the NodeId-backed bindings into plain nodes:
+     * Jena detaches bindings it copies or spills beyond the execution that
+     * created them, and a detached binding must not keep resolving lazily
+     * against this graph's reader (which may be closed by then). Both detach
+     * paths are overridden - the default "original parent" path would return
+     * {@code this}, still reader-backed.
+     */
     @Override
     protected Binding detachWithNewParent(Binding newParent) {
-        throw new UnsupportedOperationException("Not supported yet.");
+        return materialize(newParent);
+    }
+
+    @Override
+    protected Binding detachWithOriginalParent() {
+        return materialize(idBinding.getParentBinding());
+    }
+
+    private Binding materialize(Binding newParent) {
+        BindingBuilder builder = Binding.builder(newParent);
+        Iterator<Var> it = idBinding.iterator();
+        while (it.hasNext()) {
+            Var v = it.next();
+            if (builder.contains(v)) continue;
+            Node n = get1(v);
+            if (n != null) {
+                builder.add(v, n);
+            }
+        }
+        return builder.build();
     }
 }

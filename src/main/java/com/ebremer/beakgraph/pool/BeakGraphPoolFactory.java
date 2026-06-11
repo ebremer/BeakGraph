@@ -32,6 +32,16 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
         return new DefaultPooledObject<>(value);
     }
 
+    /**
+     * Without this override, BaseKeyedPooledObjectFactory.validateObject always
+     * returns true and setTestOnBorrow(true) validates nothing - an instance whose
+     * reader was closed (poisoned) would be re-issued and fail on first use.
+     */
+    @Override
+    public boolean validateObject(URI uri, PooledObject<BeakGraph> p) {
+        return p.getObject().getReader().isOpen();
+    }
+
     @Override
     public void destroyObject(URI uri, PooledObject<BeakGraph> p, DestroyMode mode) throws Exception {
         logger.trace("destroyObject {}", uri);        

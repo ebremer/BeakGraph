@@ -25,4 +25,10 @@ public interface BGReader extends AutoCloseable {
     public Stream<Quad> streamQuads();
     public boolean containsGraph(Node graphNode);
     public URI getURI();
+
+    /**
+     * Whether this reader is still usable. Pool validation uses this to evict
+     * instances whose underlying storage has been closed.
+     */
+    public default boolean isOpen() { return true; }
 }

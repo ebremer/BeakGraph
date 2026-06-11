@@ -87,10 +87,14 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
 
     private int commonPrefixLength(String s1, String s2) {
         int minLength = Math.min(s1.length(), s2.length());
-        for (int i = 0; i < minLength; i++) {
-            if (s1.charAt(i) != s2.charAt(i)) return i;
-        }
-        return minLength;
+        int i = 0;
+        while (i < minLength && s1.charAt(i) == s2.charAt(i)) i++;
+        // Never split a UTF-16 surrogate pair: the suffix is encoded to UTF-8 on its
+        // own, and a suffix starting with an unpaired low surrogate encodes as '?',
+        // silently corrupting the stored string. Back off so the whole pair stays
+        // in the suffix.
+        if (i > 0 && Character.isHighSurrogate(s1.charAt(i - 1))) i--;
+        return i;
     }
 
     @Override public long getNumEntries() { return numEntries; }

@@ -1,5 +1,6 @@
 package com.ebremer.halcyon.hilbert;
 
+import com.ebremer.beakgraph.utils.ImageTools;
 import com.ebremer.halcyon.geometry.Point;
 import com.ebremer.halcyon.geometry.Box;
 import com.ebremer.halcyon.geometry.Vector2D;
@@ -48,7 +49,10 @@ public final class HilbertSpace {
     private HilbertSpace() {}
     
     public static boolean inRange(ArrayList<Range> rr, Point p, Byte neighbor) {
-        switch (neighbor) {
+        // Return the membership result - the old switch *statement* computed
+        // contains(...) and discarded it, so this always answered false and the
+        // getPolygon boundary walk never advanced.
+        return switch (neighbor) {
             case N -> contains(rr,p.x,p.y-1);
             case NE -> contains(rr,p.x+1,p.y-1);
             case E -> contains(rr,p.x+1,p.y);
@@ -57,12 +61,12 @@ public final class HilbertSpace {
             case SW -> contains(rr,p.x-1,p.y+1);
             case W -> contains(rr,p.x-1,p.y);
             case NW -> contains(rr,p.x-1,p.y-1);
-        }
-        return false;
+            default -> false;
+        };
     }
-    
+
     public static boolean inRange(Ranges rr, Point p, Byte neighbor) {
-        switch (neighbor) {
+        return switch (neighbor) {
             case N -> contains(rr,p.x,p.y-1);
             case NE -> contains(rr,p.x+1,p.y-1);
             case E -> contains(rr,p.x+1,p.y);
@@ -71,8 +75,8 @@ public final class HilbertSpace {
             case SW -> contains(rr,p.x-1,p.y+1);
             case W -> contains(rr,p.x-1,p.y);
             case NW -> contains(rr,p.x-1,p.y-1);
-        }
-        return false;
+            default -> false;
+        };
     }
     
     public static Point getPoint(long p) {
@@ -659,15 +663,20 @@ public final class HilbertSpace {
     public static org.locationtech.jts.geom.Polygon fromWkt(String wkt) {
         WKTReader reader = new WKTReader();
         Geometry geom;
+        // GeoSPARQL wktLiterals may carry a "<crs-uri> WKT" prefix; JTS does not
+        // accept it. Failures raise a catchable exception (with the offending
+        // input), never a bare java.lang.Error.
+        String clean = ImageTools.stripCrs(wkt);
         try {
-            geom = reader.read(wkt);
+            geom = reader.read(clean);
             if (!(geom instanceof org.locationtech.jts.geom.Polygon)) {
                 logger.error("WKT is not a Polygon: {}", geom.getGeometryType());
-                throw new Error("WKT is not a Polygon: " + geom.getGeometryType());
+                throw new IllegalArgumentException("WKT is not a Polygon: " + geom.getGeometryType());
             }
             return (org.locationtech.jts.geom.Polygon) geom;
         } catch (ParseException ex) {
-            throw new Error("Parsing Error!");
+            throw new IllegalArgumentException("Invalid WKT: "
+                    + (clean.length() > 100 ? clean.substring(0, 100) + "..." : clean), ex);
         }
     }
     

@@ -72,6 +72,44 @@ class LWSStorageServletTest {
     }
 
     @Test
+    void escapeHtmlNeutralizesMarkupAndAttributeBreakouts() {
+        assertEquals("&lt;script&gt;alert(1)&lt;/script&gt;",
+            LWSStorageServlet.escapeHtml("<script>alert(1)</script>"));
+        assertEquals("a&quot; onmouseover=&quot;x", LWSStorageServlet.escapeHtml("a\" onmouseover=\"x"));
+        assertEquals("a&amp;b&#39;c", LWSStorageServlet.escapeHtml("a&b'c"));
+        assertEquals("plain-name.h5", LWSStorageServlet.escapeHtml("plain-name.h5"));
+    }
+
+    @Test
+    void encodeHrefPercentEncodesUnsafeCharactersButKeepsSlashes() {
+        assertEquals("/sub/a%20b.h5", LWSStorageServlet.encodeHref("/sub/a b.h5"));
+        assertEquals("/x%22y", LWSStorageServlet.encodeHref("/x\"y"));
+        assertEquals("/plain/file.h5", LWSStorageServlet.encodeHref("/plain/file.h5"));
+    }
+
+    @Test
+    void fileUrisAreNotExposableToClients() {
+        org.apache.jena.rdf.model.Model m = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        assertFalse(LWSStorageServlet.exposableToClient(
+            m.createResource("file:///C:/secret/storage/data.h5")), "server paths must be redacted");
+        assertTrue(LWSStorageServlet.exposableToClient(m.createResource("https://example.org/r")));
+        assertTrue(LWSStorageServlet.exposableToClient(m.createLiteral("file:///looks-like-but-is-a-literal")));
+        assertTrue(LWSStorageServlet.exposableToClient(m.createResource())); // bnode
+    }
+
+    @Test
+    void sparqlBodyReadIsBounded() throws Exception {
+        String small = "SELECT * WHERE { ?s ?p ?o }";
+        assertEquals(small, BGSparqlService.readBody(
+            new java.io.ByteArrayInputStream(small.getBytes(java.nio.charset.StandardCharsets.UTF_8)), 1024));
+        byte[] huge = new byte[2048];
+        java.util.Arrays.fill(huge, (byte) 'x');
+        org.junit.jupiter.api.Assertions.assertThrows(
+            BGSparqlService.QueryBodyTooLargeException.class,
+            () -> BGSparqlService.readBody(new java.io.ByteArrayInputStream(huge), 1024));
+    }
+
+    @Test
     void resolveWithinRejectsSymlinkEscape() throws Exception {
         Path root = Files.createTempDirectory("lws-sym").toRealPath();
         Path outside = Files.createTempFile("lws-outside", ".txt");   // a real file outside the root

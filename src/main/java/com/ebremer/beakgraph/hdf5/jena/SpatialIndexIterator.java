@@ -34,13 +34,15 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
         NodeTable currentTable = bGraph.getReader().getNodeTable();        
         this.outputIterator = Iter.flatMap(input, parent -> {
             Iterator<Node> lazyCandidateNodes = new LazyCandidateIterator(ranges, bGraph, context.scale);
-            
-            return Iter.map(lazyCandidateNodes, node -> {
+
+            // The target variable may already be bound in the parent row; a
+            // candidate that conflicts with that binding must be dropped, not
+            // silently overridden by the parent value.
+            return Iter.removeNulls(Iter.map(lazyCandidateNodes, node -> {
                 NodeId nodeId = currentTable.getNodeIdForNode(node);
                 BindingNodeId child = new BindingNodeId(parent);
-                child.put(targetVar, nodeId);
-                return child;
-            });
+                return child.putCompatible(targetVar, nodeId, currentTable) ? child : null;
+            }));
         });
     }
 

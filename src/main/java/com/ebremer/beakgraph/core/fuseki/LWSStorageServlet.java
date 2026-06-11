@@ -66,7 +66,13 @@ public class LWSStorageServlet extends HttpServlet {
       return "GET".equals(method) && req.getParameter("query") != null;
   }
     private void handleSparqlQuery(HttpServletRequest req, HttpServletResponse resp, Path h5File) throws IOException {
-        String queryStr = BGSparqlService.extractQuery(req);
+        String queryStr;
+        try {
+            queryStr = BGSparqlService.extractQuery(req);
+        } catch (BGSparqlService.QueryBodyTooLargeException e) {
+            resp.sendError(413, e.getMessage());
+            return;
+        }
         if (queryStr == null || queryStr.isBlank()) {
             resp.sendError(400, "No SPARQL query provided");
             return;
@@ -164,6 +170,45 @@ public class LWSStorageServlet extends HttpServlet {
     }
 
     /**
+     * Minimal HTML escaping for text and attribute contexts. Request paths and
+     * on-disk filenames are attacker-influenced and end up in the container
+     * listing - unescaped they are a stored-XSS sink.
+     */
+    static String escapeHtml(String s) {
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '&' -> sb.append("&amp;");
+                case '<' -> sb.append("&lt;");
+                case '>' -> sb.append("&gt;");
+                case '"' -> sb.append("&quot;");
+                case '\'' -> sb.append("&#39;");
+                default -> sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Percent-encode a path for use in an href (keeps '/', encodes spaces, quotes, etc.). */
+    static String encodeHref(String path) {
+        try {
+            return new java.net.URI(null, null, path, null).toASCIIString();
+        } catch (java.net.URISyntaxException e) {
+            return java.net.URLEncoder.encode(path, StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * Whether a statement object may be sent to clients. The metadata model links
+     * every resource to its on-disk location via {@code owl:sameAs <file:///...>};
+     * those server-local URIs must never leave the server.
+     */
+    static boolean exposableToClient(RDFNode obj) {
+        return !(obj.isURIResource() && obj.asResource().getURI().startsWith("file:"));
+    }
+
+    /**
      * Resolve a request path against the storage root, rejecting anything that escapes it via "..",
      * an absolute path, etc. Returns null when {@code root} is null or the path would leave the root.
      */
@@ -189,6 +234,8 @@ public class LWSStorageServlet extends HttpServlet {
     }
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        // Stop browsers from MIME-sniffing served content into something executable.
+        resp.setHeader("X-Content-Type-Options", "nosniff");
         String reqPath = req.getRequestURI();
         if (reqPath.startsWith("/")) reqPath = reqPath.substring(1);
         if (reqPath.endsWith("/")) reqPath = reqPath.substring(0, reqPath.length()-1);
@@ -205,7 +252,9 @@ public class LWSStorageServlet extends HttpServlet {
         if (reqPath.equals("description")) {
             resp.setContentType("application/ld+json");
             resp.setHeader("Link", "<" + BASE + "description>; rel=\"storageDescription\"");
-            resp.setHeader("Link", "<" + getLinksetURI(BASE + "description") + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
+            // addHeader, not setHeader: a second setHeader replaces the first Link
+            // header, which silently dropped the storageDescription link.
+            resp.addHeader("Link", "<" + getLinksetURI(BASE + "description") + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
             resp.setHeader("Vary", "Accept");
             resp.getWriter().write(descriptionJson(BASE));
             return;
@@ -240,10 +289,13 @@ public class LWSStorageServlet extends HttpServlet {
         boolean wantJson = (accept.contains("ld+json") || accept.contains("json")) || forceJsonLd;
         if (isContainer && wantHtml) {
             resp.setContentType("text/html; charset=utf-8");
+            // The request path and item names come from the URL / the filesystem;
+            // escape them for HTML and percent-encode hrefs (stored-XSS sink).
+            String safePath = escapeHtml(reqPath);
             try (PrintWriter out = resp.getWriter()) {
-                out.println("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LWS Storage – /" + (reqPath.isEmpty() ? "" : reqPath) + "</title>");
+                out.println("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LWS Storage – /" + safePath + "</title>");
                 out.println("<style>body{font-family:sans-serif;margin:40px} ul{list-style:none;padding:0} a{color:#0066cc}</style></head><body>");
-                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> Linked Web Storage: /" + (reqPath.isEmpty() ? "" : reqPath) + "</h1>");
+                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> Linked Web Storage: /" + safePath + "</h1>");
                 out.println("<p><a href=\"" + BASE + "description\">Storage Description</a> | ");
                 out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
                 out.println("<a href=\"/sparql/index.html\" target=\"_blank\">SPARQL Endpoint</a></p><hr>");
@@ -256,7 +308,8 @@ public class LWSStorageServlet extends HttpServlet {
                         String name = item.getURI().substring(HTTP_ROOT.length());
                         if (name.isEmpty()) name = "(root)";
                         String link = name.startsWith("/") ? name : "/" + name;
-                        out.printf("<li><a href=\"%s\">%s</a></li>%n", link, name);
+                        out.printf("<li><a href=\"%s\">%s</a></li>%n",
+                                escapeHtml(encodeHref(link)), escapeHtml(name));
                     }
                     out.println("</ul>");
                 }
@@ -269,6 +322,7 @@ public class LWSStorageServlet extends HttpServlet {
             Resource httpR = out.createResource(BASE + (reqPath.isEmpty() ? "" : reqPath));
             r.listProperties().forEachRemaining(s -> {
                 RDFNode obj = s.getObject();
+                if (!exposableToClient(obj)) return; // never leak file:/// server paths
                 if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
                     String newURI = BASE + obj.asResource().getURI().substring(HTTP_ROOT.length());
                     httpR.addProperty(s.getPredicate(), out.createResource(newURI));
@@ -295,7 +349,11 @@ public class LWSStorageServlet extends HttpServlet {
                     int startIdx = (int) start;
                     List<Resource> paged = items.subList(startIdx, Math.min(startIdx+size, total));
                     Resource pageR = out.createResource(BASE + (reqPath.isEmpty() ? "" : reqPath) + (reqPath.isEmpty() ? "" : "/") + "?page=" + page);
-                    r.listProperties().forEachRemaining(s -> { if (!s.getPredicate().equals(LWS_ITEMS)) pageR.addProperty(s.getPredicate(), s.getObject()); });
+                    r.listProperties().forEachRemaining(s -> {
+                        if (!s.getPredicate().equals(LWS_ITEMS) && exposableToClient(s.getObject())) {
+                            pageR.addProperty(s.getPredicate(), s.getObject());
+                        }
+                    });
                     pageR.addProperty(RDF.type, LWS.ContainerPage);
                     pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#first"), BASE + (reqPath.isEmpty() ? "" : reqPath) + "?page=1");
                     int pages = (total + size - 1) / size;
@@ -307,6 +365,7 @@ public class LWSStorageServlet extends HttpServlet {
                         pageR.addProperty(LWS_ITEMS, out.createResource(itHttp));
                         it.listProperties().forEachRemaining(st -> {
                             RDFNode obj = st.getObject();
+                            if (!exposableToClient(obj)) return; // never leak file:/// server paths
                             if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
                                 String newURI = BASE + obj.asResource().getURI().substring(HTTP_ROOT.length());
                                 out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(newURI));
@@ -320,6 +379,7 @@ public class LWSStorageServlet extends HttpServlet {
                         String itHttp = BASE + it.getURI().substring(HTTP_ROOT.length());
                         it.listProperties().forEachRemaining(st -> {
                             RDFNode obj = st.getObject();
+                            if (!exposableToClient(obj)) return; // never leak file:/// server paths
                             if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
                                 String newURI = BASE + obj.asResource().getURI().substring(HTTP_ROOT.length());
                                 out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(newURI));
@@ -351,11 +411,16 @@ public class LWSStorageServlet extends HttpServlet {
             if (media == null) media = "application/octet-stream";
         }
         resp.setContentType(media);
+        // Stored bytes are served as a download: with nosniff above, this keeps an
+        // HTML/SVG file someone placed under the root from rendering in this origin.
+        String filename = localFile.getFileName().toString().replace("\"", "");
+        resp.setHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
         resp.setContentLengthLong(Files.size(localFile));
         Files.copy(localFile, resp.getOutputStream());
     }
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        resp.setHeader("X-Content-Type-Options", "nosniff");
         logger.info("LWS {} {} ct={} query-param={} bodyLen={}",
         req.getMethod(), req.getRequestURI(), req.getContentType(),
         req.getParameter("query") != null, req.getContentLengthLong());

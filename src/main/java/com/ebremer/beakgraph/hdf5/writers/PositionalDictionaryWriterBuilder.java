@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.Stats;
+import com.ebremer.beakgraph.utils.ImageTools;
 import com.ebremer.halcyon.hilbert.HilbertSpace;
 import com.ebremer.halcyon.hilbert.PolygonScaler;
 import com.ebremer.halcyon.hilbert.WKTDatatype;
@@ -217,7 +218,10 @@ public class PositionalDictionaryWriterBuilder {
 
     private ArrayList<Quad> addSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
-        String wkt = quad.getObject().getLiteralLexicalForm();
+        // The GeoSPARQL-standard "<crs-uri> WKT" form must be indexed too: strip the
+        // prefix once here so the degeneracy check and the scaler both see plain WKT
+        // (previously such geometries failed the parse and were silently dropped).
+        String wkt = ImageTools.stripCrs(quad.getObject().getLiteralLexicalForm());
         if (isDegeneratePolygon(wkt)) {
             IO.println("Degenerate Polygon : "+wkt);
             return qqq;
@@ -351,7 +355,42 @@ public class PositionalDictionaryWriterBuilder {
                 u.equals(REL_BASE) ? "" : u.substring(REL_BASE_PREFIX.length()));
     }
 
-    private void ProcessQuad(Quad quad) {        
+    /**
+     * Numeric literal canonicalization policy: xsd:int / xsd:long / xsd:float /
+     * xsd:double objects are stored by VALUE and the reader regenerates the
+     * canonical lexical form, so two lexical variants of one value ("01" vs
+     * "1"^^xsd:int) would become two term-distinct dictionary entries that both
+     * extract to the same canonical term - duplicate "equal" entries that break
+     * the strict ordering the dictionary binary search relies on, leaving some
+     * triples unreachable by term lookup. Rewriting the object to its canonical
+     * term at ingest collapses the variants onto one entry and keeps locate()
+     * and extract() symmetric. (The value-typed storage never preserved the
+     * non-canonical lexical form anyway.)
+     */
+    private Quad canonicalizeNumericObject(Quad quad) {
+        Node o = quad.getObject();
+        if (!o.isLiteral()) return quad;
+        String dt = o.getLiteralDatatypeURI();
+        try {
+            Node canonical = null;
+            if (XSD.xint.getURI().equals(dt)) {
+                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.intValue());
+            } else if (XSD.xlong.getURI().equals(dt)) {
+                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.longValue());
+            } else if (XSD.xfloat.getURI().equals(dt)) {
+                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.floatValue());
+            } else if (XSD.xdouble.getURI().equals(dt)) {
+                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.doubleValue());
+            }
+            if (canonical == null || canonical.equals(o)) return quad;
+            return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canonical);
+        } catch (RuntimeException e) {
+            // Malformed numeric literal: leave it untouched; downstream handling decides.
+            return quad;
+        }
+    }
+
+    private void ProcessQuad(Quad quad) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node p = quad.getPredicate();
@@ -477,6 +516,7 @@ public class PositionalDictionaryWriterBuilder {
                             : quad)
                     .map(this::relativize)
                     .map(this::AlignBnodes)
+                    .map(this::canonicalizeNumericObject)
                     .forEach(quad -> {
                         quadcount.incrementAndGet();
                         if (quadcount.get() % 100_000 == 0) {
@@ -508,8 +548,9 @@ public class PositionalDictionaryWriterBuilder {
                     throw new IOException("Spatial processing failed for " + src, ex.getCause());
                 }
                 extraQuads.forEach(q -> {
-                    quadslist.add(q);
-                    ProcessQuad(q);
+                    Quad canon = canonicalizeNumericObject(q);
+                    quadslist.add(canon);
+                    ProcessQuad(canon);
                 });
             }
             Model xxx = xvoid.getModel();
@@ -524,7 +565,7 @@ public class PositionalDictionaryWriterBuilder {
             xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
             xvoid.getModel().listStatements().forEach(s->{
                 Triple ff = s.asTriple();
-                Quad qqq = Quad.create(BGVOID, ff);
+                Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
                 ProcessQuad(qqq);
                 quadslist.add(qqq);
             });

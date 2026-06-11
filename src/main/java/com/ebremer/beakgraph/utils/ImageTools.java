@@ -95,11 +95,28 @@ public class ImageTools {
         return polygons.isEmpty() ? null : polygons.get(0);
     }
 
+    /**
+     * Strips the optional CRS/SRS URI prefix from a GeoSPARQL wktLiteral
+     * ("&lt;http://...crs...&gt; POLYGON(...)" -&gt; "POLYGON(...)"). The GeoSPARQL
+     * spec allows the prefix and data in the wild commonly carries it; JTS's
+     * WKTReader does not accept it.
+     */
+    public static String stripCrs(String wkt) {
+        String trimmed = wkt.trim();
+        if (trimmed.startsWith("<")) {
+            int end = trimmed.indexOf('>');
+            if (end != -1) {
+                return trimmed.substring(end + 1).trim();
+            }
+        }
+        return trimmed;
+    }
+
     public static List<Polygon> wktToPolygons(String wkt) throws Exception {
         if (wkt == null || wkt.trim().isEmpty()) {
             return Collections.emptyList();
         }
-        Geometry geom = WKT_READER.read(wkt.trim());
+        Geometry geom = WKT_READER.read(stripCrs(wkt));
         if (geom.isEmpty()) {
             return Collections.emptyList();
         }

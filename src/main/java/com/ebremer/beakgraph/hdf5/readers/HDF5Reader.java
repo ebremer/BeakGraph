@@ -16,11 +16,17 @@ import io.jhdf.api.Group;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
+import org.apache.commons.collections4.iterators.IteratorChain;
+import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.core.Quad;
@@ -41,7 +47,10 @@ public class HDF5Reader implements BGReader {
     private final Map<Index, IndexReader> indexCache = new ConcurrentHashMap<>();
     private final URI uri;
     private final long formatVersion;
-    
+    // Closed readers must be detectable (pool validation) and close() must be
+    // idempotent (a poisoned pooled instance is closed again on destroy).
+    private volatile boolean open = true;
+
     static {
         JenaSystem.init();
         Spatial.init();
@@ -53,20 +62,30 @@ public class HDF5Reader implements BGReader {
     
     public HDF5Reader(File src) {
         this.hdf = new HdfFile(src.toPath());
-        this.hdt = (Group) hdf.getChild(Params.BG);
-        this.formatVersion = readFormatVersion(hdt);
-        if (formatVersion > Params.FORMAT_VERSION) {
-            hdf.close();
-            throw new IllegalStateException(
-                    "BeakGraph HDF5 format version " + formatVersion + " in " + src
-                  + " is newer than this build supports (max " + Params.FORMAT_VERSION
-                  + "). Upgrade BeakGraph.");
+        try {
+            this.hdt = (Group) hdf.getChild(Params.BG);
+            if (hdt == null) {
+                throw new IllegalStateException(
+                        "Not a BeakGraph file (no '" + Params.BG + "' group): " + src);
+            }
+            this.formatVersion = readFormatVersion(hdt);
+            if (formatVersion > Params.FORMAT_VERSION) {
+                throw new IllegalStateException(
+                        "BeakGraph HDF5 format version " + formatVersion + " in " + src
+                      + " is newer than this build supports (max " + Params.FORMAT_VERSION
+                      + "). Upgrade BeakGraph.");
+            }
+            Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
+            this.dict = new PositionalDictionaryReader(dictionary);
+            this.defaultGraph = Quad.defaultGraphIRI;
+            nodeTable = new SimpleNodeTable(dict);
+            this.uri = src.toURI();
+        } catch (RuntimeException | Error e) {
+            // Close the mapped file before propagating: a leaked HdfFile pins the
+            // file handle (and on Windows, the file lock) with no way to release it.
+            try { hdf.close(); } catch (Exception ignore) {}
+            throw e;
         }
-        Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
-        this.dict = new PositionalDictionaryReader(dictionary);
-        this.defaultGraph = Quad.defaultGraphIRI;
-        nodeTable = new SimpleNodeTable(dict);
-        this.uri = src.toURI();
     }
 
     /**
@@ -116,6 +135,9 @@ public class HDF5Reader implements BGReader {
                 || boundToMissing(triple.getObject(), bnid)) {
             return Collections.emptyIterator();
         }
+        if (Quad.isUnionGraph(ng)) {
+            return readUnion(bnid, triple, filter, nodeTable);
+        }
         boolean isDefault = ng.equals(Quad.defaultGraphNodeGenerated) || ng.equals(Quad.defaultGraphIRI);
         Node g = isDefault ? this.defaultGraph : ng;
         Node s = substitute(triple.getSubject(), bnid, nodeTable);
@@ -123,6 +145,34 @@ public class HDF5Reader implements BGReader {
         Node o = substitute(triple.getObject(), bnid, nodeTable);
         Quad quadPattern = new Quad(g, s, p, o);
         return new BGIteratorMaster(this, dict, bnid, quadPattern, filter, nodeTable);
+    }
+
+    /**
+     * {@code urn:x-arq:unionGraph}: the union of all named graphs, with the
+     * SPARQL-mandated set semantics - a triple present in several named graphs
+     * appears once. Rows are deduplicated on the values of the pattern's
+     * variables (the concrete positions are identical across graphs by
+     * construction).
+     */
+    private Iterator<BindingNodeId> readUnion(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        List<Var> vars = new ArrayList<>(3);
+        for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
+            if (n.isVariable()) vars.add(Var.alloc(n));
+        }
+        List<Iterator<BindingNodeId>> its = new ArrayList<>();
+        dict.streamGraphs()
+            .filter(n -> !(n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated)))
+            .forEach(gn -> its.add(read(gn, bnid, triple, filter, nodeTable)));
+        Iterator<BindingNodeId> chain = new IteratorChain<>(its);
+        Set<List<Long>> seen = new HashSet<>();
+        return Iter.filter(chain, b -> {
+            List<Long> key = new ArrayList<>(vars.size());
+            for (Var v : vars) {
+                NodeId id = b.get(v);
+                key.add(id == null ? Long.MIN_VALUE : id.getId());
+            }
+            return seen.add(key);
+        });
     }
 
     /** True when {@code n} is a variable already bound to a node that does not exist here. */
@@ -191,8 +241,18 @@ public class HDF5Reader implements BGReader {
 
     @Override
     public NodeTable getNodeTable() { return nodeTable; }
-    @Override public void close() { hdf.close(); }
-    @Override public GSPODictionary getDictionary() { return dict; }    
+
+    @Override
+    public void close() {
+        if (!open) return;
+        open = false;
+        hdf.close();
+    }
+
+    @Override
+    public boolean isOpen() { return open; }
+
+    @Override public GSPODictionary getDictionary() { return dict; }
     @Override public int getNumberOfTriples(String ng) { return 0; }
     @Override public Stream<Quad> streamQuads() { return Stream.empty(); }
 
@@ -203,7 +263,11 @@ public class HDF5Reader implements BGReader {
     
     @Override
     public boolean containsGraph(Node graphNode) {
-        return (dict.getGraphs().locate(graphNode) != -1);
+        // Graphs share the universal entity dictionary, so locate() alone matches
+        // every subject/object entity too; membership in the columnar graphs list
+        // is what makes an entity an actual graph.
+        long id = dict.getGraphs().locate(graphNode);
+        return id != -1 && dict.isGraph(id);
     }
     
 }

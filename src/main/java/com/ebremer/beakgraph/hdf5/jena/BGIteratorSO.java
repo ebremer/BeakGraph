@@ -95,22 +95,30 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (rawOStart == -1 || rawOStart > rawOEnd) return;
 
         // D. Apply Specific Object Bound or Range Filters
-        long specificObjId = resolveNode(quad.getObject(), dict.getObjects(), bnid);
+        // Distinguish "object is an unbound variable" from "object is a concrete
+        // term (or bound variable)": resolveNode returns -1 for both an unbound
+        // variable and a term missing from the dictionary, and a missing term must
+        // yield no match - not a full range scan (which fabricated phantom rows,
+        // e.g. ASK with a non-existent object answered true).
+        Node oNode = quad.getObject();
+        boolean oUnbound = oNode.isVariable() && (bnid == null || !bnid.containsKey(Var.alloc(oNode)));
 
-        if (specificObjId > 0) {
+        if (oUnbound) {
+            // Case: Object is a variable, apply min/max ID range filters
+            this.i = (minObjId <= 0) ? rawOStart : So.lowerBound(rawOStart, rawOEnd, minObjId);
+            this.j = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId);
+
+            if (this.i != -1 && this.i <= this.j) {
+                this.hasNext = true;
+            }
+        } else {
             // Case: Object is bound (e.g., G, S, P, O are all known, just checking existence)
+            long specificObjId = resolveNode(oNode, dict.getObjects(), bnid);
+            if (specificObjId < 1) return; // concrete term absent from this store -> no match
             long foundIdx = So.binarySearch(rawOStart, rawOEnd, specificObjId);
             if (foundIdx >= 0) {
                 this.i = foundIdx;
                 this.j = foundIdx;
-                this.hasNext = true;
-            }
-        } else {
-            // Case: Object is a variable, apply min/max ID range filters
-            this.i = (minObjId <= 0) ? rawOStart : So.lowerBound(rawOStart, rawOEnd, minObjId);
-            this.j = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId);
-            
-            if (this.i != -1 && this.i <= this.j) {
                 this.hasNext = true;
             }
         }
@@ -157,30 +165,26 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
 
     private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
         if (!var.equals(quad.getObject())) return;
-        long rawResult = dict.getObjects().search(value);
-        long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
-        boolean found = (rawResult >= 0);
+        // Snap the bound to the edges of the whole value-equal cluster: value-equal
+        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
+        // adjacent distinct ids, and the raw exact-term insertion point can land
+        // inside that cluster, silently dropping qualifying boundary rows.
+        long[] c = ValueCluster.of(dict.getObjects(), value);
         switch (op) {
             case ">" -> {
-                long target = found ? id + 1 : id;
+                long target = c[1] + 1;
                 if (Long.compareUnsigned(target, minObjId) > 0) minObjId = target;
             }
             case ">=" -> {
-                if (Long.compareUnsigned(id, minObjId) > 0) minObjId = id;
+                if (Long.compareUnsigned(c[0], minObjId) > 0) minObjId = c[0];
             }
             case "<" -> {
-                if (id == 0) { maxObjId = 0; minObjId = 1; } 
-                else {
-                    long target = id - 1;
-                    if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-                }
+                long target = c[0] - 1;
+                if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
             }
             case "<=" -> {
-                long target = found ? id : id - 1;
-                if (id == 0 && !found) { maxObjId = 0; minObjId = 1; } 
-                else {
-                    if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-                }
+                long target = c[1];
+                if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
             }
         }
     }

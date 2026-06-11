@@ -124,6 +124,15 @@ public class PositionalDictionaryReader implements GSPODictionary {
         };
     }
     
+    /**
+     * True when {@code entityId} appears in the columnar list of actual graphs.
+     * Graphs share the universal entity ID space, so a bare dictionary lookup
+     * cannot distinguish a graph from any other entity - this can.
+     */
+    public boolean isGraph(long entityId) {
+        return graphs != null && graphs.stream().anyMatch(id -> id == entityId);
+    }
+
     @Override
     public Stream<Node> streamGraphs() {
         if (graphs == null || entities == null) {

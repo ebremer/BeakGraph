@@ -83,6 +83,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         // bit pattern survives the unsigned mask round-trip in BitPackedUnSignedLongBuffer.
         int intWidth = (stats.minInteger < 0) ? 32 : (1 + MinBits(stats.maxInteger));
         int longWidth = (stats.minLong < 0) ? 64 : (1 + MinBits(stats.maxLong));
+        // The bit-packed buffer supports widths 1..57 and 64 only, and this width is
+        // value-derived: a legal xsd:long in [2^56, 2^62) lands in 58..63. Round up.
+        if (longWidth > 57) longWidth = 64;
         this.integers = (!et.contains(Types.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), null, 0, intWidth);
         this.longs = (!et.contains(Types.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), null, 0, longWidth);
 

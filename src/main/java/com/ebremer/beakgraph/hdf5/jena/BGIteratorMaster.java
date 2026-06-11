@@ -72,7 +72,11 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                 Iterator<BindingNodeId> sub = new BGIteratorMaster(reader, dict, bnid,
                         new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable);
                 NodeId gId = new NodeId(dict.getGraphs().locate(n), NodeType.GRAPH);
-                its.add(Iter.map(sub, b -> { b.put(gVar, gId); return b; }));
+                // The graph variable may also occur inside the pattern (e.g.
+                // GRAPH ?g { ?g ?p ?o }); a row whose pattern binding conflicts
+                // with this graph must be dropped, not silently kept.
+                its.add(Iter.removeNulls(Iter.map(sub,
+                        b -> b.putCompatible(gVar, gId, nodeTable) ? b : null)));
             });
         }
         chain = new IteratorChain<>(its);

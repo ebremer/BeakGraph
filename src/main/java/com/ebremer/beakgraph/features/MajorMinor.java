@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.features;
 import com.ebremer.ns.GEO;
 import com.ebremer.ns.HAL;
 import java.util.ArrayList;
+import java.util.Locale;
 import org.apache.jena.datatypes.RDFDatatype;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
@@ -58,11 +59,12 @@ public class MajorMinor {
             double ay = majorlen / 2 * v0.get(1);
             double bx = minorlen / 2 * v1.get(0);
             double by = minorlen / 2 * v1.get(1);
-            // WKT strings
-            String centroidWKT = String.format("POINT(%.4f %.4f)", mx, my);
-            String majorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)",
+            // WKT strings: Locale.ROOT so the decimal separator is always '.',
+            // not the default locale's (e.g. ',' on de_DE, which is invalid WKT).
+            String centroidWKT = String.format(Locale.ROOT, "POINT(%.4f %.4f)", mx, my);
+            String majorWKT = String.format(Locale.ROOT, "LINESTRING(%.4f %.4f, %.4f %.4f)",
                     mx - ax, my - ay, mx + ax, my + ay);
-            String minorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)",
+            String minorWKT = String.format(Locale.ROOT, "LINESTRING(%.4f %.4f, %.4f %.4f)",
                     mx - bx, my - by, mx + bx, my + by);
             // add to the feature
             f.addProperty(HAL.centroid, f.getModel().createTypedLiteral(centroidWKT, GEO.wktLiteral.getURI()));
@@ -107,9 +109,10 @@ public class MajorMinor {
             double ay = majorlen / 2 * v0.get(1);
             double bx = minorlen / 2 * v1.get(0);
             double by = minorlen / 2 * v1.get(1);
-            String centroidWKT = String.format("POINT(%.4f %.4f)", mx, my);
-            String majorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)", mx - ax, my - ay, mx + ax, my + ay);
-            String minorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)", mx - bx, my - by, mx + bx, my + by);
+            // Locale.ROOT: see the WKT note in the Resource overload above.
+            String centroidWKT = String.format(Locale.ROOT, "POINT(%.4f %.4f)", mx, my);
+            String majorWKT = String.format(Locale.ROOT, "LINESTRING(%.4f %.4f, %.4f %.4f)", mx - ax, my - ay, mx + ax, my + ay);
+            String minorWKT = String.format(Locale.ROOT, "LINESTRING(%.4f %.4f, %.4f %.4f)", mx - bx, my - by, mx + bx, my + by);
             Node graph = Quad.defaultGraphIRI;
             RDFDatatype wktDT = NodeFactory.getType(GEO.wktLiteral.getURI());
             quads.add(Quad.create(graph, f, HAL.centroid.asNode(), NodeFactory.createLiteralDT(centroidWKT, wktDT)));

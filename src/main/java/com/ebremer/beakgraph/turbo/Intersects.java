@@ -4,6 +4,7 @@ import com.ebremer.ns.GEO;
 import java.util.List;
 import org.apache.jena.atlas.lib.Lib;
 import org.apache.jena.query.QueryBuildException;
+import org.apache.jena.sparql.expr.ExprEvalException;
 import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.sparql.expr.NodeValue;
 import org.apache.jena.sparql.function.FunctionBase;
@@ -11,10 +12,16 @@ import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
 
+/**
+ * JTS-backed implementation of geof:sfIntersects. This is the fallback for any
+ * sfIntersects the Hilbert index rewrite does not capture, so it must answer
+ * honestly - the previous version returned TRUE unconditionally, which made
+ * every uncaptured spatial filter match everything.
+ */
 public class Intersects extends FunctionBase {
 
     private static final String WKT_DATATYPE_URI = GEO.wktLiteral.getURI();
-    
+
     @Override
     public void checkBuild(String uri, ExprList args) {
         if (( args.size() < 2 ) || ( args.size() > 3 )) {
@@ -22,38 +29,35 @@ public class Intersects extends FunctionBase {
         }
     }
 
-        /*
     @Override
-    public NodeValue exec(NodeValue v1, NodeValue v2) {
-        return NodeValue.TRUE;
-        /*
+    public NodeValue exec(List<NodeValue> args) {
+        NodeValue v1 = args.get(0);
+        NodeValue v2 = args.get(1);
         if (v1 == null || v2 == null) {
-            throw new ExprEvalException("sfWithin: Arguments cannot be null");
+            throw new ExprEvalException("sfIntersects: arguments cannot be null");
         }
         if (!isValidGeometryLiteral(v1) || !isValidGeometryLiteral(v2)) {
-            throw new ExprEvalException("sfWithin: Arguments must be geo:wktLiteral");
+            throw new ExprEvalException("sfIntersects: arguments must be geo:wktLiteral");
         }
-        String geo1 = v1.asNode().getLiteralLexicalForm();
-        String geo2 = v2.asNode().getLiteralLexicalForm();
         try {
-            boolean isWithin = performSpatialCheck(geo1, geo2);
-            return isWithin ? NodeValue.TRUE : NodeValue.FALSE;
+            boolean intersects = performSpatialCheck(
+                v1.asNode().getLiteralLexicalForm(),
+                v2.asNode().getLiteralLexicalForm());
+            return intersects ? NodeValue.TRUE : NodeValue.FALSE;
         } catch (Exception e) {
-            throw new ExprEvalException("sfWithin: Calculation failed: " + e.getMessage());
+            throw new ExprEvalException("sfIntersects: " + e.getMessage());
         }
-    }*/
+    }
 
     private boolean isValidGeometryLiteral(NodeValue nv) {
-        if (!nv.isLiteral()) return false;        
+        if (!nv.isLiteral()) return false;
         String dtURI = nv.asNode().getLiteralDatatypeURI();
         return WKT_DATATYPE_URI.equals(dtURI);
     }
 
     /**
-     * Uses JTS to check if wkt1 is within wkt2.
-     * @param wkt1 The subject geometry (e.g., the point)
-     * @param wkt2 The containing geometry (e.g., the polygon)
-     * @return true if wkt1 is within wkt2
+     * Uses JTS to check whether the two WKT geometries intersect (share at
+     * least one point) - the geof:sfIntersects relation.
      * @throws ParseException if WKT is invalid
      */
     private boolean performSpatialCheck(String wkt1, String wkt2) throws ParseException {
@@ -71,7 +75,7 @@ public class Intersects extends FunctionBase {
            throw new ParseException("Encountered invalid geometry topology.");
         }
 
-        return g1.within(g2);
+        return g1.intersects(g2);
     }
 
     /**
@@ -89,10 +93,5 @@ public class Intersects extends FunctionBase {
             }
         }
         return trimmed;
-    }
-
-    @Override
-    public NodeValue exec(List<NodeValue> args) {
-        return NodeValue.TRUE;
     }
 }
