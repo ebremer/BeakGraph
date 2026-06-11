@@ -192,7 +192,16 @@ public class SPARQLEndPoint {
 
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             String pathInfo = req.getPathInfo();
-            String resourcePath = (pathInfo == null || pathInfo.equals("/") || pathInfo.isEmpty()) ? "/META-INF/sparql/index.html" : "/META-INF/sparql" + pathInfo;
+            String resourcePath;
+            if (pathInfo == null || pathInfo.equals("/") || pathInfo.isEmpty()) {
+                resourcePath = "/META-INF/sparql/index.html";
+            } else if (pathInfo.equals("/beakgraph.png")) {
+                // The logo ships exactly once, at the classpath root - an identical
+                // copy under META-INF/sparql used to double the jar by 1.6 MB.
+                resourcePath = "/beakgraph.png";
+            } else {
+                resourcePath = "/META-INF/sparql" + pathInfo;
+            }
             InputStream is = getClass().getResourceAsStream(resourcePath);
             if (is == null) { resp.sendError(HttpServletResponse.SC_NOT_FOUND); return; }
             resp.setContentType(getContentType(resourcePath));
@@ -207,6 +216,7 @@ public class SPARQLEndPoint {
             if (path.endsWith(".css")) return "text/css";
             if (path.endsWith(".js")) return "application/javascript";
             if (path.endsWith(".json")) return "application/json";
+            if (path.endsWith(".png")) return "image/png";
             return "application/octet-stream";
         }
     }

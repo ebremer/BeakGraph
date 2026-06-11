@@ -36,6 +36,16 @@ class BitPackedUnSignedLongBufferTest {
     }
 
     @Test
+    void streamFailsLoudlyOnTruncatedBuffer() {
+        // A buffer shorter than its declared entry count is corrupt. The stream
+        // used to emit silent garbage (negative-shift artifacts) where the
+        // sequential reader threw; both must now fail loudly.
+        java.nio.ByteBuffer twoBytes = java.nio.ByteBuffer.allocate(2);
+        BitPackedUnSignedLongBuffer truncated = new BitPackedUnSignedLongBuffer(null, twoBytes, 10, 16);
+        assertThrows(java.nio.BufferUnderflowException.class, () -> truncated.stream().toArray());
+    }
+
+    @Test
     void rejectsValuesThatWouldBeTruncated() {
         // A value wider than the buffer's bit width used to be silently masked,
         // corrupting the dictionary far from the cause. It must be rejected.

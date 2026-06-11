@@ -38,6 +38,7 @@ class NonExistentBindingTest {
 
     @TempDir
     static Path dir;
+    static BeakGraph bg;
     static Dataset ds;
 
     @BeforeAll
@@ -46,7 +47,14 @@ class NonExistentBindingTest {
         File h5 = dir.resolve("ne.ttl.h5").toFile();
         Files.write(ttl.toPath(), TTL.getBytes(StandardCharsets.UTF_8));
         HDF5Writer.Builder().setSource(ttl).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
-        ds = new BeakGraph(new HDF5Reader(h5)).getDataset();
+        bg = new BeakGraph(new HDF5Reader(h5));
+        ds = bg.getDataset();
+    }
+
+    @org.junit.jupiter.api.AfterAll
+    static void closeReader() {
+        // Release the mapped file: a leaked reader makes @TempDir cleanup flaky on Windows.
+        if (bg != null) bg.close();
     }
 
     private static int count(String body) {

@@ -33,7 +33,7 @@ public class HDF5Writer implements BeakGraphWriter {
             try (PositionalDictionaryWriter w = db
                     .setSource(builder.getSource())
                     .setDestination(builder.getDestination())
-                    .setName("dictionary")
+                    .setName(Params.DICTIONARY)
                     .setSpatial(builder.getSpatial())
                     .setFeatures(builder.getFeatures())
                     .build()) {

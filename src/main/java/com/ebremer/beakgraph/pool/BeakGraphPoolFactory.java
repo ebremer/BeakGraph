@@ -24,7 +24,13 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
     public BeakGraph create(URI uri) throws Exception {
         logger.trace("Creating BeakGraph {}", uri);
         HDF5Reader reader = new HDF5Reader(new File(uri));
-        return new BeakGraph(reader, uri, null);
+        try {
+            return new BeakGraph(reader, uri, null);
+        } catch (RuntimeException | Error e) {
+            // Release the mapped file if wrapping fails - a leaked reader pins it.
+            try { reader.close(); } catch (Exception ignore) {}
+            throw e;
+        }
     }
     
     @Override

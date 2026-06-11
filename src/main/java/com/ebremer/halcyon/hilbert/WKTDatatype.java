@@ -10,8 +10,15 @@ import org.locationtech.jts.io.WKTWriter;
 
 public class WKTDatatype extends BaseDatatype {
 
-    public static final String URI = "http://www.opengis.net/ont/geosparql#wktLiteral";   
+    public static final String URI = "http://www.opengis.net/ont/geosparql#wktLiteral";
     public static final WKTDatatype INSTANCE = new WKTDatatype();
+
+    static {
+        // Self-register on first touch: without this, the parse/equality machinery
+        // below was inert - TypeMapper handed out a generic datatype for
+        // geo:wktLiteral and nothing ever consulted this class.
+        org.apache.jena.datatypes.TypeMapper.getInstance().registerDatatype(INSTANCE);
+    }
 
     private WKTDatatype() {
         super(URI);

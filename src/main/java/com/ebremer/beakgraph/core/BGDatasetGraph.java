@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.core;
 
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -11,10 +10,10 @@ import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.graph.Graph;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.query.DatasetFactory;
 import org.apache.jena.query.ReadWrite;
 import org.apache.jena.query.TxnType;
 import org.apache.jena.riot.system.PrefixMap;
+import org.apache.jena.riot.system.PrefixMapFactory;
 import org.apache.jena.sparql.core.DatasetGraphBase;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
@@ -23,15 +22,12 @@ import org.apache.jena.sparql.pfunction.PropertyFunctionRegistry;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.util.iterator.WrappedIterator;
 import org.apache.jena.vocabulary.RDFS;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author erich
  */
 public class BGDatasetGraph extends DatasetGraphBase {
-    private static final Logger logger = LoggerFactory.getLogger(BGDatasetGraph.class);
     private final BeakGraph bg;
     // Per-dataset execution wiring (the TDB pattern): the engine merges this context
     // over the global ARQ context when a query runs against this dataset, so BG's
@@ -85,13 +81,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
     }
 
     @Override
-    public Graph getGraph(Node node) {        
-        try {
-            return new BeakGraph(node, bg.getReader());
-        } catch (IOException ex) {
-            logger.error("Failed to open named graph {}", node, ex);
-        }
-        return Graph.emptyGraph;
+    public Graph getGraph(Node node) {
+        // A non-owning view over the shared reader (closing it is a no-op).
+        return new BeakGraph(node, bg.getReader());
     }
 
     @Override
@@ -201,9 +193,14 @@ public class BGDatasetGraph extends DatasetGraphBase {
         return new IteratorChain<>(iterators);
     }
 
+    // One mutable prefix map per dataset: the old implementation built a whole
+    // fresh in-memory dataset on EVERY call and returned its (disconnected)
+    // prefixes, so registrations silently vanished between calls.
+    private final PrefixMap prefixMap = PrefixMapFactory.create();
+
     @Override
     public PrefixMap prefixes() {
-        return DatasetFactory.createGeneral().asDatasetGraph().prefixes();
+        return prefixMap;
     }
 
     // --- Minimal Transaction Support (Read-Only) ---

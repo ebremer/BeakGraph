@@ -119,6 +119,25 @@ public class UTIL {
     }
 
     /**
+     * Broadword selection: the 0-based index (from the MSB) of the k-th set bit
+     * (k &gt;= 1) of {@code word}, in O(1) via six popcount narrowing steps. The
+     * SINGLE implementation shared by the bit-packed buffer's linear select1 and
+     * the rank/select directory's accelerated select1 - the two must agree
+     * bit-for-bit or the directory fast path and the fallback diverge.
+     */
+    public static int selectInWord(long word, long k) {
+        int result = 0;
+        int cnt;
+        cnt = Long.bitCount(word >>> 32); if (k > cnt) { word <<= 32; result += 32; k -= cnt; }
+        cnt = Long.bitCount(word >>> 48); if (k > cnt) { word <<= 16; result += 16; k -= cnt; }
+        cnt = Long.bitCount(word >>> 56); if (k > cnt) { word <<= 8;  result += 8;  k -= cnt; }
+        cnt = Long.bitCount(word >>> 60); if (k > cnt) { word <<= 4;  result += 4;  k -= cnt; }
+        cnt = Long.bitCount(word >>> 62); if (k > cnt) { word <<= 2;  result += 2;  k -= cnt; }
+        cnt = Long.bitCount(word >>> 63); if (k > cnt) { result += 1; }
+        return result;
+    }
+
+    /**
      * True when {@code iri} is a relative reference (RFC 3986) - i.e. it has no
      * scheme. The empty string (a same-document reference such as {@code <>}) is
      * relative. An IRI is absolute when it begins with a valid scheme followed

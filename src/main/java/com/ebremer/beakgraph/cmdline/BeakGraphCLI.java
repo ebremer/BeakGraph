@@ -87,7 +87,11 @@ public class BeakGraphCLI {
                 if (params.version) {
                     System.out.println("beakgraph - Version : " + Params.VERSION);
                 } else {
-                    System.out.println(ex.getMessage());
+                    // Bad arguments are an error: say so on stderr and exit non-zero
+                    // (scripts used to see a successful exit 0 for a failed run).
+                    System.err.println(ex.getMessage());
+                    jc.usage();
+                    System.exit(1);
                 }
             }
         }
@@ -130,6 +134,9 @@ public class BeakGraphCLI {
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException ex) {
+                    // Restore the flag and stop polling; the executor keeps draining.
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
         } catch (IOException ex) {
