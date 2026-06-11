@@ -9,8 +9,11 @@ import org.apache.jena.sparql.core.Quad;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.io.WKTReader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Gen2DFeatures {
+    private static final Logger logger = LoggerFactory.getLogger(Gen2DFeatures.class);
     public static void generate(Resource geo, String wktPolygon) {
         try {
             GeometryFactory gf = new GeometryFactory();
@@ -27,7 +30,11 @@ public class Gen2DFeatures {
             geo.addProperty(PYR.MajorAxisLength, ResourceFactory.createTypedLiteral(ShapeAnalysis.getMajorAxisLengthFeatureValue(pts)));
             geo.addProperty(PYR.MinorAxisLength, ResourceFactory.createTypedLiteral(ShapeAnalysis.getMinorAxisLengthFeatureValue(pts)));
             geo.addProperty(PYR.Elongation, ResourceFactory.createTypedLiteral(ShapeAnalysis.getElongationFeatureValue(pts)));
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            // A geometry whose features cannot be computed is skipped - but never
+            // silently: silently-missing features read as "no data" downstream.
+            logger.warn("Failed to generate 2D shape features for {}: {}", geo, e.toString());
+        }
     }
     
     public static void generate(ArrayList<Quad> quads, Node geo, String wkt) {
@@ -47,6 +54,8 @@ public class Gen2DFeatures {
             quads.add(Quad.create(graph, geo, PYR.MajorAxisLength.asNode(), ResourceFactory.createTypedLiteral(ShapeAnalysis.getMajorAxisLengthFeatureValue(pts)).asNode()));
             quads.add(Quad.create(graph, geo, PYR.MinorAxisLength.asNode(), ResourceFactory.createTypedLiteral(ShapeAnalysis.getMinorAxisLengthFeatureValue(pts)).asNode()));
             quads.add(Quad.create(graph, geo, PYR.Elongation.asNode(), ResourceFactory.createTypedLiteral(ShapeAnalysis.getElongationFeatureValue(pts)).asNode()));
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            logger.warn("Failed to generate 2D shape features for {}: {}", geo, e.toString());
+        }
     }
 }

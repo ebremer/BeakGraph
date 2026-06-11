@@ -14,27 +14,30 @@ public class Vector2D {
     }
     
     public double Magnitude() {
-        return Math.sqrt((a*a)+(b*b));
+        // double math: int*int overflows for coordinates above ~46340, which
+        // slide-scale coordinates routinely exceed.
+        return Math.sqrt(((double) a * a) + ((double) b * b));
     }
-    
+
     public static double Magnitude(long[] a) {
-        long sum = 0;
+        double sum = 0;
         for (int c=0; c<a.length; c++) {
-            sum = sum + (a[c]*a[c]);
+            sum = sum + ((double) a[c] * a[c]);
         }
         return Math.sqrt(sum);
     }
-    
+
     public static double Magnitude(int[] a) {
-        long sum = 0;
+        double sum = 0;
         for (int c=0; c<a.length; c++) {
-            sum = sum + (a[c]*a[c]);
+            sum = sum + ((double) a[c] * a[c]);
         }
         return Math.sqrt(sum);
     }
 
     public static double Magnitude(Point a) {
-        return Math.sqrt((a.x*a.x)+(a.y+a.y));
+        // Was sqrt(x*x + y+y): addition instead of multiplication, plus int overflow.
+        return Math.sqrt(((double) a.x * a.x) + ((double) a.y * a.y));
     }
     
     public static Point SmallestMag(Point a, Point b) {

@@ -182,8 +182,12 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         if (predicatesdict.getNumberOfNodes() > 0) predicatesdict.add(dictionary);
         if (literalsdict.getNumberOfNodes() > 0) literalsdict.add(dictionary);
         
-        // Add columnar ID lists
-        if (numQuads > 0) {
+        // Add columnar ID lists whenever any quads are stored. Gating on the
+        // SOURCE quad count (numQuads) left an empty-source file internally
+        // inconsistent: the always-written VoID metadata graph was present in the
+        // indexes, but with no graphs list, containsGraph answered false and ARQ
+        // refused to execute GRAPH queries against rows that are demonstrably there.
+        if (graphs.getNumEntries() > 0) {
             graphs.add(dictionary);
             subjects.add(dictionary);
             objects.add(dictionary);

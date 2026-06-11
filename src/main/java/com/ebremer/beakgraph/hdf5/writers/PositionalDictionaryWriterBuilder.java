@@ -29,6 +29,7 @@ import org.apache.jena.graph.Triple;
 import org.apache.jena.irix.IRIx;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.RDFLanguages;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
@@ -206,63 +207,74 @@ public class PositionalDictionaryWriterBuilder {
         return intersectingURNs;
     }
     
-    private boolean isDegeneratePolygon(String wkt) {
-        try {
-            Geometry g = new WKTReader().read(wkt);
-            if (!(g instanceof Polygon p)) return false;
-            return p.getExteriorRing().getNumPoints() < 4;
-        } catch (Exception e) {
-            return true;
-        }
-    }
-
     private ArrayList<Quad> addSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
         // The GeoSPARQL-standard "<crs-uri> WKT" form must be indexed too: strip the
-        // prefix once here so the degeneracy check and the scaler both see plain WKT
+        // prefix once here so the parser and the scaler both see plain WKT
         // (previously such geometries failed the parse and were silently dropped).
         String wkt = ImageTools.stripCrs(quad.getObject().getLiteralLexicalForm());
-        if (isDegeneratePolygon(wkt)) {
-            logger.warn("Skipping degenerate polygon: {}", wkt.length() > 200 ? wkt.substring(0, 200) + "..." : wkt);
-            return qqq;
-        }
-        final Polygon[] scales;        
-        scales = PolygonScaler.toPolygons(wkt);
         if (features) {
             addFeatures(qqq, quad);
         }
+        // Everything geometry-related sits inside the catch-all below: a single bad
+        // geometry must never abort the build (these tasks feed Future.get(), whose
+        // ExecutionException would otherwise fail the whole write).
         try {
-            if (scales == null) {
-                return qqq;
-            }
-            final String[] wktScales = PolygonScaler.toWKT(scales);
-            for (int s=0; s<Math.min(scales.length, asWKT.length); s++) {
-                List<Node> tiles = generateGridURNs(scales[s],s);
-                try {
-                    for (int ii=0; ii<tiles.size(); ii++) {
-                        qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
-                    }            
-                } catch (Exception ex) {
-                    logger.error("Failed to add spatial tile quads for {}", wkt, ex);
-                }
-                long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
-                try {                
-                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
-                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
-                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
-                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));          
-                    qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
-                } catch (IllegalArgumentException ex) {
-                    logger.error("Bad polygon, skipping hilbert corners for {}", wkt, ex);
+            // Index EVERY polygonal part: MULTIPOLYGON members each get their own
+            // pyramid and corner entries (indexing only the first part made the
+            // others unfindable). Non-areal geometries (POINT, LINESTRING) are
+            // indexed via their envelope rather than silently skipped.
+            List<Polygon> parts = ImageTools.wktToPolygons(wkt);
+            if (parts.isEmpty()) {
+                Geometry g = new WKTReader().read(wkt);
+                if (g.isEmpty()) {
                     return qqq;
-                } catch (Exception ex) {
-                    logger.error("Failed to add hilbert corner quads for {}", wkt, ex);
                 }
+                Envelope env = g.getEnvelopeInternal();
+                env.expandBy(0.5); // a point/degenerate envelope still needs area
+                parts = List.of((Polygon) new GeometryFactory().toGeometry(env));
+            }
+            for (Polygon part : parts) {
+                addSpatialScales(qqq, quad, wkt, PolygonScaler.toPolygons(part));
             }
         } catch (Exception ex) {
-            logger.error("Failed to add spatial data for {}", wkt, ex);
+            logger.error("Failed to add spatial data for {}", abbrevWkt(wkt), ex);
         }
         return qqq;
+    }
+
+    private void addSpatialScales(ArrayList<Quad> qqq, Quad quad, String wkt, Polygon[] scales) {
+        if (scales == null) {
+            return;
+        }
+        final String[] wktScales = PolygonScaler.toWKT(scales);
+        for (int s=0; s<Math.min(scales.length, asWKT.length); s++) {
+            List<Node> tiles = generateGridURNs(scales[s],s);
+            try {
+                for (int ii=0; ii<tiles.size(); ii++) {
+                    qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
+                }
+            } catch (Exception ex) {
+                logger.error("Failed to add spatial tile quads for {}", abbrevWkt(wkt), ex);
+            }
+            long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
+            try {
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));
+                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
+            } catch (IllegalArgumentException ex) {
+                logger.error("Bad polygon, skipping hilbert corners for {}", abbrevWkt(wkt), ex);
+                return;
+            } catch (Exception ex) {
+                logger.error("Failed to add hilbert corner quads for {}", abbrevWkt(wkt), ex);
+            }
+        }
+    }
+
+    private static String abbrevWkt(String wkt) {
+        return (wkt != null && wkt.length() > 200) ? wkt.substring(0, 200) + "..." : wkt;
     }
     
     private void addFeatures(ArrayList<Quad> qqq, Quad quad) {
@@ -390,6 +402,26 @@ public class PositionalDictionaryWriterBuilder {
         }
     }
 
+    /**
+     * getLiteralValue(), or null for an ill-typed literal ("abc"^^xsd:int). RDF
+     * permits such terms and parsers accept them with a warning; they are counted
+     * toward (and stored via) the lexical strings path instead of aborting the
+     * whole build on a DatatypeFormatException.
+     */
+    private static Object literalValueOrNull(Node o) {
+        try {
+            return o.getLiteralValue();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private void countStringStored(String lex) {
+        this.stats.longestStringLength = Math.max(this.stats.longestStringLength, lex.length());
+        this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, lex.length());
+        this.stats.numStrings++;
+    }
+
     private void ProcessQuad(Quad quad) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
@@ -425,43 +457,49 @@ public class PositionalDictionaryWriterBuilder {
                 String dt = o.getLiteralDatatypeURI();
                 dataTypes.add(dt);
                 if (dt.equals(XSD.xlong.getURI())) {
-                    Number n = (Number) o.getLiteralValue();
-                    this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
-                    this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
-                    this.stats.numLong++;
+                    if (literalValueOrNull(o) instanceof Number n) {
+                        this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
+                        this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
+                        this.stats.numLong++;
+                    } else {
+                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
+                    }
                 } else if (dt.equals(XSD.xint.getURI())) {
                     // Only xsd:int (32-bit bounded) is bit-packed here. xsd:integer is
                     // unbounded, so it is handled by the string fallback below instead;
                     // bit-packing it would truncate large values and change the datatype
                     // to xsd:int on read-back.
-                    Number n = (Number) o.getLiteralValue();
-                    this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
-                    this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
-                    this.stats.numInteger++;
+                    if (literalValueOrNull(o) instanceof Number n) {
+                        this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
+                        this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
+                        this.stats.numInteger++;
+                    } else {
+                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
+                    }
                 } else if (dt.equals(XSD.xfloat.getURI())) {
-                    Number n = (Number) o.getLiteralValue();
-                    this.stats.maxFloat = Math.max(this.stats.maxFloat, n.floatValue());
-                    this.stats.minFloat = Math.min(this.stats.minFloat, n.floatValue());
-                    this.stats.numFloat++;
+                    if (literalValueOrNull(o) instanceof Number n) {
+                        this.stats.maxFloat = Math.max(this.stats.maxFloat, n.floatValue());
+                        this.stats.minFloat = Math.min(this.stats.minFloat, n.floatValue());
+                        this.stats.numFloat++;
+                    } else {
+                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
+                    }
                 } else if (dt.equals(XSD.xdouble.getURI())) {
-                    Number n = (Number) o.getLiteralValue();
-                    this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
-                    this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
-                    this.stats.numDouble++;
+                    if (literalValueOrNull(o) instanceof Number n) {
+                        this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
+                        this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
+                        this.stats.numDouble++;
+                    } else {
+                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
+                    }
                 } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
                     // rdf:langString shares the strings buffer; its language tag is
                     // stored separately by MultiTypeDictionaryWriter (langs/langTags).
-                    String wow = (String) o.getLiteralLexicalForm();
-                    this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
-                    this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
-                    this.stats.numStrings++;
+                    countStringStored(o.getLiteralLexicalForm());
                 } else if (dt.equals(XSD.dateTime.getURI())) {
-                    String lex = o.getLiteralLexicalForm(); 
+                    String lex = o.getLiteralLexicalForm();
                     int t = lex.indexOf('T');
-                    String wow = (t > 0) ? lex.substring(0, t) : lex;
-                    this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
-                    this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
-                    this.stats.numStrings++;
+                    countStringStored((t > 0) ? lex.substring(0, t) : lex);
                 } else {
                     // Any other datatype (xsd:integer, xsd:decimal, xsd:date, custom
                     // datatypes, ...) is stored verbatim in the strings buffer by
@@ -469,13 +507,10 @@ public class PositionalDictionaryWriterBuilder {
                     // toward numStrings so that buffer is always allocated; otherwise the
                     // writer would have nowhere to put it and would drop the node,
                     // desynchronising the offset/datatype buffers and corrupting the dictionary.
-                    String wow = o.getLiteralLexicalForm();
-                    this.stats.longestStringLength = Math.max(this.stats.longestStringLength, wow.length());
-                    this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, wow.length());
-                    this.stats.numStrings++;
+                    countStringStored(o.getLiteralLexicalForm());
                 }
                 literals.add(o);
-            }                  
+            }
         } else {
             if (!entities.contains(o)) {
                 if (o.isBlank()) {
@@ -496,12 +531,21 @@ public class PositionalDictionaryWriterBuilder {
         try (InputStream xis = src.toString().endsWith(".gz")
                 ? new GZIPInputStream(new FileInputStream(src))
                 : new FileInputStream(src)) {
+            // Detect the syntax from the file name (TriG, N-Quads, N-Triples,
+            // Turtle, ...; .gz handled) instead of hardcoding Turtle: this is a
+            // quad store, and named graphs can only arrive through a quad-capable
+            // syntax.
+            String fname = src.getName();
+            if (fname.endsWith(".gz")) {
+                fname = fname.substring(0, fname.length() - 3);
+            }
+            Lang lang = RDFLanguages.filenameToLang(fname, Lang.TURTLE);
             // Parse relative references against a stable sentinel base so they
             // resolve deterministically (not against the process working
             // directory). The relativize() step below strips the sentinel back
             // off; the relative form is resolved at query time against the URL
             // the .h5 file is served from.
-            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, Lang.TURTLE, REL_BASE);
+            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, lang, REL_BASE);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();

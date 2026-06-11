@@ -19,23 +19,42 @@ public class PolygonScaler {
     private static final AffineTransformation half = AffineTransformation.scaleInstance(0.5, 0.5);
 
     /**
-     * Parses WKT and generates a sequence of progressively quarter-area scaled polygons.
+     * Parses WKT and generates a sequence of progressively quarter-area scaled
+     * polygons. Returns null (skip this geometry) for any input that cannot be
+     * turned into a usable polygon - unparseable WKT, a geometry that collapses
+     * under integer snapping, or one the fixer cannot repair. The policy is
+     * uniform: one bad geometry is skipped with a warning, never silently and
+     * never by aborting the (possibly multi-hour) build that contains it.
      * @param wkt The Well-Known Text string.
-     * @return Array of Polygons.
+     * @return Array of Polygons, or null to skip.
      */
     public static Polygon[] toPolygons(String wkt) {
         Polygon original;
         try {
             original = ImageTools.wktToPolygon(wkt);
+            if (original == null) {
+                logger.warn("No polygon in WKT; skipping spatial indexing: {}", abbrev(wkt));
+                return null;
+            }
             original.apply(new IntSnapFilter());
             original = snapAndSimplify(original);
         } catch (Exception ex) {
-            logger.error("Failed to parse input WKT as Polygon {} {}", wkt, ex.getMessage());
-            original = gf.createPolygon();
+            logger.warn("Failed to parse WKT as Polygon; skipping spatial indexing: {} ({})",
+                    abbrev(wkt), ex.getMessage());
+            return null;
+        }
+        if (original == null) {
+            logger.warn("Polygon collapsed during integer snapping; skipping spatial indexing: {}",
+                    abbrev(wkt));
+            return null;
         }
         return toPolygons(original);
     }
-    
+
+    private static String abbrev(String wkt) {
+        return (wkt != null && wkt.length() > 200) ? wkt.substring(0, 200) + "..." : wkt;
+    }
+
     public static Polygon fixPolygon(Polygon polygon) {
         // Check if already valid
         if (polygon.isValid()) {
@@ -80,7 +99,10 @@ public class PolygonScaler {
                 return largest;
             }
         }
-        throw new IllegalStateException("Unable to fix invalid polygon: " + polygon);
+        // Describe the polygon by size and extent - embedding the full WKT of a
+        // possibly-100k-vertex polygon in an exception message helps nobody.
+        throw new IllegalStateException("Unable to fix invalid polygon ("
+                + polygon.getNumPoints() + " points, envelope " + polygon.getEnvelopeInternal() + ")");
     }
 
     /**
@@ -90,14 +112,31 @@ public class PolygonScaler {
      * @return Array of Polygons (Levels).
      */
     public static Polygon[] toPolygons(Polygon original) {
+        if (original == null || original.isEmpty()) {
+            return null;
+        }
+        // Snap/clean here (not only in the String entry) so callers passing raw
+        // JTS parts - e.g. individual MULTIPOLYGON members - get the same
+        // integer-grid treatment.
+        original.apply(new IntSnapFilter());
+        original = snapAndSimplify(original);
         if (original == null) {
+            logger.warn("Polygon collapsed during integer snapping; skipping spatial indexing");
             return null;
         }
         List<Polygon> scaledPolygons = new ArrayList<>();
-        Polygon current = fixPolygon(original);
+        Polygon current;
+        try {
+            current = fixPolygon(original);
+        } catch (RuntimeException ex) {
+            // One unfixable geometry must not abort the whole build: skip its
+            // spatial indexing - the source quad itself is still stored.
+            logger.warn("Skipping spatial indexing of unfixable polygon: {}", ex.getMessage());
+            return null;
+        }
         if (current == null || !current.isValid()) {
             return new Polygon[0];
-        }        
+        }
         int maxIterations = 20; // Safety limit to prevent infinite loops
         int iterations = 0;        
         while (iterations < maxIterations) {
@@ -238,40 +277,62 @@ public class PolygonScaler {
     }
 
     private static Polygon removeDuplicateAndCollinearVertices(Polygon poly) {
-        Coordinate[] coords = poly.getExteriorRing().getCoordinates();
-        List<Coordinate> cleaned = new ArrayList<>();        
+        // Clean every ring, not just the shell: interior rings (holes - lumens in
+        // pathology annotations) must survive cleanup. A hole that collapses under
+        // snapping is dropped while the outer shape survives.
+        Coordinate[] shellCoords = cleanRing(poly.getExteriorRing().getCoordinates());
+        if (shellCoords == null) {
+            return null;
+        }
+        List<LinearRing> holes = new ArrayList<>();
+        for (int h = 0; h < poly.getNumInteriorRing(); h++) {
+            Coordinate[] ring = cleanRing(poly.getInteriorRingN(h).getCoordinates());
+            if (ring != null) {
+                try {
+                    holes.add(gf.createLinearRing(ring));
+                } catch (Exception e) {
+                    // collapsed/invalid hole: drop it, keep the polygon
+                }
+            }
+        }
+        try {
+            LinearRing shell = gf.createLinearRing(shellCoords);
+            return gf.createPolygon(shell, holes.toArray(LinearRing[]::new));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** De-duplicates and de-collinearizes one ring; null when it collapses (&lt;4 points). */
+    private static Coordinate[] cleanRing(Coordinate[] coords) {
+        List<Coordinate> cleaned = new ArrayList<>();
         // Remove duplicate consecutive vertices
         for (Coordinate coord : coords) {
             if (cleaned.isEmpty() || !coord.equals2D(cleaned.get(cleaned.size() - 1))) {
                 cleaned.add(coord);
             }
-        }        
+        }
         // Remove collinear points
         int i = 0;
         while (i < cleaned.size() - 2) {
             Coordinate a = cleaned.get(i);
             Coordinate b = cleaned.get(i + 1);
             Coordinate c = cleaned.get(i + 2);
-            
+
             // Check if b is collinear with a and c
             if (Orientation.index(a, b, c) == 0) {
                 cleaned.remove(i + 1);
             } else {
                 i++;
             }
-        }        
+        }
         // Ensure ring closure
         if (!cleaned.isEmpty() && !cleaned.get(0).equals2D(cleaned.get(cleaned.size() - 1))) {
             cleaned.add(new Coordinate(cleaned.get(0)));
-        }        
+        }
         if (cleaned.size() < 4) {
             return null;
-        }        
-        try {
-            LinearRing shell = gf.createLinearRing(cleaned.toArray(new Coordinate[0]));
-            return gf.createPolygon(shell);
-        } catch (Exception e) {
-            return null;
         }
+        return cleaned.toArray(new Coordinate[0]);
     }
 }

@@ -89,7 +89,6 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
             if ( initialized ) {
                 return ;
             }
-            initialized = true ;
             // The OpExecutor factory is wired per-dataset (BGDatasetGraph's own
             // context), NOT into the global ARQ context: a global factory would
             // change query execution for every other dataset in the JVM. Only the
@@ -97,6 +96,9 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
             // because it dispatches on the active graph's type and delegates
             // everything that is not a BeakGraph.
             wireIntoExecution() ;
+            // Publish only after wiring succeeded, so a failure here is retried by
+            // the next caller instead of leaving the JVM half-wired forever.
+            initialized = true ;
         }
     }
     

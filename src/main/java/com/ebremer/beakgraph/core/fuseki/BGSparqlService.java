@@ -30,6 +30,8 @@ import org.apache.jena.sparql.syntax.syntaxtransform.QueryTransformOps;
  */
 public final class BGSparqlService {
 
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(BGSparqlService.class);
+
     /** Maximum accepted SPARQL request body. Real queries are tiny; an unbounded
      *  readAllBytes lets a single request allocate arbitrary heap. */
     static final int MAX_QUERY_BODY_BYTES = 1 << 20; // 1 MiB
@@ -124,8 +126,14 @@ public final class BGSparqlService {
                     resp.sendError(400, "Unsupported SPARQL query type");
                 }
             }
+        } catch (org.apache.jena.query.QueryParseException ex) {
+            // The client's own query text is at fault; the parse message is theirs.
+            resp.sendError(400, "Query parse error: " + ex.getMessage());
         } catch (Exception ex) {
-            resp.sendError(400, "Query error: " + ex.getMessage());
+            // Internal failure: log the details server-side, but do not echo
+            // exception internals (paths, class names, state) back to the client.
+            logger.error("SPARQL query execution failed", ex);
+            resp.sendError(500, "Query execution failed");
         }
     }
 }

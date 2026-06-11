@@ -14,6 +14,7 @@ import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -115,7 +116,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                             fcdTLD.add(s);
                             dataTypesLookUp.put(s, fcdTLD.getNumEntries());
                         } catch (IOException ex) {
-                            logger.error("Failed to add datatype to dictionary", ex);
+                            // A missing datatype entry shifts every later datatype id.
+                            throw new UncheckedIOException("Failed to add datatype to dictionary: " + s, ex);
                         }
                     });
             }
@@ -169,7 +171,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         try {
             close();
         } catch (Exception ex) {
-            logger.error("Error during dictionary buffer finalization", ex);
+            // A failed finalization means incomplete buffers; writing them out
+            // would produce a corrupt dictionary. Abort the build instead.
+            throw new IllegalStateException("Dictionary buffer finalization failed for '" + name + "'", ex);
         }
     }
 
@@ -196,7 +200,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 if (literalsPresent) typedLiterals.writeLong(0);
                 if (langTags != null) langTags.writeLong(0);
             } catch (IOException ex) {
-                logger.error("Failed to add IRI to dictionary: {}", node, ex);
+                // Continuing after a failed iri.add() would leave the offsets and
+                // datatypes buffers one entry ahead of the IRI dictionary, silently
+                // corrupting every node after this one. Abort the build instead.
+                throw new UncheckedIOException("Failed to add IRI to dictionary: " + node, ex);
             }
         }
         else if (node.isLiteral()) {
@@ -207,36 +214,46 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 String lang = node.getLiteralLanguage();
                 langTags.writeLong((lang == null || lang.isEmpty()) ? 0L : langLookUp.getOrDefault(lang, 0L));
             }
-            Object val = node.getLiteralValue();
-            if (dt.equals(XSD.xlong.getURI()) && longs != null) {
+            // An ill-typed literal ("abc"^^xsd:int) has no parseable value but is a
+            // valid RDF term: route it to the strings branch below (term-exact, with
+            // its datatype IRI) instead of aborting the build here. ProcessQuad
+            // counts those same terms toward numStrings, so the buffer exists.
+            Object val;
+            try {
+                val = node.getLiteralValue();
+            } catch (RuntimeException ex) {
+                val = null;
+            }
+            if (dt.equals(XSD.xlong.getURI()) && longs != null && val instanceof Number num) {
                 offsets.writeLong(longs.getNumEntries());
                 nativedatatypes.writeInteger(DataType.LONG.ordinal());
-                long l = (val instanceof Number n) ? n.longValue() : Long.parseLong(node.getLiteralLexicalForm());
-                longs.writeLong(l);
+                longs.writeLong(num.longValue());
             }
-            else if (dt.equals(XSD.xint.getURI()) && integers != null) {
+            else if (dt.equals(XSD.xint.getURI()) && integers != null && val instanceof Number num) {
                 // Only xsd:int is bit-packed (32-bit). xsd:integer is unbounded and is
                 // stored via the strings branch below so its value and datatype survive.
                 offsets.writeLong(integers.getNumEntries());
                 nativedatatypes.writeInteger(DataType.INTEGER.ordinal());
-                int i = (val instanceof Number n) ? n.intValue() : Integer.parseInt(node.getLiteralLexicalForm());
-                integers.writeInteger(i);
+                integers.writeInteger(num.intValue());
             }
-            else if (dt.equals(XSD.xdouble.getURI()) && doubles != null) {
+            else if (dt.equals(XSD.xdouble.getURI()) && doubles != null && val instanceof Number num) {
                 offsets.writeLong(doubles.getNumEntries());
                 nativedatatypes.writeInteger(DataType.DOUBLE.ordinal());
                 try {
-                    double d = (val instanceof Number n) ? n.doubleValue() : Double.parseDouble(node.getLiteralLexicalForm());
-                    doubles.writeDouble(d);
-                } catch (IOException ex) { logger.error("Failed to add double literal to dictionary", ex); }
+                    doubles.writeDouble(num.doubleValue());
+                } catch (IOException ex) {
+                    // See the IRI case: a skipped value desynchronises the dictionary.
+                    throw new UncheckedIOException("Failed to add double literal to dictionary", ex);
+                }
             }
-            else if (dt.equals(XSD.xfloat.getURI()) && floats != null) {
+            else if (dt.equals(XSD.xfloat.getURI()) && floats != null && val instanceof Number num) {
                 offsets.writeLong(floats.getNumEntries());
                 nativedatatypes.writeInteger(DataType.FLOAT.ordinal());
                 try {
-                    float f = (val instanceof Number n) ? n.floatValue() : Float.parseFloat(node.getLiteralLexicalForm());
-                    floats.writeFloat(f);
-                } catch (IOException ex) { logger.error("Failed to add float literal to dictionary", ex); }
+                    floats.writeFloat(num.floatValue());
+                } catch (IOException ex) {
+                    throw new UncheckedIOException("Failed to add float literal to dictionary", ex);
+                }
             }
             else if (strings != null) {
                 // Fallback for strings, booleans, dates, and custom types
@@ -245,7 +262,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 nativedatatypes.writeInteger(DataType.STRING.ordinal());
                 try {
                     strings.add(lex);
-                } catch (IOException ex) { logger.error("Failed to add string literal to dictionary", ex); }
+                } catch (IOException ex) {
+                    throw new UncheckedIOException("Failed to add string literal to dictionary", ex);
+                }
             }
             else {
                 // Unreachable in normal operation: every string-stored datatype is

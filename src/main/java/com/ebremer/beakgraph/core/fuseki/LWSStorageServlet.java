@@ -85,7 +85,11 @@ public class LWSStorageServlet extends HttpServlet {
             BGSparqlService.execute(bg.getDataset(), queryStr,
                     req.getRequestURL().toString(), req.getHeader("Accept"), resp);
         } catch (Exception ex) {
-            resp.sendError(400, "Query error: " + ex.getMessage());
+            // Parse errors are answered with 400 inside BGSparqlService.execute;
+            // reaching here means infrastructure failure (pool, file). Log it,
+            // don't echo internals to the client.
+            logger.error("SPARQL query handling failed for {}", h5File, ex);
+            resp.sendError(500, "Query execution failed");
         } finally {
             if (bg != null) {
                 BeakGraphPool.getPool().returnObject(fileUri, bg);
@@ -410,13 +414,30 @@ public class LWSStorageServlet extends HttpServlet {
             media = Files.probeContentType(localFile);
             if (media == null) media = "application/octet-stream";
         }
+        // Conditional GET support: the store is read-only between writes, so
+        // size+mtime make a stable validator.
+        long size = Files.size(localFile);
+        long lastModified = Files.getLastModifiedTime(localFile).toMillis();
+        String etag = "\"" + size + "-" + lastModified + "\"";
+        resp.setHeader("ETag", etag);
+        resp.setDateHeader("Last-Modified", lastModified);
+        String ifNoneMatch = req.getHeader("If-None-Match");
+        long ifModifiedSince = req.getDateHeader("If-Modified-Since");
+        if (etag.equals(ifNoneMatch)
+                || (ifNoneMatch == null && ifModifiedSince >= 0 && lastModified / 1000 <= ifModifiedSince / 1000)) {
+            resp.setStatus(HttpServletResponse.SC_NOT_MODIFIED);
+            return;
+        }
         resp.setContentType(media);
         // Stored bytes are served as a download: with nosniff above, this keeps an
         // HTML/SVG file someone placed under the root from rendering in this origin.
         String filename = localFile.getFileName().toString().replace("\"", "");
         resp.setHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
-        resp.setContentLengthLong(Files.size(localFile));
-        Files.copy(localFile, resp.getOutputStream());
+        resp.setContentLengthLong(size);
+        // HEAD gets the same headers without the body (and without the file copy).
+        if (!"HEAD".equals(req.getMethod())) {
+            Files.copy(localFile, resp.getOutputStream());
+        }
     }
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -451,6 +472,8 @@ public class LWSStorageServlet extends HttpServlet {
     }
     @Override
     protected void doHead(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        // Same routing and headers as GET; the file-serving branch checks the
+        // method and skips the body copy for HEAD.
         doGet(req, resp);
     }
 }

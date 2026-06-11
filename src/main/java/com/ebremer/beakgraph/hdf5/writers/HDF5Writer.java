@@ -8,6 +8,7 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
+import java.nio.file.Files;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,27 +28,38 @@ public class HDF5Writer implements BeakGraphWriter {
     @Override
     public void write() throws IOException {
         logger.info("Writing BeakGraph to {}", builder.getDestination());
-        PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
-        try (PositionalDictionaryWriter w = db
-                .setSource(builder.getSource())
-                .setDestination(builder.getDestination())
-                .setName("dictionary")
-                .setSpatial(builder.getSpatial())
-                .setFeatures(builder.getFeatures())
-                .build()) {
-            Quad[] allQuads = w.getQuads();
-            BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
-            BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
+        try {
+            PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
+            try (PositionalDictionaryWriter w = db
+                    .setSource(builder.getSource())
+                    .setDestination(builder.getDestination())
+                    .setName("dictionary")
+                    .setSpatial(builder.getSpatial())
+                    .setFeatures(builder.getFeatures())
+                    .build()) {
+                Quad[] allQuads = w.getQuads();
+                BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
+                BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
 
-            logger.info("Creating HDF5 file {}", builder.getDestination());
-            try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
-                final WritableGroup hdt = hdfFile.putGroup(builder.getName());
-                hdt.putAttribute("numQuads", w.getNumberOfQuads());
-                hdt.putAttribute("formatVersion", Params.FORMAT_VERSION);
-                w.add(hdt);
-                gspo.add(hdt);
-                gpos.add(hdt);
+                logger.info("Creating HDF5 file {}", builder.getDestination());
+                try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
+                    final WritableGroup hdt = hdfFile.putGroup(builder.getName());
+                    hdt.putAttribute("numQuads", w.getNumberOfQuads());
+                    hdt.putAttribute("formatVersion", Params.FORMAT_VERSION);
+                    w.add(hdt);
+                    gspo.add(hdt);
+                    gpos.add(hdt);
+                }
             }
+        } catch (IOException | RuntimeException ex) {
+            // Never leave a partial .h5 behind: a half-written container reads as
+            // corrupt - or worse, plausibly valid - long after the failed build.
+            try {
+                Files.deleteIfExists(builder.getDestination().toPath());
+            } catch (IOException cleanup) {
+                logger.warn("Failed to remove partial output {}", builder.getDestination(), cleanup);
+            }
+            throw ex;
         }
         logger.info("Write complete: {}", builder.getDestination());
     }

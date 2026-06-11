@@ -49,13 +49,19 @@ public class ShapeAnalysis {
     public static boolean isEdge(BufferedImage bi, int a, int b) {
         int c = bi.getRGB(a, b) & 0xFF;
         if (c>0) {
-            c = ((bi.getRGB(a+1, b) & 0xFF)>0)?1:0;
-            c = c + (((bi.getRGB(a-1, b) & 0xFF)>0)?1:0);
-            c = c + (((bi.getRGB(a, b+1) & 0xFF)>0)?1:0);
-            c = c + (((bi.getRGB(a, b-1) & 0xFF)>0)?1:0);
-            return (c!=4);
+            // Out-of-bounds neighbours count as background, so a filled pixel on
+            // the image border is an edge instead of an ArrayIndexOutOfBounds.
+            int n = filled(bi, a+1, b) + filled(bi, a-1, b) + filled(bi, a, b+1) + filled(bi, a, b-1);
+            return (n!=4);
         }
         return false;
+    }
+
+    private static int filled(BufferedImage bi, int x, int y) {
+        if (x < 0 || y < 0 || x >= bi.getWidth() || y >= bi.getHeight()) {
+            return 0;
+        }
+        return ((bi.getRGB(x, y) & 0xFF) > 0) ? 1 : 0;
     }
   
     public static int Circumference(BufferedImage bi) {
