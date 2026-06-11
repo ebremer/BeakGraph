@@ -79,10 +79,12 @@ class BadPolygonResilienceTest {
     }
 
     @Test
-    void collapsedGeometryIsSkippedNotIndexed() {
-        // Snapping collapses the sub-pixel polygon to nothing; it is skipped (with a
-        // warning), not indexed and - critically - the build did not abort.
-        assertEquals(0, count("GRAPH <" + Params.SPATIALSTRING + "> { ex:tiny ?p ?o }"));
+    void collapsedGeometryHasNoScaledPyramidButBuildSurvives() {
+        // Snapping collapses the sub-pixel polygon, so no scaled-WKT pyramid is
+        // produced for it (and - critically - the build did not abort). Its
+        // recall-safe index cells ARE still written: the geometry stays findable,
+        // and sfIntersects verification uses the precise original WKT.
+        assertEquals(0, count("GRAPH <" + Params.SPATIALSTRING + "> { ex:tiny <https://halcyon.is/ns/asWKT0> ?o }"));
     }
 
     @Test

@@ -34,32 +34,31 @@ public class PatternMatchBG {
         List<Abortable> killList = new ArrayList<>();
         Iterator<BindingNodeId> chain = Iter.map(input, SolverLibBeak.convFromBinding(bGraph));
         
-        // Check for spatial filter optimization opportunity
+        // Spatial index acceleration: seed the chain with recall-safe candidates
+        // for the geometry's subject. The sfIntersects filter itself STAYS in the
+        // plan (the OpFilter wrapper produced by TransformFilterPlacement) - it is
+        // the verification stage that removes the candidates' false positives with
+        // real JTS geometry. The old code removed it, which made the lossy index
+        // pre-filter the final answer.
         SpatialContext spatialCtx = getSpatialContext(filter);
-        ExprList modifiedFilter = filter;
-        Triple triggerTriple = null;
-        
         if (spatialCtx != null) {
-            triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
-
+            Triple triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
             if (triggerTriple != null) {
                 Var varToBind = spatialCtx.geometryVar;
-                if (triggerTriple.getObject().isVariable() && 
+                if (triggerTriple.getObject().isVariable() &&
                     triggerTriple.getObject().equals(spatialCtx.geometryVar)) {
                     if (triggerTriple.getSubject().isVariable()) {
                         varToBind = (Var) triggerTriple.getSubject();
                     }
                 }
-
                 chain = new SpatialIndexIterator(chain, bGraph, varToBind, spatialCtx);
-                modifiedFilter = removeSpatialFilter(filter);
             }
         }
-        
-        // Execute all triple patterns
+
+        // Execute all triple patterns (the ExprList is range-pushdown hints only;
+        // full filter semantics are enforced by the surrounding OpFilter).
         for (Triple triple : triples) {
-            ExprList filterToUse = (triggerTriple != null && triple.equals(triggerTriple)) ? null : modifiedFilter;
-            chain = solve(bGraph, triple, filterToUse, chain, execCxt);
+            chain = solve(bGraph, triple, filter, chain, execCxt);
             chain = makeAbortable(chain, killList);
         }
 
@@ -169,28 +168,6 @@ public class PatternMatchBG {
             }
         }
         return null;
-    }
-
-    private static ExprList removeSpatialFilter(ExprList filters) {
-        if (filters == null || filters.isEmpty()) {
-            return null;
-        }
-        
-        ExprList newFilters = new ExprList();
-        
-        for (Expr e : filters) {
-            if (e.isFunction()) {
-                ExprFunction func = e.getFunction();
-                if (func instanceof E_Function) {
-                    if (func.getFunctionIRI().equals(SF_INTERSECTS)) {
-                        continue;
-                    }
-                }
-            }
-            newFilters.add(e);
-        }
-        
-        return newFilters.isEmpty() ? null : newFilters;
     }
 
     private static Triple findTriggerTriple(List<Triple> triples, Var targetVar) {

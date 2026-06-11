@@ -92,9 +92,18 @@ class SpatialFidelityTest {
 
     @Test
     void allMultiPolygonPartsAreIndexed() {
-        // Two parts x four bbox corners each.
-        assertEquals(8, count("GRAPH <" + Params.SPATIALSTRING + "> { ex:multi hal:hilbertCorner0 ?o }"),
-            "every MULTIPOLYGON part must contribute its corner entries");
+        // A query region overlapping ONLY the second part must still find the
+        // geometry - first-part-only indexing left the other parts unfindable.
+        String q = "PREFIX ex: <http://ex.org/> " +
+            "PREFIX geo: <http://www.opengis.net/ont/geosparql#> " +
+            "PREFIX geof: <http://www.opengis.net/def/function/geosparql/> " +
+            "SELECT ?f WHERE { ?f geo:asWKT ?w FILTER(geof:sfIntersects(?w, " +
+            "\"POLYGON((1010 1010,1020 1010,1020 1020,1010 1020,1010 1010))\"^^geo:wktLiteral)) }";
+        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(q)).build()) {
+            ResultSet rs = qe.execSelect();
+            assertTrue(rs.hasNext(), "the second MULTIPOLYGON part must be findable");
+            assertEquals("http://ex.org/multi", rs.next().get("f").asResource().getURI());
+        }
     }
 
     @Test

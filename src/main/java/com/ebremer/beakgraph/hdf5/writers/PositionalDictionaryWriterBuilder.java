@@ -123,17 +123,21 @@ public class PositionalDictionaryWriterBuilder {
         NodeFactory.createURI("https://halcyon.is/ns/asWKT12"), NodeFactory.createURI("https://halcyon.is/ns/asWKT13"),
         NodeFactory.createURI("https://halcyon.is/ns/asWKT14")
     };
-    private static final Node[] hilbertCorner = {
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner0"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner1"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner2"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner3"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner4"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner5"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner6"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner7"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner8"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner9"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner10"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner11"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner12"), NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner13"),
-        NodeFactory.createURI("https://halcyon.is/ns/hilbertCorner14")
-    };
-    
+    /**
+     * Spatial index entry parameters. Each geometry part's bbox is covered by
+     * whole Hilbert cells at the coarsest scale where the cover holds at most
+     * {@link #MAX_INDEX_CELLS} cells, stored as hal:hilbertCell{scale} values.
+     * The query side covers ITS bbox with ranges at every scale using the same
+     * floor snapping (see SpatialIndexIterator), so any bbox overlap shares a
+     * cell at the stored scale: candidates have no false negatives, and the
+     * sfIntersects filter - which the rewrite no longer removes from the plan -
+     * eliminates the false positives with real JTS geometry.
+     */
+    public static final String HILBERT_CELL_NS = "https://halcyon.is/ns/hilbertCell";
+    public static final int MAX_INDEX_CELLS = 16;
+    public static final int MAX_INDEX_SCALE = 30;
+
+
     private BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
     
     public File getDestination() { return dest; }
@@ -235,6 +239,7 @@ public class PositionalDictionaryWriterBuilder {
                 parts = List.of((Polygon) new GeometryFactory().toGeometry(env));
             }
             for (Polygon part : parts) {
+                addSpatialIndexCells(qqq, quad, part);
                 addSpatialScales(qqq, quad, wkt, PolygonScaler.toPolygons(part));
             }
         } catch (Exception ex) {
@@ -257,20 +262,55 @@ public class PositionalDictionaryWriterBuilder {
             } catch (Exception ex) {
                 logger.error("Failed to add spatial tile quads for {}", abbrevWkt(wkt), ex);
             }
-            long[] corners = HilbertSpace.getBoundingBoxHilbertIndices(scales[s]);
             try {
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[0])));
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[1])));
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[2])));
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), hilbertCorner[s], NodeFactory.createLiteralByValue(corners[3])));
                 qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
-            } catch (IllegalArgumentException ex) {
-                logger.error("Bad polygon, skipping hilbert corners for {}", abbrevWkt(wkt), ex);
-                return;
             } catch (Exception ex) {
-                logger.error("Failed to add hilbert corner quads for {}", abbrevWkt(wkt), ex);
+                logger.error("Failed to add scaled WKT quad for {}", abbrevWkt(wkt), ex);
             }
         }
+    }
+
+    /**
+     * Emits this part's recall-safe spatial index entries: the Hilbert indices of
+     * every whole cell covering its bbox, at the coarsest scale where that cover
+     * is at most {@link #MAX_INDEX_CELLS} cells. Cell coordinates use floor
+     * snapping - the query side MUST snap identically or shared cells are missed.
+     */
+    private void addSpatialIndexCells(ArrayList<Quad> qqq, Quad quad, Polygon part) {
+        Envelope env = part.getEnvelopeInternal();
+        long minX = (long) Math.floor(env.getMinX());
+        long maxX = (long) Math.floor(env.getMaxX());
+        long minY = (long) Math.floor(env.getMinY());
+        long maxY = (long) Math.floor(env.getMaxY());
+        if (maxX < 0 || maxY < 0) {
+            logger.warn("Geometry outside the indexable (non-negative) coordinate domain; not indexed: {}",
+                    quad.getSubject());
+            return;
+        }
+        minX = Math.max(0, minX);
+        minY = Math.max(0, minY);
+        int s = 0;
+        while (s < MAX_INDEX_SCALE && cellCount(minX, maxX, minY, maxY, s) > MAX_INDEX_CELLS) {
+            s++;
+        }
+        long cell = 1L << s;
+        Node pred = NodeFactory.createURI(HILBERT_CELL_NS + s);
+        HashSet<Long> cells = new HashSet<>();
+        for (long x = Math.floorDiv(minX, cell); x <= Math.floorDiv(maxX, cell); x++) {
+            for (long y = Math.floorDiv(minY, cell); y <= Math.floorDiv(maxY, cell); y++) {
+                cells.add(HilbertSpace.hc.index(new long[]{x, y}));
+            }
+        }
+        for (Long c : cells) {
+            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), pred, NodeFactory.createLiteralByValue((long) c)));
+        }
+    }
+
+    private static long cellCount(long minX, long maxX, long minY, long maxY, int s) {
+        long cell = 1L << s;
+        long nx = Math.floorDiv(maxX, cell) - Math.floorDiv(minX, cell) + 1;
+        long ny = Math.floorDiv(maxY, cell) - Math.floorDiv(minY, cell) + 1;
+        return nx * ny;
     }
 
     private static String abbrevWkt(String wkt) {
