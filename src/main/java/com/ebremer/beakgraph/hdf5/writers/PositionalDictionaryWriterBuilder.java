@@ -218,7 +218,14 @@ public class PositionalDictionaryWriterBuilder {
         // (previously such geometries failed the parse and were silently dropped).
         String wkt = ImageTools.stripCrs(quad.getObject().getLiteralLexicalForm());
         if (features) {
-            addFeatures(qqq, quad);
+            // Same containment as the geometry block below: feature generation runs
+            // inside the spatial task, so anything escaping here feeds Future.get()
+            // and fails the whole write over one bad geometry.
+            try {
+                addFeatures(qqq, quad);
+            } catch (Exception ex) {
+                logger.warn("Failed to generate features for {}: {}", quad.getSubject(), ex.toString());
+            }
         }
         // Everything geometry-related sits inside the catch-all below: a single bad
         // geometry must never abort the build (these tasks feed Future.get(), whose
@@ -243,7 +250,11 @@ public class PositionalDictionaryWriterBuilder {
                 addSpatialScales(qqq, quad, wkt, PolygonScaler.toPolygons(part));
             }
         } catch (Exception ex) {
-            logger.error("Failed to add spatial data for {}", abbrevWkt(wkt), ex);
+            // Expected data condition (pathology exports contain degenerate
+            // geometries such as two-point rings): one line per skip, no stack -
+            // a slide can contain thousands of these.
+            logger.warn("Skipping spatial indexing for {}: {} ({})",
+                    quad.getSubject(), ex.toString(), abbrevWkt(wkt));
         }
         return qqq;
     }

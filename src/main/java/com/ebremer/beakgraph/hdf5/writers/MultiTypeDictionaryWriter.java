@@ -71,8 +71,12 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         this.et = builder.getEnabledTypes();
 
         // --- STEP 1: Strict Total Ordering ---
-        logger.debug("Sorting {} nodes for dictionary '{}'", builder.getNodes().size(), name);
+        // INFO bracketing: sorting tens of millions of nodes takes minutes with no
+        // other output - this is the writer's longest silent phase.
+        logger.info("Sorting {} nodes for dictionary '{}'...", builder.getNodes().size(), name);
+        long sortStart = System.nanoTime();
         sorted = NodeSorter.parallelSort(builder.getNodes());
+        logger.info("Sorted dictionary '{}' in {} s", name, (System.nanoTime() - sortStart) / 1_000_000_000L);
 
         // --- STEP 2: Initialize Buffers ---
         // BitPackedUnSignedLongBuffer constructors do not throw; assign finals directly.
@@ -278,7 +282,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                   + "refusing to write a misaligned dictionary entry.");
             }
         }
-        cc.incrementAndGet();
+        long c = cc.incrementAndGet();
+        if (c % 1_000_000 == 0) {
+            logger.info("Dictionary '{}': encoded {} / {} nodes", name, c, sorted.size());
+        }
     }
 
     @Override

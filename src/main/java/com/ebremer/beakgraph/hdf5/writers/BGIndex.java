@@ -147,8 +147,11 @@ public class BGIndex {
     }
 
     private void processQuads(PositionalDictionaryWriter w, Quad[] allQuads) {
-        logger.debug("Sorting quads for {}...", type.name());
+        // INFO bracketing: sorting millions of quads takes minutes with no other output.
+        logger.info("Sorting {} quads for {}...", allQuads.length, type.name());
+        long sortStart = System.nanoTime();
         Arrays.parallelSort(allQuads, type.getComparator());
+        logger.info("Sorted {} in {} s", type.name(), (System.nanoTime() - sortStart) / 1_000_000_000L);
 
         LevelState l1 = new LevelState(), l2 = new LevelState(), l3 = new LevelState();
         Quad lastUnique = null;

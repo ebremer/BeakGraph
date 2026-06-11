@@ -88,7 +88,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), null, 0, oBits);
 
         // 5. Populate ID lists from the unique sets collected by the Builder
-        logger.debug("Populating columnar ID lists with unique entities...");
+        logger.info("Populating columnar ID lists...");
         ArrayList<Node> src = parallelSort(builder.getUniqueGraphs());
         for (Node n : src) {
             graphs.writeLong(locateGraph(n));
@@ -106,6 +106,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         graphs.prepareForReading();
         subjects.prepareForReading();
         objects.prepareForReading();
+        logger.info("Columnar ID lists populated");
     }
     
     private static ArrayList<Node> parallelSort(Set<Node> nodes) {

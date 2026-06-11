@@ -30,12 +30,16 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class BadPolygonResilienceTest {
 
+    // ex:degen is structurally invalid WKT (a two-point ring): JTS throws
+    // IllegalArgumentException for it, not ParseException - real pathology data
+    // contains these, and one of them must not abort the parse of a whole file.
     private static final String TTL = """
         @prefix ex:  <http://ex.org/> .
         @prefix geo: <http://www.opengis.net/ont/geosparql#> .
         ex:good geo:asWKT "POLYGON((0 0,64 0,64 64,0 64,0 0))"^^geo:wktLiteral .
         ex:tiny geo:asWKT "POLYGON((0.1 0.1,0.4 0.1,0.4 0.4,0.1 0.4,0.1 0.1))"^^geo:wktLiteral .
         ex:bow  geo:asWKT "POLYGON((0 0,10 10,10 0,0 10,0 0))"^^geo:wktLiteral .
+        ex:degen geo:asWKT "POLYGON((0 0,1 1))"^^geo:wktLiteral .
         """;
 
     @TempDir
@@ -89,7 +93,16 @@ class BadPolygonResilienceTest {
 
     @Test
     void sourceQuadsSurviveRegardlessOfGeometryFate() {
-        assertEquals(3, count("?s <http://www.opengis.net/ont/geosparql#asWKT> ?o"));
+        assertEquals(4, count("?s <http://www.opengis.net/ont/geosparql#asWKT> ?o"));
+    }
+
+    @Test
+    void structurallyInvalidWktIsKeptAsATermAndSkippedSpatially() {
+        // The two-point ring survives as an RDF term (lexical + datatype intact)...
+        assertEquals(1, count("ex:degen <http://www.opengis.net/ont/geosparql#asWKT> "
+            + "\"POLYGON((0 0,1 1))\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>"));
+        // ...but contributes nothing to the spatial index.
+        assertEquals(0, count("GRAPH <" + Params.SPATIALSTRING + "> { ex:degen ?p ?o }"));
     }
 
     @Test

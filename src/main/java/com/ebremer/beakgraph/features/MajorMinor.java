@@ -3,6 +3,8 @@ import com.ebremer.ns.GEO;
 import com.ebremer.ns.HAL;
 import java.util.ArrayList;
 import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.jena.datatypes.RDFDatatype;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
@@ -19,6 +21,7 @@ import org.locationtech.jts.io.WKTReader;
  * Adds centroid, major axis and minor axis as WKT literals to a geo:Feature
  */
 public class MajorMinor {
+    private static final Logger logger = LoggerFactory.getLogger(MajorMinor.class);
     public static void add(Resource f, String wkt) {
         try {
             WKTReader reader = new WKTReader();
@@ -70,7 +73,13 @@ public class MajorMinor {
             f.addProperty(HAL.centroid, f.getModel().createTypedLiteral(centroidWKT, GEO.wktLiteral.getURI()));
             f.addProperty(HAL.majorAxis, f.getModel().createTypedLiteral(majorWKT, GEO.wktLiteral.getURI()));
             f.addProperty(HAL.minorAxis, f.getModel().createTypedLiteral(minorWKT, GEO.wktLiteral.getURI()));
-        } catch (ParseException ignored) {}
+        } catch (ParseException | RuntimeException e) {
+            // JTS throws IllegalArgumentException - not just ParseException - for
+            // structurally invalid geometry (e.g. a two-point ring). One bad
+            // geometry skips ITS features with a warning; it must never escape
+            // into the spatial task and abort the whole build.
+            logger.warn("Skipping centroid/axis features for {}: {}", f, e.toString());
+        }
     }
     
     public static void add(ArrayList<Quad> quads, Node f, String wkt) {
@@ -118,6 +127,9 @@ public class MajorMinor {
             quads.add(Quad.create(graph, f, HAL.centroid.asNode(), NodeFactory.createLiteralDT(centroidWKT, wktDT)));
             quads.add(Quad.create(graph, f, HAL.majorAxis.asNode(), NodeFactory.createLiteralDT(majorWKT, wktDT)));
             quads.add(Quad.create(graph, f, HAL.minorAxis.asNode(), NodeFactory.createLiteralDT(minorWKT, wktDT)));
-        } catch (ParseException ignored) {}
+        } catch (ParseException | RuntimeException e) {
+            // See the Resource overload: skip-with-warning, never abort the build.
+            logger.warn("Skipping centroid/axis features for {}: {}", f, e.toString());
+        }
     }
 }
