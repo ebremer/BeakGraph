@@ -34,32 +34,24 @@ public class PatternMatchBG {
         List<Abortable> killList = new ArrayList<>();
         Iterator<BindingNodeId> chain = Iter.map(input, SolverLibBeak.convFromBinding(bGraph));
         
-        // Check for spatial filter optimization opportunity
+        // Spatial index acceleration: seed the chain with recall-safe candidates
+        // for the geometry's subject. The sfIntersects filter itself STAYS in the
+        // plan (the OpFilter wrapper produced by TransformFilterPlacement) - it is
+        // the verification stage that removes the candidates' false positives with
+        // real JTS geometry. The old code removed it, which made the lossy index
+        // pre-filter the final answer.
         SpatialContext spatialCtx = getSpatialContext(filter);
-        ExprList modifiedFilter = filter;
-        Triple triggerTriple = null;
-        
         if (spatialCtx != null) {
-            triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
-
+            Triple triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
             if (triggerTriple != null) {
-                Var varToBind = spatialCtx.geometryVar;
-                if (triggerTriple.getObject().isVariable() && 
-                    triggerTriple.getObject().equals(spatialCtx.geometryVar)) {
-                    if (triggerTriple.getSubject().isVariable()) {
-                        varToBind = (Var) triggerTriple.getSubject();
-                    }
-                }
-
-                chain = new SpatialIndexIterator(chain, bGraph, varToBind, spatialCtx);
-                modifiedFilter = removeSpatialFilter(filter);
+                chain = new SpatialIndexIterator(chain, bGraph, (Var) triggerTriple.getSubject(), spatialCtx);
             }
         }
-        
-        // Execute all triple patterns
+
+        // Execute all triple patterns (the ExprList is range-pushdown hints only;
+        // full filter semantics are enforced by the surrounding OpFilter).
         for (Triple triple : triples) {
-            ExprList filterToUse = (triggerTriple != null && triple.equals(triggerTriple)) ? null : modifiedFilter;
-            chain = solve(bGraph, triple, filterToUse, chain, execCxt);
+            chain = solve(bGraph, triple, filter, chain, execCxt);
             chain = makeAbortable(chain, killList);
         }
 
@@ -171,48 +163,31 @@ public class PatternMatchBG {
         return null;
     }
 
-    private static ExprList removeSpatialFilter(ExprList filters) {
-        if (filters == null || filters.isEmpty()) {
-            return null;
-        }
-        
-        ExprList newFilters = new ExprList();
-        
-        for (Expr e : filters) {
-            if (e.isFunction()) {
-                ExprFunction func = e.getFunction();
-                if (func instanceof E_Function) {
-                    if (func.getFunctionIRI().equals(SF_INTERSECTS)) {
-                        continue;
-                    }
-                }
-            }
-            newFilters.add(e);
-        }
-        
-        return newFilters.isEmpty() ? null : newFilters;
-    }
-
+    /**
+     * The triple whose VARIABLE subject the spatial index can seed. The
+     * candidates are geometry SUBJECT ids (the writer indexes the subject of
+     * every quad with a wktLiteral object, so any row that survives the
+     * sfIntersects verification has its subject in the candidate set - the
+     * seeding stays recall-safe for any predicate). The geometry variable must
+     * sit in the OBJECT position: it binds WKT literals, and seeding it - or
+     * any other position - injects subject ids into a literal slot, so every
+     * candidate row fails the triple pattern and the query silently returns
+     * nothing (the old behavior whenever the subject was concrete). With no
+     * variable subject there is nothing to seed: return null and leave the
+     * work to the sfIntersects OpFilter, which always stays in the plan -
+     * skipping the index costs speed, never rows.
+     */
     private static Triple findTriggerTriple(List<Triple> triples, Var targetVar) {
         String targetName = targetVar.getName();
-        
+
         for (Triple t : triples) {
-            if (t.getObject().isVariable() && 
-                t.getObject().getName().equals(targetName)) {
-                return t;
-            }
-            
-            if (t.getSubject().isVariable() && 
-                t.getSubject().getName().equals(targetName)) {
-                return t;
-            }
-            
-            if (t.getPredicate().isVariable() && 
-                t.getPredicate().getName().equals(targetName)) {
+            if (t.getObject().isVariable()
+                    && t.getObject().getName().equals(targetName)
+                    && t.getSubject().isVariable()) {
                 return t;
             }
         }
-        
+
         return null;
     }
 }

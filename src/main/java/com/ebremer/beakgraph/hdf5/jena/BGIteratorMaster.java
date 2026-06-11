@@ -63,21 +63,41 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
             }
         } else {
             // G is an unbound variable. Scan only the actual graphs (the columnar
-            // `graphs` list), not every entity: getGraphs().streamNodes() would also
-            // yield every URI/BNode in S/O positions, creating one (almost always empty)
-            // sub-iterator per entity. Bind the graph variable to each graph too, since
-            // each per-graph sub-iterator only ever sees a concrete graph.
+            // `graphs` list), not every entity - and LAZILY: constructing every
+            // graph's sub-iterator up front paid each one's index binary searches
+            // before the first row came back (spatial stores hold thousands of
+            // tile graphs). The graph id is taken straight from the columnar list
+            // (no extract() -> locate() round trip) and pre-bound in a child
+            // binding: every concrete iterator resolves a pre-bound graph var,
+            // the binding rides into every result row, and a pattern that also
+            // uses the var (GRAPH ?g { ?g ?p ?o }) is constrained through the
+            // ordinary bound-variable substitution instead of a post-filter.
             Var gVar = Var.alloc(quad.getGraph());
-            dict.streamGraphs().forEach(n -> {
-                Iterator<BindingNodeId> sub = new BGIteratorMaster(reader, dict, bnid,
-                        new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable);
-                NodeId gId = new NodeId(dict.getGraphs().locate(n), NodeType.GRAPH);
-                // The graph variable may also occur inside the pattern (e.g.
-                // GRAPH ?g { ?g ?p ?o }); a row whose pattern binding conflicts
-                // with this graph must be dropped, not silently kept.
-                its.add(Iter.removeNulls(Iter.map(sub,
-                        b -> b.putCompatible(gVar, gId, nodeTable) ? b : null)));
-            });
+            // GRAPH/SUBJECT/OBJECT share the universal entity id-space, so a
+            // pre-bound graph id is valid in those positions - but PREDICATE ids
+            // live in an isolated dictionary. If the graph var also occupies the
+            // predicate position, fall back to concrete-graph substitution with
+            // the cross-space compatibility filter.
+            boolean gVarInPredicate = quad.getPredicate().isVariable()
+                    && quad.getPredicate().getName().equals(gVar.getName());
+            if (gVarInPredicate) {
+                Iterator<org.apache.jena.graph.Node> graphNodes = dict.streamGraphs().iterator();
+                its.add(Iter.flatMap(graphNodes, n -> {
+                    NodeId gId = new NodeId(dict.getGraphs().locate(n), NodeType.GRAPH);
+                    Iterator<BindingNodeId> sub = new BGIteratorMaster(reader, dict, bnid,
+                            new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable);
+                    return Iter.removeNulls(Iter.map(sub,
+                            b -> b.putCompatible(gVar, gId, nodeTable) ? b : null));
+                }));
+            } else {
+                Iterator<NodeId> graphIds = dict.streamGraphIds()
+                        .mapToObj(gid -> new NodeId(gid, NodeType.GRAPH)).iterator();
+                its.add(Iter.flatMap(graphIds, gId -> {
+                    BindingNodeId child = new BindingNodeId(bnid);
+                    child.put(gVar, gId);
+                    return new BGIteratorMaster(reader, dict, child, quad, filter, nodeTable);
+                }));
+            }
         }
         chain = new IteratorChain<>(its);
     }

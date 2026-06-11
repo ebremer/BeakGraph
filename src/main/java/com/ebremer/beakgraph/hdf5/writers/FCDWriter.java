@@ -12,7 +12,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.UUID;
 
 public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private final int blockSize;
@@ -24,16 +23,21 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private long numEntries = 0;
     private long position = 0;
     private final DataOutputBuffer offsets;
-    public final String ID = UUID.randomUUID().toString();
     private final BitPackedUnSignedLongBuffer compressed = new BitPackedUnSignedLongBuffer(Path.of("compressed"), null, 0, 1);
     private final StringUtils su = new StringUtils();
 
     public FCDWriter(Path path, int blockSize) throws FileNotFoundException {
+        if (blockSize < 2) {
+            // With blockSize 1 the add() block-head branch never closes a block:
+            // the offsets dataset would hold one entry total and FCDReader.get()
+            // for any later block reads past it. Fail construction loudly rather
+            // than write an unreadable dictionary.
+            throw new IllegalArgumentException("FCD blockSize must be >= 2, got " + blockSize);
+        }
         this.path = path;
         this.blockSize = blockSize;
         this.baos = new ByteArrayOutputStream();
         this.offsets = new DataOutputBuffer(Path.of("offsets"));
-        IO.println(path+"   "+ID);
     }
 
     private void writeFragment(byte[] data) throws IOException {

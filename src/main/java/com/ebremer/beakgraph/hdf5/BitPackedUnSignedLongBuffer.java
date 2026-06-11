@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5;
 
+import com.ebremer.beakgraph.utils.UTIL;
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
@@ -117,70 +118,35 @@ public class BitPackedUnSignedLongBuffer {
     }
     
     /**
-     * Finds the index (0-63) of the k-th set bit in a 64-bit word using Broadword Selection.
-     * This is strictly O(1) -- exactly 6 checks, no loops.
-     * * @param word The 64-bit word (Big Endian context).
-     * @param k The rank to find (1-based).
-     * @return The 0-based index of the k-th set bit (from MSB).
+     * Finds the index (0-63, from the MSB) of the k-th set bit in a word.
+     * Delegates to the shared broadword implementation so this linear select1
+     * and HDTBitmapDirectory's accelerated select1 can never disagree.
      */
     private int selectInWordSafe(long word, long k) {
-        int result = 0;
-        int cnt;
-        // Check top 32 bits
-        // shift right to isolate the top 32 bits.
-        cnt = Long.bitCount(word >>> 32);
-        if (k > cnt) {
-            // The target is NOT in the top 32. It's in the lower 32.
-            // Move the lower 32 bits up, add 32 to our result index, and subtract the count we skipped.
-            word <<= 32;
-            result += 32;
-            k -= cnt;
-        }
-        // Check top 16 bits (of the remaining word)
-        cnt = Long.bitCount(word >>> 48);
-        if (k > cnt) {
-            word <<= 16;
-            result += 16;
-            k -= cnt;
-        }
-        // Check top 8 bits
-        cnt = Long.bitCount(word >>> 56);
-        if (k > cnt) {
-            word <<= 8;
-            result += 8;
-            k -= cnt;
-        }
-        // Check top 4 bits
-        cnt = Long.bitCount(word >>> 60);
-        if (k > cnt) {
-            word <<= 4;
-            result += 4;
-            k -= cnt;
-        }
-        // Check top 2 bits
-        cnt = Long.bitCount(word >>> 62);
-        if (k > cnt) {
-            word <<= 2;
-            result += 2;
-            k -= cnt;
-        }
-        // Check top 1 bit
-        // If k > cnt (where cnt is 0 or 1), it means the target is the 2nd bit of this pair.
-        cnt = Long.bitCount(word >>> 63);
-        if (k > cnt) {
-            result += 1;
-        }
-        return result;
+        return UTIL.selectInWord(word, k);
     }
 
     // --- WRITE METHODS ---
 
     public void writeInteger(int value) {
+        // Reject values whose bit pattern would not survive the width mask - silent
+        // truncation here corrupts the dictionary far from the cause. Widths 32 and
+        // 64 are exempt for negatives: the full two's-complement pattern round-trips
+        // (the reader casts back to int/long).
+        if (bitWidth != 32 && bitWidth != 64 && (value < 0 || value > ((1L << bitWidth) - 1))) {
+            throw new IllegalArgumentException(
+                "Value " + value + " does not fit in " + bitWidth + " bits");
+        }
         putValue(value & ((bitWidth == 64) ? -1L : (1L << bitWidth) - 1));
         numEntries++;
     }
 
     public void writeLong(long value) {
+        // See writeInteger: only width 64 carries a negative long's full pattern.
+        if (bitWidth != 64 && (value < 0 || value > ((1L << bitWidth) - 1))) {
+            throw new IllegalArgumentException(
+                "Value " + value + " does not fit in " + bitWidth + " bits");
+        }
         putValue(value & ((bitWidth == 64) ? -1L : (1L << bitWidth) - 1));
         numEntries++;
     }
@@ -351,14 +317,18 @@ public class BitPackedUnSignedLongBuffer {
     }
     
     public long binarySearch(long start, long end, long value) {
-       long low = start;
+        long low = start;
         long high = end;
         while (low <= high) {
             long mid = (low + high) >>> 1;
             long midVal = get(mid); // Internal get is bit-unpacked
-            if (midVal < value) {
+            // Unsigned comparison, matching lowerBound/upperBound: the stored
+            // values are unsigned bit patterns, and mixing signed search with
+            // unsigned bounds on the same buffer invites subtle disagreement.
+            int cmp = Long.compareUnsigned(midVal, value);
+            if (cmp < 0) {
                 low = mid + 1;
-            } else if (midVal > value) {
+            } else if (cmp > 0) {
                 high = mid - 1;
             } else {
                 return mid; // Value found
@@ -465,8 +435,11 @@ public class BitPackedUnSignedLongBuffer {
 
             while (accCount < bitWidth) {
                 if (!localBuf.hasRemaining()) {
-                    // This handles potential padding/truncation issues
-                    break; 
+                    // A buffer too short for its declared entry count is corrupt.
+                    // Fail loudly like the sequential reader does - the old break
+                    // left accCount < bitWidth, making the shift below negative
+                    // (mod-64) and emitting silent garbage values.
+                    throw new BufferUnderflowException();
                 }
                 acc = (acc << 8) | (localBuf.get() & 0xFFL);
                 accCount += 8;

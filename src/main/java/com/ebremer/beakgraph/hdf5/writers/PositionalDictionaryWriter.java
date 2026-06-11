@@ -19,12 +19,15 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Monolithic Entity Dictionary with Columnar ID lists for Graphs, Subjects, and Objects.
  * @author Erich Bremer
  */
 public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable, DictionaryWriter {
+    private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriter.class);
     private final DictionaryWriter entitiesdict;
     private final DictionaryWriter predicatesdict;
     private final DictionaryWriter literalsdict;    
@@ -44,7 +47,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         this.quads = builder.getQuads();
         
         Stats stats = builder.getStats();
-        IO.println(stats);
+        logger.debug("{}", stats);
         
         // 1. Build the Monolithic Entity Dictionary (G, S, O URIs + BNodes)
         entitiesdict = new MultiTypeDictionaryWriter.Builder()
@@ -85,7 +88,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), null, 0, oBits);
 
         // 5. Populate ID lists from the unique sets collected by the Builder
-        System.out.println("Populating columnar ID lists with unique entities...");
+        logger.info("Populating columnar ID lists...");
         ArrayList<Node> src = parallelSort(builder.getUniqueGraphs());
         for (Node n : src) {
             graphs.writeLong(locateGraph(n));
@@ -103,6 +106,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         graphs.prepareForReading();
         subjects.prepareForReading();
         objects.prepareForReading();
+        logger.info("Columnar ID lists populated");
     }
     
     private static ArrayList<Node> parallelSort(Set<Node> nodes) {
@@ -179,8 +183,12 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         if (predicatesdict.getNumberOfNodes() > 0) predicatesdict.add(dictionary);
         if (literalsdict.getNumberOfNodes() > 0) literalsdict.add(dictionary);
         
-        // Add columnar ID lists
-        if (numQuads > 0) {
+        // Add columnar ID lists whenever any quads are stored. Gating on the
+        // SOURCE quad count (numQuads) left an empty-source file internally
+        // inconsistent: the always-written VoID metadata graph was present in the
+        // indexes, but with no graphs list, containsGraph answered false and ARQ
+        // refused to execute GRAPH queries against rows that are demonstrably there.
+        if (graphs.getNumEntries() > 0) {
             graphs.add(dictionary);
             subjects.add(dictionary);
             objects.add(dictionary);

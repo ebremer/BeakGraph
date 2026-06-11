@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.function.Predicate;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.query.ResultSet;
@@ -55,29 +56,61 @@ class RelativeIRIResolverTest {
         assertSame(snomed, t.apply(snomed));
     }
 
+    /** A dictionary that holds only relative-form terms (no scheme) - the shape a BG store has. */
+    private static final Predicate<Node> RELATIVE_FORMS_STORED = n -> !n.getURI().contains(":");
+
     @Test
     void absoluteToStorageRelativizesTheDocumentItself() {
-        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage();
+        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage(RELATIVE_FORMS_STORED);
         assertEquals("", t.apply(NodeFactory.createURI(BASE)).getURI());
     }
 
     @Test
     void absoluteToStorageRelativizesASibling() {
-        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage();
+        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage(RELATIVE_FORMS_STORED);
         assertEquals("image.png", t.apply(NodeFactory.createURI(SIBLING)).getURI());
     }
 
     @Test
     void absoluteToStorageLeavesUnrelatedIrisUnchanged() {
-        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage();
+        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage(RELATIVE_FORMS_STORED);
         Node snomed = NodeFactory.createURI("http://snomed.info/id/123");
         assertSame(snomed, t.apply(snomed));
     }
 
     @Test
+    void absoluteStoredIriIsNotRewrittenIntoAGuaranteedMiss() {
+        // Same host, different subtree: relativize yields the path-absolute form
+        // "/other/thing", which the writer never stores. The rewrite must not
+        // fire - the dictionary holds the ABSOLUTE term and the query must keep
+        // naming it (the old unconditional rewrite silently returned 0 rows).
+        String abs = "http://localhost:8888/other/thing";
+        NodeTransform t = new RelativeIRIResolver(BASE)
+                .absoluteToStorage(n -> n.getURI().equals(abs));
+        Node node = NodeFactory.createURI(abs);
+        assertSame(node, t.apply(node));
+    }
+
+    @Test
+    void parentDirectoryFormIsNeverStoredSoNoRewrite() {
+        // "../other.png" is relative per IRIx but not a form the writer produces;
+        // with nothing stored, the absolute name must pass through untouched.
+        Node up = NodeFactory.createURI("http://localhost:8888/HalcyonStorage/utah/other.png");
+        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage(n -> false);
+        assertSame(up, t.apply(up));
+    }
+
+    @Test
+    void bothFormsStoredKeepsTheExactTermTheQueryNamed() {
+        NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage(n -> true);
+        Node sibling = NodeFactory.createURI(SIBLING);
+        assertSame(sibling, t.apply(sibling));
+    }
+
+    @Test
     void inputThenOutputRoundTripsToTheOriginalIri() {
         RelativeIRIResolver r = new RelativeIRIResolver(BASE);
-        NodeTransform in = r.absoluteToStorage();
+        NodeTransform in = r.absoluteToStorage(RELATIVE_FORMS_STORED);
         NodeTransform out = r.storageToAbsolute();
         for (String iri : new String[] { BASE, SIBLING }) {
             Node original = NodeFactory.createURI(iri);
@@ -91,7 +124,7 @@ class RelativeIRIResolverTest {
         assertFalse(r.isActive());
         Node rel = NodeFactory.createURI("image.png");
         assertSame(rel, r.storageToAbsolute().apply(rel));
-        assertSame(rel, r.absoluteToStorage().apply(rel));
+        assertSame(rel, r.absoluteToStorage(n -> true).apply(rel));
     }
 
     @Test

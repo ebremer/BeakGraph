@@ -59,7 +59,18 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             analyzeFilters(filter, dict, quad);
         }
 
-        gi = dict.getGraphs().locate(quad.getGraph());
+        // Resolve the graph the same way the other three iterators behind
+        // BGIteratorMaster do: the dispatcher also routes here when the graph
+        // VARIABLE is pre-bound in the BindingNodeId, and locate() on the raw
+        // variable node returns -1 - silently yielding nothing for a graph
+        // that exists.
+        if (quad.getGraph().isVariable()) {
+            gi = (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph())))
+                    ? bnid.get(Var.alloc(quad.getGraph())).getId()
+                    : -1;
+        } else {
+            gi = dict.getGraphs().locate(quad.getGraph());
+        }
         if (gi < 1) return;
 
         // Honour concrete subject / object terms named directly in the triple

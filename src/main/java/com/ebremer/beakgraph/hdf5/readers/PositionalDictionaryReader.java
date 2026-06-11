@@ -124,13 +124,32 @@ public class PositionalDictionaryReader implements GSPODictionary {
         };
     }
     
+    // Lazily materialized set of the graph ids: isGraph() used to decode the
+    // whole columnar list per call - O(numGraphs) for every containsGraph, and
+    // spatial stores carry thousands of tile graphs. Benign publication race:
+    // both builders produce identical content over immutable data.
+    private volatile java.util.Set<Long> graphIdSet;
+
     /**
      * True when {@code entityId} appears in the columnar list of actual graphs.
      * Graphs share the universal entity ID space, so a bare dictionary lookup
      * cannot distinguish a graph from any other entity - this can.
      */
     public boolean isGraph(long entityId) {
-        return graphs != null && graphs.stream().anyMatch(id -> id == entityId);
+        if (graphs == null) {
+            return false;
+        }
+        java.util.Set<Long> s = graphIdSet;
+        if (s == null) {
+            s = graphs.stream().boxed().collect(java.util.stream.Collectors.toUnmodifiableSet());
+            graphIdSet = s;
+        }
+        return s.contains(entityId);
+    }
+
+    /** Raw ids of the actual graphs (the columnar list), in stored order. */
+    public java.util.stream.LongStream streamGraphIds() {
+        return (graphs == null) ? java.util.stream.LongStream.empty() : graphs.stream();
     }
 
     @Override

@@ -24,8 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Stream;
-import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
@@ -159,19 +157,26 @@ public class HDF5Reader implements BGReader {
         for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
             if (n.isVariable()) vars.add(Var.alloc(n));
         }
-        List<Iterator<BindingNodeId>> its = new ArrayList<>();
-        dict.streamGraphs()
+        // Lazy per-graph chaining: constructing every graph's iterator up front
+        // paid each one's index binary searches before the first row came back
+        // (spatial stores hold thousands of tile graphs).
+        Iterator<Node> graphs = dict.streamGraphs()
             .filter(n -> !(n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated)))
-            .forEach(gn -> its.add(read(gn, bnid, triple, filter, nodeTable)));
-        Iterator<BindingNodeId> chain = new IteratorChain<>(its);
-        Set<List<Long>> seen = new HashSet<>();
+            .iterator();
+        Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gn -> read(gn, bnid, triple, filter, nodeTable));
+        // The dedup set is inherent to union set-semantics (rows arrive per
+        // graph, not globally sorted); the key is a record of three primitive
+        // longs rather than a boxed List<Long>, cutting the per-row footprint
+        // of a large union scan several-fold.
+        record RowKey(long a, long b, long c) {}
+        Set<RowKey> seen = new HashSet<>();
         return Iter.filter(chain, b -> {
-            List<Long> key = new ArrayList<>(vars.size());
-            for (Var v : vars) {
-                NodeId id = b.get(v);
-                key.add(id == null ? Long.MIN_VALUE : id.getId());
+            long[] k = {Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE};
+            for (int i = 0; i < vars.size(); i++) {
+                NodeId id = b.get(vars.get(i));
+                if (id != null) k[i] = id.getId();
             }
-            return seen.add(key);
+            return seen.add(new RowKey(k[0], k[1], k[2]));
         });
     }
 
@@ -253,8 +258,6 @@ public class HDF5Reader implements BGReader {
     public boolean isOpen() { return open; }
 
     @Override public GSPODictionary getDictionary() { return dict; }
-    @Override public int getNumberOfTriples(String ng) { return 0; }
-    @Override public Stream<Quad> streamQuads() { return Stream.empty(); }
 
     @Override
     public Iterator<Node> listGraphNodes() {

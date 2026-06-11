@@ -2,22 +2,13 @@ package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.NodeTable;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
-import java.util.Set;
 import org.apache.jena.atlas.lib.Map2;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.Binding;
 
 public class BindingNodeId extends Map2<Var, NodeId> {
-    public static BindingNodeId root = new BindingNodeId(null, null, null) {
-        @Override
-        public String toString() {
-            return "<root>";
-        }
-    };
-
     // This is the parent binding - which may be several steps up the chain.
     // This just carried around for later use when we go BindingNodeId back to Binding.
     private final Binding parentBinding;
@@ -104,32 +95,6 @@ public class BindingNodeId extends Map2<Var, NodeId> {
         Node na = nodeTable.getNodeForNodeId(a);
         Node nb = nodeTable.getNodeForNodeId(b);
         return na != null && na.equals(nb);
-    }
-
-    public void putAll(BindingNodeId other) {
-        Iterator<Var> vIter = other.iterator();
-        for (; vIter.hasNext() ; ) {
-            Var v = vIter.next();
-            if ( v == null )
-                throw new IllegalArgumentException("Null key");
-            NodeId n = other.get(v);
-            if ( n == null )
-                throw new IllegalArgumentException("("+v+","+n+")");
-            super.put(v, n);
-        }
-    }
-    
-    /**
-     * Returns a Set of entries representing all bindings (local + parent).
-     * Added to support iteration in BGIterator classes.
-     * @return 
-     */
-    public Set<Map.Entry<Var, NodeId>> entrySet() {
-        Map<Var, NodeId> allEntries = new HashMap<>();
-        for (Var v : this) {
-            allEntries.put(v, get(v));
-        }
-        return allEntries.entrySet();
     }
 
     @Override

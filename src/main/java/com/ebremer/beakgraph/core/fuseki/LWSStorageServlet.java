@@ -79,16 +79,41 @@ public class LWSStorageServlet extends HttpServlet {
         }
         URI fileUri = h5File.toUri();
         BeakGraph bg = null;
+        boolean healthy = true;
         try {
             bg = BeakGraphPool.getPool().borrowObject(fileUri);
             // resolve document-relative IRIs against the URL this .h5 is served from
-            BGSparqlService.execute(bg.getDataset(), queryStr,
+            healthy = BGSparqlService.execute(bg.getDataset(), queryStr,
                     req.getRequestURL().toString(), req.getHeader("Accept"), resp);
+        } catch (BGSparqlService.QueryExecutionFailedException ex) {
+            // Failure after the response committed: nothing may touch the response
+            // now. Rethrow (after the finally invalidates the reader) so the
+            // container aborts the connection instead of finishing a truncated
+            // 200 body as if it were complete.
+            healthy = false;
+            throw ex;
         } catch (Exception ex) {
-            resp.sendError(400, "Query error: " + ex.getMessage());
+            // Reaching here means infrastructure failure (pool, file). Log it,
+            // don't echo internals to the client.
+            healthy = false;
+            logger.error("SPARQL query handling failed for {}", h5File, ex);
+            if (!resp.isCommitted()) {
+                resp.sendError(500, "Query execution failed");
+            }
         } finally {
             if (bg != null) {
-                BeakGraphPool.getPool().returnObject(fileUri, bg);
+                if (healthy) {
+                    BeakGraphPool.getPool().returnObject(fileUri, bg);
+                } else {
+                    // Never re-issue an instance that just failed: with only
+                    // returnObject here, a broken-but-open reader circulated
+                    // forever, 500ing every request for its file.
+                    try {
+                        BeakGraphPool.getPool().invalidateObject(fileUri, bg);
+                    } catch (Exception invalidateEx) {
+                        logger.warn("Failed to invalidate pooled BeakGraph for {}", fileUri, invalidateEx);
+                    }
+                }
             }
         }
     }
@@ -116,7 +141,9 @@ public class LWSStorageServlet extends HttpServlet {
         String updated = r.hasProperty(AS_UPDATED) ? r.getProperty(AS_UPDATED).getString() : null;
         resp.setContentType("application/linkset+json");
         resp.setCharacterEncoding("UTF-8");
-        resp.getWriter().write(linksetJson(resourceURI, typeHref, up, media, size, updated));
+        // anchor/up are advertised on the LIVE base, never the canonical one.
+        resp.getWriter().write(linksetJson(toLiveUri(resourceURI), typeHref,
+                up == null ? null : toLiveUri(up), media, size, updated));
     }
 
     /**
@@ -200,6 +227,60 @@ public class LWSStorageServlet extends HttpServlet {
     }
 
     /**
+     * Decode the raw request URI into the literal path the metadata model and the
+     * filesystem use. Servlet spec: {@code getRequestURI()} is UNDECODED, while the
+     * model holds raw filenames - comparing them directly made every resource whose
+     * name needs percent-encoding (spaces, '#', non-ASCII) permanently 404, including
+     * via this servlet's own encoded listing links. Returns null for a syntactically
+     * invalid URI (callers answer 400).
+     */
+    static String decodePath(String rawRequestUri) {
+        try {
+            String p = new java.net.URI(rawRequestUri).getPath();
+            return p == null ? "" : p;
+        } catch (java.net.URISyntaxException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Map a canonical-model URI (rooted at {@link LWSMetadataGenerator#CANONICAL_BASE})
+     * onto the live serving base. {@code base} ends with '/' and the canonical
+     * remainder starts with '/', so naive concatenation minted double-slash URIs that
+     * 404 when dereferenced; the canonical host/port also leaked into Link headers and
+     * linksets whenever the server ran on a non-default port.
+     */
+    static String toLiveUri(String canonicalUri, String base) {
+        String rest = canonicalUri.substring(HTTP_ROOT.length());
+        while (rest.startsWith("/")) {
+            rest = rest.substring(1);
+        }
+        return base + rest;
+    }
+
+    private String toLiveUri(String canonicalUri) {
+        return toLiveUri(canonicalUri, BASE);
+    }
+
+    /** Container page URI on the live base; reqPath carries no leading slash and BASE ends with '/'. */
+    private String pageUri(String reqPath, int page) {
+        return BASE + reqPath + "?page=" + page;
+    }
+
+    /**
+     * Whether the (lower-cased) Accept header admits an HTML representation.
+     * RFC 9110: {@code *}{@code /*} and {@code text/*} match every/any text
+     * representation - curl's default {@code Accept: *}{@code /*} must get a
+     * page, not a 406.
+     */
+    static boolean acceptsHtmlRepresentation(String lowerAccept) {
+        return lowerAccept.isEmpty()
+                || lowerAccept.contains("text/html")
+                || lowerAccept.contains("text/*")
+                || lowerAccept.contains("*/*");
+    }
+
+    /**
      * Whether a statement object may be sent to clients. The metadata model links
      * every resource to its on-disk location via {@code owl:sameAs <file:///...>};
      * those server-local URIs must never leave the server.
@@ -236,7 +317,8 @@ public class LWSStorageServlet extends HttpServlet {
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         // Stop browsers from MIME-sniffing served content into something executable.
         resp.setHeader("X-Content-Type-Options", "nosniff");
-        String reqPath = req.getRequestURI();
+        String reqPath = decodePath(req.getRequestURI());
+        if (reqPath == null) { resp.sendError(400, "Malformed request URI"); return; }
         if (reqPath.startsWith("/")) reqPath = reqPath.substring(1);
         if (reqPath.endsWith("/")) reqPath = reqPath.substring(0, reqPath.length()-1);
         if (reqPath.endsWith(".meta")) {
@@ -244,6 +326,15 @@ public class LWSStorageServlet extends HttpServlet {
             if (basePath.startsWith("HalcyonStorage")) {
                 basePath = basePath.substring("HalcyonStorage".length());
                 if (basePath.startsWith("/")) basePath = basePath.substring(1);
+            }
+            if (basePath.equals("description")) {
+                // The /description document advertises this linkset itself; it is
+                // not in the metadata model, so answer it directly instead of 404.
+                resp.setContentType("application/linkset+json");
+                resp.setCharacterEncoding("UTF-8");
+                resp.getWriter().write(linksetJson(BASE + "description",
+                        LWS.MetadataResource.getURI(), BASE, null, null, null));
+                return;
             }
             String baseResourceURI = basePath.isEmpty() ? HTTP_ROOT : HTTP_ROOT + "/" + basePath;
             serveLinkset(resp, baseResourceURI);
@@ -276,7 +367,7 @@ public class LWSStorageServlet extends HttpServlet {
             handleSparqlQuery(req, resp, h5Candidate);
             return;
         }
-        String linksetURI = getLinksetURI(resourceURI);
+        String linksetURI = getLinksetURI(toLiveUri(resourceURI));
         resp.addHeader("Link", "<" + linksetURI + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
         resp.setHeader("Vary", "Accept");
         boolean isContainer = r.hasProperty(RDF.type, LWS_CONTAINER);
@@ -284,7 +375,7 @@ public class LWSStorageServlet extends HttpServlet {
         String formatParam = req.getParameter("format");
         boolean forceTurtle = "turtle".equalsIgnoreCase(formatParam);
         boolean forceJsonLd = "jsonld".equalsIgnoreCase(formatParam);
-        boolean wantHtml = (accept.contains("text/html") || accept.isEmpty()) && !forceTurtle && !forceJsonLd;
+        boolean wantHtml = acceptsHtmlRepresentation(accept) && !forceTurtle && !forceJsonLd;
         boolean wantTurtle = accept.contains("turtle") || forceTurtle;
         boolean wantJson = (accept.contains("ld+json") || accept.contains("json")) || forceJsonLd;
         if (isContainer && wantHtml) {
@@ -324,8 +415,7 @@ public class LWSStorageServlet extends HttpServlet {
                 RDFNode obj = s.getObject();
                 if (!exposableToClient(obj)) return; // never leak file:/// server paths
                 if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
-                    String newURI = BASE + obj.asResource().getURI().substring(HTTP_ROOT.length());
-                    httpR.addProperty(s.getPredicate(), out.createResource(newURI));
+                    httpR.addProperty(s.getPredicate(), out.createResource(toLiveUri(obj.asResource().getURI())));
                 } else {
                     httpR.addProperty(s.getPredicate(), obj);
                 }
@@ -348,27 +438,29 @@ public class LWSStorageServlet extends HttpServlet {
                     if (start >= total) { resp.sendError(404); return; }
                     int startIdx = (int) start;
                     List<Resource> paged = items.subList(startIdx, Math.min(startIdx+size, total));
-                    Resource pageR = out.createResource(BASE + (reqPath.isEmpty() ? "" : reqPath) + (reqPath.isEmpty() ? "" : "/") + "?page=" + page);
+                    // Self and first/last/prev/next all use the same URI shape,
+                    // and the navigation links are RESOURCES (they are page URIs,
+                    // and were emitted as plain literals with a divergent shape).
+                    Resource pageR = out.createResource(pageUri(reqPath, page));
                     r.listProperties().forEachRemaining(s -> {
                         if (!s.getPredicate().equals(LWS_ITEMS) && exposableToClient(s.getObject())) {
                             pageR.addProperty(s.getPredicate(), s.getObject());
                         }
                     });
                     pageR.addProperty(RDF.type, LWS.ContainerPage);
-                    pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#first"), BASE + (reqPath.isEmpty() ? "" : reqPath) + "?page=1");
+                    pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#first"), out.createResource(pageUri(reqPath, 1)));
                     int pages = (total + size - 1) / size;
-                    pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#last"), BASE + (reqPath.isEmpty() ? "" : reqPath) + "?page=" + pages);
-                    if (page > 1) pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#prev"), BASE + (reqPath.isEmpty() ? "" : reqPath) + "?page=" + (page-1));
-                    if (page < pages) pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#next"), BASE + (reqPath.isEmpty() ? "" : reqPath) + "?page=" + (page+1));
+                    pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#last"), out.createResource(pageUri(reqPath, pages)));
+                    if (page > 1) pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#prev"), out.createResource(pageUri(reqPath, page-1)));
+                    if (page < pages) pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#next"), out.createResource(pageUri(reqPath, page+1)));
                     for (Resource it : paged) {
-                        String itHttp = BASE + it.getURI().substring(HTTP_ROOT.length());
+                        String itHttp = toLiveUri(it.getURI());
                         pageR.addProperty(LWS_ITEMS, out.createResource(itHttp));
                         it.listProperties().forEachRemaining(st -> {
                             RDFNode obj = st.getObject();
                             if (!exposableToClient(obj)) return; // never leak file:/// server paths
                             if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
-                                String newURI = BASE + obj.asResource().getURI().substring(HTTP_ROOT.length());
-                                out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(newURI));
+                                out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(toLiveUri(obj.asResource().getURI())));
                             } else {
                                 out.getResource(itHttp).addProperty(st.getPredicate(), obj);
                             }
@@ -376,13 +468,12 @@ public class LWSStorageServlet extends HttpServlet {
                     }
                 } else {
                     for (Resource it : items) {
-                        String itHttp = BASE + it.getURI().substring(HTTP_ROOT.length());
+                        String itHttp = toLiveUri(it.getURI());
                         it.listProperties().forEachRemaining(st -> {
                             RDFNode obj = st.getObject();
                             if (!exposableToClient(obj)) return; // never leak file:/// server paths
                             if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
-                                String newURI = BASE + obj.asResource().getURI().substring(HTTP_ROOT.length());
-                                out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(newURI));
+                                out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(toLiveUri(obj.asResource().getURI())));
                             } else {
                                 out.getResource(itHttp).addProperty(st.getPredicate(), obj);
                             }
@@ -410,13 +501,30 @@ public class LWSStorageServlet extends HttpServlet {
             media = Files.probeContentType(localFile);
             if (media == null) media = "application/octet-stream";
         }
+        // Conditional GET support: the store is read-only between writes, so
+        // size+mtime make a stable validator.
+        long size = Files.size(localFile);
+        long lastModified = Files.getLastModifiedTime(localFile).toMillis();
+        String etag = "\"" + size + "-" + lastModified + "\"";
+        resp.setHeader("ETag", etag);
+        resp.setDateHeader("Last-Modified", lastModified);
+        String ifNoneMatch = req.getHeader("If-None-Match");
+        long ifModifiedSince = req.getDateHeader("If-Modified-Since");
+        if (etag.equals(ifNoneMatch)
+                || (ifNoneMatch == null && ifModifiedSince >= 0 && lastModified / 1000 <= ifModifiedSince / 1000)) {
+            resp.setStatus(HttpServletResponse.SC_NOT_MODIFIED);
+            return;
+        }
         resp.setContentType(media);
         // Stored bytes are served as a download: with nosniff above, this keeps an
         // HTML/SVG file someone placed under the root from rendering in this origin.
         String filename = localFile.getFileName().toString().replace("\"", "");
         resp.setHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
-        resp.setContentLengthLong(Files.size(localFile));
-        Files.copy(localFile, resp.getOutputStream());
+        resp.setContentLengthLong(size);
+        // HEAD gets the same headers without the body (and without the file copy).
+        if (!"HEAD".equals(req.getMethod())) {
+            Files.copy(localFile, resp.getOutputStream());
+        }
     }
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -424,7 +532,8 @@ public class LWSStorageServlet extends HttpServlet {
         logger.info("LWS {} {} ct={} query-param={} bodyLen={}",
         req.getMethod(), req.getRequestURI(), req.getContentType(),
         req.getParameter("query") != null, req.getContentLengthLong());
-        String reqPath = req.getRequestURI();
+        String reqPath = decodePath(req.getRequestURI());
+        if (reqPath == null) { resp.sendError(400, "Malformed request URI"); return; }
         if (reqPath.startsWith("/")) reqPath = reqPath.substring(1);
         if (reqPath.endsWith("/")) reqPath = reqPath.substring(0, reqPath.length()-1);
         if (reqPath.startsWith("HalcyonStorage")) {
@@ -438,7 +547,9 @@ public class LWSStorageServlet extends HttpServlet {
             return;
         }
         boolean isContainer = r.hasProperty(RDF.type, LWS_CONTAINER);
-        if (isContainer) { resp.sendError(406); return; }
+        // 405, not 406: POST to a container is an unsupported METHOD, not a
+        // content-negotiation failure.
+        if (isContainer) { resp.sendError(405, "Method not allowed"); return; }
         if (STORAGE_ROOT == null) { resp.sendError(500); return; }
         Path localFile = resolveWithin(STORAGE_ROOT, reqPath);
         if (localFile == null) { resp.sendError(403, "Forbidden"); return; }
@@ -451,6 +562,8 @@ public class LWSStorageServlet extends HttpServlet {
     }
     @Override
     protected void doHead(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        // Same routing and headers as GET; the file-serving branch checks the
+        // method and skips the body copy for HEAD.
         doGet(req, resp);
     }
 }

@@ -21,10 +21,13 @@ public class Stats {
     public int maxInteger = Integer.MIN_VALUE;
     public int minInteger = Integer.MAX_VALUE;
     public long numInteger = 0;
-    public float maxFloat = Float.MIN_VALUE;
+    // Seeds for running max must be the most NEGATIVE value: Float.MIN_VALUE /
+    // Double.MIN_VALUE are the smallest POSITIVE values, which made the reported
+    // max wrong for all-negative data.
+    public float maxFloat = -Float.MAX_VALUE;
     public float minFloat = Float.MAX_VALUE;
-    public long numFloat = 0;    
-    public double maxDouble = Double.MIN_VALUE;
+    public long numFloat = 0;
+    public double maxDouble = -Double.MAX_VALUE;
     public double minDouble = Double.MAX_VALUE;
     public long numDouble = 0;
     

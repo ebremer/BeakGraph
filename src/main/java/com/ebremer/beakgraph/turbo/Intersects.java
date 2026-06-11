@@ -9,6 +9,7 @@ import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.sparql.expr.NodeValue;
 import org.apache.jena.sparql.function.FunctionBase;
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.util.GeometryFixer;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
 
@@ -69,13 +70,23 @@ public class Intersects extends FunctionBase {
         // JTS only accepts "POINT(1 1)", so we must strip the URI prefix.
         String cleanWkt1 = extractWkt(wkt1);
         String cleanWkt2 = extractWkt(wkt2);
-        Geometry g1 = reader.read(cleanWkt1);
-        Geometry g2 = reader.read(cleanWkt2);
-        if (!g1.isValid() || !g2.isValid()) {
-           throw new ParseException("Encountered invalid geometry topology.");
-        }
+        Geometry g1 = repaired(reader.read(cleanWkt1));
+        Geometry g2 = repaired(reader.read(cleanWkt2));
 
         return g1.intersects(g2);
+    }
+
+    /**
+     * Topologically invalid geometry (self-intersecting rings - a data reality
+     * in pathology exports) must not make this function error out: the build
+     * deliberately indexes such geometries, and throwing here made Jena drop
+     * the row for every candidate whose stored WKT is invalid - an indexed
+     * geometry that no sfIntersects query could ever return. GeometryFixer
+     * preserves the point set (a bowtie becomes its two triangles), unlike
+     * buffer(0), which discards zero-area parts and lines/points.
+     */
+    private static Geometry repaired(Geometry g) {
+        return g.isValid() ? g : GeometryFixer.fix(g);
     }
 
     /**

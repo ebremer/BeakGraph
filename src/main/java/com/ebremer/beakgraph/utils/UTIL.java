@@ -39,73 +39,6 @@ public class UTIL {
         return sb.toString();
     }
 
-    public static byte[] getBytes(ByteBuffer buffer) {
-        String cn = buffer.getClass().getName();
-        if (cn.equals("java.nio.HeapByteBuffer2")) {
-            buffer.position(0);
-            int r = buffer.capacity();
-            byte[] b = new byte[r];
-            buffer.get(b);
-            return b;
-        }
-        return buffer.array();
-    }
-
-    public static ByteBuffer subBuffer(ByteBuffer src, int offset, int length) {
-        ByteBuffer dup = src.duplicate();
-        dup.position(offset);
-        dup.limit(offset + length);
-        return dup.slice();
-    }
-
-    public static void skipNullTerminatedStrings(ByteBuffer buffer, int skip) {
-        if (skip > 0) {
-            int currentPosition = buffer.position();
-            int limit = buffer.limit();
-            for (int i = 0; i < skip; i++) {
-                while (currentPosition < limit) {
-                    if (buffer.get(currentPosition) == 0) {
-                        currentPosition++;
-                        break;
-                    }
-                    currentPosition++;
-                }
-            }
-            buffer.position(currentPosition);
-        }
-    }
-
-    public static String readNullTerminatedString(ByteBuffer buffer) {
-        if (!buffer.hasRemaining()) {
-            return "";
-        }
-        int startPosition = buffer.position();
-        int limit = buffer.limit();
-        int endPosition = startPosition;
-        // Find the null terminator
-        while (endPosition < limit && buffer.get(endPosition) != 0) {
-            endPosition++;
-        }
-        int length = endPosition - startPosition;
-        byte[] stringBytes = new byte[length];
-        // Use bulk get for better performance
-        buffer.get(stringBytes);
-        // If we stopped at a null terminator, skip over it
-        if (buffer.hasRemaining() && buffer.get() != 0) {
-            // This handles the edge case where the loop stopped at limit
-            // but we still need to advance position correctly.
-            // Usually, buffer.get() above moves position to endPosition.
-            // If the byte at endPosition was 0, buffer.get() consumes it.
-        }
-        // Correctly advance position to after the null terminator if it exists
-        if (endPosition < limit) {
-            buffer.position(endPosition + 1);
-        } else {
-            buffer.position(limit);
-        }
-        return new String(stringBytes, StandardCharsets.UTF_8);
-    }
-
     public static WritableDataset putAttributes( WritableDataset ds, Map<String, Object> attributes ) {
         attributes.forEach((k,v)->{
             ds.putAttribute(k, v);
@@ -116,6 +49,25 @@ public class UTIL {
     public static int MinBits(long x) {
         if (x == 0) return 1;
         return Long.SIZE - Long.numberOfLeadingZeros(x);
+    }
+
+    /**
+     * Broadword selection: the 0-based index (from the MSB) of the k-th set bit
+     * (k &gt;= 1) of {@code word}, in O(1) via six popcount narrowing steps. The
+     * SINGLE implementation shared by the bit-packed buffer's linear select1 and
+     * the rank/select directory's accelerated select1 - the two must agree
+     * bit-for-bit or the directory fast path and the fallback diverge.
+     */
+    public static int selectInWord(long word, long k) {
+        int result = 0;
+        int cnt;
+        cnt = Long.bitCount(word >>> 32); if (k > cnt) { word <<= 32; result += 32; k -= cnt; }
+        cnt = Long.bitCount(word >>> 48); if (k > cnt) { word <<= 16; result += 16; k -= cnt; }
+        cnt = Long.bitCount(word >>> 56); if (k > cnt) { word <<= 8;  result += 8;  k -= cnt; }
+        cnt = Long.bitCount(word >>> 60); if (k > cnt) { word <<= 4;  result += 4;  k -= cnt; }
+        cnt = Long.bitCount(word >>> 62); if (k > cnt) { word <<= 2;  result += 2;  k -= cnt; }
+        cnt = Long.bitCount(word >>> 63); if (k > cnt) { result += 1; }
+        return result;
     }
 
     /**

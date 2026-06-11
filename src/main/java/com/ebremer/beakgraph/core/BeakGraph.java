@@ -3,7 +3,6 @@ package com.ebremer.beakgraph.core;
 import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG;
 import com.ebremer.beakgraph.turbo.Spatial;
-import java.io.IOException;
 import java.net.URI;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
@@ -51,11 +50,11 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         Spatial.init();
     }
 
-    public BeakGraph(BGReader reader, URI uri) throws IOException {
+    public BeakGraph(BGReader reader, URI uri) {
         this(reader, uri, uri);
     }
-    
-    public BeakGraph(BGReader reader, URI uri, URI base) throws IOException {
+
+    public BeakGraph(BGReader reader, URI uri, URI base) {
         logger.trace("BeakGraph -> {}", uri.toString());
         init();
         this.uri = uri;
@@ -64,7 +63,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         this.ownsReader = true;
     }
     
-    public BeakGraph(BGReader reader) throws IOException {
+    public BeakGraph(BGReader reader) {
         this( reader, reader.getURI(), null);
     }
     
@@ -72,7 +71,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         return uri;
     }
         
-    public BeakGraph(Node namedgraph, BGReader reader) throws IOException {
+    public BeakGraph(Node namedgraph, BGReader reader) {
         logger.trace("Create a SubBeakGraph -> {}", namedgraph);
         init();
         this.uri = reader.getURI();
@@ -89,7 +88,6 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
             if ( initialized ) {
                 return ;
             }
-            initialized = true ;
             // The OpExecutor factory is wired per-dataset (BGDatasetGraph's own
             // context), NOT into the global ARQ context: a global factory would
             // change query execution for every other dataset in the JVM. Only the
@@ -97,6 +95,9 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
             // because it dispatches on the active graph's type and delegates
             // everything that is not a BeakGraph.
             wireIntoExecution() ;
+            // Publish only after wiring succeeded, so a failure here is retried by
+            // the next caller instead of leaving the JVM half-wired forever.
+            initialized = true ;
         }
     }
     

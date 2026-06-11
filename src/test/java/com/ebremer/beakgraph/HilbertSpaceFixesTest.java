@@ -56,6 +56,36 @@ class HilbertSpaceFixesTest {
         throw new AssertionError("malformed WKT must raise a RuntimeException");
     }
 
+    // --- Corner-only range relevance ----------------------------------------
+
+    @Test
+    void subCellPolygonProducesANonEmptyCover() {
+        // Smaller than one cell and away from every cell corner: the old
+        // relevance test only asked whether the polygon covers a range's two
+        // endpoint cell-corner POINTS, so this real polygon produced an EMPTY
+        // Hilbert cover - a silent false negative for every API consumer.
+        String subCell = "POLYGON((0.2 0.2,0.8 0.2,0.8 0.8,0.2 0.8,0.2 0.2))";
+        ArrayList<Range> ranges = HilbertPolygon.Polygon2Hilbert(subCell, 0);
+        long cell00 = HilbertSpace.hc.index(0, 0);
+        assertFalse(ranges.isEmpty(), "a real polygon must produce a non-empty cover");
+        assertTrue(ranges.stream().anyMatch(r -> r.low() <= cell00 && cell00 <= r.high()),
+            "the cover must contain the polygon's own cell");
+
+        // Same failure mode at a coarser scale (cells of 2^2 units).
+        ArrayList<Range> scaled = HilbertPolygon.Polygon2Hilbert(subCell, 2);
+        assertFalse(scaled.isEmpty(), "the scaled cover must not be empty either");
+    }
+
+    @Test
+    void cellInteriorOverlapKeepsTheRange() {
+        // Overlaps the interior of cell (5,4) without covering its corner point.
+        ArrayList<Range> ranges = HilbertPolygon.Polygon2Hilbert(
+            "POLYGON((5.2 4.2,5.8 4.2,5.8 4.8,5.2 4.8,5.2 4.2))", 0);
+        long cell = HilbertSpace.hc.index(5, 4);
+        assertTrue(ranges.stream().anyMatch(r -> r.low() <= cell && cell <= r.high()),
+            "a range whose cell the polygon overlaps must be kept");
+    }
+
     // --- H10 ----------------------------------------------------------------
 
     @Test

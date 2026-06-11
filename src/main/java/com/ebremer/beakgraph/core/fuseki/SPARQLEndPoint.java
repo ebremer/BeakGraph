@@ -35,6 +35,7 @@ public class SPARQLEndPoint {
     private Model lwsModel;
     private Path storageRoot = null;
     private BeakGraph singleFileGraph;
+    private final Dataset dataset;
 
     static {
         JenaSystem.init();
@@ -98,6 +99,7 @@ public class SPARQLEndPoint {
             }
             if (lwsModel == null) lwsModel = ModelFactory.createDefaultModel();
         }
+        this.dataset = ds;
 
         boolean singleFile = !Files.isDirectory(endpointPath);
         var serverBuilder = FusekiServer.create()
@@ -130,8 +132,11 @@ public class SPARQLEndPoint {
             // Serve /rdf ourselves so document-relative IRIs in the HDF5 file are
             // resolved (against the file's own URI) instead of leaking out raw,
             // matching the behaviour of the LWS .h5 SPARQL path.
+            // Resolution base is the SERVED URL, never the local file URI: resolving
+            // stored-relative IRIs against endpointPath.toUri() sent every client
+            // file:///<absolute-server-path>/... IRIs - full filesystem disclosure.
             ServletHolder rdfHolder = new ServletHolder("hdf5-sparql",
-                    new HDF5SparqlServlet(ds, endpointPath.toUri().toString()));
+                    new HDF5SparqlServlet(ds, BASE_URL + "rdf"));
             context.addServlet(rdfHolder, "/rdf");
             context.addServlet(rdfHolder, "/rdf/*");
         }
@@ -152,7 +157,10 @@ public class SPARQLEndPoint {
     }
 
     public DatasetGraph getDataset() {
-        return server.getDataAccessPointRegistry().get("/rdf").getDataService().getDataset();
+        // The dataset this endpoint serves, held directly: the Fuseki registry
+        // only knows "/rdf" in directory mode (single-file mode serves /rdf via
+        // its own servlet), so the old registry lookup NPE'd in single-file mode.
+        return dataset.asDatasetGraph();
     }
 
     public void shutdown() {
@@ -192,7 +200,25 @@ public class SPARQLEndPoint {
 
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             String pathInfo = req.getPathInfo();
-            String resourcePath = (pathInfo == null || pathInfo.equals("/") || pathInfo.isEmpty()) ? "/META-INF/sparql/index.html" : "/META-INF/sparql" + pathInfo;
+            String resourcePath;
+            if (pathInfo == null || pathInfo.equals("/") || pathInfo.isEmpty()) {
+                resourcePath = "/META-INF/sparql/index.html";
+            } else if (pathInfo.equals("/beakgraph.png")) {
+                // The logo ships exactly once, at the classpath root - an identical
+                // copy under META-INF/sparql used to double the jar by 1.6 MB.
+                resourcePath = "/beakgraph.png";
+            } else {
+                // pathInfo is attacker-influenced and already URL-decoded: reject
+                // dot-segments (and backslashes) before splicing it into a classpath
+                // lookup, so an encoded "/../.." can never escape /META-INF/sparql -
+                // regardless of the container's URI-compliance mode or whether the
+                // classpath is a jar or exploded directories.
+                if (pathInfo.contains("..") || pathInfo.indexOf('\\') >= 0) {
+                    resp.sendError(HttpServletResponse.SC_NOT_FOUND);
+                    return;
+                }
+                resourcePath = "/META-INF/sparql" + pathInfo;
+            }
             InputStream is = getClass().getResourceAsStream(resourcePath);
             if (is == null) { resp.sendError(HttpServletResponse.SC_NOT_FOUND); return; }
             resp.setContentType(getContentType(resourcePath));
@@ -207,6 +233,7 @@ public class SPARQLEndPoint {
             if (path.endsWith(".css")) return "text/css";
             if (path.endsWith(".js")) return "application/javascript";
             if (path.endsWith(".json")) return "application/json";
+            if (path.endsWith(".png")) return "image/png";
             return "application/octet-stream";
         }
     }

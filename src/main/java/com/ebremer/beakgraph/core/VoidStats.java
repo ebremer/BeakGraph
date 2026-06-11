@@ -81,7 +81,11 @@ final class VoidStats {
         for (Map.Entry<Node, Node> e : partitionPredicate.entrySet()) {
             Long n = resourceTriples.get(e.getKey());
             if (n != null) {
-                predicateCount.put(e.getValue(), n);
+                // One partition per (graph, predicate) pair: the same predicate can
+                // appear in several graph descriptions, so counts must SUM. A plain
+                // put kept whichever partition iteration visited last, feeding the
+                // reorder cost model a per-graph count against a dataset-wide total.
+                predicateCount.merge(e.getValue(), n, Long::sum);
                 total += n;
             }
         }

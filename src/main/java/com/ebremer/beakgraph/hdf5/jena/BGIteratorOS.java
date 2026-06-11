@@ -119,15 +119,19 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // F. Initialize
         if (specificSubId > 0) {
-            boolean found = false;
-            for (long k = i; k < j; k++) {
-                if (Ss.get(k) == specificSubId) {
-                    i = k;
-                    found = true;
-                    break;
-                }
+            // The subject list under one (G,P,O) group is sorted ascending (GPOS
+            // ordering), so binary-search it instead of the previous linear scan.
+            long lo = i, hi = j - 1, found = -1;
+            while (lo <= hi) {
+                long mid = (lo + hi) >>> 1;
+                long v = Ss.get(mid);
+                if (v == specificSubId) { found = mid; break; }
+                if (v < specificSubId) lo = mid + 1; else hi = mid - 1;
             }
-            hasNext = found;
+            if (found >= 0) {
+                i = found;
+                hasNext = true;
+            }
         } else {
             advanceToNextValid();
         }

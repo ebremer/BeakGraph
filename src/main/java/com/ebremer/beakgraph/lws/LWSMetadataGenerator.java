@@ -43,7 +43,8 @@ public class LWSMetadataGenerator {
             writeModelToGZ(model, outputPath);
             System.out.println("Metadata successfully written to " + outputPath.toAbsolutePath());
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("Failed to generate LWS metadata: " + e.getMessage());
+            System.exit(1);
         }
     }
 
@@ -71,6 +72,13 @@ public class LWSMetadataGenerator {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                // Never index the metadata cache itself: on regeneration the previous
+                // beakgraph.ttl.gz would become a listed DataResource, making the raw
+                // model - including the owl:sameAs file:/// server paths the servlet
+                // exists to withhold - downloadable by any client.
+                if (CACHE_FILE_NAME.equals(file.getFileName().toString())) {
+                    return FileVisitResult.CONTINUE;
+                }
                 String httpUri = toHttpUri(rootPath, file);
                 processResource(model, httpUri, file, attrs, dataType, mediaType, size, modified);
                 linkToParent(model, rootPath, file, items, totalItems);

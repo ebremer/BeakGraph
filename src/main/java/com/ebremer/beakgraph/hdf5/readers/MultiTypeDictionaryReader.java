@@ -38,9 +38,15 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final long numEntries;
     private final String name;
 
-    // Tiered Index Storage
-    private long[] tieredIds;
-    private Node[] tieredNodes;
+    // Tiered index, built LAZILY on first search: building it in the
+    // constructor performed numEntries/TIER_SPACING full extracts at every
+    // file-open, paying for a search accelerator the caller might never use.
+    // Volatile publication keeps concurrent first-searchers safe; the benign
+    // race builds identical content over immutable data.
+    private volatile TieredIndex tiered;
+
+    private record TieredIndex(long[] ids, Node[] nodes) {}
+    private static final TieredIndex EMPTY_TIER = new TieredIndex(new long[0], new Node[0]);
 
     public MultiTypeDictionaryReader(Group d) {
         this.name = d.getName();
@@ -76,21 +82,34 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.langs = (langsG != null) ? new FCDReader(langsG) : null;
         ContiguousDataset langTagsDS = (ContiguousDataset) d.getChild("langTags");
         this.langTags = (langTagsDS != null) ? new BitPackedUnSignedLongBuffer(null, langTagsDS.getBuffer(), (Long) langTagsDS.getAttribute("numEntries").getData(), (Integer) langTagsDS.getAttribute("width").getData()) : null;
-
-        buildTieredIndex();
     }
 
-    private void buildTieredIndex() {
-        if (numEntries <= TIER_SPACING) return;
+    private TieredIndex tieredIndex() {
+        TieredIndex t = tiered;
+        if (t == null) {
+            synchronized (this) {
+                t = tiered;
+                if (t == null) {
+                    t = buildTieredIndex();
+                    tiered = t;
+                }
+            }
+        }
+        return t;
+    }
+
+    private TieredIndex buildTieredIndex() {
+        if (numEntries <= TIER_SPACING) return EMPTY_TIER;
         int tierSize = (int) (numEntries / TIER_SPACING);
-        tieredIds = new long[tierSize];
-        tieredNodes = new Node[tierSize];
-        
+        long[] ids = new long[tierSize];
+        Node[] nodes = new Node[tierSize];
+
         for (int i = 0; i < tierSize; i++) {
             long id = (long) i * TIER_SPACING + 1;
-            tieredIds[i] = id;
-            tieredNodes[i] = extract(id);
+            ids[i] = id;
+            nodes[i] = extract(id);
         }
+        return new TieredIndex(ids, nodes);
     }
 
     private Optional<ContiguousDataset> getDataSet(Group g, String name) {
@@ -151,19 +170,20 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         long high = numEntries;
 
         // 1. Tiered Index Lookup to narrow the range
-        // This is safe because tieredNodes are actual Node objects compared using your specific Comparator
-        if (tieredNodes != null && tieredNodes.length > 0) {
-            int tierIdx = Arrays.binarySearch(tieredNodes, element, NodeComparator.INSTANCE);
-            if (tierIdx >= 0) return tieredIds[tierIdx]; 
+        // This is safe because the tier nodes are actual Node objects compared using your specific Comparator
+        TieredIndex tier = tieredIndex();
+        if (tier.nodes().length > 0) {
+            int tierIdx = Arrays.binarySearch(tier.nodes(), element, NodeComparator.INSTANCE);
+            if (tierIdx >= 0) return tier.ids()[tierIdx];
 
             int insertionPoint = -(tierIdx + 1);
             if (insertionPoint > 0) {
-                // The element at tieredIds[insertionPoint-1] already compared < element,
+                // The element at ids[insertionPoint-1] already compared < element,
                 // so the real match (if any) starts strictly after it.
-                low = tieredIds[insertionPoint - 1] + 1;
+                low = tier.ids()[insertionPoint - 1] + 1;
             }
-            if (insertionPoint < tieredIds.length) {
-                high = tieredIds[insertionPoint] - 1;
+            if (insertionPoint < tier.ids().length) {
+                high = tier.ids()[insertionPoint] - 1;
             }
         }
 

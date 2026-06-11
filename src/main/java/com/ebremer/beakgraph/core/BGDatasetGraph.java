@@ -2,42 +2,42 @@ package com.ebremer.beakgraph.core;
 
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.graph.Graph;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.query.DatasetFactory;
 import org.apache.jena.query.ReadWrite;
 import org.apache.jena.query.TxnType;
 import org.apache.jena.riot.system.PrefixMap;
+import org.apache.jena.riot.system.PrefixMapFactory;
 import org.apache.jena.sparql.core.DatasetGraphBase;
 import org.apache.jena.sparql.core.Quad;
+import org.apache.jena.sparql.core.Transactional;
+import org.apache.jena.sparql.core.TransactionalLock;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.pfunction.PropertyFunctionRegistry;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.util.iterator.WrappedIterator;
 import org.apache.jena.vocabulary.RDFS;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author erich
  */
 public class BGDatasetGraph extends DatasetGraphBase {
-    private static final Logger logger = LoggerFactory.getLogger(BGDatasetGraph.class);
     private final BeakGraph bg;
     // Per-dataset execution wiring (the TDB pattern): the engine merges this context
     // over the global ARQ context when a query runs against this dataset, so BG's
     // OpExecutor and property-function scoping apply here and ONLY here - never to
     // other datasets in the JVM.
     private final Context context = Context.create();
+    // Tracks per-thread read-transaction lifecycle (begin/commit/abort/end pairing);
+    // the store is immutable, so the lock only provides honest bookkeeping.
+    private final Transactional txn = TransactionalLock.createMRSW();
 
     /**
      * The standard property-function registry minus rdfs:member. BG stores use
@@ -85,13 +85,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
     }
 
     @Override
-    public Graph getGraph(Node node) {        
-        try {
-            return new BeakGraph(node, bg.getReader());
-        } catch (IOException ex) {
-            logger.error("Failed to open named graph {}", node, ex);
-        }
-        return Graph.emptyGraph;
+    public Graph getGraph(Node node) {
+        // A non-owning view over the shared reader (closing it is a no-op).
+        return new BeakGraph(node, bg.getReader());
     }
 
     @Override
@@ -143,12 +139,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
             return findInSpecificGraph(g, s, p, o); // read() handles the union semantics
         }
         if (g == null || Node.ANY.equals(g)) {
-            List<Iterator<Quad>> iterators = new ArrayList<>();
-            Iterator<Node> graphs = listGraphNodes();
-            while (graphs.hasNext()) {
-                iterators.add(findInSpecificGraph(graphs.next(), s, p, o));
-            }
-            return new IteratorChain<>(iterators);
+            // Lazy per-graph chaining - see findInAnyGraph.
+            return org.apache.jena.atlas.iterator.Iter.flatMap(listGraphNodes(),
+                    gn -> findInSpecificGraph(gn, s, p, o));
         }
         if (Quad.isDefaultGraph(g)) {
             return Collections.emptyIterator();
@@ -182,28 +175,25 @@ public class BGDatasetGraph extends DatasetGraphBase {
     }
 
     private Iterator<Quad> findInAnyGraph(Node s, Node p, Node o) {
-        // 1. Default Graph
-        Iterator<Quad> defaultGraphIter = findInSpecificGraph(Quad.defaultGraphIRI, s, p, o);
-        
-        // 2. All Named Graphs
-        Iterator<Node> graphs = listGraphNodes();
-        List<Iterator<Quad>> iterators = new ArrayList<>();
-        iterators.add(defaultGraphIter);
-        
-        while(graphs.hasNext()) {
-            Node graphNode = graphs.next();
-            // Skip default if it appears in the list to avoid duplicates
-            if (!graphNode.equals(Quad.defaultGraphIRI)) {
-                iterators.add(findInSpecificGraph(graphNode, s, p, o));
-            }
-        }
-        
-        return new IteratorChain<>(iterators);
+        // Lazily chain the default graph and every named graph: constructing
+        // each graph's iterator up front paid its index searches before the
+        // first quad came back, and spatial stores hold thousands of tile
+        // graphs. Skip default if it appears in the graph list (duplicates).
+        Iterator<Node> graphs = org.apache.jena.atlas.iterator.Iter.concat(
+                List.of(Quad.defaultGraphIRI).iterator(),
+                org.apache.jena.atlas.iterator.Iter.filter(listGraphNodes(),
+                        gn -> !gn.equals(Quad.defaultGraphIRI)));
+        return org.apache.jena.atlas.iterator.Iter.flatMap(graphs, gn -> findInSpecificGraph(gn, s, p, o));
     }
+
+    // One mutable prefix map per dataset: the old implementation built a whole
+    // fresh in-memory dataset on EVERY call and returned its (disconnected)
+    // prefixes, so registrations silently vanished between calls.
+    private final PrefixMap prefixMap = PrefixMapFactory.create();
 
     @Override
     public PrefixMap prefixes() {
-        return DatasetFactory.createGeneral().asDatasetGraph().prefixes();
+        return prefixMap;
     }
 
     // --- Minimal Transaction Support (Read-Only) ---
@@ -216,11 +206,13 @@ public class BGDatasetGraph extends DatasetGraphBase {
     @Override
     public void begin(TxnType type) {
         if (type == TxnType.WRITE) throw new UnsupportedOperationException("Write transactions not supported");
+        txn.begin(type);
     }
 
     @Override
     public void begin(ReadWrite readWrite) {
         if (readWrite == ReadWrite.WRITE) throw new UnsupportedOperationException("Write transactions not supported");
+        txn.begin(readWrite);
     }
 
     @Override
@@ -230,32 +222,35 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public void commit() {
-        // No-op for read-only
+        txn.commit();
     }
 
     @Override
     public void abort() {
-        // No-op for read-only
+        txn.abort();
     }
 
     @Override
     public void end() {
-        // No-op for read-only
+        txn.end();
     }
 
     @Override
     public ReadWrite transactionMode() {
-        return ReadWrite.READ;
+        return txn.transactionMode();
     }
 
     @Override
     public TxnType transactionType() {
-        return TxnType.READ;
+        return txn.transactionType();
     }
 
     @Override
     public boolean isInTransaction() {
-        // Always behave as if in a transaction or allow access
-        return true;
+        // Real per-thread state, not an unconditional "true": lying that a
+        // transaction is always active masked mispaired begin/end in callers.
+        // The data itself is immutable, so reads need no lock protection - the
+        // delegate exists purely to track lifecycle honestly.
+        return txn.isInTransaction();
     }
 }

@@ -19,11 +19,17 @@ public class BG {
     
     public static BeakGraph getBeakGraph(File file) throws IOException {
         HDF5Reader reader = new HDF5Reader(file);
-        return new BeakGraph(reader);
+        try {
+            return new BeakGraph(reader);
+        } catch (RuntimeException | Error e) {
+            // The reader pins the mapped file; if BeakGraph construction fails it
+            // must be released here or nobody ever can.
+            try { reader.close(); } catch (Exception ignore) {}
+            throw e;
+        }
     }
-    
+
     public static BeakGraph getBeakGraph(Path path) throws IOException {
-        HDF5Reader reader = new HDF5Reader(path);       
-        return new BeakGraph(reader);
+        return getBeakGraph(path.toFile());
     }
 }
