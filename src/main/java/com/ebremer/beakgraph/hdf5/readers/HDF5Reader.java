@@ -24,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Stream;
 import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Node;
@@ -253,8 +252,6 @@ public class HDF5Reader implements BGReader {
     public boolean isOpen() { return open; }
 
     @Override public GSPODictionary getDictionary() { return dict; }
-    @Override public int getNumberOfTriples(String ng) { return 0; }
-    @Override public Stream<Quad> streamQuads() { return Stream.empty(); }
 
     @Override
     public Iterator<Node> listGraphNodes() {

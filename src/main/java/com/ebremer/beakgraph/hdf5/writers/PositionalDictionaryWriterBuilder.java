@@ -223,7 +223,7 @@ public class PositionalDictionaryWriterBuilder {
         // (previously such geometries failed the parse and were silently dropped).
         String wkt = ImageTools.stripCrs(quad.getObject().getLiteralLexicalForm());
         if (isDegeneratePolygon(wkt)) {
-            IO.println("Degenerate Polygon : "+wkt);
+            logger.warn("Skipping degenerate polygon: {}", wkt.length() > 200 ? wkt.substring(0, 200) + "..." : wkt);
             return qqq;
         }
         final Polygon[] scales;        
@@ -520,7 +520,7 @@ public class PositionalDictionaryWriterBuilder {
                     .forEach(quad -> {
                         quadcount.incrementAndGet();
                         if (quadcount.get() % 100_000 == 0) {
-                            System.out.println("Loaded " + quadcount.get() + " quads...");
+                            logger.info("Loaded {} quads...", quadcount.get());
                         }
                         quadslist.add(quad);
                         // Let an invalid quad abort the write rather than silently skipping
@@ -583,7 +583,7 @@ public class PositionalDictionaryWriterBuilder {
         this.numQuads = quadcount.get();
         this.quads = quadslist.toArray(Quad[]::new);
         quadslist.clear();
-        System.out.println("Dictionary created. Total Quads: " + this.numQuads);
+        logger.info("Dictionary created. Total quads: {}", this.numQuads);
         return new PositionalDictionaryWriter(this);
     }
 

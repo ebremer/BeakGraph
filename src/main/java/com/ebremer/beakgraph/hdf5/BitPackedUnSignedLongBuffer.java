@@ -176,11 +176,24 @@ public class BitPackedUnSignedLongBuffer {
     // --- WRITE METHODS ---
 
     public void writeInteger(int value) {
+        // Reject values whose bit pattern would not survive the width mask - silent
+        // truncation here corrupts the dictionary far from the cause. Widths 32 and
+        // 64 are exempt for negatives: the full two's-complement pattern round-trips
+        // (the reader casts back to int/long).
+        if (bitWidth != 32 && bitWidth != 64 && (value < 0 || value > ((1L << bitWidth) - 1))) {
+            throw new IllegalArgumentException(
+                "Value " + value + " does not fit in " + bitWidth + " bits");
+        }
         putValue(value & ((bitWidth == 64) ? -1L : (1L << bitWidth) - 1));
         numEntries++;
     }
 
     public void writeLong(long value) {
+        // See writeInteger: only width 64 carries a negative long's full pattern.
+        if (bitWidth != 64 && (value < 0 || value > ((1L << bitWidth) - 1))) {
+            throw new IllegalArgumentException(
+                "Value " + value + " does not fit in " + bitWidth + " bits");
+        }
         putValue(value & ((bitWidth == 64) ? -1L : (1L << bitWidth) - 1));
         numEntries++;
     }

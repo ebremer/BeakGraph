@@ -36,6 +36,24 @@ class BitPackedUnSignedLongBufferTest {
     }
 
     @Test
+    void rejectsValuesThatWouldBeTruncated() {
+        // A value wider than the buffer's bit width used to be silently masked,
+        // corrupting the dictionary far from the cause. It must be rejected.
+        BitPackedUnSignedLongBuffer narrow = new BitPackedUnSignedLongBuffer(null, null, 0, 8);
+        assertDoesNotThrow(() -> narrow.writeLong(255));
+        assertThrows(IllegalArgumentException.class, () -> narrow.writeLong(256));
+        assertThrows(IllegalArgumentException.class, () -> narrow.writeLong(-1));
+        assertThrows(IllegalArgumentException.class, () -> narrow.writeInteger(256));
+
+        // Widths 32 and 64 legitimately carry full two's-complement patterns
+        // (the int/long literal buffers): negatives must stay writable there.
+        BitPackedUnSignedLongBuffer w32 = new BitPackedUnSignedLongBuffer(null, null, 0, 32);
+        assertDoesNotThrow(() -> w32.writeInteger(-5));
+        BitPackedUnSignedLongBuffer w64 = new BitPackedUnSignedLongBuffer(null, null, 0, 64);
+        assertDoesNotThrow(() -> w64.writeLong(Long.MIN_VALUE));
+    }
+
+    @Test
     void rejectsUnsupportedBitWidths() {
         // 58..63 would overflow the 64-bit accumulator (value + <=7-bit sub-byte offset) and silently
         // corrupt data, so they are rejected rather than written.

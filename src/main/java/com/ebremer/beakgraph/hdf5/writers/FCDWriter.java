@@ -12,7 +12,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.UUID;
 
 public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private final int blockSize;
@@ -24,7 +23,6 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private long numEntries = 0;
     private long position = 0;
     private final DataOutputBuffer offsets;
-    public final String ID = UUID.randomUUID().toString();
     private final BitPackedUnSignedLongBuffer compressed = new BitPackedUnSignedLongBuffer(Path.of("compressed"), null, 0, 1);
     private final StringUtils su = new StringUtils();
 
@@ -33,7 +31,6 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
         this.blockSize = blockSize;
         this.baos = new ByteArrayOutputStream();
         this.offsets = new DataOutputBuffer(Path.of("offsets"));
-        IO.println(path+"   "+ID);
     }
 
     private void writeFragment(byte[] data) throws IOException {

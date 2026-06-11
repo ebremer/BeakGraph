@@ -26,7 +26,7 @@ public class HDF5Writer implements BeakGraphWriter {
 
     @Override
     public void write() throws IOException {
-        IO.println("Writing...");
+        logger.info("Writing BeakGraph to {}", builder.getDestination());
         PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
         try (PositionalDictionaryWriter w = db
                 .setSource(builder.getSource())
@@ -39,7 +39,7 @@ public class HDF5Writer implements BeakGraphWriter {
             BGIndex gspo = new BGIndex(builder, w, Index.GSPO, allQuads);
             BGIndex gpos = new BGIndex(builder, w, Index.GPOS, allQuads);
 
-            IO.print("Creating HDF5 File..." + builder.getDestination() + "...");
+            logger.info("Creating HDF5 file {}", builder.getDestination());
             try (WritableHdfFile hdfFile = HdfFile.write(builder.getDestination().toPath())) {
                 final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                 hdt.putAttribute("numQuads", w.getNumberOfQuads());
@@ -49,7 +49,7 @@ public class HDF5Writer implements BeakGraphWriter {
                 gpos.add(hdt);
             }
         }
-        IO.println("Done.");
+        logger.info("Write complete: {}", builder.getDestination());
     }
 
     public static class Builder extends AbstractGraphBuilder<Builder> {

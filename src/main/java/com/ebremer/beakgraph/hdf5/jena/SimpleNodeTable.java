@@ -5,8 +5,11 @@ import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.apache.jena.graph.Node;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class SimpleNodeTable implements NodeTable {
+    private static final Logger logger = LoggerFactory.getLogger(SimpleNodeTable.class);
     
     private final PositionalDictionaryReader dict;
     
@@ -128,8 +131,8 @@ public class SimpleNodeTable implements NodeTable {
     
     public void status() {
         // Caffeine evaluates size concurrently, so we use estimatedSize()
-        IO.println(String.format("nodeId2nodemap size: %d, node2nodeIdmap size: %d", 
-                nodeId2nodemap.estimatedSize(), node2nodeIdmap.estimatedSize()));
+        logger.debug("nodeId2nodemap size: {}, node2nodeIdmap size: {}",
+                nodeId2nodemap.estimatedSize(), node2nodeIdmap.estimatedSize());
     }
 
     @Override

@@ -84,38 +84,10 @@ public class FCDReader {
         return current;
     }
 
-    public long locate(String x) {
-        if (numEntries == 0) return -1;
-        // Binary search for the correct block.
-        long low = 0;
-        long high = numBlocks - 1;
-        while (low <= high) {
-            long mid = low + (high - low) / 2;
-            String midHeader = get(mid * blockSize);
-            int cmp = x.compareTo(midHeader);
-            if (cmp < 0) high = mid - 1;
-            else if (cmp > 0) low = mid + 1;
-            else return mid * blockSize;
-        }
-        long candidateBlock = high;
-        if (candidateBlock < 0) return -1;
-        // Linear search inside the block.
-        long blockStart = candidateBlock * blockSize;
-        long blockEnd = Math.min(blockStart + blockSize, numEntries);
-        int pos = (int) offsets.getLong((int) candidateBlock * 8);
-        Fragment frag = readFragment(pos, (int) blockStart);
-        String current = frag.value();
-        pos = frag.nextPos();
-        if (current.equals(x)) return blockStart;
-        for (long i = blockStart + 1; i < blockEnd; i++) {
-            VByte.DecodeResult pl = VByte.decodeAt(buffer, pos);
-            int prefixLen = (int) pl.value;
-            pos = pl.nextOffset;
-            Fragment suffix = readFragment(pos, (int) i);
-            current = current.substring(0, prefixLen) + suffix.value();
-            pos = suffix.nextPos();
-            if (current.equals(x)) return i;
-        }
-        return -1;
-    }
+    // NOTE: an unused locate(String) lived here that binary-searched blocks by
+    // String.compareTo. It was removed in the dead-code sweep - and must not be
+    // reintroduced as-was: the value-ordered dictionaries (strings holding typed
+    // literals) are NOT ordered by raw string comparison, so its block search was
+    // wrong for them. Term lookup goes through MultiTypeDictionaryReader.search,
+    // which compares with the same NodeComparator the writer sorted with.
 }

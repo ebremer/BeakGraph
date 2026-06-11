@@ -22,9 +22,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static com.ebremer.beakgraph.utils.UTIL.isRelativeIRI;
 import org.apache.jena.graph.Node;
 import org.apache.jena.vocabulary.XSD;
@@ -35,7 +35,7 @@ import org.apache.jena.vocabulary.XSD;
  * * @author erbre
  */
 public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, AutoCloseable {
-    private static final Logger logger = Logger.getLogger(MultiTypeDictionaryWriter.class.getName());
+    private static final Logger logger = LoggerFactory.getLogger(MultiTypeDictionaryWriter.class);
     
     private final BitPackedUnSignedLongBuffer offsets;
     private final BitPackedUnSignedLongBuffer typedLiterals;
@@ -64,16 +64,14 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     
     protected MultiTypeDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         this.name = builder.getName();
-        IO.println("Building Dictionary: " + name);
-        IO.println("Total Nodes        : " + builder.getNodes().size());
+        logger.info("Building dictionary '{}' ({} nodes)", name, builder.getNodes().size());
 
         Stats stats = builder.getStats();
         this.et = builder.getEnabledTypes();
 
         // --- STEP 1: Strict Total Ordering ---
-        System.out.print("Sorting nodes...");
+        logger.debug("Sorting {} nodes for dictionary '{}'", builder.getNodes().size(), name);
         sorted = NodeSorter.parallelSort(builder.getNodes());
-        System.out.println("Done.");
 
         // --- STEP 2: Initialize Buffers ---
         // BitPackedUnSignedLongBuffer constructors do not throw; assign finals directly.
@@ -117,7 +115,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                             fcdTLD.add(s);
                             dataTypesLookUp.put(s, fcdTLD.getNumEntries());
                         } catch (IOException ex) {
-                            logger.log(Level.SEVERE, "Failed to add datatype to dictionary", ex);
+                            logger.error("Failed to add datatype to dictionary", ex);
                         }
                     });
             }
@@ -171,7 +169,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         try {
             close();
         } catch (Exception ex) {
-            logger.log(Level.SEVERE, "Error during dictionary buffer finalization", ex);
+            logger.error("Error during dictionary buffer finalization", ex);
         }
     }
 
@@ -198,7 +196,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 if (literalsPresent) typedLiterals.writeLong(0);
                 if (langTags != null) langTags.writeLong(0);
             } catch (IOException ex) {
-                logger.log(Level.SEVERE, null, ex);
+                logger.error("Failed to add IRI to dictionary: {}", node, ex);
             }
         }
         else if (node.isLiteral()) {
@@ -230,7 +228,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 try {
                     double d = (val instanceof Number n) ? n.doubleValue() : Double.parseDouble(node.getLiteralLexicalForm());
                     doubles.writeDouble(d);
-                } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
+                } catch (IOException ex) { logger.error("Failed to add double literal to dictionary", ex); }
             }
             else if (dt.equals(XSD.xfloat.getURI()) && floats != null) {
                 offsets.writeLong(floats.getNumEntries());
@@ -238,7 +236,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 try {
                     float f = (val instanceof Number n) ? n.floatValue() : Float.parseFloat(node.getLiteralLexicalForm());
                     floats.writeFloat(f);
-                } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
+                } catch (IOException ex) { logger.error("Failed to add float literal to dictionary", ex); }
             }
             else if (strings != null) {
                 // Fallback for strings, booleans, dates, and custom types
@@ -247,7 +245,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 nativedatatypes.writeInteger(DataType.STRING.ordinal());
                 try {
                     strings.add(lex);
-                } catch (IOException ex) { logger.log(Level.SEVERE, null, ex); }
+                } catch (IOException ex) { logger.error("Failed to add string literal to dictionary", ex); }
             }
             else {
                 // Unreachable in normal operation: every string-stored datatype is

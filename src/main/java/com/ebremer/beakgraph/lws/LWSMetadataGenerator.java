@@ -43,7 +43,8 @@ public class LWSMetadataGenerator {
             writeModelToGZ(model, outputPath);
             System.out.println("Metadata successfully written to " + outputPath.toAbsolutePath());
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("Failed to generate LWS metadata: " + e.getMessage());
+            System.exit(1);
         }
     }
 

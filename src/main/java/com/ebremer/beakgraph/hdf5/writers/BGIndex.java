@@ -10,8 +10,11 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class BGIndex {
+    private static final Logger logger = LoggerFactory.getLogger(BGIndex.class);
 
     private final BitPackedUnSignedLongBuffer B1, B2, B3;
     private final BitPackedUnSignedLongBuffer S1, S2, S3;
@@ -81,7 +84,7 @@ public class BGIndex {
     }
 
     public BGIndex(HDF5Writer.Builder builder, PositionalDictionaryWriter dictWriter, Index type, Quad[] allQuads) {
-        System.out.println("Creating Index " + type);
+        logger.info("Creating index {}", type);
         this.type = type;
         String indexName = type.name();
         
@@ -144,9 +147,8 @@ public class BGIndex {
     }
 
     private void processQuads(PositionalDictionaryWriter w, Quad[] allQuads) {
-        System.out.print("Sorting quads for " + type.name() + "... ");
+        logger.debug("Sorting quads for {}...", type.name());
         Arrays.parallelSort(allQuads, type.getComparator());
-        System.out.println("done");
 
         LevelState l1 = new LevelState(), l2 = new LevelState(), l3 = new LevelState();
         Quad lastUnique = null;
@@ -160,7 +162,7 @@ public class BGIndex {
 
         for (Quad curr : allQuads) {
             if (++count % 1_000_000 == 0) {
-                System.out.println("  " + type.name() + " processed " + count + " / " + totalQuads + " quads...");
+                logger.info("{} processed {} / {} quads...", type.name(), count, totalQuads);
             }
             // 1. Duplicate Check
             if (lastUnique != null && 

@@ -19,12 +19,15 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Monolithic Entity Dictionary with Columnar ID lists for Graphs, Subjects, and Objects.
  * @author Erich Bremer
  */
 public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable, DictionaryWriter {
+    private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriter.class);
     private final DictionaryWriter entitiesdict;
     private final DictionaryWriter predicatesdict;
     private final DictionaryWriter literalsdict;    
@@ -44,7 +47,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         this.quads = builder.getQuads();
         
         Stats stats = builder.getStats();
-        IO.println(stats);
+        logger.debug("{}", stats);
         
         // 1. Build the Monolithic Entity Dictionary (G, S, O URIs + BNodes)
         entitiesdict = new MultiTypeDictionaryWriter.Builder()
@@ -85,7 +88,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), null, 0, oBits);
 
         // 5. Populate ID lists from the unique sets collected by the Builder
-        System.out.println("Populating columnar ID lists with unique entities...");
+        logger.debug("Populating columnar ID lists with unique entities...");
         ArrayList<Node> src = parallelSort(builder.getUniqueGraphs());
         for (Node n : src) {
             graphs.writeLong(locateGraph(n));
