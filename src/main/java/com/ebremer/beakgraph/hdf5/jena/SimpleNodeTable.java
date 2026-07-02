@@ -5,8 +5,11 @@ import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.apache.jena.graph.Node;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class SimpleNodeTable implements NodeTable {
+    private static final Logger logger = LoggerFactory.getLogger(SimpleNodeTable.class);
     
     private final PositionalDictionaryReader dict;
     
@@ -85,11 +88,15 @@ public class SimpleNodeTable implements NodeTable {
         }
         
         NodeId nid = findInDictionaries(n);
-        
+
         if (nid != NodeId.NodeDoesNotExist) {
             nodeId2nodemap.put(nid, n);
-            node2nodeIdmap.put(n, nid); // authoritative, deterministic Node -> NodeId mapping
         }
+        // Cache misses too: the store is immutable, so absence is permanent, and
+        // an uncached miss re-ran up to two dictionary binary searches on every
+        // lookup of the same foreign term (VALUES/BIND-heavy queries). The shared
+        // does-not-exist sentinel is deliberately NOT seeded into nodeId2nodemap.
+        node2nodeIdmap.put(n, nid); // authoritative, deterministic Node -> NodeId mapping
 
         return nid;
     }
@@ -128,8 +135,8 @@ public class SimpleNodeTable implements NodeTable {
     
     public void status() {
         // Caffeine evaluates size concurrently, so we use estimatedSize()
-        IO.println(String.format("nodeId2nodemap size: %d, node2nodeIdmap size: %d", 
-                nodeId2nodemap.estimatedSize(), node2nodeIdmap.estimatedSize()));
+        logger.debug("nodeId2nodemap size: {}, node2nodeIdmap size: {}",
+                nodeId2nodemap.estimatedSize(), node2nodeIdmap.estimatedSize());
     }
 
     @Override

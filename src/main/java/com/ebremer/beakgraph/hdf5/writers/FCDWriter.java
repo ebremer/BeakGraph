@@ -12,7 +12,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.UUID;
 
 public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private final int blockSize;
@@ -24,16 +23,21 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
     private long numEntries = 0;
     private long position = 0;
     private final DataOutputBuffer offsets;
-    public final String ID = UUID.randomUUID().toString();
     private final BitPackedUnSignedLongBuffer compressed = new BitPackedUnSignedLongBuffer(Path.of("compressed"), null, 0, 1);
     private final StringUtils su = new StringUtils();
 
     public FCDWriter(Path path, int blockSize) throws FileNotFoundException {
+        if (blockSize < 2) {
+            // With blockSize 1 the add() block-head branch never closes a block:
+            // the offsets dataset would hold one entry total and FCDReader.get()
+            // for any later block reads past it. Fail construction loudly rather
+            // than write an unreadable dictionary.
+            throw new IllegalArgumentException("FCD blockSize must be >= 2, got " + blockSize);
+        }
         this.path = path;
         this.blockSize = blockSize;
         this.baos = new ByteArrayOutputStream();
         this.offsets = new DataOutputBuffer(Path.of("offsets"));
-        IO.println(path+"   "+ID);
     }
 
     private void writeFragment(byte[] data) throws IOException {
@@ -87,10 +91,14 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable {
 
     private int commonPrefixLength(String s1, String s2) {
         int minLength = Math.min(s1.length(), s2.length());
-        for (int i = 0; i < minLength; i++) {
-            if (s1.charAt(i) != s2.charAt(i)) return i;
-        }
-        return minLength;
+        int i = 0;
+        while (i < minLength && s1.charAt(i) == s2.charAt(i)) i++;
+        // Never split a UTF-16 surrogate pair: the suffix is encoded to UTF-8 on its
+        // own, and a suffix starting with an unpaired low surrogate encodes as '?',
+        // silently corrupting the stored string. Back off so the whole pair stays
+        // in the suffix.
+        if (i > 0 && Character.isHighSurrogate(s1.charAt(i - 1))) i--;
+        return i;
     }
 
     @Override public long getNumEntries() { return numEntries; }

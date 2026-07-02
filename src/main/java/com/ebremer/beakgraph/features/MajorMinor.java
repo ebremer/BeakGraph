@@ -2,119 +2,154 @@ package com.ebremer.beakgraph.features;
 import com.ebremer.ns.GEO;
 import com.ebremer.ns.HAL;
 import java.util.ArrayList;
+import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.jena.datatypes.RDFDatatype;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.sparql.core.Quad;
-import org.ejml.simple.SimpleEVD;
-import org.ejml.simple.SimpleMatrix;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
 /**
- * Adds centroid, major axis and minor axis as WKT literals to a geo:Feature
+ * Adds centroid, major axis and minor axis as WKT literals to a geo:Feature.
+ * <p>
+ * All values come from the polygon's exact AREA moments (Green's theorem over
+ * the rings, shell positive and holes negative), not from a vertex point
+ * cloud: the vertex PCA double-weighted ring-closure vertices on holed
+ * polygons and measured boundary spread rather than the region, so the drawn
+ * axis disagreed with {@code PYR.MajorAxisLength} (raster-region based) for
+ * the same geometry. Axis length is the pyradiomics convention, 4*sqrt(λ) of
+ * the region's covariance - identical in definition to the raster feature.
  */
 public class MajorMinor {
+    private static final Logger logger = LoggerFactory.getLogger(MajorMinor.class);
+
     public static void add(Resource f, String wkt) {
         try {
-            WKTReader reader = new WKTReader();
-            Geometry geom = reader.read(wkt);
-            if (!(geom instanceof Polygon)) return;
-            Polygon poly = (Polygon) geom;
-            Coordinate[] coords = poly.getCoordinates();
-            // build point cloud
-            int n = coords.length - 1; // close ring
-            SimpleMatrix m = new SimpleMatrix(n, 2);
-            for (int i = 0; i < n; i++) {
-                m.set(i, 0, coords[i].x);
-                m.set(i, 1, coords[i].y);
+            Geometry geom = new WKTReader().read(wkt);
+            if (!(geom instanceof Polygon poly)) return;
+            double[] g = axes(poly);
+            if (g == null) {
+                logger.warn("Skipping centroid/axis features for {}: zero-area geometry", f);
+                return;
             }
-            // centroid
-            double mx = m.extractVector(false, 0).elementSum() / n;
-            double my = m.extractVector(false, 1).elementSum() / n;
-            // PCA
-            SimpleMatrix ones = SimpleMatrix.ones(n, 1);
-            SimpleMatrix meanVec = new SimpleMatrix(1, 2, true, mx, my);
-            SimpleMatrix centered = m.minus(ones.mult(meanVec));
-            SimpleMatrix cov = centered.transpose().mult(centered).divide(n - 1.0);
-            SimpleEVD evd = cov.eig();
-            double lambda0 = evd.getEigenvalue(0).getReal();
-            double lambda1 = evd.getEigenvalue(1).getReal();
-            SimpleMatrix v0 = (SimpleMatrix) evd.getEigenVector(0).copy();
-            SimpleMatrix v1 = (SimpleMatrix) evd.getEigenVector(1).copy();
-            if (lambda0 < lambda1) {
-                double t = lambda0; lambda0 = lambda1; lambda1 = t;
-                SimpleMatrix tv = v0; v0 = v1; v1 = tv;
-            }
-            if (v0.get(0) < 0) v0 = v0.scale(-1.0);
-            if (v1.get(0) < 0) v1 = v1.scale(-1.0);
-            double majorlen = 2 * Math.sqrt(lambda0);
-            double minorlen = 2 * Math.sqrt(lambda1);
-            // half-axis vectors
-            double ax = majorlen / 2 * v0.get(0);
-            double ay = majorlen / 2 * v0.get(1);
-            double bx = minorlen / 2 * v1.get(0);
-            double by = minorlen / 2 * v1.get(1);
-            // WKT strings
-            String centroidWKT = String.format("POINT(%.4f %.4f)", mx, my);
-            String majorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)",
-                    mx - ax, my - ay, mx + ax, my + ay);
-            String minorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)",
-                    mx - bx, my - by, mx + bx, my + by);
-            // add to the feature
-            f.addProperty(HAL.centroid, f.getModel().createTypedLiteral(centroidWKT, GEO.wktLiteral.getURI()));
-            f.addProperty(HAL.majorAxis, f.getModel().createTypedLiteral(majorWKT, GEO.wktLiteral.getURI()));
-            f.addProperty(HAL.minorAxis, f.getModel().createTypedLiteral(minorWKT, GEO.wktLiteral.getURI()));
-        } catch (ParseException ignored) {}
+            // WKT strings: Locale.ROOT so the decimal separator is always '.',
+            // not the default locale's (e.g. ',' on de_DE, which is invalid WKT).
+            f.addProperty(HAL.centroid, f.getModel().createTypedLiteral(centroidWkt(g), GEO.wktLiteral.getURI()));
+            f.addProperty(HAL.majorAxis, f.getModel().createTypedLiteral(majorWkt(g), GEO.wktLiteral.getURI()));
+            f.addProperty(HAL.minorAxis, f.getModel().createTypedLiteral(minorWkt(g), GEO.wktLiteral.getURI()));
+        } catch (ParseException | RuntimeException e) {
+            // JTS throws IllegalArgumentException - not just ParseException - for
+            // structurally invalid geometry (e.g. a two-point ring). One bad
+            // geometry skips ITS features with a warning; it must never escape
+            // into the spatial task and abort the whole build.
+            logger.warn("Skipping centroid/axis features for {}: {}", f, e.toString());
+        }
     }
-    
+
     public static void add(ArrayList<Quad> quads, Node f, String wkt) {
         try {
-            WKTReader reader = new WKTReader();
-            Geometry geom = reader.read(wkt);
-            if (!(geom instanceof Polygon)) return;
-            Polygon poly = (Polygon) geom;
-            Coordinate[] coords = poly.getCoordinates();
-            int n = coords.length - 1;
-            SimpleMatrix m = new SimpleMatrix(n, 2);
-            for (int i = 0; i < n; i++) {
-                m.set(i, 0, coords[i].x);
-                m.set(i, 1, coords[i].y);
+            Geometry geom = new WKTReader().read(wkt);
+            if (!(geom instanceof Polygon poly)) return;
+            double[] g = axes(poly);
+            if (g == null) {
+                logger.warn("Skipping centroid/axis features for {}: zero-area geometry", f);
+                return;
             }
-            double mx = m.extractVector(false, 0).elementSum() / n;
-            double my = m.extractVector(false, 1).elementSum() / n;
-            SimpleMatrix ones = SimpleMatrix.ones(n, 1);
-            SimpleMatrix meanVec = new SimpleMatrix(1, 2, true, mx, my);
-            SimpleMatrix centered = m.minus(ones.mult(meanVec));
-            SimpleMatrix cov = centered.transpose().mult(centered).divide(n - 1.0);
-            SimpleEVD evd = cov.eig();
-            double lambda0 = evd.getEigenvalue(0).getReal();
-            double lambda1 = evd.getEigenvalue(1).getReal();
-            SimpleMatrix v0 = (SimpleMatrix) evd.getEigenVector(0).copy();
-            SimpleMatrix v1 = (SimpleMatrix) evd.getEigenVector(1).copy();
-            if (lambda0 < lambda1) {
-                double t = lambda0; lambda0 = lambda1; lambda1 = t;
-                SimpleMatrix tv = v0; v0 = v1; v1 = tv;
-            }
-            if (v0.get(0) < 0) v0 = v0.scale(-1.0);
-            if (v1.get(0) < 0) v1 = v1.scale(-1.0);
-            double majorlen = 2 * Math.sqrt(lambda0);
-            double minorlen = 2 * Math.sqrt(lambda1);
-            double ax = majorlen / 2 * v0.get(0);
-            double ay = majorlen / 2 * v0.get(1);
-            double bx = minorlen / 2 * v1.get(0);
-            double by = minorlen / 2 * v1.get(1);
-            String centroidWKT = String.format("POINT(%.4f %.4f)", mx, my);
-            String majorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)", mx - ax, my - ay, mx + ax, my + ay);
-            String minorWKT = String.format("LINESTRING(%.4f %.4f, %.4f %.4f)", mx - bx, my - by, mx + bx, my + by);
             Node graph = Quad.defaultGraphIRI;
             RDFDatatype wktDT = NodeFactory.getType(GEO.wktLiteral.getURI());
-            quads.add(Quad.create(graph, f, HAL.centroid.asNode(), NodeFactory.createLiteralDT(centroidWKT, wktDT)));
-            quads.add(Quad.create(graph, f, HAL.majorAxis.asNode(), NodeFactory.createLiteralDT(majorWKT, wktDT)));
-            quads.add(Quad.create(graph, f, HAL.minorAxis.asNode(), NodeFactory.createLiteralDT(minorWKT, wktDT)));
-        } catch (ParseException ignored) {}
+            quads.add(Quad.create(graph, f, HAL.centroid.asNode(), NodeFactory.createLiteralDT(centroidWkt(g), wktDT)));
+            quads.add(Quad.create(graph, f, HAL.majorAxis.asNode(), NodeFactory.createLiteralDT(majorWkt(g), wktDT)));
+            quads.add(Quad.create(graph, f, HAL.minorAxis.asNode(), NodeFactory.createLiteralDT(minorWkt(g), wktDT)));
+        } catch (ParseException | RuntimeException e) {
+            // See the Resource overload: skip-with-warning, never abort the build.
+            logger.warn("Skipping centroid/axis features for {}: {}", f, e.toString());
+        }
+    }
+
+    private static String centroidWkt(double[] g) {
+        return String.format(Locale.ROOT, "POINT(%.4f %.4f)", g[0], g[1]);
+    }
+
+    private static String majorWkt(double[] g) {
+        return String.format(Locale.ROOT, "LINESTRING(%.4f %.4f, %.4f %.4f)",
+                g[0] - g[2], g[1] - g[3], g[0] + g[2], g[1] + g[3]);
+    }
+
+    private static String minorWkt(double[] g) {
+        return String.format(Locale.ROOT, "LINESTRING(%.4f %.4f, %.4f %.4f)",
+                g[0] - g[4], g[1] - g[5], g[0] + g[4], g[1] + g[5]);
+    }
+
+    /**
+     * {cx, cy, ax, ay, bx, by}: area centroid and the major/minor HALF-axis
+     * vectors, or null when the net area is zero/degenerate. Exact closed-form
+     * moments over each ring's edges; ring contributions are sign-normalized so
+     * the shell adds and every hole subtracts regardless of winding order in
+     * the source WKT.
+     */
+    private static double[] axes(Polygon poly) {
+        double area = 0, sumX = 0, sumY = 0, sumX2 = 0, sumY2 = 0, sumXY = 0;
+        for (int r = -1; r < poly.getNumInteriorRing(); r++) {
+            Coordinate[] ring = (r < 0 ? poly.getExteriorRing() : poly.getInteriorRingN(r)).getCoordinates();
+            double a = 0, sx = 0, sy = 0, x2 = 0, y2 = 0, xy = 0;
+            for (int i = 0; i < ring.length - 1; i++) {
+                double x0 = ring[i].x, y0 = ring[i].y;
+                double x1 = ring[i + 1].x, y1 = ring[i + 1].y;
+                double cross = x0 * y1 - x1 * y0;
+                a  += cross;
+                sx += (x0 + x1) * cross;
+                sy += (y0 + y1) * cross;
+                x2 += (x0 * x0 + x0 * x1 + x1 * x1) * cross;
+                y2 += (y0 * y0 + y0 * y1 + y1 * y1) * cross;
+                xy += (x0 * y1 + 2 * x0 * y0 + 2 * x1 * y1 + x1 * y0) * cross;
+            }
+            double sign = ((r < 0) == (a >= 0)) ? 1 : -1;
+            area  += sign * a / 2;
+            sumX  += sign * sx / 6;
+            sumY  += sign * sy / 6;
+            sumX2 += sign * x2 / 12;
+            sumY2 += sign * y2 / 12;
+            sumXY += sign * xy / 24;
+        }
+        if (!(area > 0) || !Double.isFinite(area)) {
+            return null;
+        }
+        double cx = sumX / area;
+        double cy = sumY / area;
+        // Central second moments per unit area: the region's covariance matrix.
+        double varX = sumX2 / area - cx * cx;
+        double varY = sumY2 / area - cy * cy;
+        double cov  = sumXY / area - cx * cy;
+        double trace = varX + varY;
+        double det = varX * varY - cov * cov;
+        double disc = Math.sqrt(Math.max(0, trace * trace - 4 * det));
+        double l0 = Math.max(0, (trace + disc) / 2);
+        double l1 = Math.max(0, (trace - disc) / 2);
+        double v0x, v0y, v1x, v1y;
+        if (Math.abs(cov) < 1e-12) {
+            if (varX >= varY) { v0x = 1; v0y = 0; v1x = 0; v1y = 1; }
+            else              { v0x = 0; v0y = 1; v1x = 1; v1y = 0; }
+        } else {
+            v0x = cov; v0y = l0 - varX;
+            double n0 = Math.hypot(v0x, v0y);
+            v0x /= n0; v0y /= n0;
+            v1x = cov; v1y = l1 - varX;
+            double n1 = Math.hypot(v1x, v1y);
+            v1x /= n1; v1y /= n1;
+        }
+        if (v0x < 0) { v0x = -v0x; v0y = -v0y; }
+        if (v1x < 0) { v1x = -v1x; v1y = -v1y; }
+        // Half-axis = (4*sqrt(λ)) / 2, the pyradiomics full axis length halved.
+        double ax = 2 * Math.sqrt(l0) * v0x;
+        double ay = 2 * Math.sqrt(l0) * v0y;
+        double bx = 2 * Math.sqrt(l1) * v1x;
+        double by = 2 * Math.sqrt(l1) * v1y;
+        return new double[]{cx, cy, ax, ay, bx, by};
     }
 }

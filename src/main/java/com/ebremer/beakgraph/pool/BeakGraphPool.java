@@ -15,8 +15,12 @@ public class BeakGraphPool {
         private static final BeakGraphKeyedPool INSTANCE;
         static {
             BeakGraphKeyedPoolConfig<BeakGraph> config = new BeakGraphKeyedPoolConfig<>();
-            config.setMaxTotalPerKey(100);
-            config.setMaxTotal(200);
+            // A reader is safe for concurrent use (absolute buffer reads throughout),
+            // so extra instances per file mostly multiply memory: each holds mapped
+            // buffers, a tiered node index and two 1M-entry caches. Two per key
+            // covers validation-replacement; the old 100/key invited OOM.
+            config.setMaxTotalPerKey(2);
+            config.setMaxTotal(64);
             config.setMinIdlePerKey(0);
             config.setTestOnBorrow(true);
             config.setMaxWait(Duration.ofMillis(60000));

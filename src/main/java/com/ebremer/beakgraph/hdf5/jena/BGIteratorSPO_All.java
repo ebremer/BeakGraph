@@ -31,15 +31,20 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private long resS, resP, resO;
     private final long gi; 
     private boolean hasNext = false;
-    private long minSubId = 0, maxSubId = Long.MAX_VALUE;
+    // minSubId starts at 1, not 0: real subject ids are 1-based, and the writer pads
+    // empty graph blocks with (S=0,P=0,O=0) dummy rows. Starting at 0 leaked those
+    // padding rows as phantom bindings (and extract(0) throws on materialization).
+    private long minSubId = 1, maxSubId = Long.MAX_VALUE;
     private long minPid = 0, maxPid = Long.MAX_VALUE;
     private long minObjId = 0, maxObjId = Long.MAX_VALUE;
     private final PositionalDictionaryReader dict;
+    private final NodeTable nodeTable;
 
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
         this.queryQuad = quad;
         this.dict = dict;
+        this.nodeTable = nodeTable;
         this.Bs = reader.getBitmapBuffer('S');
         this.Ss = reader.getIDBuffer('S');
         this.Bp = reader.getBitmapBuffer('P');
@@ -54,7 +59,18 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             analyzeFilters(filter, dict, quad);
         }
 
-        gi = dict.getGraphs().locate(quad.getGraph());
+        // Resolve the graph the same way the other three iterators behind
+        // BGIteratorMaster do: the dispatcher also routes here when the graph
+        // VARIABLE is pre-bound in the BindingNodeId, and locate() on the raw
+        // variable node returns -1 - silently yielding nothing for a graph
+        // that exists.
+        if (quad.getGraph().isVariable()) {
+            gi = (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph())))
+                    ? bnid.get(Var.alloc(quad.getGraph())).getId()
+                    : -1;
+        } else {
+            gi = dict.getGraphs().locate(quad.getGraph());
+        }
         if (gi < 1) return;
 
         // Honour concrete subject / object terms named directly in the triple
@@ -261,21 +277,21 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     }
 
     private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        int type; 
+        int type;
         if (var.equals(quad.getSubject())) type = 1;
         else if (var.equals(quad.getPredicate())) type = 2;
         else if (var.equals(quad.getObject())) type = 3;
         else return;
 
-        long rawResult;
-        rawResult = switch (type) {
-            case 1 -> dict.getSubjects().search(value);
-            case 2 -> dict.getPredicates().search(value);
-            default -> dict.getObjects().search(value);
+        // Snap the bound to the edges of the whole value-equal cluster: value-equal
+        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
+        // adjacent distinct ids, and the raw exact-term insertion point can land
+        // inside that cluster, silently dropping qualifying boundary rows.
+        long[] c = switch (type) {
+            case 1 -> ValueCluster.of(dict.getSubjects(), value);
+            case 2 -> ValueCluster.of(dict.getPredicates(), value);
+            default -> ValueCluster.of(dict.getObjects(), value);
         };
-
-        long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
-        boolean found = (rawResult >= 0);
 
         long min, max;
         switch (type) {
@@ -285,10 +301,10 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         }
 
         switch (op) {
-            case ">" -> min = Math.max(min, found ? id + 1 : id);
-            case ">=" -> min = Math.max(min, id);
-            case "<" -> max = Math.min(max, id - 1);
-            case "<=" -> max = Math.min(max, id);
+            case ">" -> min = Math.max(min, c[1] + 1);
+            case ">=" -> min = Math.max(min, c[0]);
+            case "<" -> max = Math.min(max, c[0] - 1);
+            case "<=" -> max = Math.min(max, c[1]);
         }
 
         switch (type) {
@@ -298,28 +314,60 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         }
     }
 
+    // Look-ahead: the next deliverable row, or null. Rows whose repeated-variable
+    // bindings conflict are skipped here, so hasNext() only answers true when
+    // next() really has a row to return.
+    private BindingNodeId pending = null;
+    private boolean primed = false;
+
+    /**
+     * Builds the next row whose bindings are all compatible. A variable repeated in
+     * the pattern (?s ?p ?s, ?x ?x ?o, ...) must bind to the same term in every
+     * position it occupies; putCompatible reports a conflict and the row is skipped
+     * rather than emitted with the first value. (Subject/object vs predicate repeats
+     * span two id-spaces - putCompatible resolves those through the node table.)
+     */
+    private BindingNodeId computeNext() {
+        while (hasNext) {
+            BindingNodeId result = new BindingNodeId(parentBinding);
+            boolean ok = true;
+            if (queryQuad.getGraph().isVariable()) {
+                ok = result.putCompatible(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH), nodeTable);
+            }
+            if (ok && queryQuad.getSubject().isVariable()) {
+                ok = result.putCompatible(Var.alloc(queryQuad.getSubject()), new NodeId(resS, NodeType.SUBJECT), nodeTable);
+            }
+            if (ok && queryQuad.getPredicate().isVariable()) {
+                ok = result.putCompatible(Var.alloc(queryQuad.getPredicate()), new NodeId(resP, NodeType.PREDICATE), nodeTable);
+            }
+            if (ok && queryQuad.getObject().isVariable()) {
+                ok = result.putCompatible(Var.alloc(queryQuad.getObject()), new NodeId(resO, NodeType.OBJECT), nodeTable);
+            }
+            advance();
+            if (ok) return result;
+        }
+        return null;
+    }
+
+    private void prime() {
+        if (!primed) {
+            primed = true;
+            pending = computeNext();
+        }
+    }
+
     @Override
     public boolean hasNext() {
-        return hasNext;
+        prime();
+        return pending != null;
     }
 
     @Override
     public BindingNodeId next() {
-        if (!hasNext) throw new NoSuchElementException();
-        BindingNodeId result = new BindingNodeId(parentBinding);        
-        if (queryQuad.getGraph().isVariable()) {
-            result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
-        }
-        if (queryQuad.getSubject().isVariable()) {
-            result.put(Var.alloc(queryQuad.getSubject()), new NodeId(resS, NodeType.SUBJECT));
-        }
-        if (queryQuad.getPredicate().isVariable()) {
-            result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(resP, NodeType.PREDICATE));
-        }
-        if (queryQuad.getObject().isVariable()) {
-            result.put(Var.alloc(queryQuad.getObject()), new NodeId(resO, NodeType.OBJECT));
-        }
-        advance(); 
-        return result;
+        prime();
+        if (pending == null) throw new NoSuchElementException();
+        BindingNodeId r = pending;
+        pending = computeNext();
+        return r;
     }
 }

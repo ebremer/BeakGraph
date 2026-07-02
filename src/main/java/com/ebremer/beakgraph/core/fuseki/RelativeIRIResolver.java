@@ -3,6 +3,8 @@ package com.ebremer.beakgraph.core.fuseki;
 import com.ebremer.beakgraph.utils.UTIL;
 import java.util.Iterator;
 import java.util.List;
+import java.util.function.Predicate;
+import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.irix.IRIx;
@@ -28,8 +30,9 @@ import org.apache.jena.sparql.graph.NodeTransformLib;
  * in at build time. This class converts between the stored "storage form" and
  * the absolute "result form" expected by SPARQL clients:
  * <ul>
- *   <li>{@link #absoluteToStorage()} - query input: an absolute IRI under the
- *       base is rewritten to the relative form held in the dictionary.</li>
+ *   <li>{@link #absoluteToStorage(Predicate)} - query input: an absolute IRI
+ *       under the base is rewritten to the relative form when the dictionary
+ *       holds that relative form (and not the absolute one).</li>
  *   <li>{@link #storageToAbsolute()} - query output: a relative IRI is resolved
  *       against the base into an absolute IRI.</li>
  * </ul>
@@ -60,19 +63,33 @@ public class RelativeIRIResolver {
     }
 
     /**
-     * Input transform: an absolute IRI that sits under the document base is
-     * rewritten to the relative form actually stored in the dictionary, so that
-     * queries naming a resource by its served URL still match. Every other node
-     * (variables, literals, blank nodes, unrelated IRIs) passes through.
+     * Input transform: an absolute IRI under the document base is rewritten to
+     * its relative form so that queries naming a resource by its served URL
+     * still match a relative-stored term. Every other node (variables,
+     * literals, blank nodes, unrelated IRIs) passes through.
+     * <p>
+     * The rewrite fires only when {@code storedTerm} says the relative form IS
+     * in the store and the absolute form is NOT. The dictionary holds a term in
+     * exactly one of the two forms (relative only when the source document used
+     * a relative reference), so rewriting unconditionally turned every query
+     * naming an absolute-stored same-host IRI into a guaranteed miss - Jena's
+     * relativize also emits {@code /absolute/path} and {@code ../up} forms the
+     * writer never produces. When both forms are stored, the exact term the
+     * query named (the absolute one) wins.
+     *
+     * @param storedTerm whether a node exists in the store's dictionary
      */
-    public NodeTransform absoluteToStorage() {
+    public NodeTransform absoluteToStorage(Predicate<Node> storedTerm) {
         return node -> {
             if (base != null && node != null && node.isURI()
                     && !UTIL.isRelativeIRI(node.getURI())) {
                 try {
                     IRIx rel = base.relativize(IRIx.create(node.getURI()));
                     if (rel != null && rel.isRelative()) {
-                        return NodeFactory.createURI(rel.str());
+                        Node relNode = NodeFactory.createURI(rel.str());
+                        if (storedTerm.test(relNode) && !storedTerm.test(node)) {
+                            return relNode;
+                        }
                     }
                 } catch (RuntimeException ignore) {
                     // leave the node unchanged on any IRI parsing failure

@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.readers;
 import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
+import com.ebremer.beakgraph.io.DatasetBytes;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
 import java.util.Optional;
@@ -38,11 +39,11 @@ public class PositionalDictionaryReader implements GSPODictionary {
         this.maxEntityId = (entities != null) ? entities.getNumberOfNodes() : 0;
         
         this.graphs = getDataSet(dictionary, "graphs").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.subjects = getDataSet(dictionary, "subjects").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objects = getDataSet(dictionary, "objects").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objectsDict = makeObjectsDictionary();
     }
     
@@ -124,6 +125,34 @@ public class PositionalDictionaryReader implements GSPODictionary {
         };
     }
     
+    // Lazily materialized set of the graph ids: isGraph() used to decode the
+    // whole columnar list per call - O(numGraphs) for every containsGraph, and
+    // spatial stores carry thousands of tile graphs. Benign publication race:
+    // both builders produce identical content over immutable data.
+    private volatile java.util.Set<Long> graphIdSet;
+
+    /**
+     * True when {@code entityId} appears in the columnar list of actual graphs.
+     * Graphs share the universal entity ID space, so a bare dictionary lookup
+     * cannot distinguish a graph from any other entity - this can.
+     */
+    public boolean isGraph(long entityId) {
+        if (graphs == null) {
+            return false;
+        }
+        java.util.Set<Long> s = graphIdSet;
+        if (s == null) {
+            s = graphs.stream().boxed().collect(java.util.stream.Collectors.toUnmodifiableSet());
+            graphIdSet = s;
+        }
+        return s.contains(entityId);
+    }
+
+    /** Raw ids of the actual graphs (the columnar list), in stored order. */
+    public java.util.stream.LongStream streamGraphIds() {
+        return (graphs == null) ? java.util.stream.LongStream.empty() : graphs.stream();
+    }
+
     @Override
     public Stream<Node> streamGraphs() {
         if (graphs == null || entities == null) {

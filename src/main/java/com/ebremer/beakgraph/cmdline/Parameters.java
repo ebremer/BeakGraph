@@ -27,9 +27,20 @@ public class Parameters {
     
     @Parameter(names = {"-spatial"}, converter = BooleanConverter.class)
     public boolean spatial = false;
-    
+
     @Parameter(names = {"-features"}, converter = BooleanConverter.class)
     public boolean features = false;
+
+    @Parameter(names = {"-huge"}, converter = BooleanConverter.class,
+            description = "Use the disk-based writer (com.ebremer.beakgraph.huge): sorts and "
+                        + "indexes on disk instead of RAM, for sources too large for the heap")
+    public boolean huge = false;
+
+    @Parameter(names = "-workdir",
+            description = "Workspace directory for -huge spill files; needs free space on the "
+                        + "order of a few times the uncompressed source (default: each "
+                        + "destination file's directory)", required = false)
+    public File workdir = null;
     
     @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)
     public boolean version = false;

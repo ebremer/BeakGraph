@@ -204,9 +204,9 @@ public class BGVoIDSD {
         private String getNamespaceBase(String uri) {
             int idx = uri.lastIndexOf('#');
             if (idx == -1) idx = uri.lastIndexOf('/');
-            if (idx == -1) return uri + "#";            
-            String ns = uri.substring(0, idx + 1);
-            return (uri.charAt(idx) == '#') ? ns : ns;
+            if (idx == -1) return uri + "#";
+            // The substring already ends with the separator ('#' or '/').
+            return uri.substring(0, idx + 1);
         }
     }
 }

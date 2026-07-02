@@ -5,6 +5,7 @@ import com.beust.jcommander.ParameterException;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.SPARQLEndPoint;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
+import com.ebremer.beakgraph.huge.HugeHDF5Writer;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -35,6 +36,11 @@ public class BeakGraphCLI {
     private final FileCounter fc;
     private Parameters params;
 
+    /** Conversion counters for this run (failed conversions drive the exit code). */
+    public FileCounter getFileCounter() {
+        return fc;
+    }
+
     public BeakGraphCLI(Parameters params) {
         JenaSystem.init();
         this.params = params;
@@ -58,6 +64,13 @@ public class BeakGraphCLI {
         if (args.length != 0) {
             try {
                 jc.parse(args);
+                if (params.version) {
+                    // Must be handled on the SUCCESS path: version was previously
+                    // printed only inside the ParameterException catch, so a plain
+                    // "-v" parsed fine, matched no branch, and printed nothing.
+                    System.out.println("beakgraph - Version : " + Params.VERSION);
+                    System.exit(0);
+                }
                 if (params.help) {
                     jc.usage();
                     System.exit(0);
@@ -76,18 +89,34 @@ public class BeakGraphCLI {
                             Thread.currentThread().interrupt();
                         }
                     } else if (params.src != null && params.src.exists()) {
+                        if (params.dest == null) {
+                            // Without this guard every FileProcessor NPEs inside a
+                            // discarded Future: nothing converts, nothing is logged,
+                            // and the run exits 0 reporting success.
+                            System.err.println("Error: -dest is required with -src");
+                            jc.usage();
+                            System.exit(1);
+                        }
                         JenaSystem.init();
                         BeakGraphCLI bg = new BeakGraphCLI(params);
                         bg.traverse();
+                        if (bg.fc.getFailedConversionFileCount() > 0) {
+                            System.exit(2);
+                        }
                     } else if (params.src != null) {
-                        System.out.println("Source does not exist! " + params.src);
+                        System.err.println("Error: -src does not exist: " + params.src);
+                        System.exit(1);
                     }
                 }
             } catch (ParameterException ex) {
                 if (params.version) {
                     System.out.println("beakgraph - Version : " + Params.VERSION);
                 } else {
-                    System.out.println(ex.getMessage());
+                    // Bad arguments are an error: say so on stderr and exit non-zero
+                    // (scripts used to see a successful exit 0 for a failed run).
+                    System.err.println(ex.getMessage());
+                    jc.usage();
+                    System.exit(1);
                 }
             }
         }
@@ -130,6 +159,9 @@ public class BeakGraphCLI {
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException ex) {
+                    // Restore the flag and stop polling; the executor keeps draining.
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
         } catch (IOException ex) {
@@ -168,23 +200,44 @@ public class BeakGraphCLI {
 
         @Override
         public Model call() {
-            Path dest = mapToDestinationWithNewExtension(src, params.src.toPath(), params.dest.toPath(), "h5");
-            if (dest.toFile().exists() && dest.toFile().length() > 0) {
-                return null;
-            }
-            dest.getParent().toFile().mkdirs();
+            // The Future from engine.submit() is never inspected, so anything
+            // escaping this method is swallowed silently by FutureTask and the
+            // file still counts as a success. EVERYTHING - including destination
+            // mapping - must be counted and logged inside this catch.
             try {
-                HDF5Writer.Builder()
-                    .setSource(src.toFile())
-                    .setDestination(dest.toFile())
-                    .setSpatial(params.spatial)
-                     .setFeatures(params.features)
-                    .build()
-                    .write();
+                Path dest = mapToDestinationWithNewExtension(src, params.src.toPath(), params.dest.toPath(), "h5");
+                if (dest.toFile().exists() && dest.toFile().length() > 0) {
+                    return null;
+                }
+                dest.getParent().toFile().mkdirs();
+                if (params.huge) {
+                    // Disk-based build: same output format, but sorting/indexing
+                    // spill to a workspace instead of the heap. Note the huge
+                    // writer needs the native HDF5 backend on the classpath (the
+                    // hdf5-backend-* profiles); with -threads N, N builds run
+                    // concurrently, each with its own workspace.
+                    HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
+                        .setSource(src.toFile())
+                        .setDestination(dest.toFile())
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features);
+                    if (params.workdir != null) {
+                        params.workdir.mkdirs();
+                        builder.setWorkDirectory(params.workdir.toPath());
+                    }
+                    builder.build().write();
+                } else {
+                    HDF5Writer.Builder()
+                        .setSource(src.toFile())
+                        .setDestination(dest.toFile())
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features)
+                        .build()
+                        .write();
+                }
             } catch (Exception ex) {
                 fc.incrementFailedConversionFileCount();
-                logger.error("Failed to convert {} -> {}", src, dest, ex);
-                throw new RuntimeException("Failed to convert " + src + " -> " + dest, ex);
+                logger.error("Failed to convert {}", src, ex);
             }
             return null;
         }

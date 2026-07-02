@@ -119,15 +119,19 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // F. Initialize
         if (specificSubId > 0) {
-            boolean found = false;
-            for (long k = i; k < j; k++) {
-                if (Ss.get(k) == specificSubId) {
-                    i = k;
-                    found = true;
-                    break;
-                }
+            // The subject list under one (G,P,O) group is sorted ascending (GPOS
+            // ordering), so binary-search it instead of the previous linear scan.
+            long lo = i, hi = j - 1, found = -1;
+            while (lo <= hi) {
+                long mid = (lo + hi) >>> 1;
+                long v = Ss.get(mid);
+                if (v == specificSubId) { found = mid; break; }
+                if (v < specificSubId) lo = mid + 1; else hi = mid - 1;
             }
-            hasNext = found;
+            if (found >= 0) {
+                i = found;
+                hasNext = true;
+            }
         } else {
             advanceToNextValid();
         }
@@ -181,28 +185,24 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
     private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
         if (!var.equals(quad.getSubject())) return;
-        long rawResult = dict.getSubjects().search(value);
-        long id = (rawResult >= 0) ? rawResult : -rawResult - 1;
-        boolean found = (rawResult >= 0);
+        // Snap the bound to the edges of the whole value-equal cluster (degenerates
+        // to the plain insertion point for non-literal constants); see ValueCluster.
+        long[] c = ValueCluster.of(dict.getSubjects(), value);
         switch (op) {
             case ">" -> {
-                 long target = found ? id + 1 : id;
+                 long target = c[1] + 1;
                  if (Long.compareUnsigned(target, minSubId) > 0) minSubId = target;
             }
             case ">=" -> {
-                 if (Long.compareUnsigned(id, minSubId) > 0) minSubId = id;
+                 if (Long.compareUnsigned(c[0], minSubId) > 0) minSubId = c[0];
             }
             case "<" -> {
-                 if (id <= 1) { maxSubId = 0; minSubId = 1; } else {
-                     long target = id - 1;
-                     if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
-                 }
+                 long target = c[0] - 1;
+                 if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
             }
             case "<=" -> {
-                 long target = found ? id : id - 1;
-                 if (id <= 1 && !found) { maxSubId = 0; minSubId = 1; } else {
-                     if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
-                 }
+                 long target = c[1];
+                 if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
             }
         }
     }

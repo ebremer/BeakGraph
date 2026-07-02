@@ -1,11 +1,8 @@
 package com.ebremer.beakgraph.core;
 
 import com.ebremer.beakgraph.hdf5.jena.BGReader;
-import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
-import com.ebremer.beakgraph.hdf5.jena.QueryEngineBeak;
 import com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG;
 import com.ebremer.beakgraph.turbo.Spatial;
-import java.io.IOException;
 import java.net.URI;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
@@ -17,7 +14,6 @@ import org.apache.jena.query.DatasetFactory;
 import org.apache.jena.shared.AddDeniedException;
 import org.apache.jena.shared.DeleteDeniedException;
 import org.apache.jena.sparql.core.Quad;
-import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.main.StageBuilder;
 import org.apache.jena.sparql.engine.main.StageGenerator;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderLib;
@@ -37,6 +33,10 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     private static volatile boolean initialized = false ;
     private final Node namedgraph;
     private final BGReader reader;
+    // Whether this instance owns (and on close() must close) the reader. Named-graph
+    // views handed out by BGDatasetGraph.getGraph share the dataset's reader; closing
+    // such a view must not shut the storage under every other graph of the dataset.
+    private final boolean ownsReader;
     private static final Logger logger = LoggerFactory.getLogger(BeakGraph.class);
     private final URI uri;
     // Lazily-computed triple count for this graph. -1 = not yet computed; the graph
@@ -50,19 +50,20 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         Spatial.init();
     }
 
-    public BeakGraph(BGReader reader, URI uri) throws IOException {
+    public BeakGraph(BGReader reader, URI uri) {
         this(reader, uri, uri);
     }
-    
-    public BeakGraph(BGReader reader, URI uri, URI base) throws IOException {
+
+    public BeakGraph(BGReader reader, URI uri, URI base) {
         logger.trace("BeakGraph -> {}", uri.toString());
         init();
         this.uri = uri;
         this.reader = reader;
         this.namedgraph = Quad.defaultGraphIRI;
+        this.ownsReader = true;
     }
     
-    public BeakGraph(BGReader reader) throws IOException {
+    public BeakGraph(BGReader reader) {
         this( reader, reader.getURI(), null);
     }
     
@@ -70,12 +71,13 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         return uri;
     }
         
-    public BeakGraph(Node namedgraph, BGReader reader) throws IOException {
+    public BeakGraph(Node namedgraph, BGReader reader) {
         logger.trace("Create a SubBeakGraph -> {}", namedgraph);
         init();
         this.uri = reader.getURI();
         this.reader = reader;
         this.namedgraph = namedgraph;
+        this.ownsReader = false; // a view over a reader owned by the dataset
     }
     
     private static void init() {
@@ -86,10 +88,16 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
             if ( initialized ) {
                 return ;
             }
-            initialized = true ;
-            QC.setFactory(ARQ.getContext(), OpExecutorBG.opExecFactoryBG);
-            QueryEngineBeak.register();
+            // The OpExecutor factory is wired per-dataset (BGDatasetGraph's own
+            // context), NOT into the global ARQ context: a global factory would
+            // change query execution for every other dataset in the JVM. Only the
+            // stage-generator director is global - the standard Jena pattern -
+            // because it dispatches on the active graph's type and delegates
+            // everything that is not a BeakGraph.
             wireIntoExecution() ;
+            // Publish only after wiring succeeded, so a failure here is retried by
+            // the next caller instead of leaving the JVM half-wired forever.
+            initialized = true ;
         }
     }
     
@@ -99,6 +107,9 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     @Override
     public void close() {
+        if (!ownsReader) {
+            return; // closing a named-graph view must not close the shared reader
+        }
         try {
             reader.close();
         } catch (Exception ex) {

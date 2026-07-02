@@ -49,13 +49,19 @@ public class ShapeAnalysis {
     public static boolean isEdge(BufferedImage bi, int a, int b) {
         int c = bi.getRGB(a, b) & 0xFF;
         if (c>0) {
-            c = ((bi.getRGB(a+1, b) & 0xFF)>0)?1:0;
-            c = c + (((bi.getRGB(a-1, b) & 0xFF)>0)?1:0);
-            c = c + (((bi.getRGB(a, b+1) & 0xFF)>0)?1:0);
-            c = c + (((bi.getRGB(a, b-1) & 0xFF)>0)?1:0);
-            return (c!=4);
+            // Out-of-bounds neighbours count as background, so a filled pixel on
+            // the image border is an edge instead of an ArrayIndexOutOfBounds.
+            int n = filled(bi, a+1, b) + filled(bi, a-1, b) + filled(bi, a, b+1) + filled(bi, a, b-1);
+            return (n!=4);
         }
         return false;
+    }
+
+    private static int filled(BufferedImage bi, int x, int y) {
+        if (x < 0 || y < 0 || x >= bi.getWidth() || y >= bi.getHeight()) {
+            return 0;
+        }
+        return ((bi.getRGB(x, y) & 0xFF) > 0) ? 1 : 0;
     }
   
     public static int Circumference(BufferedImage bi) {
@@ -223,12 +229,17 @@ public class ShapeAnalysis {
     }
   
     public static BufferedImage getBufferedImage(Polygon p) {
-        Geometry bb = p.getEnvelope();
-        Coordinate[] c = bb.getCoordinates();
-        int width = (int) Math.round(c[2].x-c[0].x);
-        int height = (int) Math.round(c[2].y - c[0].y);
+        // Dimensions come from the Envelope, not getEnvelope()'s coordinate array:
+        // a degenerate (point/line) envelope has fewer than 3 coordinates (the old
+        // c[2] access threw), and a valid polygon thinner than ~0.5 units rounded
+        // to a 0-sized image (BufferedImage rejects it) - either way ALL features
+        // were skipped, including the purely polygon-based ones. Clamping to 1px
+        // keeps the raster features defined and the polygon features exact.
+        org.locationtech.jts.geom.Envelope env = p.getEnvelopeInternal();
+        int width = Math.max(1, (int) Math.round(env.getWidth()));
+        int height = Math.max(1, (int) Math.round(env.getHeight()));
         AffineTransformation af = new AffineTransformation();
-        af.setToTranslation(-c[0].x, -c[0].y);
+        af.setToTranslation(-env.getMinX(), -env.getMinY());
         // transform() returns a translated copy (it does not mutate p, which the caller
         // still uses for its other feature calcs). Draw that copy, shifted so the polygon's
         // bounding-box corner sits at (0,0) and lands inside the width x height image -

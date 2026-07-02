@@ -23,6 +23,15 @@ Configuration:
         - ref: FileAppender
 
     Logger:
+      # BeakGraph's own progress reporting (quads loaded, dictionary/index build,
+      # skipped geometries) lives at INFO/WARN - the root stays at ERROR so
+      # third-party libraries remain quiet.
+      - name: com.ebremer.beakgraph
+        level: info
+        additivity: false
+        AppenderRef:
+          - ref: STDOUT
+          - ref: FileAppender
       - name: org.apache.jena.fuseki
         level: error
         additivity: false

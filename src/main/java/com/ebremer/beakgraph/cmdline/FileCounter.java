@@ -49,6 +49,16 @@ public class FileCounter {
         return failedConversionFileCount.get();
     }
 
+    /**
+     * RDF files that converted (or already had a non-empty destination).
+     * Zero-length files are NOT subtracted here: the traverse filter rejects
+     * them before they are ever counted as RDF files, so subtracting them
+     * again understated the summary and could drive it negative.
+     */
+    public long getSuccessfulConversionCount() {
+        return getRDFFileCount() - getFailedConversionFileCount();
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
@@ -71,7 +81,7 @@ public class FileCounter {
             """,
             getZeroFileCount(),
             getFailedConversionFileCount(),
-            getRDFFileCount()-getZeroFileCount()-getFailedConversionFileCount()
+            getSuccessfulConversionCount()
         ));
         return sb.toString();
     }

@@ -72,6 +72,76 @@ class LWSStorageServletTest {
     }
 
     @Test
+    void escapeHtmlNeutralizesMarkupAndAttributeBreakouts() {
+        assertEquals("&lt;script&gt;alert(1)&lt;/script&gt;",
+            LWSStorageServlet.escapeHtml("<script>alert(1)</script>"));
+        assertEquals("a&quot; onmouseover=&quot;x", LWSStorageServlet.escapeHtml("a\" onmouseover=\"x"));
+        assertEquals("a&amp;b&#39;c", LWSStorageServlet.escapeHtml("a&b'c"));
+        assertEquals("plain-name.h5", LWSStorageServlet.escapeHtml("plain-name.h5"));
+    }
+
+    @Test
+    void encodeHrefPercentEncodesUnsafeCharactersButKeepsSlashes() {
+        assertEquals("/sub/a%20b.h5", LWSStorageServlet.encodeHref("/sub/a b.h5"));
+        assertEquals("/x%22y", LWSStorageServlet.encodeHref("/x\"y"));
+        assertEquals("/plain/file.h5", LWSStorageServlet.encodeHref("/plain/file.h5"));
+    }
+
+    @Test
+    void toLiveUriMapsCanonicalUrisWithoutDoubledSlashes() {
+        String canonicalRoot = com.ebremer.beakgraph.lws.LWSMetadataGenerator.CANONICAL_BASE;
+        // Live bases end with '/'; canonical remainders start with '/': the old
+        // concatenation minted "http://host//name" URIs that 404 when followed.
+        assertEquals("http://example:9999/sub/file.h5",
+            LWSStorageServlet.toLiveUri(canonicalRoot + "/sub/file.h5", "http://example:9999/"));
+        assertEquals("http://example:9999/",
+            LWSStorageServlet.toLiveUri(canonicalRoot, "http://example:9999/"));
+    }
+
+    @Test
+    void decodePathDecodesPercentEncodingAndRejectsGarbage() {
+        // getRequestURI() is undecoded; the metadata model and the filesystem
+        // hold raw names, so "a b.h5" must be reachable via its encoded link.
+        assertEquals("/a b.h5", LWSStorageServlet.decodePath("/a%20b.h5"));
+        assertEquals("/x/y.h5", LWSStorageServlet.decodePath("/x/y.h5"));
+        // '+' is a literal plus in a path (URLDecoder would have eaten it).
+        assertEquals("/a+b.h5", LWSStorageServlet.decodePath("/a+b.h5"));
+        assertNull(LWSStorageServlet.decodePath("/bad%zz"));
+    }
+
+    @Test
+    void wildcardAcceptHeadersGetARepresentationNotA406() {
+        assertTrue(LWSStorageServlet.acceptsHtmlRepresentation(""));      // no Accept at all
+        assertTrue(LWSStorageServlet.acceptsHtmlRepresentation("*/*"));   // curl's default
+        assertTrue(LWSStorageServlet.acceptsHtmlRepresentation("text/*"));
+        assertTrue(LWSStorageServlet.acceptsHtmlRepresentation("text/html,application/xhtml+xml"));
+        assertFalse(LWSStorageServlet.acceptsHtmlRepresentation("application/ld+json"));
+        assertFalse(LWSStorageServlet.acceptsHtmlRepresentation("text/turtle"));
+    }
+
+    @Test
+    void fileUrisAreNotExposableToClients() {
+        org.apache.jena.rdf.model.Model m = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        assertFalse(LWSStorageServlet.exposableToClient(
+            m.createResource("file:///C:/secret/storage/data.h5")), "server paths must be redacted");
+        assertTrue(LWSStorageServlet.exposableToClient(m.createResource("https://example.org/r")));
+        assertTrue(LWSStorageServlet.exposableToClient(m.createLiteral("file:///looks-like-but-is-a-literal")));
+        assertTrue(LWSStorageServlet.exposableToClient(m.createResource())); // bnode
+    }
+
+    @Test
+    void sparqlBodyReadIsBounded() throws Exception {
+        String small = "SELECT * WHERE { ?s ?p ?o }";
+        assertEquals(small, BGSparqlService.readBody(
+            new java.io.ByteArrayInputStream(small.getBytes(java.nio.charset.StandardCharsets.UTF_8)), 1024));
+        byte[] huge = new byte[2048];
+        java.util.Arrays.fill(huge, (byte) 'x');
+        org.junit.jupiter.api.Assertions.assertThrows(
+            BGSparqlService.QueryBodyTooLargeException.class,
+            () -> BGSparqlService.readBody(new java.io.ByteArrayInputStream(huge), 1024));
+    }
+
+    @Test
     void resolveWithinRejectsSymlinkEscape() throws Exception {
         Path root = Files.createTempDirectory("lws-sym").toRealPath();
         Path outside = Files.createTempFile("lws-outside", ".txt");   // a real file outside the root

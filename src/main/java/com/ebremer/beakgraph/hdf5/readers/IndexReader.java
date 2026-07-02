@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.readers;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
+import com.ebremer.beakgraph.io.DatasetBytes;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
@@ -57,7 +58,7 @@ public class IndexReader {
         if (ds == null) return null;
         long num = (Long) ds.getAttribute("numEntries").getData();
         int width = (Integer) ds.getAttribute("width").getData();
-        return new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), num, width);
+        return BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), num, width);
     }
     
     public HDTBitmapDirectory getDirectory(char component) {

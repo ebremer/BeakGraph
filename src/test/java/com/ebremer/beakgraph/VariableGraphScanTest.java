@@ -78,4 +78,32 @@ class VariableGraphScanTest {
             assertTrue(count >= 20, "should return at least the 20 default-graph triples; got " + count);
         }
     }
+
+    @Test
+    void preBoundGraphVariableScansTheBoundGraph() throws Exception {
+        // The graph var is a VARIABLE in the quad but already bound in the
+        // BindingNodeId (BGIteratorMaster routes this shape to BGIteratorSPO_All
+        // when the predicate is unbound). SPO_All used to locate() the raw
+        // variable node, get -1, and silently yield nothing for a graph that
+        // exists - unlike the other three iterators behind the same dispatcher.
+        try (HDF5Reader reader = new HDF5Reader(h5)) {
+            PositionalDictionaryReader dict = (PositionalDictionaryReader) reader.getDictionary();
+            NodeTable nt = reader.getNodeTable();
+            Var g = Var.alloc("g"), s = Var.alloc("s"), p = Var.alloc("p"), o = Var.alloc("o");
+
+            long gid = dict.getGraphs().locate(Quad.defaultGraphIRI);
+            assertTrue(gid >= 1, "the default graph must exist in the dictionary");
+            BindingNodeId bnid = new BindingNodeId();
+            bnid.put(g, new NodeId(gid, com.ebremer.beakgraph.hdf5.jena.NodeType.GRAPH));
+
+            long count = 0;
+            Iterator<BindingNodeId> it = new BGIteratorMaster(
+                    reader, dict, bnid, new Quad(g, s, p, o), null, nt);
+            while (it.hasNext()) {
+                it.next();
+                count++;
+            }
+            assertEquals(20, count, "the pre-bound default graph holds exactly the 20 source triples");
+        }
+    }
 }

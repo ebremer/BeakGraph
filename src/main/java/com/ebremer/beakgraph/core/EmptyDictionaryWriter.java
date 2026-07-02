@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.core;
 
-import com.ebremer.beakgraph.core.AbstractDictionary;
 import io.jhdf.api.WritableGroup;
 import java.util.ArrayList;
 import java.util.List;
@@ -8,6 +7,9 @@ import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 
 /**
+ * Null-object dictionary for a section with no entries (e.g. a source with no
+ * literals). Every operation answers honestly for an empty dictionary instead
+ * of throwing template "Not supported yet." exceptions.
  *
  * @author Erich Bremer
  */
@@ -33,16 +35,18 @@ public class EmptyDictionaryWriter extends AbstractDictionary implements Diction
 
     @Override
     public Node extract(long id) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        throw new IllegalArgumentException("id [" + id + "]: empty dictionary has no entries");
     }
 
     @Override
     public Stream<Node> streamNodes() {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        return Stream.empty();
     }
 
     @Override
     public long search(Node element) {
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        // Nothing matches; the insertion point in an empty 1-based dictionary is 1,
+        // encoded -(insertion)-1 per the search contract.
+        return -2;
     }
 }

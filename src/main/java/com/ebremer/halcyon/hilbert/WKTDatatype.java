@@ -2,7 +2,6 @@ package com.ebremer.halcyon.hilbert;
 
 import org.apache.jena.datatypes.BaseDatatype;
 import org.apache.jena.datatypes.DatatypeFormatException;
-import org.apache.jena.graph.impl.LiteralLabel;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
@@ -10,8 +9,15 @@ import org.locationtech.jts.io.WKTWriter;
 
 public class WKTDatatype extends BaseDatatype {
 
-    public static final String URI = "http://www.opengis.net/ont/geosparql#wktLiteral";   
+    public static final String URI = "http://www.opengis.net/ont/geosparql#wktLiteral";
     public static final WKTDatatype INSTANCE = new WKTDatatype();
+
+    static {
+        // Self-register on first touch: without this, the parse/equality machinery
+        // below was inert - TypeMapper handed out a generic datatype for
+        // geo:wktLiteral and nothing ever consulted this class.
+        org.apache.jena.datatypes.TypeMapper.getInstance().registerDatatype(INSTANCE);
+    }
 
     private WKTDatatype() {
         super(URI);
@@ -21,7 +27,7 @@ public class WKTDatatype extends BaseDatatype {
      * Parse the Lexical Form (String) into a Java Object (JTS Geometry).
      * GeoSPARQL literals can look like: "<http://www.opengis.net/def/crs/EPSG/0/4326> POINT(10 20)"
      * @param lexicalForm
-     * @return 
+     * @return
      */
     @Override
     public Object parse(String lexicalForm) throws DatatypeFormatException {
@@ -38,10 +44,16 @@ public class WKTDatatype extends BaseDatatype {
             }
             WKTReader reader = new WKTReader();
             return reader.read(cleanWkt);
-        } catch (ParseException e) {
+        } catch (ParseException | RuntimeException e) {
+            // JTS throws IllegalArgumentException - not ParseException - for
+            // structurally invalid geometry (e.g. a two-point ring), and RIOT
+            // validates every wktLiteral through this method now that the
+            // datatype is registered. Anything escaping here turns one bad
+            // literal into a fatal abort of the whole parse; wrapping it makes
+            // it the ill-typed-literal warning it should be.
             throw new DatatypeFormatException(
-                lexicalForm, 
-                this, 
+                lexicalForm,
+                this,
                 "Invalid WKT format: " + e.getMessage()
             );
         }
@@ -76,24 +88,10 @@ public class WKTDatatype extends BaseDatatype {
         }
     }
     
-    /**
-     * Comparison logic for SPARQL FILTERs
-     * @param value1
-     * @param value2
-     * @return 
-     */
-    @Override
-    public boolean isEqual(LiteralLabel value1, LiteralLabel value2) {
-        // Parse both to Geometries and check equality (topological equality)
-        if (value1.getDatatype() == this && value2.getDatatype() == this) {
-            try {
-                Geometry g1 = (Geometry) value1.getValue();
-                Geometry g2 = (Geometry) value2.getValue();
-                return g1.equals(g2); // JTS topological equality
-            } catch (Exception e) {
-                return false;
-            }
-        }
-        return super.isEqual(value1, value2);
-    }
+    // NOTE: no isEqual override. An earlier version compared wktLiterals by JTS
+    // topological equality, which changes RDF *term* equality - sameTerm, HashSet
+    // membership, and the writer's dictionary deduplication would silently
+    // collapse lexically distinct geometries (and pay a JTS parse per equality
+    // check). Term equality stays lexical (the BaseDatatype default); geometric
+    // comparison belongs in filter functions like geof:sfIntersects.
 }

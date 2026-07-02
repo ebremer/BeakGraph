@@ -1,0 +1,27 @@
+# Linux + Windows test matrix. The Linux leg exists deliberately: the LWS
+# symlink-escape test (LWSStorageServletTest.resolveWithinRejectsSymlinkEscape)
+# auto-skips on Windows without symlink privileges, so Windows-only development
+# never exercises that protection.
+name: CI
+
+on:
+  push:
+    branches: [ master, next ]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+      - name: Build and test
+        run: mvn -B -Plib clean test

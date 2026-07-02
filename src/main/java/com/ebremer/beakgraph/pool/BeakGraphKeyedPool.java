@@ -19,13 +19,18 @@ public class BeakGraphKeyedPool extends GenericKeyedObjectPool<URI, BeakGraph> {
     
     @Override
     public BeakGraph borrowObject(final URI key) throws Exception {
-        logger.trace("borrowObject {}\n{}", key, getStatus());
+        // getStatus() takes five pool-lock metrics; only pay for it when TRACE is on.
+        if (logger.isTraceEnabled()) {
+            logger.trace("borrowObject {}\n{}", key, getStatus());
+        }
         return super.borrowObject(key);
     }
-    
+
     @Override
     public void returnObject(final URI key, final BeakGraph reader) {
-        logger.trace("returnObject {}\n{}", key, getStatus());
+        if (logger.isTraceEnabled()) {
+            logger.trace("returnObject {}\n{}", key, getStatus());
+        }
         super.returnObject(key, reader);
     }
     
