@@ -46,9 +46,37 @@ class LWSStorageServletTest {
     void descriptionJsonIsWellFormed() {
         JsonObject doc = parse(LWSStorageServlet.descriptionJson("https://base.example/"));
         assertEquals("Storage", doc.getString("type"));
-        assertEquals("https://base.example/", doc.getString("@id"));
+        // LWS Discovery data model: the storage is identified by "id" (the lws/v1
+        // context maps it to @id), and the StorageDescription service is mandatory.
+        assertEquals("https://base.example/", doc.getString("id"));
+        assertEquals("StorageDescription",
+            doc.getJsonArray("service").getJsonObject(0).getString("type"));
+        assertEquals("https://base.example/description",
+            doc.getJsonArray("service").getJsonObject(0).getString("serviceEndpoint"));
         assertEquals("https://base.example/sparql",
             doc.getJsonArray("service").getJsonObject(1).getString("serviceEndpoint"));
+    }
+
+    @Test
+    void parseRangeHandlesTheSingleRangeForms() {
+        long size = 100;
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new long[]{2, 5},
+            LWSStorageServlet.parseRange("bytes=2-5", size));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new long[]{90, 99},
+            LWSStorageServlet.parseRange("bytes=90-", size), "open-ended range runs to EOF");
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new long[]{90, 99},
+            LWSStorageServlet.parseRange("bytes=-10", size), "suffix range takes the last N bytes");
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new long[]{0, 99},
+            LWSStorageServlet.parseRange("bytes=0-500", size), "end clamps to size-1");
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new long[]{-1, -1},
+            LWSStorageServlet.parseRange("bytes=100-", size), "start at/after EOF is unsatisfiable");
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new long[]{-1, -1},
+            LWSStorageServlet.parseRange("bytes=-0", size), "empty suffix is unsatisfiable");
+        assertNull(LWSStorageServlet.parseRange(null, size), "no header -> full response");
+        assertNull(LWSStorageServlet.parseRange("bytes=0-1,5-9", size), "multi-range is ignored");
+        assertNull(LWSStorageServlet.parseRange("items=0-5", size), "non-bytes unit is ignored");
+        assertNull(LWSStorageServlet.parseRange("bytes=x-y", size), "garbage is ignored");
+        assertNull(LWSStorageServlet.parseRange("bytes=5-2", size), "inverted range is ignored");
     }
 
     @Test
