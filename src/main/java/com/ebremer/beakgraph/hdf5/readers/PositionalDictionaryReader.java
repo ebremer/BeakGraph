@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.readers;
 import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
+import com.ebremer.beakgraph.io.DatasetBytes;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
 import java.util.Optional;
@@ -38,11 +39,11 @@ public class PositionalDictionaryReader implements GSPODictionary {
         this.maxEntityId = (entities != null) ? entities.getNumberOfNodes() : 0;
         
         this.graphs = getDataSet(dictionary, "graphs").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.subjects = getDataSet(dictionary, "subjects").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objects = getDataSet(dictionary, "objects").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objectsDict = makeObjectsDictionary();
     }
     

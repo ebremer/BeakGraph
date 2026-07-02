@@ -5,6 +5,7 @@ import com.beust.jcommander.ParameterException;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.SPARQLEndPoint;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
+import com.ebremer.beakgraph.huge.HugeHDF5Writer;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -209,13 +210,31 @@ public class BeakGraphCLI {
                     return null;
                 }
                 dest.getParent().toFile().mkdirs();
-                HDF5Writer.Builder()
-                    .setSource(src.toFile())
-                    .setDestination(dest.toFile())
-                    .setSpatial(params.spatial)
-                    .setFeatures(params.features)
-                    .build()
-                    .write();
+                if (params.huge) {
+                    // Disk-based build: same output format, but sorting/indexing
+                    // spill to a workspace instead of the heap. Note the huge
+                    // writer needs the native HDF5 backend on the classpath (the
+                    // hdf5-backend-* profiles); with -threads N, N builds run
+                    // concurrently, each with its own workspace.
+                    HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
+                        .setSource(src.toFile())
+                        .setDestination(dest.toFile())
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features);
+                    if (params.workdir != null) {
+                        params.workdir.mkdirs();
+                        builder.setWorkDirectory(params.workdir.toPath());
+                    }
+                    builder.build().write();
+                } else {
+                    HDF5Writer.Builder()
+                        .setSource(src.toFile())
+                        .setDestination(dest.toFile())
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features)
+                        .build()
+                        .write();
+                }
             } catch (Exception ex) {
                 fc.incrementFailedConversionFileCount();
                 logger.error("Failed to convert {}", src, ex);

@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.15.0</version>
+    <version>0.16.0</version>
     <packaging>jar</packaging>
    
     <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
@@ -53,6 +53,21 @@
         <log4j.version>2.25.2</log4j.version>
         <slf4j.version>2.0.17</slf4j.version>
         <jhdf.version>0.10.0</jhdf.version>
+        <!-- Native HDF5 (https://github.com/HDFGroup/hdf5) backend versions for the
+             com.ebremer.beakgraph.huge writers, which need incremental (chunk-at-a-
+             time) dataset writing that jHDF does not yet support. All writer code
+             targets the official hdf.hdf5lib.H5 API, which BOTH backends provide;
+             selection is a build-time dependency choice (identical class names
+             cannot coexist on one classpath). See the hdf5-backend-* profiles:
+             the JavaCPP preset (bundled natives, Maven Central) is the default;
+             -Dhdf5.ffm switches to the HDF Group's own Java 25 FFM bindings. -->
+        <hdf5.javacpp.version>1.14.3-1.5.10</hdf5.javacpp.version>
+        <hdf5.ffm.version>2.1.1</hdf5.ffm.version>
+        <!-- Overridden by the OS-detection profiles below; set explicitly
+             (-Dhdf5.ffm.classifier=...) for platforms they do not recognize.
+             Published classifiers: linux-x86_64, windows-x86_64, macos-x86_64,
+             macos-aarch64. -->
+        <hdf5.ffm.classifier>linux-x86_64</hdf5.ffm.classifier>
         <jcommander.version>3.0</jcommander.version>
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
@@ -209,7 +224,18 @@
         <profile>
             <id>lib</id>
             <activation>
-                <activeByDefault>true</activeByDefault>
+                <!-- Was activeByDefault, which Maven silently DISABLES whenever any
+                     other profile in this POM activates - and the hdf5-backend-*
+                     profiles below auto-activate on every build. Property-based
+                     "active unless -Dthin" keeps lib on in all builds regardless of
+                     other profiles. Consequences: lib now also stays active with
+                     -Pcmdlinejar (its shade execution merges with lib's identical
+                     one, so the jar is shaded once, same output as before) and with
+                     -Pcmdlinenative (pass -Dthin there to skip shading if the
+                     native-image build should see plain classes + thin deps). -->
+                <property>
+                    <name>!thin</name>
+                </property>
             </activation>
             <build>
                 <finalName>BeakGraph-${project.version}</finalName>
@@ -374,6 +400,121 @@
                 </plugins>
             </build>
         </profile>
+
+        <!-- ================= Native HDF5 backend selection =================
+             The com.ebremer.beakgraph.huge writers call the official
+             hdf.hdf5lib.H5 API; the two profiles below choose which jar
+             provides it. Property-based activation (not activeByDefault) on
+             purpose: activating any -P profile would silently deactivate an
+             activeByDefault backend and drop hdf.hdf5lib from the classpath. -->
+        <profile>
+            <!-- DEFAULT: JavaCPP preset of HDF5 1.14.3. On Maven Central, and the
+                 platform jars bundle the C library for linux/macos/windows x86_64,
+                 so builds and consumers need no system HDF5 install. Same optional
+                 pattern as the log4j backend: consumers are not forced to pull the
+                 ~40MB of natives unless they use com.ebremer.beakgraph.huge; the
+                 shaded fat jars still package it. -->
+            <id>hdf5-backend-javacpp</id>
+            <activation>
+                <property>
+                    <name>!hdf5.ffm</name>
+                </property>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>org.bytedeco</groupId>
+                    <artifactId>hdf5-platform</artifactId>
+                    <version>${hdf5.javacpp.version}</version>
+                    <optional>true</optional>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <!-- OPT-IN (-Dhdf5.ffm): the HDF Group's own Java bindings for HDF5
+                 ${hdf5.ffm.version}, using the Java 25 FFM API (no JNI glue). Same
+                 hdf.hdf5lib.H5 API, so no BeakGraph code changes - any 2.x
+                 signature drift would surface only in NativeHdf5File.
+                 Two prerequisites, which is why this is not the default:
+                 1. GitHub Packages requires authentication even for public
+                    artifacts. Add to ~/.m2/settings.xml:
+                        <server>
+                          <id>github-hdfgroup</id>
+                          <username>YOUR_GITHUB_USERNAME</username>
+                          <password>PAT with read:packages scope</password>
+                        </server>
+                 2. The jars do NOT bundle the C library: a matching HDF5 2.1.x
+                    shared library must be installed and discoverable at runtime
+                    (PATH / LD_LIBRARY_PATH / DYLD_LIBRARY_PATH).
+                 The FFM API additionally needs the JVM flag
+                 - -enable-native-access=ALL-UNNAMED, which this build already
+                 passes (surefire argLine) and stamps into the jar manifests.
+                 Swap this profile to the JNI flavor by changing the artifactId to
+                 hdf5-java-jni. When the HDF Group publishes to Maven Central,
+                 drop the <repositories> block and consider making this the
+                 default backend. -->
+            <id>hdf5-backend-ffm</id>
+            <activation>
+                <property>
+                    <name>hdf5.ffm</name>
+                </property>
+            </activation>
+            <repositories>
+                <repository>
+                    <id>github-hdfgroup</id>
+                    <name>HDF Group GitHub Packages</name>
+                    <url>https://maven.pkg.github.com/HDFGroup/hdf5</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+            </repositories>
+            <dependencies>
+                <dependency>
+                    <groupId>org.hdfgroup</groupId>
+                    <artifactId>hdf5-java-ffm</artifactId>
+                    <version>${hdf5.ffm.version}</version>
+                    <classifier>${hdf5.ffm.classifier}</classifier>
+                    <optional>true</optional>
+                </dependency>
+            </dependencies>
+        </profile>
+        <!-- OS detection for the FFM platform classifier; inert unless the
+             hdf5-backend-ffm profile is active. -->
+        <profile>
+            <id>hdf5-ffm-windows</id>
+            <activation>
+                <os><family>windows</family></os>
+            </activation>
+            <properties>
+                <hdf5.ffm.classifier>windows-x86_64</hdf5.ffm.classifier>
+            </properties>
+        </profile>
+        <profile>
+            <id>hdf5-ffm-linux</id>
+            <activation>
+                <os><name>linux</name><arch>amd64</arch></os>
+            </activation>
+            <properties>
+                <hdf5.ffm.classifier>linux-x86_64</hdf5.ffm.classifier>
+            </properties>
+        </profile>
+        <profile>
+            <id>hdf5-ffm-macos-intel</id>
+            <activation>
+                <os><family>mac</family><arch>x86_64</arch></os>
+            </activation>
+            <properties>
+                <hdf5.ffm.classifier>macos-x86_64</hdf5.ffm.classifier>
+            </properties>
+        </profile>
+        <profile>
+            <id>hdf5-ffm-macos-arm</id>
+            <activation>
+                <os><family>mac</family><arch>aarch64</arch></os>
+            </activation>
+            <properties>
+                <hdf5.ffm.classifier>macos-aarch64</hdf5.ffm.classifier>
+            </properties>
+        </profile>
     </profiles>
     <dependencies>
         <dependency>
@@ -455,6 +596,9 @@
             <artifactId>jhdf</artifactId>
             <version>${jhdf.version}</version>
         </dependency>
+        <!-- The native HDF5 backend for com.ebremer.beakgraph.huge is supplied by
+             one of the hdf5-backend-* profiles (JavaCPP by default, HDF Group FFM
+             with -Dhdf5.ffm) - see <profiles> below. -->
         <dependency>
             <groupId>org.jcommander</groupId>
             <artifactId>jcommander</artifactId>

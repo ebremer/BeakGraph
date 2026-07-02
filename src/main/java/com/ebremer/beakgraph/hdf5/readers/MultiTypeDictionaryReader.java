@@ -4,10 +4,10 @@ import com.ebremer.beakgraph.core.AbstractDictionary;
 import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
+import com.ebremer.beakgraph.io.DatasetBytes;
+import com.ebremer.beakgraph.io.RandomAccessBytes;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.stream.LongStream;
@@ -25,8 +25,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final BitPackedUnSignedLongBuffer longs;
     private final BitPackedUnSignedLongBuffer datatype;
     private final BitPackedUnSignedLongBuffer typedLiterals;
-    private final ByteBuffer floats;
-    private final ByteBuffer doubles;
+    private final RandomAccessBytes floats;
+    private final RandomAccessBytes doubles;
     private final FCDReader iri;
     private final FCDReader strings;
     private final FCDReader typedLiteralsDictionary;
@@ -52,22 +52,22 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.name = d.getName();
         ContiguousDataset offsetsDS = (ContiguousDataset) d.getDatasetByPath("offsets");
         this.numEntries = (Long) offsetsDS.getAttribute("numEntries").getData();
-        this.offsets = new BitPackedUnSignedLongBuffer(null, offsetsDS.getBuffer(), numEntries, (Integer) offsetsDS.getAttribute("width").getData());
+        this.offsets = BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(offsetsDS), numEntries, (Integer) offsetsDS.getAttribute("width").getData());
 
         ContiguousDataset datatypeDS = (ContiguousDataset) d.getDatasetByPath("datatypes");
-        this.datatype = new BitPackedUnSignedLongBuffer(null, datatypeDS.getBuffer(), (Long) datatypeDS.getAttribute("numEntries").getData(), (Integer) datatypeDS.getAttribute("width").getData());
+        this.datatype = BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(datatypeDS), (Long) datatypeDS.getAttribute("numEntries").getData(), (Integer) datatypeDS.getAttribute("width").getData());
 
         ContiguousDataset typedLiteralsDS = (ContiguousDataset) d.getChild("typedLiterals");
-        this.typedLiterals = (typedLiteralsDS != null) ? new BitPackedUnSignedLongBuffer(null, typedLiteralsDS.getBuffer(), (Long) typedLiteralsDS.getAttribute("numEntries").getData(), (Integer) typedLiteralsDS.getAttribute("width").getData()) : null;
+        this.typedLiterals = (typedLiteralsDS != null) ? BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(typedLiteralsDS), (Long) typedLiteralsDS.getAttribute("numEntries").getData(), (Integer) typedLiteralsDS.getAttribute("width").getData()) : null;
 
-        this.doubles = getDataSet(d, "doubles").map(ds -> ds.getBuffer().order(ByteOrder.BIG_ENDIAN)).orElse(null);
-        this.floats = getDataSet(d, "floats").map(ds -> ds.getBuffer().order(ByteOrder.BIG_ENDIAN)).orElse(null);
+        this.doubles = getDataSet(d, "doubles").map(DatasetBytes::of).orElse(null);
+        this.floats = getDataSet(d, "floats").map(DatasetBytes::of).orElse(null);
 
         this.integers = getDataSet(d, "integers").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
 
         this.longs = getDataSet(d, "longs").map(ds ->
-            new BitPackedUnSignedLongBuffer(null, ds.getBuffer(), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
 
         Group stringsG = (Group) d.getChild("strings");
         this.strings = (stringsG != null) ? new FCDReader(stringsG) : null;
@@ -81,7 +81,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         Group langsG = (Group) d.getChild("langs");
         this.langs = (langsG != null) ? new FCDReader(langsG) : null;
         ContiguousDataset langTagsDS = (ContiguousDataset) d.getChild("langTags");
-        this.langTags = (langTagsDS != null) ? new BitPackedUnSignedLongBuffer(null, langTagsDS.getBuffer(), (Long) langTagsDS.getAttribute("numEntries").getData(), (Integer) langTagsDS.getAttribute("width").getData()) : null;
+        this.langTags = (langTagsDS != null) ? BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(langTagsDS), (Long) langTagsDS.getAttribute("numEntries").getData(), (Integer) langTagsDS.getAttribute("width").getData()) : null;
     }
 
     private TieredIndex tieredIndex() {
@@ -130,8 +130,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         Node na = switch (dt) {
             case INTEGER -> NodeFactory.createLiteralByValue((int) integers.get(off));
             case LONG -> NodeFactory.createLiteralByValue(longs.get(off));
-            case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat(Math.toIntExact(off * Float.BYTES)));
-            case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble(Math.toIntExact(off * Double.BYTES)));
+            case FLOAT -> NodeFactory.createLiteralByValue(floats.getFloat(off * Float.BYTES));
+            case DOUBLE -> NodeFactory.createLiteralByValue(doubles.getDouble(off * Double.BYTES));
             case STRING -> {
                 // A language tag takes precedence: rdf:langString is reconstructed
                 // as a lang-tagged literal (term-exact per RDF semantics).

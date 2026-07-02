@@ -1,15 +1,17 @@
 package com.ebremer.beakgraph.core.lib;
 
+import com.ebremer.beakgraph.io.RandomAccessBytes;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
 
 /**
  * Variable-byte (VByte) encoding, trimmed to the two operations the
  * front-coded dictionaries actually use: streaming encode at write time and
  * position-independent decode at read time. The signed (zig-zag), byte-array
  * and position-mutating ByteBuffer variants that accumulated here had no
- * callers and were removed in the dead-code sweep.
+ * callers and were removed in the dead-code sweep. The decode side reads
+ * through {@link RandomAccessBytes} with long offsets (its only caller is
+ * FCDReader), so string buffers past 2 GiB decode without int truncation.
  */
 public class VByte {
 
@@ -35,20 +37,20 @@ public class VByte {
     }
 
     /**
-     * Decode an unsigned long from a ByteBuffer at an absolute offset, WITHOUT moving the
-     * buffer's position. This lets a single buffer be read by concurrent threads safely.
-     * @param buffer the buffer to read from
+     * Decode an unsigned long at an absolute offset. Absolute reads only, so a
+     * single backing region can be read by concurrent threads safely.
+     * @param bytes the region to read from
      * @param offset the absolute byte offset to start decoding at
      * @return value and nextOffset (the absolute position just past the encoded value)
      */
-    public static DecodeResult decodeAt(ByteBuffer buffer, int offset) {
+    public static DecodeResult decodeAt(RandomAccessBytes bytes, long offset) {
         long result = 0;
         int shift = 0;
-        int pos = offset;
+        long pos = offset;
         byte b;
         do {
             if (shift >= 64) throw new IllegalArgumentException("VByte sequence too long");
-            b = buffer.get(pos++);
+            b = bytes.get(pos++);
             result |= (long)(b & 0x7F) << shift;
             shift += 7;
         } while ((b & 0x80) == 0);
@@ -60,9 +62,9 @@ public class VByte {
      */
     public static class DecodeResult {
         public final long value;
-        public final int nextOffset;
+        public final long nextOffset;
 
-        public DecodeResult(long value, int nextOffset) {
+        public DecodeResult(long value, long nextOffset) {
             this.value = value;
             this.nextOffset = nextOffset;
         }
