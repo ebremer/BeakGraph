@@ -112,27 +112,35 @@ public class OpExecutorBG extends OpExecutor {
     }
     
     private static QueryIterator plainExecute(Op op, QueryIterator input, ExecutionContext execCxt) {
-        ExecutionContextBG ec = new ExecutionContextBG(execCxt, op);
-        ec.setExecutor(plainFactory);
+        // Jena 6: ExecutionContext is final, so the placed filter can no longer
+        // ride on a context subclass (the old ExecutionContextBG). It rides on a
+        // per-call executor FACTORY instead - immutable and per-execution, so
+        // executors created lazily during iteration (e.g. substitution joins
+        // re-executing the RHS per binding) still see exactly their op's filter.
+        ExprList filter = (op instanceof OpFilter opFilter) ? opFilter.getExprs() : null;
+        ExecutionContext ec = ExecutionContext.copyChangeExecutor(execCxt, new OpExecutorPlainFactoryBeak(filter));
         return QC.execute(op, input, ec) ;
     }
-    
-    private static final OpExecutorFactory plainFactory = new OpExecutorPlainFactoryBeak();
-    
+
     private static class OpExecutorPlainFactoryBeak implements OpExecutorFactory {
+        private final ExprList filter;
+
+        OpExecutorPlainFactoryBeak(ExprList filter) {
+            this.filter = filter;
+        }
+
         @Override
         public OpExecutor create(ExecutionContext execCxt) {
-            return new OpExecutorPlainBeak(execCxt) ;
+            return new OpExecutorPlainBeak(execCxt, filter) ;
         }
     }
-    
+
     private static class OpExecutorPlainBeak extends OpExecutor {
         final ExprList filter;
 
-        public OpExecutorPlainBeak(ExecutionContext execCxt) {
+        public OpExecutorPlainBeak(ExecutionContext execCxt, ExprList filter) {
             super(execCxt);
-            ExecutionContextBG ecr = (ExecutionContextBG) execCxt;
-            filter = ecr.getFilter();
+            this.filter = filter;
         }
 
         @Override

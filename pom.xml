@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>BeakGraph</artifactId>
     <name>BeakGraph</name>
-    <version>0.16.0</version>
+    <version>0.17.0</version>
     <packaging>jar</packaging>
    
     <description>Library for creating indexed binary storages for Apache Jena Graphs and Datasets</description>
@@ -40,7 +40,7 @@
         <exec.mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</exec.mainClass>
        
         <!-- Dependency versions -->
-        <jena.version>5.6.0</jena.version>
+        <jena.version>6.1.0</jena.version>
         <!--<arrow.version>18.3.0</arrow.version>-->
         <commons-compress.version>1.28.0</commons-compress.version>
         <commons-collections.version>4.5.0</commons-collections.version>
@@ -74,9 +74,10 @@
         <aircompressor.version>3.6</aircompressor.version>
         <commons.pool.ver>2.13.1</commons.pool.ver>
         <commons.io.version>2.21.0</commons.io.version>
-        <!-- Matches the version Jena pulls in transitively; declared explicitly because
-             SimpleNodeTable uses Caffeine directly (so don't rely on a transitive dep). -->
-        <caffeine.version>3.2.2</caffeine.version>
+        <!-- Matches the version Jena pulls in transitively (Jena 6.1 manages 3.2.3);
+             declared explicitly because SimpleNodeTable uses Caffeine directly
+             (so don't rely on a transitive dep). -->
+        <caffeine.version>3.2.3</caffeine.version>
        
         <!-- Plugin versions -->
         <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>

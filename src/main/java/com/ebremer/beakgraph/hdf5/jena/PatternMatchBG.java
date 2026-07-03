@@ -50,14 +50,16 @@ public class PatternMatchBG {
 
         // Execute all triple patterns (the ExprList is range-pushdown hints only;
         // full filter semantics are enforced by the surrounding OpFilter).
+        // Jena 6: makeAbortable takes the execution's cancel signal directly,
+        // mirroring Jena's own solvers.
         for (Triple triple : triples) {
             chain = solve(bGraph, triple, filter, chain, execCxt);
-            chain = makeAbortable(chain, killList);
+            chain = makeAbortable(chain, killList, execCxt.getCancelSignal());
         }
 
         // Convert back to Jena bindings
         Iterator<Binding> iterBinding = SolverLibBeak.convertToNodes(chain, bGraph);
-        iterBinding = makeAbortable(iterBinding, killList);
+        iterBinding = makeAbortable(iterBinding, killList, execCxt.getCancelSignal());
         return new QueryIterAbortable(iterBinding, killList, input, execCxt);
     }
 
