@@ -1,11 +1,7 @@
 package com.ebremer.beakgraph.utils;
 
-import io.airlift.compress.v3.zstd.ZstdCompressor;
-import io.airlift.compress.v3.zstd.ZstdDecompressor;
-import io.airlift.compress.v3.zstd.ZstdJavaCompressor;
-import io.airlift.compress.v3.zstd.ZstdJavaDecompressor;
-import io.airlift.compress.v3.zstd.ZstdNativeCompressor;
-import io.airlift.compress.v3.zstd.ZstdNativeDecompressor;
+import io.airlift.compress.v3.zstdFFM.ZstdCompressor;
+import io.airlift.compress.v3.zstdFFM.ZstdDecompressor;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -20,19 +16,14 @@ public final class StringUtils {
     private static final int HEADER_SIZE = 4; // To store uncompressed length
 
     /**
-     * Selects the Zstd implementation: the native (Foreign Function and Memory
-     * API) binding when its bundled library is available, otherwise the
-     * pure-Java port. The native path avoids sun.misc.Unsafe (deprecated for
-     * removal); the Java path remains the portable fallback.
+     * Selects the Zstd implementation via the vendored zstdFFM package (see
+     * io/airlift/compress/v3/zstdFFM/README.md): the native binding when its
+     * bundled library loads, otherwise the FFM-based pure-Java port. Neither
+     * path touches sun.misc.Unsafe (deprecated for removal).
      */
     public StringUtils() {
-        if (ZstdNativeCompressor.isEnabled()) {
-            COMPRESSOR = new ZstdNativeCompressor();
-            DECOMPRESSOR = new ZstdNativeDecompressor();
-        } else {
-            COMPRESSOR = new ZstdJavaCompressor();
-            DECOMPRESSOR = new ZstdJavaDecompressor();
-        }
+        COMPRESSOR = ZstdCompressor.create();
+        DECOMPRESSOR = ZstdDecompressor.create();
     }
 
     /**
