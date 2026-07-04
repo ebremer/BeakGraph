@@ -33,8 +33,8 @@ public class Parameters {
     public boolean features = false;
 
     @Parameter(names = {"-huge"}, converter = BooleanConverter.class,
-            description = "Use the disk-based writer (com.ebremer.beakgraph.huge): sorts and "
-                        + "indexes on disk instead of RAM, for sources too large for the heap")
+            description = "Shorthand for \"-method 1\": the disk-based writer "
+                        + "(com.ebremer.beakgraph.huge). An explicit -method takes precedence")
     public boolean huge = false;
 
     @Parameter(names = "-workdir",
@@ -48,19 +48,28 @@ public class Parameters {
                         + "into ONE BeakGraph HDF5 file at -dest instead of one .h5 per source "
                         + "(if -dest is an existing directory, writes <dest>/merged.h5; an "
                         + "existing destination file is rebuilt). Blank nodes stay distinct per "
-                        + "source document. Works with the default, -parallel, and -huge writers")
+                        + "source document. Works with every -method")
     public boolean merge = false;
 
-    @Parameter(names = {"-parallel"}, converter = BooleanConverter.class,
-            description = "Use the multi-threaded in-memory writer "
-                        + "(com.ebremer.beakgraph.hdf5.writers.parallel): builds each file's "
-                        + "dictionaries, columnar id lists, and GSPO/GPOS indexes concurrently "
-                        + "on -cores threads. Ignored when -huge is set")
-    public boolean parallel = false;
+    @Parameter(names = "-method", validateWith = MethodValidator.class,
+            description = "Conversion engine: 0 = sequential in-memory writer (default), "
+                        + "1 = disk-based writer for sources too large for the heap "
+                        + "(com.ebremer.beakgraph.huge; needs the native HDF5 backend, see -workdir), "
+                        + "2 = multi-threaded in-memory writer "
+                        + "(com.ebremer.beakgraph.hdf5.writers.parallel) on -cores threads, "
+                        + "3 = ultra in-memory writer (com.ebremer.beakgraph.hdf5.writers.ultra): "
+                        + "parallel parsing, radix-sorted packed-key indexes, and parallel index "
+                        + "emission on -cores threads, "
+                        + "4 = hugeUltra parallel DISK-based writer "
+                        + "(com.ebremer.beakgraph.hdf5.writers.hugeUltra) for multi-billion-quad "
+                        + "builds: bounded RAM like -method 1, but with radix-sorted bit-packed "
+                        + "spill runs, background spilling, and concurrent pipeline stages on "
+                        + "-cores threads (needs the native HDF5 backend; honors -workdir)")
+    public int method = 0;
 
     @Parameter(names = "-cores", validateWith = PositiveInteger.class,
-            description = "# of threads each -parallel conversion may use (with -threads N, "
-                        + "N conversions run at once, each capped at -cores)")
+            description = "# of threads each -method 2 or -method 3 conversion may use (with "
+                        + "-threads N, N conversions run at once, each capped at -cores)")
     public int cores = 4;
 
     @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)

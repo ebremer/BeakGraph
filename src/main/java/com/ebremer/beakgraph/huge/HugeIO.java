@@ -15,7 +15,7 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-final class HugeIO {
+public final class HugeIO {
 
     /** Copy buffer for temp-file-to-HDF5 streaming; bounds writer RAM per transfer. */
     static final int TRANSFER_BUFFER_BYTES = 8 * 1024 * 1024;
@@ -34,7 +34,7 @@ final class HugeIO {
     }
 
     /** Unsigned LEB128-style varint (7 bits per byte, high bit = continuation). */
-    static void writeVarLong(DataOutput out, long value) throws IOException {
+    public static void writeVarLong(DataOutput out, long value) throws IOException {
         if (value < 0) {
             throw new IllegalArgumentException("varint value must be non-negative: " + value);
         }
@@ -45,7 +45,7 @@ final class HugeIO {
         out.writeByte((int) value);
     }
 
-    static long readVarLong(DataInput in) throws IOException {
+    public static long readVarLong(DataInput in) throws IOException {
         long result = 0;
         int shift = 0;
         while (true) {
@@ -71,3 +71,4 @@ final class HugeIO {
         return data;
     }
 }
+

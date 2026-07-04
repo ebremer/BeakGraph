@@ -77,25 +77,24 @@ class BeakGraphCLIConversionTest {
         }
     }
 
-    @Test
-    void parallelFlagConvertsThroughParallelWriter() throws Exception {
-        Path src = Files.createDirectories(dir.resolve("srcpar"));
+    private void convertsWithMethod(int method, String tag) throws Exception {
+        Path src = Files.createDirectories(dir.resolve("src" + tag));
         Files.write(src.resolve("data.ttl"),
                 "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n".getBytes(StandardCharsets.UTF_8));
 
         Parameters p = new Parameters();
         p.src = src.toFile();
-        p.dest = dir.resolve("outpar").toFile();
-        p.parallel = true;
+        p.dest = dir.resolve("out" + tag).toFile();
+        p.method = method;
         p.cores = 2;
 
         BeakGraphCLI cli = new BeakGraphCLI(p);
         cli.traverse();
 
         assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(),
-                "the -parallel conversion must succeed");
-        File h5 = dir.resolve("outpar").resolve("data.h5").toFile();
-        assertTrue(h5.exists() && h5.length() > 0, "the -parallel writer must produce the .h5 file");
+                "the -method " + method + " conversion must succeed");
+        File h5 = dir.resolve("out" + tag).resolve("data.h5").toFile();
+        assertTrue(h5.exists() && h5.length() > 0, "the -method " + method + " writer must produce the .h5 file");
         // The produced store must be readable by the standard reader stack.
         try (com.ebremer.beakgraph.core.BeakGraph bg = new com.ebremer.beakgraph.core.BeakGraph(
                 new com.ebremer.beakgraph.hdf5.readers.HDF5Reader(h5))) {
@@ -107,14 +106,37 @@ class BeakGraphCLIConversionTest {
     }
 
     @Test
-    void parallelAndCoresOptionsParse() {
-        // The exact spellings the writer is documented with: -parallel and -cores.
+    void methodTwoConvertsThroughParallelWriter() throws Exception {
+        convertsWithMethod(2, "par");
+    }
+
+    @Test
+    void methodThreeConvertsThroughUltraWriter() throws Exception {
+        convertsWithMethod(3, "ultra");
+    }
+
+    @Test
+    void methodAndCoresOptionsParse() {
+        // The exact spellings the writers are documented with: -method and -cores.
         Parameters p = new Parameters();
         com.beust.jcommander.JCommander.newBuilder().addObject(p).build()
-                .parse("-src", "x", "-parallel", "-cores", "6");
-        assertTrue(p.parallel, "-parallel must set the flag");
+                .parse("-src", "x", "-method", "3", "-cores", "6");
+        assertEquals(3, p.method, "-method must set the engine");
         assertEquals(6, p.cores, "-cores must override the default");
         assertEquals(4, new Parameters().cores, "-cores must default to 4");
+        assertEquals(0, new Parameters().method, "-method must default to the in-memory writer");
+        org.junit.jupiter.api.Assertions.assertThrows(com.beust.jcommander.ParameterException.class,
+                () -> com.beust.jcommander.JCommander.newBuilder().addObject(new Parameters()).build()
+                        .parse("-src", "x", "-method", "5"),
+                "-method outside 0..4 must be rejected");
+    }
+
+    @Test
+    void methodFourConvertsThroughHugeUltraWriter() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
+                "native HDF5 library unavailable");
+        convertsWithMethod(4, "hugeultra");
     }
 
     @Test

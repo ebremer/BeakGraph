@@ -22,35 +22,35 @@ import org.apache.jena.graph.Node;
  *
  * @author Erich Bremer
  */
-final class HugeRecords {
+public final class HugeRecords {
 
     private HugeRecords() {}
 
-    record TermRow(Node term, long row) {}
+    public record TermRow(Node term, long row) {}
 
-    record RowId(long row, long id) {}
+    public record RowId(long row, long id) {}
 
-    record IdQuad(long g, long s, long p, long o) {}
+    public record IdQuad(long g, long s, long p, long o) {}
 
     /** Term order only; equal terms may interleave rows arbitrarily (the join maps them to one id). */
-    static final Comparator<TermRow> TERM_ORDER =
+    public static final Comparator<TermRow> TERM_ORDER =
             (a, b) -> NodeComparator.INSTANCE.compare(a.term(), b.term());
 
-    static final Comparator<RowId> ROW_ORDER = Comparator.comparingLong(RowId::row);
+    public static final Comparator<RowId> ROW_ORDER = Comparator.comparingLong(RowId::row);
 
-    static final Comparator<IdQuad> GSPO_ORDER = Comparator
+    public static final Comparator<IdQuad> GSPO_ORDER = Comparator
             .comparingLong(IdQuad::g)
             .thenComparingLong(IdQuad::s)
             .thenComparingLong(IdQuad::p)
             .thenComparingLong(IdQuad::o);
 
-    static final Comparator<IdQuad> GPOS_ORDER = Comparator
+    public static final Comparator<IdQuad> GPOS_ORDER = Comparator
             .comparingLong(IdQuad::g)
             .thenComparingLong(IdQuad::p)
             .thenComparingLong(IdQuad::o)
             .thenComparingLong(IdQuad::s);
 
-    static final ExternalSorter.Codec<TermRow> TERM_ROW_CODEC = new ExternalSorter.Codec<>() {
+    public static final ExternalSorter.Codec<TermRow> TERM_ROW_CODEC = new ExternalSorter.Codec<>() {
         @Override
         public void write(DataOutput out, TermRow record) throws IOException {
             NodeCodec.writeNode(out, record.term());
@@ -65,7 +65,7 @@ final class HugeRecords {
         }
     };
 
-    static final ExternalSorter.Codec<RowId> ROW_ID_CODEC = new ExternalSorter.Codec<>() {
+    public static final ExternalSorter.Codec<RowId> ROW_ID_CODEC = new ExternalSorter.Codec<>() {
         @Override
         public void write(DataOutput out, RowId record) throws IOException {
             HugeIO.writeVarLong(out, record.row());
@@ -81,7 +81,7 @@ final class HugeRecords {
     };
 
     /** Bare non-negative longs (the per-row predicate temp/final id files). */
-    static final ExternalSorter.Codec<Long> VAR_LONG_CODEC = new ExternalSorter.Codec<>() {
+    public static final ExternalSorter.Codec<Long> VAR_LONG_CODEC = new ExternalSorter.Codec<>() {
         @Override
         public void write(DataOutput out, Long record) throws IOException {
             HugeIO.writeVarLong(out, record);
@@ -93,7 +93,7 @@ final class HugeRecords {
         }
     };
 
-    static final ExternalSorter.Codec<IdQuad> ID_QUAD_CODEC = new ExternalSorter.Codec<>() {
+    public static final ExternalSorter.Codec<IdQuad> ID_QUAD_CODEC = new ExternalSorter.Codec<>() {
         @Override
         public void write(DataOutput out, IdQuad record) throws IOException {
             HugeIO.writeVarLong(out, record.g());

@@ -89,7 +89,10 @@ public class BGVoIDSD {
     }
 
     private static class Stats {
-        private long numtriples = 0;
+        // LongAdder rather than a plain long: every other structure here is
+        // already concurrent, and the ultra writer calls add(Quad) from several
+        // document-parsing threads at once. A bare ++ was the one lost-update.
+        private final java.util.concurrent.atomic.LongAdder numtriples = new java.util.concurrent.atomic.LongAdder();
         private final ConcurrentHashMap<Node, Long> predicateCounts = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<Node, Set<Node>> classInstances = new ConcurrentHashMap<>();
         private final Set<Node> distinctSubjects = ConcurrentHashMap.newKeySet();
@@ -98,7 +101,7 @@ public class BGVoIDSD {
         public Stats() {}
 
         public void add(Quad quad) {
-            numtriples++;
+            numtriples.increment();
             Node sNode = quad.getSubject();
             Node pNode = quad.getPredicate();
             Node oNode = quad.getObject();
@@ -114,7 +117,7 @@ public class BGVoIDSD {
         public void applyTo(Resource graphRes, Model m) {
             long entities = classInstances.values().stream().mapToLong(Set::size).sum();
             graphRes.addProperty(RDF.type, VOID.Dataset)
-                    .addLiteral(VOID.triples, numtriples)
+                    .addLiteral(VOID.triples, numtriples.sum())
                     .addLiteral(VOID.classes, (long) classInstances.size())
                     .addLiteral(VOID.properties, (long) predicateCounts.size())
                     .addLiteral(VOID.distinctSubjects, (long) distinctSubjects.size())

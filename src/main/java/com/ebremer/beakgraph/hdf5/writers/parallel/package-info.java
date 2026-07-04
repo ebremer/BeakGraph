@@ -5,7 +5,7 @@
  * build one store on one thread: three sub-dictionaries one after another, three
  * columnar id lists one after another, then the GSPO index, then the GPOS index.
  * This package is a drop-in twin of that pipeline that runs the independent
- * stages concurrently on a bounded worker pool (CLI: {@code -parallel}, sized
+ * stages concurrently on a bounded worker pool (CLI: {@code -method 2}, sized
  * with {@code -cores}, default 4):
  *
  * <ul>

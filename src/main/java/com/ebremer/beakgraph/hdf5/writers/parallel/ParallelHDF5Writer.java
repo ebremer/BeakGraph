@@ -23,7 +23,7 @@ import org.slf4j.LoggerFactory;
  * Multi-threaded twin of {@link com.ebremer.beakgraph.hdf5.writers.HDF5Writer}:
  * same source formats, same output format, same readers - but each store is
  * built on a dedicated {@link ForkJoinPool} of {@code cores} threads (CLI:
- * {@code -parallel} with {@code -cores}, default {@value #DEFAULT_CORES}).
+ * {@code -method 2} with {@code -cores}, default {@value #DEFAULT_CORES}).
  * The three sub-dictionaries build concurrently, the columnar id lists
  * populate concurrently, every quad's dictionary ids are resolved once in a
  * parallel pass, and the GSPO/GPOS indexes are then built concurrently from

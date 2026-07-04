@@ -4,8 +4,11 @@ import com.beust.jcommander.JCommander;
 import com.beust.jcommander.ParameterException;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.SPARQLEndPoint;
+import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer;
+import com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer;
+import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
 import com.ebremer.beakgraph.huge.HugeHDF5Writer;
 import com.ebremer.beakgraph.utils.RdfSources;
 import java.io.File;
@@ -229,45 +232,103 @@ public class BeakGraphCLI {
         if (dest.getParentFile() != null) {
             dest.getParentFile().mkdirs();
         }
-        logger.info("Merging {} RDF sources into {}", inputs.size(), dest);
+        logger.info("Merging {} RDF sources into {} (method {})", inputs.size(), dest, effectiveMethod());
         try {
-            if (params.huge) {
-                // Disk-based merge: all sources spill into one workspace/store;
-                // blank nodes stay distinct per document (see HugeBuildPipeline).
-                HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
-                    .setSources(inputs)
-                    .setDestination(dest)
-                    .setSpatial(params.spatial)
-                    .setFeatures(params.features);
-                if (params.workdir != null) {
-                    params.workdir.mkdirs();
-                    builder.setWorkDirectory(params.workdir.toPath());
-                }
-                builder.build().write();
-            } else if (params.parallel) {
-                ParallelHDF5Writer.Builder()
-                    .setSources(inputs)
-                    .setDestination(dest)
-                    .setSpatial(params.spatial)
-                    .setFeatures(params.features)
-                    .setCores(params.cores)
-                    .build()
-                    .write();
-            } else {
-                HDF5Writer.Builder()
-                    .setSources(inputs)
-                    .setDestination(dest)
-                    .setSpatial(params.spatial)
-                    .setFeatures(params.features)
-                    .build()
-                    .write();
-            }
+            // All sources feed the ONE store being written; blank nodes stay
+            // distinct per document in every engine.
+            newWriter(null, inputs, dest).write();
         } catch (Exception ex) {
             fc.incrementFailedConversionFileCount();
             logger.error("Failed to merge {} sources into {}", inputs.size(), dest, ex);
         }
         if (params.status) {
             System.out.println(fc);
+        }
+    }
+
+    /**
+     * The conversion engine for this run: {@code -method} (0 = in-memory,
+     * 1 = disk, 2 = parallel, 3 = ultra), with the legacy {@code -huge} flag
+     * acting as "-method 1" when no explicit -method was given.
+     */
+    private int effectiveMethod() {
+        return (params.method == 0 && params.huge) ? 1 : params.method;
+    }
+
+    /**
+     * Builds the writer selected by {@link #effectiveMethod()} for one
+     * source-or-sources -> destination conversion. Shared by the per-file
+     * processors and -merge so the two can never route differently.
+     */
+    private BeakGraphWriter newWriter(File source, List<File> sources, File dest) throws IOException {
+        switch (effectiveMethod()) {
+            case 1 -> {
+                // Disk-based build: same output format, but sorting/indexing
+                // spill to a workspace instead of the heap. Needs the native
+                // HDF5 backend on the classpath (the hdf5-backend-* profiles);
+                // with -threads N, N builds run concurrently, each with its
+                // own workspace.
+                HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
+                        .setDestination(dest)
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features);
+                if (source != null) builder.setSource(source);
+                if (sources != null) builder.setSources(sources);
+                if (params.workdir != null) {
+                    params.workdir.mkdirs();
+                    builder.setWorkDirectory(params.workdir.toPath());
+                }
+                return builder.build();
+            }
+            case 2 -> {
+                // Multi-threaded in-memory build on a pool of -cores threads.
+                ParallelHDF5Writer.Builder builder = ParallelHDF5Writer.Builder()
+                        .setDestination(dest)
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features)
+                        .setCores(params.cores);
+                if (source != null) builder.setSource(source);
+                if (sources != null) builder.setSources(sources);
+                return builder.build();
+            }
+            case 3 -> {
+                // Ultra in-memory build: parallel parse, packed-key radix-sorted
+                // indexes, parallel emission - also capped at -cores threads.
+                UltraHDF5Writer.Builder builder = UltraHDF5Writer.Builder()
+                        .setDestination(dest)
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features)
+                        .setCores(params.cores);
+                if (source != null) builder.setSource(source);
+                if (sources != null) builder.setSources(sources);
+                return builder.build();
+            }
+            case 4 -> {
+                // hugeUltra: the disk-based pipeline (bounded RAM, any quad
+                // count) on parallel primitive sorting machinery - the engine
+                // for multi-billion-quad builds. Needs the native HDF5 backend.
+                HugeUltraHDF5Writer.Builder builder = HugeUltraHDF5Writer.Builder()
+                        .setDestination(dest)
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features)
+                        .setCores(params.cores);
+                if (source != null) builder.setSource(source);
+                if (sources != null) builder.setSources(sources);
+                if (params.workdir != null) {
+                    params.workdir.mkdirs();
+                    builder.setWorkDirectory(params.workdir.toPath());
+                }
+                return builder.build();
+            }
+            default -> {
+                HDF5Writer.Builder builder = HDF5Writer.Builder()
+                        .setDestination(dest)
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features);
+                if (source != null) builder.setSource(source);
+                if (sources != null) builder.setSources(sources);
+                return builder.build();
+            }
         }
     }
 
@@ -309,44 +370,7 @@ public class BeakGraphCLI {
                     return null;
                 }
                 dest.getParent().toFile().mkdirs();
-                if (params.huge) {
-                    // Disk-based build: same output format, but sorting/indexing
-                    // spill to a workspace instead of the heap. Note the huge
-                    // writer needs the native HDF5 backend on the classpath (the
-                    // hdf5-backend-* profiles); with -threads N, N builds run
-                    // concurrently, each with its own workspace.
-                    HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
-                        .setSource(src.toFile())
-                        .setDestination(dest.toFile())
-                        .setSpatial(params.spatial)
-                        .setFeatures(params.features);
-                    if (params.workdir != null) {
-                        params.workdir.mkdirs();
-                        builder.setWorkDirectory(params.workdir.toPath());
-                    }
-                    builder.build().write();
-                } else if (params.parallel) {
-                    // Multi-threaded in-memory build: same output format, but each
-                    // file's dictionaries, id lists, and indexes are built
-                    // concurrently on a pool of -cores threads (default 4). With
-                    // -threads N, N conversions run at once, each with its own pool.
-                    ParallelHDF5Writer.Builder()
-                        .setSource(src.toFile())
-                        .setDestination(dest.toFile())
-                        .setSpatial(params.spatial)
-                        .setFeatures(params.features)
-                        .setCores(params.cores)
-                        .build()
-                        .write();
-                } else {
-                    HDF5Writer.Builder()
-                        .setSource(src.toFile())
-                        .setDestination(dest.toFile())
-                        .setSpatial(params.spatial)
-                        .setFeatures(params.features)
-                        .build()
-                        .write();
-                }
+                newWriter(src.toFile(), null, dest.toFile()).write();
             } catch (Exception ex) {
                 fc.incrementFailedConversionFileCount();
                 logger.error("Failed to convert {}", src, ex);

@@ -65,22 +65,29 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     
     protected MultiTypeDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
         this.name = builder.getName();
-        logger.info("Building dictionary '{}' ({} nodes)", name, builder.getNodes().size());
+        logger.info("Building dictionary '{}' ({} nodes)", name, builder.getNodeCount());
 
         Stats stats = builder.getStats();
         this.et = builder.getEnabledTypes();
 
         // --- STEP 1: Strict Total Ordering ---
         // INFO bracketing: sorting tens of millions of nodes takes minutes with no
-        // other output - this is the writer's longest silent phase.
-        logger.info("Sorting {} nodes for dictionary '{}'...", builder.getNodes().size(), name);
-        long sortStart = System.nanoTime();
-        sorted = NodeSorter.parallelSort(builder.getNodes());
-        logger.info("Sorted dictionary '{}' in {} s", name, (System.nanoTime() - sortStart) / 1_000_000_000L);
+        // other output - this is the writer's longest silent phase. A caller that
+        // already holds the NodeComparator-sorted list (the ultra writer shares one
+        // sort between this dictionary and its node->id map) passes it via
+        // setSortedNodes and the sort is skipped entirely.
+        if (builder.getSortedNodes() != null) {
+            sorted = builder.getSortedNodes();
+        } else {
+            logger.info("Sorting {} nodes for dictionary '{}'...", builder.getNodes().size(), name);
+            long sortStart = System.nanoTime();
+            sorted = NodeSorter.parallelSort(builder.getNodes());
+            logger.info("Sorted dictionary '{}' in {} s", name, (System.nanoTime() - sortStart) / 1_000_000_000L);
+        }
 
         // --- STEP 2: Initialize Buffers ---
         // BitPackedUnSignedLongBuffer constructors do not throw; assign finals directly.
-        this.offsets = new BitPackedUnSignedLongBuffer(Path.of("offsets"), null, 0, 1 + MinBits(builder.getNodes().size()));
+        this.offsets = new BitPackedUnSignedLongBuffer(Path.of("offsets"), null, 0, 1 + MinBits(builder.getNodeCount()));
         this.nativedatatypes = new BitPackedUnSignedLongBuffer(Path.of("datatypes"), null, 0, 1 + MinBits(DataType.values().length));
         // Signed-safe widths: when min is negative, use a fixed width (32 or 64) so the two's-complement
         // bit pattern survives the unsigned mask round-trip in BitPackedUnSignedLongBuffer.
@@ -347,24 +354,33 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
 
     public static class Builder {
         private Set<Node> nodes = new HashSet<>();
+        private ArrayList<Node> sortedNodes;
         private String name;
         private Stats stats;
         private Set<Types> et = new HashSet<>();
-        private Set<String> typedLiterals = new HashSet<>();        
+        private Set<String> typedLiterals = new HashSet<>();
         public Builder enable(Types... types) { et.addAll(Arrays.asList(types)); return this; }
         public Builder setStats(Stats stats) { this.stats = stats; return this; }
         public Builder setNodes(Set<Node> nodes) { this.nodes = nodes; return this; }
+        /**
+         * Supplies the node list ALREADY in {@code NodeComparator} order, skipping
+         * the internal sort; takes precedence over {@link #setNodes}. The caller
+         * owns the ordering contract - a mis-sorted list corrupts every id.
+         */
+        public Builder setSortedNodes(ArrayList<Node> sortedNodes) { this.sortedNodes = sortedNodes; return this; }
         public Builder setDataTypes(Set<String> typedLiterals) { this.typedLiterals = typedLiterals; return this; }
         public Builder setName(String name) { this.name = name; return this; }
         public String getName() { return name; }
         public Set<Node> getNodes() { return nodes; }
+        public ArrayList<Node> getSortedNodes() { return sortedNodes; }
+        public int getNodeCount() { return sortedNodes != null ? sortedNodes.size() : nodes.size(); }
         public Stats getStats() { return stats; }
         public Set<Types> getEnabledTypes() { return et; }
         public Set<String> getTypedLiterals() { return typedLiterals; }
-        
+
         public DictionaryWriter build() throws IOException {
-            if (nodes.isEmpty()) return new EmptyDictionaryWriter();
+            if (getNodeCount() == 0) return new EmptyDictionaryWriter();
             return new MultiTypeDictionaryWriter(this);
         }
-    }    
+    }
 }

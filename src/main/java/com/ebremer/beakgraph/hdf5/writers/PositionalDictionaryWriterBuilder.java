@@ -77,8 +77,9 @@ public class PositionalDictionaryWriterBuilder {
     // Sentinel base: relative references in the source are parsed against this
     // stable, reserved (.invalid) host that survives IRI normalization, then
     // stripped back to relative form for storage and resolved at query time
-    // against the URL the .h5 file is served from.
-    private static final String REL_BASE = "http://beakgraph.invalid/document";
+    // against the URL the .h5 file is served from. Protected: the ultra
+    // subclass parses documents itself and must use the identical base.
+    protected static final String REL_BASE = "http://beakgraph.invalid/document";
     private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
     private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
     
@@ -223,7 +224,10 @@ public class PositionalDictionaryWriterBuilder {
         return intersectingURNs;
     }
     
-    private ArrayList<Quad> addSpatial(Quad quad) {
+    // Protected, not private: thread-safe per-quad augmentation (guarded by the
+    // spatial/features flags only), reused by the ultra subclass's per-document
+    // parallel parse. Both callers already invoke it concurrently.
+    protected ArrayList<Quad> addSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
         // The GeoSPARQL-standard "<crs-uri> WKT" form must be indexed too: strip the
         // prefix once here so the parser and the scaler both see plain WKT
@@ -404,7 +408,7 @@ public class PositionalDictionaryWriterBuilder {
      * {@code <>} becomes "" and a sibling {@code <x.png>} becomes "x.png". They
      * are resolved against the serving URL at query time.
      */
-    private Quad relativize(Quad q) {
+    protected final Quad relativize(Quad q) {
         Node qg = q.getGraph();
         Node qs = q.getSubject();
         Node qp = q.getPredicate();
@@ -453,7 +457,7 @@ public class PositionalDictionaryWriterBuilder {
      * and extract() symmetric. (The value-typed storage never preserved the
      * non-canonical lexical form anyway.)
      */
-    private Quad canonicalizeNumericObject(Quad quad) {
+    protected final Quad canonicalizeNumericObject(Quad quad) {
         Node o = quad.getObject();
         if (!o.isLiteral()) return quad;
         String dt = o.getLiteralDatatypeURI();
@@ -490,10 +494,76 @@ public class PositionalDictionaryWriterBuilder {
         }
     }
 
-    private void countStringStored(String lex) {
-        this.stats.longestStringLength = Math.max(this.stats.longestStringLength, lex.length());
-        this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, lex.length());
-        this.stats.numStrings++;
+    private static void countStringStored(Stats stats, String lex) {
+        stats.longestStringLength = Math.max(stats.longestStringLength, lex.length());
+        stats.shortestStringLength = Math.min(stats.shortestStringLength, lex.length());
+        stats.numStrings++;
+    }
+
+    /**
+     * Counts one DISTINCT literal into {@code stats}, choosing the same storage
+     * class (long/int/float/double/strings, with the ill-typed and dateTime
+     * special cases) that {@link MultiTypeDictionaryWriter} will pick when it
+     * encodes the node. Extracted from {@link #ProcessQuad} so the ultra
+     * writer's post-dedup, chunk-parallel stats pass counts literals with
+     * EXACTLY the sequential rules (a drifted copy here would corrupt buffer
+     * allocation, not just reporting). Must be called once per unique literal.
+     */
+    protected static void countLiteralStats(Node o, Stats stats) {
+        String dt = o.getLiteralDatatypeURI();
+        if (dt.equals(XSD.xlong.getURI())) {
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxLong = Math.max(stats.maxLong, n.longValue());
+                stats.minLong = Math.min(stats.minLong, n.longValue());
+                stats.numLong++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xint.getURI())) {
+            // Only xsd:int (32-bit bounded) is bit-packed here. xsd:integer is
+            // unbounded, so it is handled by the string fallback below instead;
+            // bit-packing it would truncate large values and change the datatype
+            // to xsd:int on read-back.
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxInteger = Math.max(stats.maxInteger, n.intValue());
+                stats.minInteger = Math.min(stats.minInteger, n.intValue());
+                stats.numInteger++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xfloat.getURI())) {
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxFloat = Math.max(stats.maxFloat, n.floatValue());
+                stats.minFloat = Math.min(stats.minFloat, n.floatValue());
+                stats.numFloat++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xdouble.getURI())) {
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxDouble = Math.max(stats.maxDouble, n.doubleValue());
+                stats.minDouble = Math.min(stats.minDouble, n.doubleValue());
+                stats.numDouble++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
+            // rdf:langString shares the strings buffer; its language tag is
+            // stored separately by MultiTypeDictionaryWriter (langs/langTags).
+            countStringStored(stats, o.getLiteralLexicalForm());
+        } else if (dt.equals(XSD.dateTime.getURI())) {
+            String lex = o.getLiteralLexicalForm();
+            int t = lex.indexOf('T');
+            countStringStored(stats, (t > 0) ? lex.substring(0, t) : lex);
+        } else {
+            // Any other datatype (xsd:integer, xsd:decimal, xsd:date, custom
+            // datatypes, ...) is stored verbatim in the strings buffer by
+            // MultiTypeDictionaryWriter, tagged with its datatype IRI. Count it
+            // toward numStrings so that buffer is always allocated; otherwise the
+            // writer would have nowhere to put it and would drop the node,
+            // desynchronising the offset/datatype buffers and corrupting the dictionary.
+            countStringStored(stats, o.getLiteralLexicalForm());
+        }
     }
 
     private void ProcessQuad(Quad quad) {
@@ -533,61 +603,8 @@ public class PositionalDictionaryWriterBuilder {
         }
         if (o.isLiteral()) {
             if (!literals.contains(o)) {
-                String dt = o.getLiteralDatatypeURI();
-                dataTypes.add(dt);
-                if (dt.equals(XSD.xlong.getURI())) {
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
-                        this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
-                        this.stats.numLong++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xint.getURI())) {
-                    // Only xsd:int (32-bit bounded) is bit-packed here. xsd:integer is
-                    // unbounded, so it is handled by the string fallback below instead;
-                    // bit-packing it would truncate large values and change the datatype
-                    // to xsd:int on read-back.
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
-                        this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
-                        this.stats.numInteger++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xfloat.getURI())) {
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxFloat = Math.max(this.stats.maxFloat, n.floatValue());
-                        this.stats.minFloat = Math.min(this.stats.minFloat, n.floatValue());
-                        this.stats.numFloat++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xdouble.getURI())) {
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
-                        this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
-                        this.stats.numDouble++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
-                    // rdf:langString shares the strings buffer; its language tag is
-                    // stored separately by MultiTypeDictionaryWriter (langs/langTags).
-                    countStringStored(o.getLiteralLexicalForm());
-                } else if (dt.equals(XSD.dateTime.getURI())) {
-                    String lex = o.getLiteralLexicalForm();
-                    int t = lex.indexOf('T');
-                    countStringStored((t > 0) ? lex.substring(0, t) : lex);
-                } else {
-                    // Any other datatype (xsd:integer, xsd:decimal, xsd:date, custom
-                    // datatypes, ...) is stored verbatim in the strings buffer by
-                    // MultiTypeDictionaryWriter, tagged with its datatype IRI. Count it
-                    // toward numStrings so that buffer is always allocated; otherwise the
-                    // writer would have nowhere to put it and would drop the node,
-                    // desynchronising the offset/datatype buffers and corrupting the dictionary.
-                    countStringStored(o.getLiteralLexicalForm());
-                }
+                dataTypes.add(o.getLiteralDatatypeURI());
+                countLiteralStats(o, stats);
                 literals.add(o);
             }
         } else {
@@ -733,7 +750,7 @@ public class PositionalDictionaryWriterBuilder {
         }
     }
 
-    private boolean isGeoLiteral(Quad quad) {
+    protected final boolean isGeoLiteral(Quad quad) {
         Node o = quad.getObject();
         return o.isLiteral() && GEO.wktLiteral.getURI().equals(o.getLiteralDatatypeURI());
     }

@@ -64,7 +64,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author Erich Bremer
  */
-final class HugeBuildPipeline implements AutoCloseable {
+public final class HugeBuildPipeline implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(HugeBuildPipeline.class);
 
@@ -79,7 +79,6 @@ final class HugeBuildPipeline implements AutoCloseable {
     private final boolean spatial;
     private final boolean features;
     private final Path workDir;
-    private final int mergeFanIn;
 
     // ---- Pass A state ----
     private final Stats stats = new Stats();
@@ -91,11 +90,13 @@ final class HugeBuildPipeline implements AutoCloseable {
     private final HashMap<Node, Long> predTempIds = new HashMap<>();
     private final ArrayList<Node> predByTempId = new ArrayList<>();
     private final BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
-    private ExternalSorter<TermRow> gSorter;
-    private ExternalSorter<TermRow> sSorter;
-    private ExternalSorter<TermRow> oSorter;
+    private RecordSorter<TermRow> gSorter;
+    private RecordSorter<TermRow> sSorter;
+    private RecordSorter<TermRow> oSorter;
     private RecordFile<Long> pTempFile;
-    private final int idSpillBatch;
+    private final SorterProvider provider;
+    /** Non-null: independent stage groups run concurrently on it (-method 4). */
+    private final java.util.concurrent.ExecutorService stagePool;
     private long rows = 0;
     private long parsedQuads = 0;
 
@@ -104,6 +105,19 @@ final class HugeBuildPipeline implements AutoCloseable {
 
     HugeBuildPipeline(List<File> sources, boolean spatial, boolean features, Path workDir,
                       int termSpillBatch, int idSpillBatch, int mergeFanIn) {
+        this(sources, spatial, features, workDir,
+                SorterProvider.sequential(termSpillBatch, idSpillBatch, mergeFanIn), null);
+    }
+
+    /**
+     * The injectable form: {@code provider} supplies every sorter the build
+     * uses, and a non-null {@code stagePool} runs independent stage groups
+     * (column materializations, dictionary encodes, id joins) concurrently.
+     * This is how the hugeUltra writer (-method 4) turbocharges the pipeline
+     * without changing its flow or output.
+     */
+    public HugeBuildPipeline(List<File> sources, boolean spatial, boolean features, Path workDir,
+                             SorterProvider provider, java.util.concurrent.ExecutorService stagePool) {
         if (sources.isEmpty()) {
             throw new IllegalArgumentException("At least one source document is required");
         }
@@ -111,23 +125,62 @@ final class HugeBuildPipeline implements AutoCloseable {
         this.spatial = spatial;
         this.features = features;
         this.workDir = workDir;
-        this.mergeFanIn = mergeFanIn;
-        this.gSorter = track(new ExternalSorter<>(workDir, "gcol", HugeRecords.TERM_ROW_CODEC,
-                HugeRecords.TERM_ORDER, termSpillBatch, mergeFanIn));
-        this.sSorter = track(new ExternalSorter<>(workDir, "scol", HugeRecords.TERM_ROW_CODEC,
-                HugeRecords.TERM_ORDER, termSpillBatch, mergeFanIn));
-        this.oSorter = track(new ExternalSorter<>(workDir, "ocol", HugeRecords.TERM_ROW_CODEC,
-                HugeRecords.TERM_ORDER, termSpillBatch, mergeFanIn));
-        this.idSpillBatch = idSpillBatch;
+        this.provider = provider;
+        this.stagePool = stagePool;
+        this.gSorter = track(provider.termSorter(workDir, "gcol"));
+        this.sSorter = track(provider.termSorter(workDir, "scol"));
+        this.oSorter = track(provider.termSorter(workDir, "ocol"));
     }
 
-    private <T extends AutoCloseable> T track(T resource) {
+    // Synchronized: concurrent stages register their resources too.
+    private synchronized <T extends AutoCloseable> T track(T resource) {
         resources.add(resource);
         return resource;
     }
 
+    @FunctionalInterface
+    private interface Stage {
+        void run() throws IOException;
+    }
+
+    /**
+     * Runs independent stages sequentially (no pool: -method 1 behaviour,
+     * bounded RAM) or concurrently on the stage pool (-method 4). Every stage
+     * is awaited before returning; the first failure wins.
+     */
+    private void runStages(String what, Stage... stages) throws IOException {
+        if (stagePool == null) {
+            for (Stage s : stages) {
+                s.run();
+            }
+            return;
+        }
+        List<java.util.concurrent.Future<?>> futures = new ArrayList<>(stages.length);
+        for (Stage s : stages) {
+            futures.add(stagePool.submit(() -> {
+                s.run();
+                return null;
+            }));
+        }
+        IOException first = null;
+        for (java.util.concurrent.Future<?> f : futures) {
+            try {
+                f.get();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                if (first == null) first = new IOException("Interrupted during " + what, ex);
+            } catch (ExecutionException ex) {
+                Throwable c = ex.getCause();
+                if (first == null) {
+                    first = (c instanceof IOException io) ? io : new IOException(what + " failed", c);
+                }
+            }
+        }
+        if (first != null) throw first;
+    }
+
     /** Runs the whole build, producing the finished HDF5 file at {@code tmpH5}. */
-    void run(Path tmpH5) throws IOException {
+    public void run(Path tmpH5) throws IOException {
         ingest();
 
         // ---- Predicates: final rank ids from the in-RAM population ----
@@ -146,13 +199,20 @@ final class HugeBuildPipeline implements AutoCloseable {
         }
 
         // ---- Materialize the sorted columns (each is re-read several times) ----
-        logger.info("Sorting {} rows per column (external merge sort)...", rows);
-        RecordFile<TermRow> gSorted = materialize(gSorter, "gcol.sorted");
+        logger.info("Sorting {} rows per column (external merge sort{})...", rows,
+                stagePool == null ? "" : ", 3 columns concurrently");
+        final List<RecordFile<TermRow>> cols = Arrays.asList(null, null, null);
+        final RecordSorter<TermRow> gS = gSorter, sS = sSorter, oS = oSorter;
         gSorter = null;
-        RecordFile<TermRow> sSorted = materialize(sSorter, "scol.sorted");
         sSorter = null;
-        RecordFile<TermRow> oSorted = materialize(oSorter, "ocol.sorted");
         oSorter = null;
+        runStages("column sort",
+                () -> cols.set(0, materialize(gS, "gcol.sorted")),
+                () -> cols.set(1, materialize(sS, "scol.sorted")),
+                () -> cols.set(2, materialize(oS, "ocol.sorted")));
+        RecordFile<TermRow> gSorted = cols.get(0);
+        RecordFile<TermRow> sSorted = cols.get(1);
+        RecordFile<TermRow> oSorted = cols.get(2);
 
         // ---- Distinct sorted dictionaries on disk ----
         RecordFile<Node> entFile = new RecordFile<>(workDir.resolve("entities.sorted"), NodeCodec.INSTANCE);
@@ -166,30 +226,38 @@ final class HugeBuildPipeline implements AutoCloseable {
         logger.info("Dictionary populations: {} entities, {} predicates, {} literals",
                 numEntities, numPredicates, numLiterals);
 
-        // ---- Encode the three dictionary sections ----
-        StreamingDictionaryWriter entitiesDict = null;
-        StreamingDictionaryWriter predicatesDict = null;
-        StreamingDictionaryWriter literalsDict = null;
-        if (numEntities > 0) {
-            entitiesDict = track(new StreamingDictionaryWriter(workDir, "entities", numEntities, stats,
-                    Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>()));
-            try (var s = entFile.read()) {
-                entitiesDict.encode(s);
-            }
-        }
-        if (numPredicates > 0) {
-            predicatesDict = track(new StreamingDictionaryWriter(workDir, "predicates", numPredicates, stats,
-                    Set.of(Types.IRI), new TreeSet<>(), new TreeSet<>()));
-            predicatesDict.encode(Arrays.asList(sortedPreds).iterator());
-        }
-        if (numLiterals > 0) {
-            literalsDict = track(new StreamingDictionaryWriter(workDir, "literals", numLiterals, stats,
-                    Set.of(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING),
-                    dataTypes, langSet));
-            try (var s = litFile.read()) {
-                literalsDict.encode(s);
-            }
-        }
+        // ---- Encode the three dictionary sections (independent; concurrent with a pool) ----
+        final StreamingDictionaryWriter[] dicts = new StreamingDictionaryWriter[3];
+        runStages("dictionary encode",
+                () -> {
+                    if (numEntities > 0) {
+                        dicts[0] = track(new StreamingDictionaryWriter(workDir, "entities", numEntities, stats,
+                                Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>()));
+                        try (var s = entFile.read()) {
+                            dicts[0].encode(s);
+                        }
+                    }
+                },
+                () -> {
+                    if (numPredicates > 0) {
+                        dicts[1] = track(new StreamingDictionaryWriter(workDir, "predicates", numPredicates, stats,
+                                Set.of(Types.IRI), new TreeSet<>(), new TreeSet<>()));
+                        dicts[1].encode(Arrays.asList(sortedPreds).iterator());
+                    }
+                },
+                () -> {
+                    if (numLiterals > 0) {
+                        dicts[2] = track(new StreamingDictionaryWriter(workDir, "literals", numLiterals, stats,
+                                Set.of(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING),
+                                dataTypes, langSet));
+                        try (var s = litFile.read()) {
+                            dicts[2].encode(s);
+                        }
+                    }
+                });
+        StreamingDictionaryWriter entitiesDict = dicts[0];
+        StreamingDictionaryWriter predicatesDict = dicts[1];
+        StreamingDictionaryWriter literalsDict = dicts[2];
 
         // ---- Columnar unique-id lists (same widths as PositionalDictionaryWriter) ----
         int gBits = (int) (Math.ceil(MinBits(numEntities + 1) / 8.0) * 8);
@@ -199,44 +267,43 @@ final class HugeBuildPipeline implements AutoCloseable {
         SpillBitPackedBuffer subjectsList = track(new SpillBitPackedBuffer(workDir.resolve("columnar.subjects"), sBits));
         SpillBitPackedBuffer objectsList = track(new SpillBitPackedBuffer(workDir.resolve("columnar.objects"), oBits));
 
-        // ---- Sort-merge id joins ----
-        logger.info("Assigning ids (sort-merge joins)...");
-        ExternalSorter<RowId> gIds = track(new ExternalSorter<>(workDir, "gid", HugeRecords.ROW_ID_CODEC,
-                HugeRecords.ROW_ORDER, idSpillBatch, mergeFanIn));
-        joinColumn(gSorted, "Graph", entityCursor(entFile, null, numEntities), graphsList, gIds);
+        // ---- Sort-merge id joins (independent columns; concurrent with a pool),
+        // plus the predicate temp->final remap, which depends on nothing here ----
+        logger.info("Assigning ids (sort-merge joins{})...", stagePool == null ? "" : ", 3 columns concurrently");
+        RecordSorter<RowId> gIds = track(provider.rowIdSorter(workDir, "gid", rows, numObjects));
+        RecordSorter<RowId> sIds = track(provider.rowIdSorter(workDir, "sid", rows, numObjects));
+        RecordSorter<RowId> oIds = track(provider.rowIdSorter(workDir, "oid", rows, numObjects));
+        RecordFile<Long> pFinal = new RecordFile<>(workDir.resolve("pcol.final"), HugeRecords.VAR_LONG_CODEC);
+        runStages("id join",
+                () -> joinColumn(gSorted, "Graph", entityCursor(entFile, null, numEntities), graphsList, gIds),
+                () -> joinColumn(sSorted, "Subject", entityCursor(entFile, null, numEntities), subjectsList, sIds),
+                () -> joinColumn(oSorted, "Object", entityCursor(entFile, litFile, numEntities), objectsList, oIds),
+                () -> {
+                    try (var s = pTempFile.read()) {
+                        while (s.hasNext()) {
+                            pFinal.append(tempToFinal[Math.toIntExact(s.next())]);
+                        }
+                    }
+                    pFinal.finish();
+                });
         gSorted.delete();
-
-        ExternalSorter<RowId> sIds = track(new ExternalSorter<>(workDir, "sid", HugeRecords.ROW_ID_CODEC,
-                HugeRecords.ROW_ORDER, idSpillBatch, mergeFanIn));
-        joinColumn(sSorted, "Subject", entityCursor(entFile, null, numEntities), subjectsList, sIds);
         sSorted.delete();
-
-        ExternalSorter<RowId> oIds = track(new ExternalSorter<>(workDir, "oid", HugeRecords.ROW_ID_CODEC,
-                HugeRecords.ROW_ORDER, idSpillBatch, mergeFanIn));
-        joinColumn(oSorted, "Object", entityCursor(entFile, litFile, numEntities), objectsList, oIds);
         oSorted.delete();
         entFile.delete();
         litFile.delete();
-
-        // ---- Predicate column: temp ids -> final ids, already in row order ----
-        RecordFile<Long> pFinal = new RecordFile<>(workDir.resolve("pcol.final"), HugeRecords.VAR_LONG_CODEC);
-        try (var s = pTempFile.read()) {
-            while (s.hasNext()) {
-                pFinal.append(tempToFinal[Math.toIntExact(s.next())]);
-            }
-        }
-        pFinal.finish();
         pTempFile.delete();
         if (pFinal.count() != rows) {
             throw new IllegalStateException("Predicate column has " + pFinal.count() + " entries for " + rows + " rows");
         }
 
-        // ---- Zip id columns into encoded quads, feeding both index sorters ----
+        // ---- Zip id columns into encoded quads. Only GSPO sorts the raw
+        // (duplicate-laden) quads: the GSPO scan below tees each DISTINCT quad
+        // into the GPOS sorter, so GPOS sorts the deduplicated set only ----
         logger.info("Encoding {} quads...", rows);
-        ExternalSorter<IdQuad> gspoSorter = track(new ExternalSorter<>(workDir, "gspo", HugeRecords.ID_QUAD_CODEC,
-                HugeRecords.GSPO_ORDER, idSpillBatch, mergeFanIn));
-        ExternalSorter<IdQuad> gposSorter = track(new ExternalSorter<>(workDir, "gpos", HugeRecords.ID_QUAD_CODEC,
-                HugeRecords.GPOS_ORDER, idSpillBatch, mergeFanIn));
+        RecordSorter<IdQuad> gspoSorter = track(provider.quadSorter(workDir, "gspo", Index.GSPO,
+                numEntities, numPredicates, numObjects));
+        RecordSorter<IdQuad> gposSorter = track(provider.quadSorter(workDir, "gpos", Index.GPOS,
+                numEntities, numPredicates, numObjects));
         try (var gs = gIds.sorted(); var ss = sIds.sorted(); var os = oIds.sorted(); var ps = pFinal.read()) {
             for (long row = 0; row < rows; row++) {
                 RowId g = gs.next();
@@ -247,9 +314,7 @@ final class HugeBuildPipeline implements AutoCloseable {
                     throw new IllegalStateException("Row misalignment at " + row + ": g=" + g.row()
                             + " s=" + s.row() + " o=" + o.row());
                 }
-                IdQuad q = new IdQuad(g.id(), s.id(), p, o.id());
-                gspoSorter.add(q);
-                gposSorter.add(q);
+                gspoSorter.add(new IdQuad(g.id(), s.id(), p, o.id()));
             }
         }
         pFinal.delete();
@@ -258,7 +323,7 @@ final class HugeBuildPipeline implements AutoCloseable {
         HugeIndexWriter gspo = track(new HugeIndexWriter(workDir, Index.GSPO,
                 numEntities, numEntities, numPredicates, numObjects, rows));
         try (var it = gspoSorter.sorted()) {
-            gspo.build(it);
+            gspo.build(teeDistinctTo(it, gposSorter));
         }
         HugeIndexWriter gpos = track(new HugeIndexWriter(workDir, Index.GPOS,
                 numEntities, numEntities, numPredicates, numObjects, rows));
@@ -574,9 +639,40 @@ final class HugeBuildPipeline implements AutoCloseable {
     // Phase helpers
     // ------------------------------------------------------------------
 
-    private RecordFile<TermRow> materialize(ExternalSorter<TermRow> sorter, String name) throws IOException {
+    /**
+     * Forwards {@code sorted} unchanged while adding each DISTINCT quad to
+     * {@code alsoDistinct} (duplicates are consecutive in a sorted stream).
+     * This is the dedup-once trick: GPOS receives exactly the unique quads the
+     * GSPO scan keeps, so it never sorts a duplicate.
+     */
+    private static Iterator<IdQuad> teeDistinctTo(Iterator<IdQuad> sorted, RecordSorter<IdQuad> alsoDistinct) {
+        return new Iterator<>() {
+            private IdQuad prev = null;
+
+            @Override
+            public boolean hasNext() {
+                return sorted.hasNext();
+            }
+
+            @Override
+            public IdQuad next() {
+                IdQuad q = sorted.next();
+                if (prev == null || !q.equals(prev)) {
+                    try {
+                        alsoDistinct.add(q);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException("Failed to tee distinct quad into GPOS sorter", e);
+                    }
+                    prev = q;
+                }
+                return q;
+            }
+        };
+    }
+
+    private RecordFile<TermRow> materialize(RecordSorter<TermRow> sorter, String name) throws IOException {
         RecordFile<TermRow> rf = new RecordFile<>(workDir.resolve(name), HugeRecords.TERM_ROW_CODEC);
-        try (ExternalSorter.SortedStream<TermRow> s = sorter.sorted()) {
+        try (RecordSorter.SortedCursor<TermRow> s = sorter.sorted()) {
             while (s.hasNext()) {
                 rf.append(s.next());
             }
@@ -755,7 +851,7 @@ final class HugeBuildPipeline implements AutoCloseable {
      * ascending id order - into the columnar list.
      */
     private void joinColumn(RecordFile<TermRow> column, String role, DictCursor cursor,
-                            SpillBitPackedBuffer columnar, ExternalSorter<RowId> out) throws IOException {
+                            SpillBitPackedBuffer columnar, RecordSorter<RowId> out) throws IOException {
         try (cursor; var col = column.read()) {
             Node prevTerm = null;
             long prevId = -1;

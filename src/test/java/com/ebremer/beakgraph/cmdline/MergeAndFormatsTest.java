@@ -179,13 +179,30 @@ class MergeAndFormatsTest {
         p.src = src.toFile();
         p.dest = dir.resolve("outmergepar").resolve("all.h5").toFile();
         p.merge = true;
-        p.parallel = true;
+        p.method = 2;
         p.cores = 2;
 
         BeakGraphCLI cli = new BeakGraphCLI(p);
         cli.merge();
 
         assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the parallel merge must succeed");
+        assertMerged(p.dest);
+    }
+
+    @Test
+    void mergeWithUltraWriter() throws Exception {
+        Path src = mergeSourceTree("srcmergeultra");
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("outmergeultra").resolve("all.h5").toFile();
+        p.merge = true;
+        p.method = 3;
+        p.cores = 2;
+
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.merge();
+
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the ultra merge must succeed");
         assertMerged(p.dest);
     }
 
@@ -206,6 +223,27 @@ class MergeAndFormatsTest {
         cli.merge();
 
         assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the -huge merge must succeed");
+        assertMerged(p.dest);
+    }
+
+    @Test
+    void mergeWithHugeUltraWriter() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
+                "native HDF5 library unavailable");
+        Path src = mergeSourceTree("srcmergehugeultra");
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("outmergehugeultra").resolve("all.h5").toFile();
+        p.merge = true;
+        p.method = 4;
+        p.cores = 3;
+        p.workdir = dir.resolve("workmergehugeultra").toFile();
+
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.merge();
+
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the -method 4 merge must succeed");
         assertMerged(p.dest);
     }
 
