@@ -43,6 +43,14 @@ public class Parameters {
                         + "destination file's directory)", required = false)
     public File workdir = null;
     
+    @Parameter(names = {"-merge"}, converter = BooleanConverter.class,
+            description = "Merge ALL RDF sources found under -src (typically a directory tree) "
+                        + "into ONE BeakGraph HDF5 file at -dest instead of one .h5 per source "
+                        + "(if -dest is an existing directory, writes <dest>/merged.h5; an "
+                        + "existing destination file is rebuilt). Blank nodes stay distinct per "
+                        + "source document. Works with the default, -parallel, and -huge writers")
+    public boolean merge = false;
+
     @Parameter(names = {"-parallel"}, converter = BooleanConverter.class,
             description = "Use the multi-threaded in-memory writer "
                         + "(com.ebremer.beakgraph.hdf5.writers.parallel): builds each file's "

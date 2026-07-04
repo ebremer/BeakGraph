@@ -10,11 +10,10 @@ import com.ebremer.beakgraph.huge.HugeRecords.IdQuad;
 import com.ebremer.beakgraph.huge.HugeRecords.RowId;
 import com.ebremer.beakgraph.huge.HugeRecords.TermRow;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
+import com.ebremer.beakgraph.utils.RdfSources;
 import com.ebremer.ns.GEO;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -32,13 +31,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.irix.IRIx;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFLanguages;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
@@ -78,7 +74,8 @@ final class HugeBuildPipeline implements AutoCloseable {
     private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
     private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
 
-    private final File src;
+    /** Source documents; more than one means a -merge build into a single store. */
+    private final List<File> sources;
     private final boolean spatial;
     private final boolean features;
     private final Path workDir;
@@ -105,9 +102,12 @@ final class HugeBuildPipeline implements AutoCloseable {
     // ---- Build products (owned; released in close()) ----
     private final List<AutoCloseable> resources = new ArrayList<>();
 
-    HugeBuildPipeline(File src, boolean spatial, boolean features, Path workDir,
+    HugeBuildPipeline(List<File> sources, boolean spatial, boolean features, Path workDir,
                       int termSpillBatch, int idSpillBatch, int mergeFanIn) {
-        this.src = src;
+        if (sources.isEmpty()) {
+            throw new IllegalArgumentException("At least one source document is required");
+        }
+        this.sources = List.copyOf(sources);
         this.spatial = spatial;
         this.features = features;
         this.workDir = workDir;
@@ -292,17 +292,35 @@ final class HugeBuildPipeline implements AutoCloseable {
     // ------------------------------------------------------------------
 
     private void ingest() throws IOException {
-        logger.info("Parsing {} (disk-based build)", src);
         this.pTempFile = new RecordFile<>(workDir.resolve("pcol.tmpids"), HugeRecords.VAR_LONG_CODEC);
-        try (InputStream xis = src.toString().endsWith(".gz")
-                ? new GZIPInputStream(new FileInputStream(src))
-                : new FileInputStream(src)) {
-            String fname = src.getName();
-            if (fname.endsWith(".gz")) {
-                fname = fname.substring(0, fname.length() - 3);
-            }
-            Lang lang = RDFLanguages.filenameToLang(fname, Lang.TURTLE);
-            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, lang, REL_BASE);
+        for (int i = 0; i < sources.size(); i++) {
+            // Blank-node labels are document-scoped in RDF: two merged sources
+            // may both say _:b0 and mean different nodes (labels are parsed as
+            // given). Prefixing every label with the source ordinal keeps
+            // documents from colliding WITHOUT the unbounded RAM map the RAM
+            // writer's AlignBnodes uses. The prefix never reaches the output:
+            // bnodes are stored by dictionary rank and readers regenerate
+            // labels from ids. Single-source builds stay untouched.
+            ingestSource(sources.get(i), sources.size() > 1 ? (i + "/") : null);
+        }
+        // VoID/SD metadata quads over ALL sources (mirrors the RAM writer; the
+        // model's namespace prefixes are presentation-only and irrelevant to quads).
+        for (Iterator<org.apache.jena.rdf.model.Statement> it = xvoid.getModel().listStatements(); it.hasNext(); ) {
+            Triple ff = it.next().asTriple();
+            Quad qqq = canonicalizeNumericObject(Quad.create(Params.BGVOID, ff));
+            acceptRow(qqq);
+        }
+        pTempFile.finish();
+        logger.info("Parse complete: {} source quads, {} total rows", parsedQuads, rows);
+    }
+
+    private void ingestSource(File input, String bnodeScope) throws IOException {
+        logger.info("Parsing {} (disk-based build)", input);
+        // Syntax from the file name (TriG, N-Quads, N-Triples, RDF/XML, JSON-LD,
+        // Turtle); .gz and .zip are decompressed transparently - one shared rule
+        // with the RAM writer and the CLI filter (RdfSources).
+        try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
+            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), REL_BASE);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             SpatialAugmenter augmenter = new SpatialAugmenter(features);
@@ -316,6 +334,7 @@ final class HugeBuildPipeline implements AutoCloseable {
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)
+                    .map(quad -> scopeBlankNodes(quad, bnodeScope))
                     .map(this::relativize)
                     .map(this::canonicalizeNumericObject)
                     .forEach(quad -> {
@@ -329,7 +348,7 @@ final class HugeBuildPipeline implements AutoCloseable {
                             if (spatial && isGeoLiteral(quad)) {
                                 inFlight.add(scope.submit(() -> augmenter.addSpatial(quad)));
                                 while (inFlight.size() >= maxInFlight) {
-                                    drainOne(inFlight);
+                                    drainOne(inFlight, input);
                                 }
                             }
                         } catch (IOException ex) {
@@ -337,26 +356,35 @@ final class HugeBuildPipeline implements AutoCloseable {
                         }
                     });
                 while (!inFlight.isEmpty()) {
-                    drainOne(inFlight);
+                    drainOne(inFlight, input);
                 }
             } catch (UncheckedIOException ex) {
-                throw new IOException("Failed while parsing/processing RDF source: " + src, ex.getCause());
+                throw new IOException("Failed while parsing/processing RDF source: " + input, ex.getCause());
             } catch (Exception ex) {
-                throw new IOException("Failed while parsing/processing RDF source: " + src, ex);
-            }
-            // VoID/SD metadata quads (mirrors the RAM writer; the model's
-            // namespace prefixes are presentation-only and irrelevant to quads).
-            for (Iterator<org.apache.jena.rdf.model.Statement> it = xvoid.getModel().listStatements(); it.hasNext(); ) {
-                Triple ff = it.next().asTriple();
-                Quad qqq = canonicalizeNumericObject(Quad.create(Params.BGVOID, ff));
-                acceptRow(qqq);
+                throw new IOException("Failed while parsing/processing RDF source: " + input, ex);
             }
         }
-        pTempFile.finish();
-        logger.info("Parse complete: {} source quads, {} total rows", parsedQuads, rows);
     }
 
-    private void drainOne(ArrayDeque<Future<ArrayList<Quad>>> inFlight) throws IOException {
+    /** See ingest(): per-document blank-node scoping for -merge builds; no-op when scope is null. */
+    private static Quad scopeBlankNodes(Quad q, String scope) {
+        if (scope == null) {
+            return q;
+        }
+        Node g = scopeNode(q.getGraph(), scope);
+        Node s = scopeNode(q.getSubject(), scope);
+        Node o = scopeNode(q.getObject(), scope);
+        if (g == q.getGraph() && s == q.getSubject() && o == q.getObject()) {
+            return q;
+        }
+        return new Quad(g, s, q.getPredicate(), o);
+    }
+
+    private static Node scopeNode(Node n, String scope) {
+        return n.isBlank() ? NodeFactory.createBlankNode(scope + n.getBlankNodeLabel()) : n;
+    }
+
+    private void drainOne(ArrayDeque<Future<ArrayList<Quad>>> inFlight, File input) throws IOException {
         Future<ArrayList<Quad>> task = inFlight.poll();
         if (task == null) return;
         ArrayList<Quad> extraQuads;
@@ -364,9 +392,9 @@ final class HugeBuildPipeline implements AutoCloseable {
             extraQuads = task.get();
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while collecting spatial results: " + src, ex);
+            throw new IOException("Interrupted while collecting spatial results: " + input, ex);
         } catch (ExecutionException ex) {
-            throw new IOException("Spatial processing failed for " + src, ex.getCause());
+            throw new IOException("Spatial processing failed for " + input, ex.getCause());
         }
         for (Quad q : extraQuads) {
             acceptRow(canonicalizeNumericObject(q));

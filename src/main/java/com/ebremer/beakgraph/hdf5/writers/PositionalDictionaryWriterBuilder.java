@@ -4,14 +4,13 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.utils.ImageTools;
+import com.ebremer.beakgraph.utils.RdfSources;
 import com.ebremer.halcyon.hilbert.HilbertSpace;
 import com.ebremer.halcyon.hilbert.PolygonScaler;
 import com.ebremer.halcyon.hilbert.WKTDatatype;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,14 +21,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.irix.IRIx;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFLanguages;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
@@ -56,6 +52,10 @@ public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
     private File src;
     private File dest;
+    /** When non-empty, ALL of these documents are parsed into ONE store (-merge); src is ignored. */
+    private final List<File> sources = new ArrayList<>();
+    /** Replacement-label counter for AlignBnodes; never resets, so labels stay unique across merged sources. */
+    private long bnodeCounter = 0;
     private final HashSet<Node> entities = new HashSet<>();   // URIs & BNodes from G, S, O
     private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
     private final HashSet<Node> literals = new HashSet<>();   // Literals from O
@@ -155,6 +155,17 @@ public class PositionalDictionaryWriterBuilder {
     
     public PositionalDictionaryWriterBuilder setSource(File src) {
         this.src = src; return this;
+    }
+
+    /**
+     * Merge mode: parse every given document into the one store being built.
+     * Blank nodes stay distinct per document; everything else (dictionaries,
+     * VoID statistics, indexes) is computed over the union.
+     */
+    public PositionalDictionaryWriterBuilder setSources(List<File> files) {
+        this.sources.clear();
+        this.sources.addAll(files);
+        return this;
     }
 
     public PositionalDictionaryWriterBuilder setSpatial(boolean flag) {
@@ -357,7 +368,7 @@ public class PositionalDictionaryWriterBuilder {
         if (g.isBlank()||s.isBlank()||o.isBlank()) {
             if (g.isBlank()) {
                 if (!bmap.containsKey(g)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bmap.size()));
+                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
                     bmap.put(g, neo);
                     g = neo;
                 } else {
@@ -366,7 +377,7 @@ public class PositionalDictionaryWriterBuilder {
             }
             if (s.isBlank()) {
                 if (!bmap.containsKey(s)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bmap.size()));
+                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
                     bmap.put(s, neo);
                     s = neo;
                 } else {
@@ -375,7 +386,7 @@ public class PositionalDictionaryWriterBuilder {
             }
             if (o.isBlank()) {
                 if (!bmap.containsKey(o)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bmap.size()));
+                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
                     bmap.put(o, neo);
                     o = neo;
                 } else {
@@ -608,25 +619,62 @@ public class PositionalDictionaryWriterBuilder {
      */
     protected final void parse() throws IOException {
         final AtomicLong quadcount = new AtomicLong();
-        logger.trace("Creating dictionary...");        
-        try (InputStream xis = src.toString().endsWith(".gz")
-                ? new GZIPInputStream(new FileInputStream(src))
-                : new FileInputStream(src)) {
-            // Detect the syntax from the file name (TriG, N-Quads, N-Triples,
-            // Turtle, ...; .gz handled) instead of hardcoding Turtle: this is a
-            // quad store, and named graphs can only arrive through a quad-capable
-            // syntax.
-            String fname = src.getName();
-            if (fname.endsWith(".gz")) {
-                fname = fname.substring(0, fname.length() - 3);
-            }
-            Lang lang = RDFLanguages.filenameToLang(fname, Lang.TURTLE);
+        logger.trace("Creating dictionary...");
+        if (sources.isEmpty() && src == null) {
+            throw new IllegalStateException("No source set: call setSource() or setSources()");
+        }
+        final List<File> inputs = sources.isEmpty() ? List.of(src) : List.copyOf(sources);
+        for (File input : inputs) {
+            parseSource(input, quadcount);
+            // Blank-node labels are document-scoped in RDF: two sources may both
+            // say _:b0 and mean different nodes (the parser keeps labels as
+            // given). Clearing the alignment map per document keeps them
+            // distinct, while the never-reset bnodeCounter keeps the replacement
+            // labels unique across the whole (possibly merged) store.
+            bmap.clear();
+        }
+        // VoID/SD metadata accumulated over ALL sources
+        Model xxx = xvoid.getModel();
+        xxx.setNsPrefix("void", VOID.NS);
+        xxx.setNsPrefix("sd", SD.getURI());
+        xxx.setNsPrefix("xsd", XSD.getURI());
+        xxx.setNsPrefix("rdfs", RDFS.getURI());
+        xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+        xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+        xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
+        xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
+        xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
+        xvoid.getModel().listStatements().forEach(s->{
+            Triple ff = s.asTriple();
+            Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
+            ProcessQuad(qqq);
+            quadslist.add(qqq);
+        });
+        // Set sum logic for backward compatibility in Stats object
+        stats.numGraphs = entities.size();
+        stats.numSubjects = entities.size();
+        stats.numPredicates = predicates.size();
+        stats.numObjects = entities.size() + literals.size();
+
+        this.numQuads = quadcount.get();
+        this.quads = quadslist.toArray(Quad[]::new);
+        quadslist.clear();
+        logger.info("Dictionary created. Total quads: {}", this.numQuads);
+    }
+
+    /** Parses one source document into the shared collected state. */
+    private void parseSource(File input, AtomicLong quadcount) throws IOException {
+        // The syntax comes from the file name (TriG, N-Quads, N-Triples,
+        // RDF/XML, JSON-LD, Turtle; .gz and .zip handled) instead of
+        // hardcoding Turtle: this is a quad store, and named graphs can only
+        // arrive through a quad-capable syntax.
+        try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
             // Parse relative references against a stable sentinel base so they
             // resolve deterministically (not against the process working
             // directory). The relativize() step below strips the sentinel back
             // off; the relative form is resolved at query time against the URL
             // the .h5 file is served from.
-            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, lang, REL_BASE);
+            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), REL_BASE);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
@@ -660,7 +708,7 @@ public class PositionalDictionaryWriterBuilder {
             } catch (Exception ex) {
                 // Don't swallow a parse/processing failure - that would leave a silently
                 // truncated dictionary. Abort the write; Error/OOM still propagate.
-                throw new IOException("Failed while parsing/processing RDF source: " + src, ex);
+                throw new IOException("Failed while parsing/processing RDF source: " + input, ex);
             }
             for (Future<ArrayList<Quad>> task : spatialTasks) {
                 ArrayList<Quad> extraQuads;
@@ -668,9 +716,9 @@ public class PositionalDictionaryWriterBuilder {
                     extraQuads = task.get();
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while collecting spatial results: " + src, ex);
+                    throw new IOException("Interrupted while collecting spatial results: " + input, ex);
                 } catch (ExecutionException ex) {
-                    throw new IOException("Spatial processing failed for " + src, ex.getCause());
+                    throw new IOException("Spatial processing failed for " + input, ex.getCause());
                 }
                 extraQuads.forEach(q -> {
                     Quad canon = canonicalizeNumericObject(q);
@@ -678,37 +726,11 @@ public class PositionalDictionaryWriterBuilder {
                     ProcessQuad(canon);
                 });
             }
-            Model xxx = xvoid.getModel();
-            xxx.setNsPrefix("void", VOID.NS);
-            xxx.setNsPrefix("sd", SD.getURI());
-            xxx.setNsPrefix("xsd", XSD.getURI());
-            xxx.setNsPrefix("rdfs", RDFS.getURI());
-            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
-            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
-            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
-            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
-            xvoid.getModel().listStatements().forEach(s->{
-                Triple ff = s.asTriple();
-                Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
-                ProcessQuad(qqq);
-                quadslist.add(qqq);
-            });
-            // Set sum logic for backward compatibility in Stats object
-            stats.numGraphs = entities.size(); 
-            stats.numSubjects = entities.size();
-            stats.numPredicates = predicates.size();
-            stats.numObjects = entities.size() + literals.size();
-            
         } catch (FileNotFoundException e) {
-            throw new IOException("Source file not found: " + src, e);
+            throw new IOException("Source file not found: " + input, e);
         } catch (IOException e) {
-            throw new IOException("I/O error while reading RDF source", e);
+            throw new IOException("I/O error while reading RDF source: " + input, e);
         }
-        this.numQuads = quadcount.get();
-        this.quads = quadslist.toArray(Quad[]::new);
-        quadslist.clear();
-        logger.info("Dictionary created. Total quads: {}", this.numQuads);
     }
 
     private boolean isGeoLiteral(Quad quad) {

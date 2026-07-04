@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.huge;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitResult;
@@ -11,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +41,10 @@ import org.slf4j.LoggerFactory;
  * node ordering (labels are kept as parsed rather than relabelled), which
  * yields an isomorphic - not byte-identical - store.
  *
+ * <p>Like the other writers, {@code setSources(List)} merges several source
+ * documents into the one store being written (-merge), with blank nodes kept
+ * distinct per document.
+ *
  * @author Erich Bremer
  */
 public class HugeHDF5Writer implements BeakGraphWriter {
@@ -61,9 +67,14 @@ public class HugeHDF5Writer implements BeakGraphWriter {
         Path workBase = (builder.workDir != null) ? builder.workDir
                 : (dest.toAbsolutePath().getParent() != null ? dest.toAbsolutePath().getParent() : Path.of("."));
         Path workspace = Files.createTempDirectory(workBase, ".bghuge-");
+        // -merge: every source in the list is parsed into this one store
+        // (blank nodes stay distinct per document); otherwise the single src.
+        List<File> inputs = builder.getSources().isEmpty()
+                ? List.of(builder.getSource())
+                : builder.getSources();
         try {
             try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
-                    builder.getSource(), builder.getSpatial(), builder.getFeatures(),
+                    inputs, builder.getSpatial(), builder.getFeatures(),
                     workspace, builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn)) {
                 pipeline.run(tmp);
             }

@@ -1,13 +1,15 @@
 package com.ebremer.beakgraph.core;
 
 import java.io.File;
+import java.util.List;
 import org.apache.jena.query.Dataset;
 
 // T refers to the concrete class (e.g., HDF5Writer.Builder)
 public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
-    
+
     protected File src;
     protected File dest;
+    protected List<File> sources = List.of();
     protected Dataset ds;
     protected boolean spatial;
     protected boolean features;
@@ -24,6 +26,18 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
         this.dest = file;
         return self();
     }
+
+    /**
+     * Merge mode: every given document is parsed into the ONE store being
+     * written (blank nodes stay distinct per document). When non-empty this
+     * takes precedence over {@link #setSource}.
+     */
+    public T setSources(List<File> files) {
+        this.sources = List.copyOf(files);
+        return self();
+    }
+
+    public List<File> getSources() { return sources; }
     
     public T setSpatial(boolean flag) {
         this.spatial = flag;

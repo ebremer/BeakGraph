@@ -7,11 +7,15 @@ import com.ebremer.beakgraph.core.fuseki.SPARQLEndPoint;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer;
 import com.ebremer.beakgraph.huge.HugeHDF5Writer;
+import com.ebremer.beakgraph.utils.RdfSources;
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -48,7 +52,9 @@ public class BeakGraphCLI {
         this.fc = new FileCounter();
         String os = System.getProperty("os.name").toLowerCase();
         ProgressBarStyle style = os.contains("win") ? ProgressBarStyle.ASCII : ProgressBarStyle.COLORFUL_UNICODE_BLOCK;
-        if (params.status) {
+        // -merge is one big conversion, not a stream of per-file tasks; the
+        // per-file progress bar would only ever render empty.
+        if (params.status && !params.merge) {
             progressBar = new ProgressBarBuilder()
                 .setTaskName("Processing RDF Source Files...")
                 .setInitialMax(0)
@@ -100,7 +106,11 @@ public class BeakGraphCLI {
                         }
                         JenaSystem.init();
                         BeakGraphCLI bg = new BeakGraphCLI(params);
-                        bg.traverse();
+                        if (params.merge) {
+                            bg.merge();
+                        } else {
+                            bg.traverse();
+                        }
                         if (bg.fc.getFailedConversionFileCount() > 0) {
                             System.exit(2);
                         }
@@ -137,7 +147,7 @@ public class BeakGraphCLI {
                         fc.incrementZeroLengthFileCount();
                         return false;
                     }
-                    if (p.toFile().toString().toLowerCase().endsWith(".ttl.gz") || p.toFile().toString().toLowerCase().endsWith(".ttl")) {
+                    if (RdfSources.isSupported(p.getFileName().toString())) {
                         return true;
                     }
                     fc.incrementOtherFileCount();
@@ -167,6 +177,94 @@ public class BeakGraphCLI {
             }
         } catch (IOException ex) {
             java.util.logging.Logger.getLogger(BeakGraphCLI.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        if (params.status) {
+            System.out.println(fc);
+        }
+    }
+
+    /**
+     * -merge: parse every supported RDF source under -src into ONE BeakGraph
+     * HDF5 file at -dest (or {@code <dest>/merged.h5} when -dest is an existing
+     * directory). Sources are taken in sorted path order so repeated merges of
+     * the same tree are deterministic; blank nodes stay distinct per source
+     * document. The destination is rebuilt - the write is atomic, so a failed
+     * rebuild never destroys a previous good artifact.
+     */
+    public void merge() {
+        final List<File> inputs = new ArrayList<>();
+        try (var walk = Files.walk(params.src.toPath())) {
+            walk.filter(p -> {
+                    File f = p.toFile();
+                    if (f.isDirectory()) {
+                        fc.incrementDirectoryCount();
+                        return false;
+                    }
+                    if (f.length() == 0) {
+                        fc.incrementZeroLengthFileCount();
+                        return false;
+                    }
+                    if (RdfSources.isSupported(p.getFileName().toString())) {
+                        return true;
+                    }
+                    fc.incrementOtherFileCount();
+                    return false;
+                })
+                .sorted()
+                .forEach(p -> {
+                    fc.incrementRDFFileCount();
+                    inputs.add(p.toFile());
+                });
+        } catch (IOException ex) {
+            logger.error("Failed to scan source tree {}", params.src, ex);
+        }
+        if (inputs.isEmpty()) {
+            System.err.println("No supported RDF sources found under " + params.src);
+            return;
+        }
+        File dest = params.dest;
+        if (dest.isDirectory()) {
+            dest = new File(dest, "merged.h5");
+        }
+        if (dest.getParentFile() != null) {
+            dest.getParentFile().mkdirs();
+        }
+        logger.info("Merging {} RDF sources into {}", inputs.size(), dest);
+        try {
+            if (params.huge) {
+                // Disk-based merge: all sources spill into one workspace/store;
+                // blank nodes stay distinct per document (see HugeBuildPipeline).
+                HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
+                    .setSources(inputs)
+                    .setDestination(dest)
+                    .setSpatial(params.spatial)
+                    .setFeatures(params.features);
+                if (params.workdir != null) {
+                    params.workdir.mkdirs();
+                    builder.setWorkDirectory(params.workdir.toPath());
+                }
+                builder.build().write();
+            } else if (params.parallel) {
+                ParallelHDF5Writer.Builder()
+                    .setSources(inputs)
+                    .setDestination(dest)
+                    .setSpatial(params.spatial)
+                    .setFeatures(params.features)
+                    .setCores(params.cores)
+                    .build()
+                    .write();
+            } else {
+                HDF5Writer.Builder()
+                    .setSources(inputs)
+                    .setDestination(dest)
+                    .setSpatial(params.spatial)
+                    .setFeatures(params.features)
+                    .build()
+                    .write();
+            }
+        } catch (Exception ex) {
+            fc.incrementFailedConversionFileCount();
+            logger.error("Failed to merge {} sources into {}", inputs.size(), dest, ex);
         }
         if (params.status) {
             System.out.println(fc);

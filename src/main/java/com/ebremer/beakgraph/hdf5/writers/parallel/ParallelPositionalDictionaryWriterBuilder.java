@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers.parallel;
 import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.ForkJoinPool;
 
 /**
@@ -27,6 +28,12 @@ public class ParallelPositionalDictionaryWriterBuilder extends PositionalDiction
     @Override
     public ParallelPositionalDictionaryWriterBuilder setSource(File src) {
         super.setSource(src);
+        return this;
+    }
+
+    @Override
+    public ParallelPositionalDictionaryWriterBuilder setSources(List<File> files) {
+        super.setSources(files);
         return this;
     }
 
