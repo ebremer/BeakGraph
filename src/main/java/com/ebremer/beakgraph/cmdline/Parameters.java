@@ -72,6 +72,19 @@ public class Parameters {
                         + "-threads N, N conversions run at once, each capped at -cores)")
     public int cores = 4;
 
+    @Parameter(names = "-export", validateWith = ExportFormatValidator.class,
+            description = "Dump the BeakGraph(s) at -src back to RDF instead of converting: "
+                        + "NT, NQ, JSON-LD, TTL, or TRIG. Output lands next to each .h5 with the "
+                        + "same name and the format's extension. If TTL or NT is chosen but the "
+                        + "store holds named graphs beyond the default graph, the format is "
+                        + "upgraded to its quad form (TTL->TRIG, NT->NQ). BeakGraph-internal "
+                        + "metadata graphs (VoID/spatial index) are not exported")
+    public String export = null;
+
+    @Parameter(names = {"-compress"}, converter = BooleanConverter.class,
+            description = "gzip the -export output (adds .gz to the file name)")
+    public boolean compress = false;
+
     @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)
     public boolean version = false;
 

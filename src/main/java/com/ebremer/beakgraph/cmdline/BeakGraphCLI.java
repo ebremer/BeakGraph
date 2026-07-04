@@ -14,6 +14,7 @@ import com.ebremer.beakgraph.utils.RdfSources;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -55,9 +56,9 @@ public class BeakGraphCLI {
         this.fc = new FileCounter();
         String os = System.getProperty("os.name").toLowerCase();
         ProgressBarStyle style = os.contains("win") ? ProgressBarStyle.ASCII : ProgressBarStyle.COLORFUL_UNICODE_BLOCK;
-        // -merge is one big conversion, not a stream of per-file tasks; the
-        // per-file progress bar would only ever render empty.
-        if (params.status && !params.merge) {
+        // -merge is one big conversion (and -export its own flow), not a stream
+        // of per-file tasks; the per-file progress bar would only render empty.
+        if (params.status && !params.merge && params.export == null) {
             progressBar = new ProgressBarBuilder()
                 .setTaskName("Processing RDF Source Files...")
                 .setInitialMax(0)
@@ -97,6 +98,14 @@ public class BeakGraphCLI {
                             Thread.currentThread().join();
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
+                        }
+                    } else if (params.src != null && params.src.exists() && params.export != null) {
+                        // Export mode: dump BeakGraph(s) back to RDF; no -dest
+                        // involved (output lands beside each source .h5).
+                        BeakGraphCLI bg = new BeakGraphCLI(params);
+                        bg.export();
+                        if (bg.fc.getFailedConversionFileCount() > 0) {
+                            System.exit(2);
                         }
                     } else if (params.src != null && params.src.exists()) {
                         if (params.dest == null) {
@@ -243,6 +252,163 @@ public class BeakGraphCLI {
         }
         if (params.status) {
             System.out.println(fc);
+        }
+    }
+
+    /**
+     * -export: dump the BeakGraph(s) at -src back to RDF. -src may be one .h5
+     * file or a directory tree of them; each store exports to a sibling file
+     * with the same name and the format's extension (plus .gz with -compress).
+     * TTL/NT are upgraded to TRIG/NQ when a store holds named graphs beyond
+     * the default graph. BeakGraph-internal metadata graphs (the VoID
+     * statistics and spatial index, urn:x-beakgraph:*) are derived build
+     * artifacts and are excluded - both from the dump and from the "has named
+     * graphs" decision, so a plain-triples store round-trips to plain triples.
+     */
+    public void export() {
+        final List<File> inputs = new ArrayList<>();
+        if (params.src.isDirectory()) {
+            try (var walk = Files.walk(params.src.toPath())) {
+                walk.filter(p -> p.toFile().isFile()
+                                && p.getFileName().toString().toLowerCase().endsWith(".h5")
+                                && p.toFile().length() > 0)
+                    .sorted()
+                    .forEach(p -> inputs.add(p.toFile()));
+            } catch (IOException ex) {
+                logger.error("Failed to scan source tree {}", params.src, ex);
+            }
+        } else {
+            inputs.add(params.src);
+        }
+        if (inputs.isEmpty()) {
+            System.err.println("No BeakGraph (.h5) files found under " + params.src);
+            return;
+        }
+        for (File h5 : inputs) {
+            fc.incrementRDFFileCount();
+            try {
+                exportOne(h5);
+            } catch (Exception ex) {
+                fc.incrementFailedConversionFileCount();
+                logger.error("Failed to export {}", h5, ex);
+            }
+        }
+        if (params.status) {
+            System.out.println(fc);
+        }
+    }
+
+    private void exportOne(File h5) throws Exception {
+        String fmt = ExportFormatValidator.normalize(params.export);
+        try (com.ebremer.beakgraph.core.BeakGraph bg = new com.ebremer.beakgraph.core.BeakGraph(
+                new com.ebremer.beakgraph.hdf5.readers.HDF5Reader(h5))) {
+            org.apache.jena.sparql.core.DatasetGraph dsg = bg.getDataset().asDatasetGraph();
+            boolean named = hasUserNamedGraphs(dsg);
+            if (named && "NT".equals(fmt)) {
+                logger.info("{} holds named graphs: exporting NQ instead of NT", h5.getName());
+                fmt = "NQ";
+            } else if (named && "TTL".equals(fmt)) {
+                logger.info("{} holds named graphs: exporting TRIG instead of TTL", h5.getName());
+                fmt = "TRIG";
+            }
+            String ext = switch (fmt) {
+                case "NT" -> "nt";
+                case "NQ" -> "nq";
+                case "TTL" -> "ttl";
+                case "TRIG" -> "trig";
+                default -> "jsonld";
+            };
+            String base = h5.getName();
+            if (base.toLowerCase().endsWith(".h5")) {
+                base = base.substring(0, base.length() - 3);
+            }
+            Path out = h5.toPath().resolveSibling(base + "." + ext + (params.compress ? ".gz" : ""));
+            Path tmp = out.resolveSibling(out.getFileName() + ".tmp");
+            logger.info("Exporting {} -> {} ({})", h5.getName(), out.getFileName(), fmt);
+            try (OutputStream os = openExportStream(tmp)) {
+                writeExport(os, dsg, fmt);
+            } catch (Exception ex) {
+                try {
+                    Files.deleteIfExists(tmp);
+                } catch (IOException ignored) {}
+                throw ex;
+            }
+            try {
+                Files.move(tmp, out, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, out, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            logger.info("Export complete: {}", out);
+        }
+    }
+
+    private OutputStream openExportStream(Path tmp) throws IOException {
+        OutputStream os = new java.io.BufferedOutputStream(Files.newOutputStream(tmp), 1 << 17);
+        return params.compress ? new java.util.zip.GZIPOutputStream(os, 1 << 16) : os;
+    }
+
+    /** A graph the USER put in the store (not BeakGraph's own metadata graphs). */
+    private static boolean isUserGraph(org.apache.jena.graph.Node g) {
+        return !Params.BGVOID.equals(g) && !Params.SPATIAL.equals(g);
+    }
+
+    private static boolean hasUserNamedGraphs(org.apache.jena.sparql.core.DatasetGraph dsg) {
+        var it = dsg.listGraphNodes();
+        while (it.hasNext()) {
+            if (isUserGraph(it.next())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void writeExport(OutputStream os, org.apache.jena.sparql.core.DatasetGraph dsg, String fmt)
+            throws IOException {
+        switch (fmt) {
+            case "NT", "TTL" -> {
+                // Triple export: by this point the store has no user named
+                // graphs, so the default graph IS the data.
+                org.apache.jena.riot.system.StreamRDF stream = org.apache.jena.riot.system.StreamRDFWriter
+                        .getWriterStream(os, "NT".equals(fmt)
+                                ? org.apache.jena.riot.RDFFormat.NTRIPLES
+                                : org.apache.jena.riot.RDFFormat.TURTLE_BLOCKS);
+                stream.start();
+                var it = dsg.getDefaultGraph().find();
+                while (it.hasNext()) {
+                    stream.triple(it.next());
+                }
+                stream.finish();
+            }
+            case "NQ", "TRIG" -> {
+                org.apache.jena.riot.system.StreamRDF stream = org.apache.jena.riot.system.StreamRDFWriter
+                        .getWriterStream(os, "NQ".equals(fmt)
+                                ? org.apache.jena.riot.RDFFormat.NQUADS
+                                : org.apache.jena.riot.RDFFormat.TRIG_BLOCKS);
+                stream.start();
+                var it = dsg.find();
+                while (it.hasNext()) {
+                    var q = it.next();
+                    if (isUserGraph(q.getGraph())) {
+                        stream.quad(q);
+                    }
+                }
+                stream.finish();
+            }
+            default -> {
+                // JSON-LD has no streaming writer: materialize the filtered
+                // dataset. Fine for JSON-LD-sized data; use NQ/TRIG for bulk.
+                org.apache.jena.sparql.core.DatasetGraph copy =
+                        org.apache.jena.sparql.core.DatasetGraphFactory.create();
+                var it = dsg.find();
+                while (it.hasNext()) {
+                    var q = it.next();
+                    if (isUserGraph(q.getGraph())) {
+                        copy.add(q);
+                    }
+                }
+                org.apache.jena.riot.RDFDataMgr.write(os, copy, org.apache.jena.riot.Lang.JSONLD);
+            }
         }
     }
 

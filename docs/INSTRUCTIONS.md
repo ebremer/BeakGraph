@@ -63,6 +63,8 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-features` | off | Also derive 2-D shape features (area, axes, …) for each geometry. Implies work under `-spatial`. |
 | `-workdir <dir>` | dest dir | Spill workspace for `-method 1` and `-method 4`. Put this on your fastest disk. |
 | `-huge` | off | Legacy shorthand for `-method 1`. An explicit `-method` takes precedence. |
+| `-export <fmt>` | — | **Export mode**: dump the BeakGraph(s) at `-src` back to RDF instead of converting. Formats: `NT`, `NQ`, `JSON-LD`, `TTL`, `TRIG` (case-insensitive). Output lands next to each `.h5` with the same name and the format's extension. See §5a. |
+| `-compress` | off | gzip the `-export` output (adds `.gz` to the file name). |
 | `-status` | off | Progress bar (per-file mode) and end-of-run counters. |
 | `-endpoint <file.h5>` | — | Serve the store as a SPARQL endpoint instead of converting. |
 | `-port <n>` | `8888` | HTTP port for `-endpoint`. |
@@ -82,6 +84,26 @@ Turtle `.ttl`, N-Triples `.nt`, N-Quads `.nq`, TriG `.trig`, RDF/XML `.rdf`, JSO
 each also as gzip (`.ttl.gz`, …) or zip (`.ttl.zip`, …; the first non-directory zip entry is read).
 Named graphs require a quad-capable syntax (TriG / N-Quads). Files with other extensions are
 counted and skipped.
+
+## 5a. Exporting a BeakGraph back to RDF
+
+```bash
+java -jar BeakGraph.jar -src data.h5 -export NQ                 # -> data.nq
+java -jar BeakGraph.jar -src data.h5 -export TTL -compress      # -> data.ttl.gz
+java -jar BeakGraph.jar -src stores/ -export NT                 # every .h5 under stores/
+```
+
+* `-src` may be one `.h5` file or a directory tree (every `.h5` under it exports).
+* **Automatic quad upgrade**: if `TTL` or `NT` is requested but the store holds named
+  graphs beyond the default graph, the format silently upgrades to its quad form
+  (`TTL -> TRIG`, `NT -> NQ`) and the extension follows.
+* BeakGraph's **internal metadata graphs** (`urn:x-beakgraph:void` statistics and the
+  `urn:x-beakgraph:Spatial` index) are derived build artifacts: they are excluded from
+  the export and from the named-graph decision, so a plain-triples store round-trips
+  to plain triples.
+* NT/NQ/TTL/TRIG exports stream (any store size); JSON-LD has no streaming writer and
+  materializes the dataset in memory - use NQ/TRIG for bulk dumps.
+* Writes are atomic (`.tmp` then rename); an existing export is replaced.
 
 ## 6. Choosing a conversion method
 
