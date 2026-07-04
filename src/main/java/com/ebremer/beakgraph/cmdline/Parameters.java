@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.cmdline;
 
 import com.beust.jcommander.Parameter;
 import com.beust.jcommander.converters.BooleanConverter;
+import com.beust.jcommander.validators.PositiveInteger;
 import java.io.File;
 
 /**
@@ -42,6 +43,18 @@ public class Parameters {
                         + "destination file's directory)", required = false)
     public File workdir = null;
     
+    @Parameter(names = {"-parallel"}, converter = BooleanConverter.class,
+            description = "Use the multi-threaded in-memory writer "
+                        + "(com.ebremer.beakgraph.hdf5.writers.parallel): builds each file's "
+                        + "dictionaries, columnar id lists, and GSPO/GPOS indexes concurrently "
+                        + "on -cores threads. Ignored when -huge is set")
+    public boolean parallel = false;
+
+    @Parameter(names = "-cores", validateWith = PositiveInteger.class,
+            description = "# of threads each -parallel conversion may use (with -threads N, "
+                        + "N conversions run at once, each capped at -cores)")
+    public int cores = 4;
+
     @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)
     public boolean version = false;
 

@@ -594,6 +594,19 @@ public class PositionalDictionaryWriterBuilder {
     }
     
     public PositionalDictionaryWriter build() throws IOException {
+        parse();
+        return new PositionalDictionaryWriter(this);
+    }
+
+    /**
+     * Runs the full ingest pipeline - parse, bnode alignment, numeric
+     * canonicalization, spatial/feature augmentation, VoID statistics - leaving
+     * the collected quads, node sets, and stats in this builder. Shared verbatim
+     * by {@link #build()} and the parallel subclass
+     * (com.ebremer.beakgraph.hdf5.writers.parallel), which differ only in which
+     * dictionary writer they construct from the collected state.
+     */
+    protected final void parse() throws IOException {
         final AtomicLong quadcount = new AtomicLong();
         logger.trace("Creating dictionary...");        
         try (InputStream xis = src.toString().endsWith(".gz")
@@ -696,7 +709,6 @@ public class PositionalDictionaryWriterBuilder {
         this.quads = quadslist.toArray(Quad[]::new);
         quadslist.clear();
         logger.info("Dictionary created. Total quads: {}", this.numQuads);
-        return new PositionalDictionaryWriter(this);
     }
 
     private boolean isGeoLiteral(Quad quad) {

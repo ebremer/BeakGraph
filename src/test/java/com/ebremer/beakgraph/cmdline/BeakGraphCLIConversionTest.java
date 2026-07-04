@@ -78,6 +78,46 @@ class BeakGraphCLIConversionTest {
     }
 
     @Test
+    void parallelFlagConvertsThroughParallelWriter() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("srcpar"));
+        Files.write(src.resolve("data.ttl"),
+                "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n".getBytes(StandardCharsets.UTF_8));
+
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("outpar").toFile();
+        p.parallel = true;
+        p.cores = 2;
+
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.traverse();
+
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(),
+                "the -parallel conversion must succeed");
+        File h5 = dir.resolve("outpar").resolve("data.h5").toFile();
+        assertTrue(h5.exists() && h5.length() > 0, "the -parallel writer must produce the .h5 file");
+        // The produced store must be readable by the standard reader stack.
+        try (com.ebremer.beakgraph.core.BeakGraph bg = new com.ebremer.beakgraph.core.BeakGraph(
+                new com.ebremer.beakgraph.hdf5.readers.HDF5Reader(h5))) {
+            assertTrue(bg.find(org.apache.jena.graph.NodeFactory.createURI("http://ex.org/a"),
+                               org.apache.jena.graph.NodeFactory.createURI("http://ex.org/p"),
+                               org.apache.jena.graph.NodeFactory.createURI("http://ex.org/b")).hasNext(),
+                    "the converted triple must be queryable");
+        }
+    }
+
+    @Test
+    void parallelAndCoresOptionsParse() {
+        // The exact spellings the writer is documented with: -parallel and -cores.
+        Parameters p = new Parameters();
+        com.beust.jcommander.JCommander.newBuilder().addObject(p).build()
+                .parse("-src", "x", "-parallel", "-cores", "6");
+        assertTrue(p.parallel, "-parallel must set the flag");
+        assertEquals(6, p.cores, "-cores must override the default");
+        assertEquals(4, new Parameters().cores, "-cores must default to 4");
+    }
+
+    @Test
     void missingDestinationFailsEveryFileLoudlyInsteadOfSilently() throws Exception {
         // main() refuses to start without -dest; if a processor is ever reached
         // without one anyway, the failure must land in the counter, not vanish
