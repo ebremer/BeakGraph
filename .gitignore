@@ -1,4 +1,5 @@
 /target/
+/benchmarks/target/
 *.log
 .claude/settings.local.json
 *.h5
