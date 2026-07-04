@@ -65,7 +65,7 @@ class UnionGraphAndDetachTest {
         File ttl = dir.resolve("union.ttl").toFile();
         File h5 = dir.resolve("union.ttl.h5").toFile();
         Files.write(ttl.toPath(), TTL.getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder()
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT)
                 .setSource(ttl).setDestination(h5)
                 .setSpatial(false).setFeatures(false)
                 .build().write();

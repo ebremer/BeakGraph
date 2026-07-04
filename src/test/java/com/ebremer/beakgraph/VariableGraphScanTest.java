@@ -49,7 +49,7 @@ class VariableGraphScanTest {
         File t = dir.resolve("vg.ttl").toFile();
         h5 = dir.resolve("vg.ttl.h5").toFile();
         Files.write(t.toPath(), ttl.toString().getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder().setSource(t).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setSource(t).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
     }
 
     @Test

@@ -59,7 +59,7 @@ class ReorderQueryTest {
         try (OutputStream out = Files.newOutputStream(ttl.toPath())) {
             RDFDataMgr.write(out, m, Lang.TURTLE);
         }
-        HDF5Writer.Builder().setSource(ttl).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setSource(ttl).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
         bg = new BeakGraph(new HDF5Reader(h5), h5.toURI());
         ds = bg.getDataset();
     }

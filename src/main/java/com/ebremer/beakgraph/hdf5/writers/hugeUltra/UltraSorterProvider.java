@@ -26,14 +26,14 @@ import org.apache.jena.sparql.core.Quad;
  * varint row list) instead of once per occurrence. Id records (row joins and
  * encoded quads) sort on bit-packed primitive sorters with no objects at all.
  */
-final class UltraSorterProvider implements SorterProvider {
+public final class UltraSorterProvider implements SorterProvider {
 
     private final int termSpillBatch;
     private final int idSpillBatch;
     private final int fanIn;
     private final ForkJoinPool pool;
 
-    UltraSorterProvider(int termSpillBatch, int idSpillBatch, int fanIn, ForkJoinPool pool) {
+    public UltraSorterProvider(int termSpillBatch, int idSpillBatch, int fanIn, ForkJoinPool pool) {
         this.termSpillBatch = termSpillBatch;
         this.idSpillBatch = idSpillBatch;
         this.fanIn = fanIn;

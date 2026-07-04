@@ -59,6 +59,8 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-cores <n>` | `4` | Threads used **inside** one conversion by `-method 2`, `3`, and `4`. |
 | `-threads <n>` | `1` | Number of conversions run **at once** (per-file mode). Each conversion gets its own `-cores` budget — total CPU ≈ `threads × cores`. |
 | `-merge` | off | Merge **all** sources under `-src` into ONE store at `-dest` (if `-dest` is an existing directory, writes `<dest>/merged.h5`). Blank nodes stay distinct per source document. Works with every `-method`. |
+| `-void` | off | Generate the VoID/SD statistics graph (`urn:x-beakgraph:void`) with **exact** in-memory counting (RAM grows with distinct terms). Mutually exclusive with `-voidsketch`. |
+| `-voidsketch` | off | Generate the statistics graph with **bounded memory**: exact up to 65,536 distinct nodes per counter, then HyperLogLog estimates (~0.8% error, deterministic). Recommended for `-method 1/4/5`. Mutually exclusive with `-void`. |
 | `-spatial` | off | Build the Hilbert-curve spatial index for `geo:wktLiteral` geometry (adds the `urn:x-beakgraph:Spatial` graph). |
 | `-features` | off | Also derive 2-D shape features (area, axes, …) for each geometry. Implies work under `-spatial`. |
 | `-workdir <dir>` | dest dir | Spill workspace for `-method 1` and `-method 4`. Put this on your fastest disk. |
@@ -114,19 +116,21 @@ java -jar BeakGraph.jar -src stores/ -export NT                 # every .h5 unde
 | `2` | Parallel in-memory | Whole input on heap | `-cores` | Medium files, faster than 0. |
 | `3` | **Ultra** in-memory | Whole input on heap | `-cores` | Fastest option **for data that fits in RAM**: parallel parse, O(1) id maps, radix-sorted packed keys, parallel index emission. |
 | `4` | **hugeUltra** disk-based | **Bounded** by spill batches | `-cores` | Multi-billion-quad builds: the `-method 1` pipeline on parallel machinery — background radix-sorted spills, packed primitive keys, grouped term runs, concurrent stages. Native HDF5 required. |
+| `5` | **plaid** disk-based | **Bounded** by spill batches | `-cores` | Method 4 **plus parallel multi-file ingest**: up to `-cores` source documents parse concurrently. The fastest option for `-merge` over many files. Native HDF5 required. |
 
-Rules of thumb: fits comfortably in heap → `-method 3`. Doesn't fit → `-method 4`.
+Rules of thumb: fits comfortably in heap → `-method 3`. Doesn't fit and merging many files →
+`-method 5`; doesn't fit, single giant file → `-method 4`.
 Methods 0/1/2 remain for compatibility, minimal-dependency, and low-memory-machine cases.
 
 For per-file batch conversion of MANY small files, prefer `-threads N` (parallel conversions)
 over large `-cores`; for one big file, all the parallelism comes from `-cores`.
 
-## 7. Very large builds (`-method 4`, 10⁹–10¹¹ quads)
+## 7. Very large builds (`-method 4`/`5`, 10⁹–10¹¹ quads)
 
 ```bash
 java -Xmx32g -jar BeakGraph.jar \
      -src shards/ -dest giant.h5 -merge \
-     -method 4 -cores 32 -workdir /nvme/scratch -status
+     -method 5 -cores 32 -workdir /nvme/scratch -status
 ```
 
 * **Workspace**: budget roughly 3–5× the uncompressed source on `-workdir`; use NVMe.
@@ -136,6 +140,11 @@ java -Xmx32g -jar BeakGraph.jar \
   `setIdSpillBatch` / `setTermSpillBatch` on `HugeUltraHDF5Writer.Builder` (defaults: 4M id
   records / 512K term records per run; each id record costs 16 bytes × 2 buffers while sorting).
 * **Shard your input**: `-merge` over many files is the natural way to feed 100B quads.
+* **Statistics are opt-in**: no VoID/SD graph is written unless you pass `-void` (exact,
+  in-memory) or `-voidsketch` (bounded memory via HyperLogLog). Readers use the VoID
+  statistics for join reordering when present and fall back to a fixed heuristic when
+  absent - for big builds, `-voidsketch` buys statistics-driven query optimization at
+  ~64 KiB per counter instead of holding the dictionary on the heap.
 * Blank nodes are scoped per source document (labels are not preserved in the output format;
   readers regenerate labels from dictionary ranks).
 
@@ -154,7 +163,7 @@ new / *Writer*.Builder()
 
 Classes: `hdf5.writers.HDF5Writer` (0) · `huge.HugeHDF5Writer` (1) ·
 `hdf5.writers.parallel.ParallelHDF5Writer` (2) · `hdf5.writers.ultra.UltraHDF5Writer` (3) ·
-`hdf5.writers.hugeUltra.HugeUltraHDF5Writer` (4).
+`hdf5.writers.hugeUltra.HugeUltraHDF5Writer` (4) · `hdf5.writers.plaid.PlaidHDF5Writer` (5).
 
 Reading:
 

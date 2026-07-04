@@ -39,7 +39,7 @@ class VoidStatsTest {
         File src = dir.resolve("stats.trig").toFile();
         File h5 = dir.resolve("stats.trig.h5").toFile();
         Files.write(src.toPath(), trig.getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder().setSource(src).setDestination(h5)
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setSource(src).setDestination(h5)
                 .setSpatial(false).setFeatures(false).build().write();
 
         try (HDF5Reader reader = new HDF5Reader(h5)) {

@@ -8,6 +8,7 @@ import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer;
+import com.ebremer.beakgraph.hdf5.writers.plaid.PlaidHDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
 import com.ebremer.beakgraph.huge.HugeHDF5Writer;
 import com.ebremer.beakgraph.utils.RdfSources;
@@ -52,6 +53,11 @@ public class BeakGraphCLI {
 
     public BeakGraphCLI(Parameters params) {
         JenaSystem.init();
+        if (params.voidExact && params.voidSketch) {
+            throw new IllegalArgumentException(
+                    "-void and -voidsketch are mutually exclusive: pick exact in-memory statistics "
+                    + "(-void) or bounded-memory HyperLogLog statistics (-voidsketch)");
+        }
         this.params = params;
         this.fc = new FileCounter();
         String os = System.getProperty("os.name").toLowerCase();
@@ -75,6 +81,12 @@ public class BeakGraphCLI {
         if (args.length != 0) {
             try {
                 jc.parse(args);
+                if (params.voidExact && params.voidSketch) {
+                    System.err.println("Error: -void and -voidsketch are mutually exclusive. "
+                            + "Use -void for exact in-memory statistics or -voidsketch for the "
+                            + "bounded-memory HyperLogLog version.");
+                    System.exit(1);
+                }
                 if (params.version) {
                     // Must be handled on the SUCCESS path: version was previously
                     // printed only inside the ParameterException catch, so a plain
@@ -412,6 +424,17 @@ public class BeakGraphCLI {
         }
     }
 
+    /** The VoID statistics mode for this run: NONE unless -void or -voidsketch was given. */
+    private com.ebremer.beakgraph.core.VoidMode voidMode() {
+        if (params.voidExact) {
+            return com.ebremer.beakgraph.core.VoidMode.EXACT;
+        }
+        if (params.voidSketch) {
+            return com.ebremer.beakgraph.core.VoidMode.SKETCH;
+        }
+        return com.ebremer.beakgraph.core.VoidMode.NONE;
+    }
+
     /**
      * The conversion engine for this run: {@code -method} (0 = in-memory,
      * 1 = disk, 2 = parallel, 3 = ultra), with the legacy {@code -huge} flag
@@ -436,6 +459,7 @@ public class BeakGraphCLI {
                 // own workspace.
                 HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
                         .setDestination(dest)
+                        .setVoidMode(voidMode())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features);
                 if (source != null) builder.setSource(source);
@@ -450,6 +474,7 @@ public class BeakGraphCLI {
                 // Multi-threaded in-memory build on a pool of -cores threads.
                 ParallelHDF5Writer.Builder builder = ParallelHDF5Writer.Builder()
                         .setDestination(dest)
+                        .setVoidMode(voidMode())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setCores(params.cores);
@@ -462,6 +487,7 @@ public class BeakGraphCLI {
                 // indexes, parallel emission - also capped at -cores threads.
                 UltraHDF5Writer.Builder builder = UltraHDF5Writer.Builder()
                         .setDestination(dest)
+                        .setVoidMode(voidMode())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setCores(params.cores);
@@ -475,6 +501,25 @@ public class BeakGraphCLI {
                 // for multi-billion-quad builds. Needs the native HDF5 backend.
                 HugeUltraHDF5Writer.Builder builder = HugeUltraHDF5Writer.Builder()
                         .setDestination(dest)
+                        .setVoidMode(voidMode())
+                        .setSpatial(params.spatial)
+                        .setFeatures(params.features)
+                        .setCores(params.cores);
+                if (source != null) builder.setSource(source);
+                if (sources != null) builder.setSources(sources);
+                if (params.workdir != null) {
+                    params.workdir.mkdirs();
+                    builder.setWorkDirectory(params.workdir.toPath());
+                }
+                return builder.build();
+            }
+            case 5 -> {
+                // plaid: hugeUltra plus parallel multi-file ingest - up to
+                // -cores documents parse concurrently. The engine of choice
+                // for -merge over many files. Needs the native HDF5 backend.
+                PlaidHDF5Writer.Builder builder = PlaidHDF5Writer.Builder()
+                        .setDestination(dest)
+                        .setVoidMode(voidMode())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setCores(params.cores);
@@ -489,6 +534,7 @@ public class BeakGraphCLI {
             default -> {
                 HDF5Writer.Builder builder = HDF5Writer.Builder()
                         .setDestination(dest)
+                        .setVoidMode(voidMode())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features);
                 if (source != null) builder.setSource(source);

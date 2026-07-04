@@ -26,6 +26,24 @@ public class Parameters {
     @Parameter(names = "-dest", description = "Destination Folder or File", required = false)
     public File dest = null;
     
+    @Parameter(names = {"-void"}, converter = BooleanConverter.class,
+            description =
+                """
+                Generate the VoID/SD statistics graph (urn:x-beakgraph:void) using
+                EXACT in-memory counting (RAM grows with distinct terms per graph).
+                Without -void or -voidsketch, no statistics graph is written and
+                readers fall back to a fixed join-reorder heuristic.
+                Mutually exclusive with -voidsketch
+                """)
+    public boolean voidExact = false;
+
+    @Parameter(names = {"-voidsketch"}, converter = BooleanConverter.class,
+            description = "Generate the VoID/SD statistics graph with BOUNDED memory: exact up "
+                        + "to 65536 distinct nodes per counter, then HyperLogLog estimates "
+                        + "(~0.8% error, deterministic). Recommended for the disk writers "
+                        + "(-method 1/4/5). Mutually exclusive with -void")
+    public boolean voidSketch = false;
+
     @Parameter(names = {"-spatial"}, converter = BooleanConverter.class)
     public boolean spatial = false;
 
@@ -64,7 +82,10 @@ public class Parameters {
                         + "(com.ebremer.beakgraph.hdf5.writers.hugeUltra) for multi-billion-quad "
                         + "builds: bounded RAM like -method 1, but with radix-sorted bit-packed "
                         + "spill runs, background spilling, and concurrent pipeline stages on "
-                        + "-cores threads (needs the native HDF5 backend; honors -workdir)")
+                        + "-cores threads (needs the native HDF5 backend; honors -workdir), "
+                        + "5 = plaid (com.ebremer.beakgraph.hdf5.writers.plaid): method 4 plus "
+                        + "PARALLEL MULTI-FILE INGEST - up to -cores source documents parse "
+                        + "concurrently; the fastest option for -merge over many files")
     public int method = 0;
 
     @Parameter(names = "-cores", validateWith = PositiveInteger.class,

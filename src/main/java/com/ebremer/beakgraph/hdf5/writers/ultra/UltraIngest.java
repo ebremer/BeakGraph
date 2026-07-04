@@ -80,7 +80,8 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
     private final Set<Node> uniqueObjects = ConcurrentHashMap.newKeySet();
     private final Set<String> dataTypes = ConcurrentHashMap.newKeySet();
     private final Stats ustats = new Stats();
-    private final BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
+    private com.ebremer.beakgraph.core.VoidMode uVoidMode = com.ebremer.beakgraph.core.VoidMode.NONE;
+    private BGVoIDSD xvoid; // null when uVoidMode == NONE
     private Quad[] quads;
     private long numQuads;
 
@@ -109,6 +110,13 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
     public UltraIngest setSpatial(boolean flag) {
         this.uspatial = flag;
         super.setSpatial(flag);
+        return this;
+    }
+
+    @Override
+    public UltraIngest setVoidMode(com.ebremer.beakgraph.core.VoidMode mode) {
+        this.uVoidMode = mode;
+        super.setVoidMode(mode);
         return this;
     }
 
@@ -147,6 +155,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         }
         final List<File> inputs = usources.isEmpty() ? List.of(usrc) : List.copyOf(usources);
         final boolean multi = inputs.size() > 1;
+        this.xvoid = BGVoIDSD.forMode(uVoidMode, "https://ebremer.com/void/");
         final long ingestStart = System.nanoTime();
         logger.info("Ultra ingest: parsing {} source document(s) on {} threads (spatial={})",
                 inputs.size(), pool.getParallelism(), uspatial);
@@ -183,22 +192,23 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         logger.info("All {} document(s) parsed in {} ms", inputs.size(),
                 (System.nanoTime() - ingestStart) / 1_000_000L);
 
-        // ---- VoID/SD metadata quads over ALL sources (same block as the
-        // sequential builder; the model itself is small) ----
-        Model xxx = xvoid.getModel();
-        xxx.setNsPrefix("void", VOID.NS);
-        xxx.setNsPrefix("sd", SD.getURI());
-        xxx.setNsPrefix("xsd", XSD.getURI());
-        xxx.setNsPrefix("rdfs", RDFS.getURI());
-        xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-        xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
-        xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
-        xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
-        xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
+        // ---- VoID/SD metadata quads over ALL sources (only when requested) ----
         final ArrayList<Quad> voidQuads = new ArrayList<>();
-        xxx.listStatements().forEach(s ->
-                voidQuads.add(canonicalizeNumericObject(Quad.create(BGVOID, s.asTriple()))));
-        logger.info("VoID/SD metadata generated: {} statements", voidQuads.size());
+        if (xvoid != null) {
+            Model xxx = xvoid.getModel();
+            xxx.setNsPrefix("void", VOID.NS);
+            xxx.setNsPrefix("sd", SD.getURI());
+            xxx.setNsPrefix("xsd", XSD.getURI());
+            xxx.setNsPrefix("rdfs", RDFS.getURI());
+            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
+            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
+            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
+            xxx.listStatements().forEach(s ->
+                    voidQuads.add(canonicalizeNumericObject(Quad.create(BGVOID, s.asTriple()))));
+            logger.info("VoID/SD metadata generated: {} statements", voidQuads.size());
+        }
 
         // ---- assemble the quad array (documents in input order: main quads,
         // then that document's spatial/feature quads - the sequential layout) ----
@@ -272,7 +282,9 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                         if (main.size() % 100_000 == 0) {
                             logger.info("{}: loaded {} quads...", input.getName(), main.size());
                         }
-                        xvoid.add(quad);
+                        if (xvoid != null) {
+                            xvoid.add(quad);
+                        }
                         if (uspatial && isGeoLiteral(quad)) {
                             spatialTasks.add(scope.submit(() -> addSpatial(quad)));
                         }

@@ -140,7 +140,16 @@ public class PositionalDictionaryWriterBuilder {
     public static final int MAX_INDEX_SCALE = 30;
 
 
-    private BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
+    // Null when voidMode == NONE (the default): no statistics are collected
+    // and no urn:x-beakgraph:void graph is written.
+    private BGVoIDSD xvoid;
+    private com.ebremer.beakgraph.core.VoidMode voidMode = com.ebremer.beakgraph.core.VoidMode.NONE;
+
+    /** VoID statistics mode (NONE default, EXACT = -void, SKETCH = -voidsketch). */
+    public PositionalDictionaryWriterBuilder setVoidMode(com.ebremer.beakgraph.core.VoidMode mode) {
+        this.voidMode = mode;
+        return this;
+    }
     
     public File getDestination() { return dest; }
     public Quad[] getQuads() { return quads; }
@@ -641,6 +650,7 @@ public class PositionalDictionaryWriterBuilder {
             throw new IllegalStateException("No source set: call setSource() or setSources()");
         }
         final List<File> inputs = sources.isEmpty() ? List.of(src) : List.copyOf(sources);
+        this.xvoid = BGVoIDSD.forMode(voidMode, "https://ebremer.com/void/");
         for (File input : inputs) {
             parseSource(input, quadcount);
             // Blank-node labels are document-scoped in RDF: two sources may both
@@ -650,23 +660,25 @@ public class PositionalDictionaryWriterBuilder {
             // labels unique across the whole (possibly merged) store.
             bmap.clear();
         }
-        // VoID/SD metadata accumulated over ALL sources
-        Model xxx = xvoid.getModel();
-        xxx.setNsPrefix("void", VOID.NS);
-        xxx.setNsPrefix("sd", SD.getURI());
-        xxx.setNsPrefix("xsd", XSD.getURI());
-        xxx.setNsPrefix("rdfs", RDFS.getURI());
-        xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-        xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
-        xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
-        xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
-        xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
-        xvoid.getModel().listStatements().forEach(s->{
-            Triple ff = s.asTriple();
-            Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
-            ProcessQuad(qqq);
-            quadslist.add(qqq);
-        });
+        // VoID/SD metadata accumulated over ALL sources (only when requested)
+        if (xvoid != null) {
+            Model xxx = xvoid.getModel();
+            xxx.setNsPrefix("void", VOID.NS);
+            xxx.setNsPrefix("sd", SD.getURI());
+            xxx.setNsPrefix("xsd", XSD.getURI());
+            xxx.setNsPrefix("rdfs", RDFS.getURI());
+            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
+            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
+            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
+            xxx.listStatements().forEach(s -> {
+                Triple ff = s.asTriple();
+                Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
+                ProcessQuad(qqq);
+                quadslist.add(qqq);
+            });
+        }
         // Set sum logic for backward compatibility in Stats object
         stats.numGraphs = entities.size();
         stats.numSubjects = entities.size();
@@ -717,7 +729,9 @@ public class PositionalDictionaryWriterBuilder {
                         // its dictionary accounting (the quad is already in quadslist, so a
                         // skip would only fail later, opaquely, when the index can't locate it).
                         ProcessQuad(quad);
-                        xvoid.add(quad);
+                        if (xvoid != null) {
+                            xvoid.add(quad);
+                        }
                         if (spatial && isGeoLiteral(quad)) {
                             spatialTasks.add(scope.submit(() -> addSpatial(quad)));
                         }

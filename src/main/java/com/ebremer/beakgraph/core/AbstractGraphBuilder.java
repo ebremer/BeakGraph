@@ -13,6 +13,7 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
     protected Dataset ds;
     protected boolean spatial;
     protected boolean features;
+    protected VoidMode voidMode = VoidMode.NONE;
 
     // Force the concrete class to return 'this'
     protected abstract T self();
@@ -39,6 +40,20 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
 
     public List<File> getSources() { return sources; }
     
+    /**
+     * Whether/how the VoID+SD statistics graph is generated: {@code NONE}
+     * (default), {@code EXACT} (in-memory, CLI -void), or {@code SKETCH}
+     * (bounded-memory HyperLogLog, CLI -voidsketch).
+     */
+    public T setVoidMode(VoidMode mode) {
+        this.voidMode = mode;
+        return self();
+    }
+
+    public VoidMode getVoidMode() {
+        return voidMode;
+    }
+
     public T setSpatial(boolean flag) {
         this.spatial = flag;
         return self();

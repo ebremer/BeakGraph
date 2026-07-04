@@ -75,6 +75,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
             ingest.setSource(builder.getSource());
             ingest.setSources(builder.getSources());
             ingest.setSpatial(builder.getSpatial());
+            ingest.setVoidMode(builder.getVoidMode());
             ingest.setDestination(builder.getDestination());
             ingest.setFeatures(builder.getFeatures());
             ingest.setName(Params.DICTIONARY);

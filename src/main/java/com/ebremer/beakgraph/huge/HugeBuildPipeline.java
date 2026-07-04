@@ -70,7 +70,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
 
     // Same sentinel base as the RAM builder: relative references resolve against
     // it during parsing and are stripped back to relative form for storage.
-    private static final String REL_BASE = "http://beakgraph.invalid/document";
+    // Public: parallel-ingest implementations must parse against the same base.
+    public static final String REL_BASE = "http://beakgraph.invalid/document";
     private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
     private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
 
@@ -89,7 +90,35 @@ public final class HugeBuildPipeline implements AutoCloseable {
     // and final rank ids once the set is complete.
     private final HashMap<Node, Long> predTempIds = new HashMap<>();
     private final ArrayList<Node> predByTempId = new ArrayList<>();
-    private final BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
+    /** Null when voidMode == NONE (the default): no statistics graph is written. */
+    private final BGVoIDSD xvoid;
+    /**
+     * A pluggable Pass A: parse the sources with whatever concurrency the
+     * implementation likes, delivering TRANSFORMED quads (default-graph
+     * rewrite, bnode scoping, relativize, numeric canonicalization,
+     * spatial/feature augmentation already applied - the public static
+     * helpers on this class plus {@link SpatialAugmenter} are the shared
+     * implementations) in batches to the sink. The sink is the pipeline's one
+     * serial section: it assigns row numbers and feeds the sorters, keeping
+     * the positional predicate column's entry-i-equals-row-i invariant
+     * without any post-sort. The plaid writer (-method 5) plugs in per-file
+     * parallel parsing here.
+     */
+    public interface ParallelIngest {
+        void run(List<File> sources, boolean spatial, boolean features,
+                 BGVoIDSD voidStats, BatchSink sink) throws IOException;
+
+        interface BatchSink {
+            /**
+             * Appends a batch of rows to the store. {@code sourceQuads} =
+             * how many of them were parsed from a document (vs derived
+             * spatial/feature quads); drives the numQuads attribute and
+             * progress logging. Thread-safe; callers may commit concurrently.
+             */
+            void commit(List<Quad> batch, long sourceQuads) throws IOException;
+        }
+    }
+
     private RecordSorter<TermRow> gSorter;
     private RecordSorter<TermRow> sSorter;
     private RecordSorter<TermRow> oSorter;
@@ -97,16 +126,19 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private final SorterProvider provider;
     /** Non-null: independent stage groups run concurrently on it (-method 4). */
     private final java.util.concurrent.ExecutorService stagePool;
+    /** Non-null: Pass A runs through it instead of the sequential loop (-method 5). */
+    private final ParallelIngest parallelIngest;
     private long rows = 0;
     private long parsedQuads = 0;
 
     // ---- Build products (owned; released in close()) ----
     private final List<AutoCloseable> resources = new ArrayList<>();
 
-    HugeBuildPipeline(List<File> sources, boolean spatial, boolean features, Path workDir,
+    HugeBuildPipeline(List<File> sources, boolean spatial, boolean features,
+                      com.ebremer.beakgraph.core.VoidMode voidMode, Path workDir,
                       int termSpillBatch, int idSpillBatch, int mergeFanIn) {
-        this(sources, spatial, features, workDir,
-                SorterProvider.sequential(termSpillBatch, idSpillBatch, mergeFanIn), null);
+        this(sources, spatial, features, voidMode, workDir,
+                SorterProvider.sequential(termSpillBatch, idSpillBatch, mergeFanIn), null, null);
     }
 
     /**
@@ -116,17 +148,27 @@ public final class HugeBuildPipeline implements AutoCloseable {
      * This is how the hugeUltra writer (-method 4) turbocharges the pipeline
      * without changing its flow or output.
      */
-    public HugeBuildPipeline(List<File> sources, boolean spatial, boolean features, Path workDir,
+    public HugeBuildPipeline(List<File> sources, boolean spatial, boolean features,
+                             com.ebremer.beakgraph.core.VoidMode voidMode, Path workDir,
                              SorterProvider provider, java.util.concurrent.ExecutorService stagePool) {
+        this(sources, spatial, features, voidMode, workDir, provider, stagePool, null);
+    }
+
+    public HugeBuildPipeline(List<File> sources, boolean spatial, boolean features,
+                             com.ebremer.beakgraph.core.VoidMode voidMode, Path workDir,
+                             SorterProvider provider, java.util.concurrent.ExecutorService stagePool,
+                             ParallelIngest parallelIngest) {
         if (sources.isEmpty()) {
             throw new IllegalArgumentException("At least one source document is required");
         }
         this.sources = List.copyOf(sources);
         this.spatial = spatial;
         this.features = features;
+        this.xvoid = BGVoIDSD.forMode(voidMode, "https://ebremer.com/void/");
         this.workDir = workDir;
         this.provider = provider;
         this.stagePool = stagePool;
+        this.parallelIngest = parallelIngest;
         this.gSorter = track(provider.termSorter(workDir, "gcol"));
         this.sSorter = track(provider.termSorter(workDir, "scol"));
         this.oSorter = track(provider.termSorter(workDir, "ocol"));
@@ -358,6 +400,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
 
     private void ingest() throws IOException {
         this.pTempFile = new RecordFile<>(workDir.resolve("pcol.tmpids"), HugeRecords.VAR_LONG_CODEC);
+        if (parallelIngest != null) {
+            parallelIngest.run(sources, spatial, features, xvoid, this::commitBatch);
+            finishIngest();
+            return;
+        }
         for (int i = 0; i < sources.size(); i++) {
             // Blank-node labels are document-scoped in RDF: two merged sources
             // may both say _:b0 and mean different nodes (labels are parsed as
@@ -368,15 +415,40 @@ public final class HugeBuildPipeline implements AutoCloseable {
             // labels from ids. Single-source builds stay untouched.
             ingestSource(sources.get(i), sources.size() > 1 ? (i + "/") : null);
         }
-        // VoID/SD metadata quads over ALL sources (mirrors the RAM writer; the
-        // model's namespace prefixes are presentation-only and irrelevant to quads).
-        for (Iterator<org.apache.jena.rdf.model.Statement> it = xvoid.getModel().listStatements(); it.hasNext(); ) {
-            Triple ff = it.next().asTriple();
-            Quad qqq = canonicalizeNumericObject(Quad.create(Params.BGVOID, ff));
-            acceptRow(qqq);
+        finishIngest();
+    }
+
+    /** VoID/SD metadata quads over ALL sources (when requested), then the p-column seal. */
+    private void finishIngest() throws IOException {
+        if (xvoid != null) {
+            // (mirrors the RAM writer; the model's namespace prefixes are
+            // presentation-only and irrelevant to quads)
+            for (Iterator<org.apache.jena.rdf.model.Statement> it = xvoid.getModel().listStatements(); it.hasNext(); ) {
+                Triple ff = it.next().asTriple();
+                Quad qqq = canonicalizeNumericObject(Quad.create(Params.BGVOID, ff));
+                acceptRow(qqq);
+            }
         }
         pTempFile.finish();
         logger.info("Parse complete: {} source quads, {} total rows", parsedQuads, rows);
+    }
+
+    /**
+     * The parallel-ingest sink: the ONE serial section of Pass A. Row numbers,
+     * the positional predicate column, statistics, and the sorter buffers all
+     * advance under this lock, so every single-threaded invariant of
+     * {@link #acceptRow} holds unchanged; spill sorting/writing still happens
+     * on background workers, so the lock is held only for buffer appends.
+     */
+    private synchronized void commitBatch(List<Quad> batch, long sourceQuads) throws IOException {
+        for (Quad q : batch) {
+            acceptRow(q);
+        }
+        long before = parsedQuads;
+        parsedQuads += sourceQuads;
+        if (before / 1_000_000 != parsedQuads / 1_000_000) {
+            logger.info("Loaded {} quads...", parsedQuads);
+        }
     }
 
     private void ingestSource(File input, String bnodeScope) throws IOException {
@@ -400,8 +472,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)
                     .map(quad -> scopeBlankNodes(quad, bnodeScope))
-                    .map(this::relativize)
-                    .map(this::canonicalizeNumericObject)
+                    .map(HugeBuildPipeline::relativize)
+                    .map(HugeBuildPipeline::canonicalizeNumericObject)
                     .forEach(quad -> {
                         parsedQuads++;
                         if (parsedQuads % 1_000_000 == 0) {
@@ -409,7 +481,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
                         }
                         try {
                             acceptRow(quad);
-                            xvoid.add(quad);
+                            if (xvoid != null) {
+                                xvoid.add(quad);
+                            }
                             if (spatial && isGeoLiteral(quad)) {
                                 inFlight.add(scope.submit(() -> augmenter.addSpatial(quad)));
                                 while (inFlight.size() >= maxInFlight) {
@@ -432,7 +506,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     /** See ingest(): per-document blank-node scoping for -merge builds; no-op when scope is null. */
-    private static Quad scopeBlankNodes(Quad q, String scope) {
+    public static Quad scopeBlankNodes(Quad q, String scope) {
         if (scope == null) {
             return q;
         }
@@ -581,7 +655,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     // Quad transforms (mirrors of PositionalDictionaryWriterBuilder)
     // ------------------------------------------------------------------
 
-    private Quad relativize(Quad q) {
+    public static Quad relativize(Quad q) {
         Node qg = q.getGraph();
         Node qs = q.getSubject();
         Node qp = q.getPredicate();
@@ -596,7 +670,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
         return new Quad(g, s, p, o);
     }
 
-    private Node relativizeNode(Node n) {
+    private static Node relativizeNode(Node n) {
         if (n == null || !n.isURI() || !n.getURI().startsWith(REL_BASE_PREFIX)) {
             return n;
         }
@@ -613,7 +687,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 u.equals(REL_BASE) ? "" : u.substring(REL_BASE_PREFIX.length()));
     }
 
-    private Quad canonicalizeNumericObject(Quad quad) {
+    public static Quad canonicalizeNumericObject(Quad quad) {
         Node o = quad.getObject();
         if (!o.isLiteral()) return quad;
         String dt = o.getLiteralDatatypeURI();

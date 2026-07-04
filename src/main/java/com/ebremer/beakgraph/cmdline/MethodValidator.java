@@ -6,7 +6,8 @@ import com.beust.jcommander.ParameterException;
 /**
  * Validates {@code -method}: 0 = sequential in-memory, 1 = disk-based (huge),
  * 2 = parallel in-memory, 3 = ultra in-memory, 4 = parallel disk-based
- * (hugeUltra).
+ * (hugeUltra), 5 = parallel disk-based with parallel multi-file ingest
+ * (plaid).
  */
 public class MethodValidator implements IParameterValidator {
 
@@ -15,13 +16,13 @@ public class MethodValidator implements IParameterValidator {
         boolean ok;
         try {
             int v = Integer.parseInt(value);
-            ok = v >= 0 && v <= 4;
+            ok = v >= 0 && v <= 5;
         } catch (NumberFormatException e) {
             ok = false;
         }
         if (!ok) {
             throw new ParameterException("Parameter " + name + " must be 0 (in-memory), 1 (disk), "
-                    + "2 (parallel), 3 (ultra), or 4 (hugeUltra disk); found \"" + value + "\"");
+                    + "2 (parallel), 3 (ultra), 4 (hugeUltra disk), or 5 (plaid disk); found \"" + value + "\"");
         }
     }
 }

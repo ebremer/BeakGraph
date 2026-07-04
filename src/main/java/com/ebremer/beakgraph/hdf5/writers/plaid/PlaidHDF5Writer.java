@@ -1,8 +1,9 @@
-package com.ebremer.beakgraph.hdf5.writers.hugeUltra;
+package com.ebremer.beakgraph.hdf5.writers.plaid;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
+import com.ebremer.beakgraph.hdf5.writers.hugeUltra.UltraSorterProvider;
 import com.ebremer.beakgraph.huge.HugeBuildPipeline;
 import java.io.File;
 import java.io.IOException;
@@ -19,54 +20,43 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The parallel disk-based BeakGraph writer (CLI: {@code -method 4}, threads
- * via {@code -cores}) for graphs of billions of quads: the exact
- * {@link HugeBuildPipeline} flow and output of {@code -method 1} - RAM stays
- * bounded by spill-batch sizes regardless of quad count - but every heavy
- * component is swapped for a parallel one:
+ * The plaid writer (CLI: {@code -method 5}): everything the hugeUltra
+ * disk-based writer is - bounded RAM at any quad count, radix-sorted
+ * bit-packed spill runs, background spilling, concurrent pipeline stages -
+ * plus PARALLEL MULTI-FILE INGEST. Where methods 1 and 4 parse sources one
+ * after another on a single thread, plaid parses up to {@code -cores}
+ * documents concurrently ({@link PlaidIngest}); only the row-assignment sink
+ * remains serial. For merges of many files (the natural shape of
+ * billion-quad inputs) this converts the parse phase - the wall-clock
+ * majority of a method-4 build - from ~2 busy cores to genuinely
+ * {@code -cores} busy cores.
  *
- * <ul>
- * <li>spill runs sort and write on background workers while ingestion
- *     continues (double-buffered);</li>
- * <li>the three column sorts, three dictionary encodes, and three id joins
- *     each run concurrently;</li>
- * <li>encoded quads and (row, id) join records sort as bit-packed primitive
- *     keys - parallel radix sort per run, fixed-width binary spills, no
- *     objects ({@link PackedQuadSorter}, {@link PackedRowIdSorter});</li>
- * <li>term runs group each distinct term's text once per run and compare via
- *     an order-preserving 8-byte prefix key ({@link UltraSorterProvider});</li>
- * <li>GPOS sorts only the DEDUPLICATED quad set teed out of the GSPO
- *     scan.</li>
- * </ul>
- *
- * Output is isomorphic to the other writers' (same divergence -method 1 has:
- * blank nodes keep parsed labels rather than being relabelled). Requires the
- * native HDF5 backend, like -method 1. Bigger spill batches = fewer merge
- * levels = less disk churn; size them to your heap
- * ({@code setIdSpillBatch(1 << 26)} at 16 GiB+ is reasonable for
- * 10B+ quad builds).
+ * <p>Single-source builds work too (the one document parses on one worker,
+ * i.e. method-4 behaviour). Output is identical to methods 1/4: row numbers
+ * interleave differently, but rows are internal - all sorted artifacts, and
+ * therefore the store, are the same. Requires the native HDF5 backend.
  *
  * @author Erich Bremer
  */
-public class HugeUltraHDF5Writer implements BeakGraphWriter {
+public class PlaidHDF5Writer implements BeakGraphWriter {
 
-    private static final Logger logger = LoggerFactory.getLogger(HugeUltraHDF5Writer.class);
+    private static final Logger logger = LoggerFactory.getLogger(PlaidHDF5Writer.class);
 
     private final Builder builder;
 
-    private HugeUltraHDF5Writer(Builder builder) {
+    private PlaidHDF5Writer(Builder builder) {
         this.builder = builder;
     }
 
     @Override
     public void write() throws IOException {
-        logger.info("Writing BeakGraph (hugeUltra: disk-based, {} cores) to {}",
+        logger.info("Writing BeakGraph (plaid: parallel-ingest disk-based, {} cores) to {}",
                 builder.cores, builder.getDestination());
         Path dest = builder.getDestination().toPath();
         Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
         Path workBase = (builder.workDir != null) ? builder.workDir
                 : (dest.toAbsolutePath().getParent() != null ? dest.toAbsolutePath().getParent() : Path.of("."));
-        Path workspace = Files.createTempDirectory(workBase, ".bghugeultra-");
+        Path workspace = Files.createTempDirectory(workBase, ".bgplaid-");
         List<File> inputs = builder.getSources().isEmpty()
                 ? List.of(builder.getSource())
                 : builder.getSources();
@@ -75,8 +65,8 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
             UltraSorterProvider provider = new UltraSorterProvider(
                     builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn, pool);
             try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
-                    inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
-                    workspace, provider, pool)) {
+                    inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(), workspace,
+                    provider, pool, new PlaidIngest(builder.cores))) {
                 pipeline.run(tmp);
             }
             try {
@@ -122,8 +112,8 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
 
         private Path workDir;
         private int cores = Math.max(2, Runtime.getRuntime().availableProcessors());
-        private int termSpillBatch = 1 << 19;  // 524288 term records per run
-        private int idSpillBatch = 1 << 22;    // 4M packed id records per run
+        private int termSpillBatch = 1 << 19;
+        private int idSpillBatch = 1 << 22;
         private int mergeFanIn = 128;
 
         /** Workspace for spill runs; needs disk on the order of a few times the source. */
@@ -132,7 +122,7 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
             return this;
         }
 
-        /** Worker threads for sorting, spilling, merging, and concurrent stages. */
+        /** Parse workers AND sort/spill/merge workers (two pools of this size). */
         public Builder setCores(int cores) {
             if (cores < 1) throw new IllegalArgumentException("cores must be >= 1, got " + cores);
             this.cores = cores;
@@ -168,8 +158,8 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
         }
 
         @Override
-        public HugeUltraHDF5Writer build() {
-            return new HugeUltraHDF5Writer(this);
+        public PlaidHDF5Writer build() {
+            return new PlaidHDF5Writer(this);
         }
     }
 

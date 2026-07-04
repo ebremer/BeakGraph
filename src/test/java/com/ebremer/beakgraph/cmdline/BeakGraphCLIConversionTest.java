@@ -127,8 +127,16 @@ class BeakGraphCLIConversionTest {
         assertEquals(0, new Parameters().method, "-method must default to the in-memory writer");
         org.junit.jupiter.api.Assertions.assertThrows(com.beust.jcommander.ParameterException.class,
                 () -> com.beust.jcommander.JCommander.newBuilder().addObject(new Parameters()).build()
-                        .parse("-src", "x", "-method", "5"),
-                "-method outside 0..4 must be rejected");
+                        .parse("-src", "x", "-method", "6"),
+                "-method outside 0..5 must be rejected");
+    }
+
+    @Test
+    void methodFiveConvertsThroughPlaidWriter() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
+                "native HDF5 library unavailable");
+        convertsWithMethod(5, "plaid");
     }
 
     @Test

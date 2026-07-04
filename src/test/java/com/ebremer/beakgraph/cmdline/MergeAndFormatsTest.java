@@ -248,6 +248,27 @@ class MergeAndFormatsTest {
     }
 
     @Test
+    void mergeWithPlaidWriter() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
+                "native HDF5 library unavailable");
+        Path src = mergeSourceTree("srcmergeplaid");
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("outmergeplaid").resolve("all.h5").toFile();
+        p.merge = true;
+        p.method = 5;
+        p.cores = 3;
+        p.workdir = dir.resolve("workmergeplaid").toFile();
+
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.merge();
+
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the -method 5 merge must succeed");
+        assertMerged(p.dest);
+    }
+
+    @Test
     void mergeIntoExistingDirectoryWritesMergedH5() throws Exception {
         Path src = mergeSourceTree("srcmergedir");
         Path out = Files.createDirectories(dir.resolve("outmergedir"));

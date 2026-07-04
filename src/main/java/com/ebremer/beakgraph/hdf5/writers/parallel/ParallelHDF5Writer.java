@@ -60,6 +60,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
         ForkJoinPool pool = new ForkJoinPool(builder.getCores());
         try {
             ParallelPositionalDictionaryWriterBuilder db = new ParallelPositionalDictionaryWriterBuilder();
+            db.setVoidMode(builder.getVoidMode());
             try (ParallelPositionalDictionaryWriter w = db
                     .setSource(builder.getSource())
                     .setSources(builder.getSources())
