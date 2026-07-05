@@ -12,15 +12,17 @@ public class SimpleNodeTable implements NodeTable {
     private static final Logger logger = LoggerFactory.getLogger(SimpleNodeTable.class);
     
     private final PositionalDictionaryReader dict;
-    
+
+    /** Entries per direction; override with -Dbeakgraph.nodetable.cache.size. */
+    private static final long CACHE_SIZE = Long.getLong("beakgraph.nodetable.cache.size", 1_000_000L);
+
     // Caffeine LRU Caches for extreme high-performance concurrent caching
-    // Adjust maximumSize based on your typical heap allocation
     private final Cache<NodeId, Node> nodeId2nodemap = Caffeine.newBuilder()
-            .maximumSize(1_000_000)
+            .maximumSize(CACHE_SIZE)
             .build();
-            
+
     private final Cache<Node, NodeId> node2nodeIdmap = Caffeine.newBuilder()
-            .maximumSize(1_000_000)
+            .maximumSize(CACHE_SIZE)
             .build();
     
     public SimpleNodeTable(PositionalDictionaryReader dict) {
@@ -82,23 +84,18 @@ public class SimpleNodeTable implements NodeTable {
 
     @Override
     public NodeId getNodeIdForNode(Node n) {
-        NodeId cachedId = node2nodeIdmap.getIfPresent(n);
-        if (cachedId != null) {
-            return cachedId;
-        }
-        
-        NodeId nid = findInDictionaries(n);
-
-        if (nid != NodeId.NodeDoesNotExist) {
-            nodeId2nodemap.put(nid, n);
-        }
-        // Cache misses too: the store is immutable, so absence is permanent, and
-        // an uncached miss re-ran up to two dictionary binary searches on every
+        // Single cache operation (lookup-or-compute) instead of getIfPresent+put.
+        // Misses are cached too: the store is immutable, so absence is permanent,
+        // and an uncached miss re-ran up to two dictionary binary searches on every
         // lookup of the same foreign term (VALUES/BIND-heavy queries). The shared
         // does-not-exist sentinel is deliberately NOT seeded into nodeId2nodemap.
-        node2nodeIdmap.put(n, nid); // authoritative, deterministic Node -> NodeId mapping
-
-        return nid;
+        return node2nodeIdmap.get(n, key -> {
+            NodeId nid = findInDictionaries(key);
+            if (nid != NodeId.NodeDoesNotExist) {
+                nodeId2nodemap.put(nid, key);
+            }
+            return nid;
+        });
     }
 
     @Override

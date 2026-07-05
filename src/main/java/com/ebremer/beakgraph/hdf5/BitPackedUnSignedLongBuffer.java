@@ -163,6 +163,68 @@ public class BitPackedUnSignedLongBuffer {
         return UTIL.selectInWord(word, k);
     }
 
+    /** Returned by {@link #nextSetBit} when the word budget ran out before a set bit. */
+    public static final long SCAN_EXHAUSTED = -2;
+
+    /**
+     * Index of the first set bit at or after {@code fromIndex}, scanning at most
+     * {@code maxWords} 64-bit words: -1 when no set bit remains, or
+     * {@link #SCAN_EXHAUSTED} when the budget ran out (the block is long - the
+     * caller should answer with an O(log n) directory select instead). This lets
+     * "where does the next block start" be answered with a couple of word reads
+     * for the short blocks that dominate real data, without ever degrading to a
+     * linear scan on a multi-million-bit block.
+     */
+    public long nextSetBit(long fromIndex, long maxWords) {
+        if (bitWidth != 1) throw new UnsupportedOperationException("nextSetBit only supported for 1-bit bitmaps");
+        if (fromIndex >= numEntries) return -1;
+        long w = fromIndex >>> 6;
+        long lastWord = (numEntries - 1) >>> 6;
+        long budgetLast = w + maxWords - 1;
+        // Bits are MSB-first within getWord64's view; shift out the bits before fromIndex.
+        long word = getWord64(w << 6) << (fromIndex & 63);
+        if (word != 0) {
+            long r = fromIndex + Long.numberOfLeadingZeros(word);
+            return (r < numEntries) ? r : -1;
+        }
+        while (true) {
+            w++;
+            if (w > lastWord) return -1;
+            if (w > budgetLast) return SCAN_EXHAUSTED;
+            word = getWord64(w << 6);
+            if (word != 0) {
+                long r = (w << 6) + Long.numberOfLeadingZeros(word);
+                return (r < numEntries) ? r : -1;
+            }
+        }
+    }
+
+    /**
+     * A word-caching single-bit reader for hot loops that probe a 1-bit bitmap at
+     * (mostly) monotonically advancing positions: one {@link #getWord64} read
+     * serves up to 64 probes. Seeking backwards or jumping is fine - it just
+     * refreshes the cached word. NOT thread-safe; use one per iterator.
+     */
+    public final class BitReader {
+        private long wordIdx = -1;
+        private long word;
+
+        public boolean bit(long index) {
+            long w = index >>> 6;
+            if (w != wordIdx) {
+                word = getWord64(w << 6);
+                wordIdx = w;
+            }
+            return (word << (index & 63)) < 0;
+        }
+    }
+
+    /** A {@link BitReader} over this 1-bit bitmap. */
+    public BitReader bitReader() {
+        if (bitWidth != 1) throw new UnsupportedOperationException("bitReader only supported for 1-bit bitmaps");
+        return new BitReader();
+    }
+
     // --- WRITE METHODS ---
 
     public void writeInteger(int value) {
@@ -265,8 +327,23 @@ public class BitPackedUnSignedLongBuffer {
             throw new IndexOutOfBoundsException("Index " + index + " out of bounds [0, " + numEntries + ")");
         }
         long totalBitOffset = index * bitWidth;
-        long startByteIndex = totalBitOffset / 8;
-        int bitOffsetInFirstByte = (int) (totalBitOffset % 8);
+        long startByteIndex = totalBitOffset >>> 3;
+        int bitOffsetInFirstByte = (int) (totalBitOffset & 7);
+        // FAST PATH: one unaligned big-endian 64-bit read covers the value whenever
+        // 8 bytes are available - the sub-byte offset (<= 7) plus any supported
+        // width (<= 57) fits in 64 bits, and width 64 is byte-aligned (offset 0).
+        // This is the innermost primitive of the whole read path (every id fetch,
+        // bitmap probe, and binary-search step lands here), and the former
+        // byte-at-a-time accumulation loop dominated its cost.
+        if (startByteIndex + 8 <= data.size()) {
+            long word = data.getLong(startByteIndex);
+            if (bitWidth == 64) {
+                return word;
+            }
+            return (word >>> (64 - bitOffsetInFirstByte - bitWidth)) & ((1L << bitWidth) - 1);
+        }
+        // TAIL: fewer than 8 bytes remain before the buffer end; collect bytes
+        // individually exactly as before.
         long acc = 0;
         int bitsCollected = 0;
         long currentByteIndex = startByteIndex;

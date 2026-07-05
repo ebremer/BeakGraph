@@ -21,54 +21,53 @@ import org.apache.jena.sparql.expr.ExprList;
  */
 public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
-    private final Quad queryQuad;
-    private final BitPackedUnSignedLongBuffer Bp, Sp, Bo, So, Bs, Ss;
-    // Accelerated rank/select directories used for select1; raw B*/S* still used for get().
-    private final HDTBitmapDirectory dirP, dirO, dirS;
+    private final BitPackedUnSignedLongBuffer Bs, Ss, So;
+    private final HDTBitmapDirectory dirS;
     private long gi, pi;
     private long oStart, oEnd, curOIndex;
     private long sStart, sEnd, curSIndex;
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
     private boolean hasNext = false;
-    private PositionalDictionaryReader dict;
     private final NodeTable nodeTable;
+
+    // Row-emission plan (see BGIteratorSO): pattern and parent binding are fixed,
+    // so the vars each row binds are computed once. Object and subject vary per row.
+    private Var oVar, sVar;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
-        this.queryQuad = quad;
-        this.dict = dict;
         this.nodeTable = nodeTable;
-        
-        this.Bp = reader.getBitmapBuffer('P'); 
-        this.Sp = reader.getIDBuffer('P');     
-        this.Bo = reader.getBitmapBuffer('O'); 
-        this.So = reader.getIDBuffer('O');     
-        this.Bs = reader.getBitmapBuffer('S'); 
-        this.Ss = reader.getIDBuffer('S');     
-        
-        this.dirP = reader.getDirectory('P');
-        this.dirO = reader.getDirectory('O');
+
+        BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
+        BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
+        BitPackedUnSignedLongBuffer Bo = reader.getBitmapBuffer('O');
+        this.So = reader.getIDBuffer('O');
+        this.Bs = reader.getBitmapBuffer('S');
+        this.Ss = reader.getIDBuffer('S');
+
+        HDTBitmapDirectory dirP = reader.getDirectory('P');
+        HDTBitmapDirectory dirO = reader.getDirectory('O');
         this.dirS = reader.getDirectory('S');
 
         // Analyze filters specifically for the Object variable
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
         }
-        
+
         // 1. Resolve Graph
         if (quad.getGraph().isVariable()) {
             if (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph()))) gi = bnid.get(Var.alloc(quad.getGraph())).getId();
-            else throw new IllegalStateException("BGIteratorPOS requires Graph to be bound."); //return; 
+            else throw new IllegalStateException("BGIteratorPOS requires Graph to be bound."); //return;
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
         if (gi < 1) return;
-        
+
         // 2. Resolve Predicate
         if (quad.getPredicate().isVariable()) {
             if (bnid != null && bnid.containsKey(Var.alloc(quad.getPredicate()))) pi = bnid.get(Var.alloc(quad.getPredicate())).getId();
-            else return; 
+            else return;
         } else {
             pi = dict.getPredicates().locate(quad.getPredicate());
         }
@@ -77,20 +76,18 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         // --- Traverse GPOS ---
 
         // A. Find Predicate Index under Graph
-        long pRangeStart = select1Safe(dirP, Bp,gi);
-        long nextGraphStart = select1Safe(dirP, Bp,gi + 1);
-        long pRangeEnd = (nextGraphStart == -1) ? (Sp.getNumEntries() - 1) : (nextGraphStart - 1);
-        
-        if (pRangeStart == -1 || pRangeStart > pRangeEnd) return;
+        long pRangeStart = RangeSelect.blockStart(dirP, Bp, gi);
+        if (pRangeStart == -1) return;
+        long pRangeEnd = RangeSelect.blockEnd(dirP, Bp, gi, pRangeStart);
+        if (pRangeStart > pRangeEnd) return;
         long pIndex = Sp.binarySearch(pRangeStart, pRangeEnd, pi);
         if (pIndex < 0) return;
 
         // B. Determine raw Object Range for this Predicate
-        long rawOStart = select1Safe(dirO, Bo,pIndex + 1);
-        long nextPStart = select1Safe(dirO, Bo,pIndex + 2);
-        long rawOEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);
-        
-        if (rawOStart == -1 || rawOStart > rawOEnd) return;
+        long rawOStart = RangeSelect.blockStart(dirO, Bo, pIndex + 1);
+        if (rawOStart == -1) return;
+        long rawOEnd = RangeSelect.blockEnd(dirO, Bo, pIndex + 1, rawOStart);
+        if (rawOStart > rawOEnd) return;
 
         // C. APPLY FILTER: Narrow the Object Range using Binary Search
         // upperBound already returns the last index whose value is <= maxObjId
@@ -100,34 +97,53 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         this.oEnd = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId);
 
         if (oStart > oEnd || oStart < 0) return;
-        
+
         // D. Initialize Nested Iteration
         this.curOIndex = oStart;
-        setupSubjectRange();
+        setupSubjectRange(true);
         advanceToNextValid();
+
+        if (hasNext) {
+            if (quad.getObject().isVariable()) oVar = Var.alloc(quad.getObject());
+            if (quad.getSubject().isVariable()) sVar = Var.alloc(quad.getSubject());
+        }
     }
 
-    private void setupSubjectRange() {
+    /**
+     * Positions [sStart..sEnd] on the subject block of object index {@code curOIndex}.
+     * Blocks tile the S level contiguously, so after the first (select1-based)
+     * placement each advance to the NEXT object index starts exactly at the previous
+     * block's end + 1 - no select at all; only the new end is found (a short forward
+     * bitmap scan with a directory fallback for giant blocks).
+     */
+    private void setupSubjectRange(boolean first) {
         if (curOIndex > oEnd) {
             sStart = -1;
             return;
         }
-        this.sStart = select1Safe(dirS, Bs,curOIndex + 1);
-        long nextOStart = select1Safe(dirS, Bs,curOIndex + 2);
-        this.sEnd = (nextOStart == -1) ? (Ss.getNumEntries() - 1) : (nextOStart - 1);
+        if (first) {
+            this.sStart = RangeSelect.blockStart(dirS, Bs, curOIndex + 1);
+            if (sStart == -1) return;
+        } else {
+            this.sStart = this.sEnd + 1;
+        }
+        this.sEnd = RangeSelect.blockEnd(dirS, Bs, curOIndex + 1, sStart);
         this.curSIndex = sStart;
     }
 
     private void advanceToNextValid() {
         hasNext = false;
         while (curOIndex <= oEnd) {
-            if (curSIndex <= sEnd && curSIndex != -1) {
+            if (curSIndex <= sEnd && curSIndex != -1 && sStart != -1) {
                 hasNext = true;
                 return;
             }
             curOIndex++;
             if (curOIndex <= oEnd) {
-                setupSubjectRange();
+                // Re-anchor with a full select if the previous placement failed
+                // (never expected mid-range; carry forward from a stale end would
+                // corrupt the walk).
+                setupSubjectRange(sStart == -1);
             }
         }
     }
@@ -183,13 +199,6 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         }
     }
 
-    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
-        if (rank < 1) return -1;
-        // Accelerated O(log n) select via the superblock/block directory when present;
-        // fall back to the buffer's linear scan only for indexes written without it.
-        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
-    }
-
     // Look-ahead: the next deliverable row, or null. Rows whose repeated-variable
     // bindings conflict are skipped here, so hasNext() only answers true when
     // next() really has a row to return.
@@ -205,14 +214,12 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private BindingNodeId computeNext() {
         while (hasNext) {
             BindingNodeId result = new BindingNodeId(this.parentBinding);
-            long currentObjectId = So.get(curOIndex);
-            long currentSubjectId = Ss.get(curSIndex);
             boolean ok = true;
-            if (queryQuad.getObject().isVariable()) {
-                ok = result.putCompatible(Var.alloc(queryQuad.getObject()), new NodeId(currentObjectId, NodeType.OBJECT), nodeTable);
+            if (oVar != null) {
+                ok = result.putCompatible(oVar, new NodeId(So.get(curOIndex), NodeType.OBJECT), nodeTable);
             }
-            if (ok && queryQuad.getSubject().isVariable()) {
-                ok = result.putCompatible(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT), nodeTable);
+            if (ok && sVar != null) {
+                ok = result.putCompatible(sVar, new NodeId(Ss.get(curSIndex), NodeType.SUBJECT), nodeTable);
             }
             curSIndex++;
             advanceToNextValid();

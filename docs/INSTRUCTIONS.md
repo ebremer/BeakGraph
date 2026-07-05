@@ -174,6 +174,21 @@ try (BeakGraph bg = new BeakGraph(new HDF5Reader(new File("data.h5")))) {
 }
 ```
 
+### Reader tuning (system properties)
+
+The read path caches aggressively over the immutable store; defaults suit most
+workloads, and each knob trades heap for repeated-lookup speed:
+
+| Property | Default | What it bounds |
+|---|---|---|
+| `beakgraph.nodetable.cache.size` | `1000000` | Node ⇄ NodeId entries per direction, per open reader (query bind/materialize path). |
+| `beakgraph.dict.search.cache.size` | `65536` | Term → dictionary-position entries per dictionary section (locate/search results, hits and misses). |
+| `beakgraph.fcd.cache.blocks` | `4096` | Decoded front-coded string blocks per FCD section (each block holds `blockSize`, typically 16, strings). |
+| `beakgraph.ffm.threshold` | `2147483647` | Dataset size in bytes above which BeakGraph FFM-maps the region itself instead of using jHDF's ByteBuffer. |
+
+JMH benchmarks for the read path live in `benchmarks/` (see its README) - use
+them to validate any tuning against your own store shape.
+
 ## 9. Output guarantees
 
 * One HDF5 format, one reader stack, for every method (format version 3).

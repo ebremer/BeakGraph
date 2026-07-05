@@ -5,23 +5,23 @@ import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
-import java.util.ArrayList;
 import java.util.Iterator;
-import org.apache.commons.collections4.iterators.IteratorChain;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.ExprList;
 
 public class BGIteratorMaster implements Iterator<BindingNodeId> {
+    // Every dispatch branch selects exactly ONE concrete iterator; this class is
+    // pure routing (the former per-call ArrayList + IteratorChain wrapper was
+    // constructed once per input binding for nothing).
     private final Iterator<BindingNodeId> chain;
 
     public BGIteratorMaster(HDF5Reader reader, PositionalDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        ArrayList<Iterator<BindingNodeId>> its = new ArrayList<>();
         boolean gBound = !quad.getGraph().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getGraph())));
         boolean sBound = !quad.getSubject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getSubject())));
         boolean pBound = !quad.getPredicate().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getPredicate())));
-        boolean oBound = !quad.getObject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getObject())));        
+        boolean oBound = !quad.getObject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getObject())));
 
         if (gBound) {
             if (pBound) {
@@ -29,7 +29,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                     // G, P, S bound -> Find O (Index: GSPO)
                     IndexReader gspo = reader.getIndexReader(Index.GSPO);
                     if (gspo != null) {
-                         its.add(new BGIteratorSO(dict, gspo, bnid, quad, filter, nodeTable));
+                         chain = new BGIteratorSO(dict, gspo, bnid, quad, filter, nodeTable);
                     } else {
                         throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
                     }
@@ -38,7 +38,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         // G, P, O bound -> Find S (Index: GPOS)
                         IndexReader gpos = reader.getIndexReader(Index.GPOS);
                         if (gpos != null) {
-                            its.add(new BGIteratorOS(dict, gpos, bnid, quad, filter, nodeTable));
+                            chain = new BGIteratorOS(dict, gpos, bnid, quad, filter, nodeTable);
                         } else {
                             throw new IllegalStateException("Required GPOS index is missing from this BeakGraph file");
                         }
@@ -46,7 +46,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         // G, P bound -> Find S, O (Index: GPOS)
                         IndexReader gpos = reader.getIndexReader(Index.GPOS);
                         if (gpos != null) {
-                            its.add(new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable));
+                            chain = new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable);
                         } else {
                             throw new IllegalStateException("Required GPOS index is missing from this BeakGraph file");
                         }
@@ -56,7 +56,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                 // G bound, P variable -> Scan SP (Index: GSPO)
                 IndexReader gspo = reader.getIndexReader(Index.GSPO);
                 if (gspo != null) {
-                    its.add(new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable));
+                    chain = new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable);
                 } else {
                     throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
                 }
@@ -82,24 +82,23 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                     && quad.getPredicate().getName().equals(gVar.getName());
             if (gVarInPredicate) {
                 Iterator<org.apache.jena.graph.Node> graphNodes = dict.streamGraphs().iterator();
-                its.add(Iter.flatMap(graphNodes, n -> {
+                chain = Iter.flatMap(graphNodes, n -> {
                     NodeId gId = new NodeId(dict.getGraphs().locate(n), NodeType.GRAPH);
                     Iterator<BindingNodeId> sub = new BGIteratorMaster(reader, dict, bnid,
                             new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable);
                     return Iter.removeNulls(Iter.map(sub,
                             b -> b.putCompatible(gVar, gId, nodeTable) ? b : null));
-                }));
+                });
             } else {
                 Iterator<NodeId> graphIds = dict.streamGraphIds()
                         .mapToObj(gid -> new NodeId(gid, NodeType.GRAPH)).iterator();
-                its.add(Iter.flatMap(graphIds, gId -> {
+                chain = Iter.flatMap(graphIds, gId -> {
                     BindingNodeId child = new BindingNodeId(bnid);
                     child.put(gVar, gId);
                     return new BGIteratorMaster(reader, dict, child, quad, filter, nodeTable);
-                }));
+                });
             }
         }
-        chain = new IteratorChain<>(its);
     }
 
     @Override

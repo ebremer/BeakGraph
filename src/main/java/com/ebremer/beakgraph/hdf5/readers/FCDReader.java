@@ -18,6 +18,16 @@ import java.nio.charset.StandardCharsets;
  * airlift does not allow sharing across threads - is held per thread.
  */
 public class FCDReader {
+    /**
+     * Decoded-block cache capacity (blocks, per FCD section). Front-coding means
+     * every {@code get(n)} must decode from its block's head - an average of
+     * blockSize/2 fragment decodes (VByte + copy + possible zstd + string build)
+     * per lookup - and both binary searches and result materialization revisit
+     * the same blocks constantly. Caching the decoded block makes those revisits
+     * an array index. Sized via -Dbeakgraph.fcd.cache.blocks.
+     */
+    private static final long CACHE_BLOCKS = Long.getLong("beakgraph.fcd.cache.blocks", 4096L);
+
     private final RandomAccessBytes buffer;
     private final RandomAccessBytes offsets;
     private final BitPackedUnSignedLongBuffer compressed;
@@ -25,6 +35,10 @@ public class FCDReader {
     private final long numEntries;
     private final long numBlocks;
     private final ThreadLocal<StringUtils> su = ThreadLocal.withInitial(StringUtils::new);
+    private final com.github.benmanes.caffeine.cache.Cache<Long, String[]> blockCache =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                    .maximumSize(CACHE_BLOCKS)
+                    .build();
 
     public FCDReader(Group strings) {
         ContiguousDataset stringbuffer = (ContiguousDataset) strings.getChild("stringbuffer");
@@ -63,26 +77,40 @@ public class FCDReader {
 
     public String get(long n) {
         if (n < 0 || n >= numEntries) throw new IndexOutOfBoundsException();
-
         long block = n / blockSize;
-        long pos = offsets.getLong(block * 8L);
+        return blockCache.get(block, this::decodeBlock)[(int) (n % blockSize)];
+    }
 
-        // The first string in the block is always at index (block * blockSize).
-        Fragment frag = readFragment(pos, block * blockSize);
-        String current = frag.value();
+    /**
+     * Decodes every string of one front-coded block. The running value is built
+     * in a reused StringBuilder ({@code setLength(prefixLen)} + append) instead
+     * of the former per-entry {@code substring(0, prefixLen) + suffix}, which
+     * allocated two intermediate strings per step.
+     */
+    private String[] decodeBlock(long block) {
+        long firstEntry = block * blockSize;
+        int entries = (int) Math.min(blockSize, numEntries - firstEntry);
+        String[] out = new String[entries];
+
+        long pos = offsets.getLong(block * 8L);
+        // The first string in the block is always stored in full.
+        Fragment frag = readFragment(pos, firstEntry);
+        StringBuilder current = new StringBuilder(frag.value());
+        out[0] = frag.value();
         pos = frag.nextPos();
 
-        long offsetInBlock = n % blockSize;
-        for (long i = 1; i <= offsetInBlock; i++) {
+        for (int i = 1; i < entries; i++) {
             VByte.DecodeResult pl = VByte.decodeAt(buffer, pos);
             int prefixLen = (int) pl.value;
             pos = pl.nextOffset;
-            // Suffix fragment is at index (block * blockSize + i).
-            Fragment suffix = readFragment(pos, block * blockSize + i);
-            current = current.substring(0, prefixLen) + suffix.value();
+            // Suffix fragment is at index (firstEntry + i).
+            Fragment suffix = readFragment(pos, firstEntry + i);
+            current.setLength(prefixLen);
+            current.append(suffix.value());
+            out[i] = current.toString();
             pos = suffix.nextPos();
         }
-        return current;
+        return out;
     }
 
     // NOTE: an unused locate(String) lived here that binary-searched blocks by

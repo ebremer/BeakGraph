@@ -1,41 +1,86 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.NodeTable;
-import java.util.HashMap;
-import java.util.Map;
-import org.apache.jena.atlas.lib.Map2;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.Binding;
 
-public class BindingNodeId extends Map2<Var, NodeId> {
+/**
+ * A Var -&gt; NodeId binding layer, chained to an optional parent layer, carrying
+ * the original Jena {@link Binding} for eventual conversion back.
+ *
+ * <p>Array-backed rather than map-backed: one of these is allocated PER RESULT
+ * ROW by every iterator, and a triple/quad pattern binds at most four variables,
+ * so the former HashMap-per-row (16-bucket table + node per entry) was nearly
+ * all garbage. Lookups linear-scan the own slots (&le; 4) and then the parent
+ * chain - cheaper than hashing at these sizes. A layer never re-binds a
+ * variable already bound in itself or its chain ({@link #put} keeps the first
+ * binding; {@link #putCompatible} reports the conflict), so iteration over the
+ * chain never yields duplicate variables.
+ */
+public class BindingNodeId implements Iterable<Var> {
+    private static final Var[] NO_VARS = new Var[0];
+    private static final NodeId[] NO_IDS = new NodeId[0];
+
     // This is the parent binding - which may be several steps up the chain.
     // This just carried around for later use when we go BindingNodeId back to Binding.
     private final Binding parentBinding;
+    private final BindingNodeId parent;
 
-    // Possible optimization: there are at most 3 possible values so HashMap is overkill.
-    // Use a chain of small objects.
+    private Var[] vars = NO_VARS;
+    private NodeId[] ids = NO_IDS;
+    private int n = 0;
 
-    private BindingNodeId(Map<Var, NodeId> map1, Map2<Var, NodeId> map2, Binding parentBinding) {
-        super(map1, map2);
+    private BindingNodeId(BindingNodeId parent, Binding parentBinding) {
+        this.parent = parent;
         this.parentBinding = parentBinding;
     }
 
     // Make from an existing BindingNodeId
     public BindingNodeId(BindingNodeId other) {
-        this(new HashMap<>(), other, other != null ? other.getParentBinding() : null);
+        this(other, other != null ? other.getParentBinding() : null);
     }
 
     // Make from an existing Binding
     public BindingNodeId(Binding binding) {
-        this(new HashMap<>(), null, binding);
+        this(null, binding);
     }
 
     public BindingNodeId() {
-        this(new HashMap<>(), null, null);
+        this(null, (Binding) null);
     }
 
     public Binding getParentBinding()    { return parentBinding; }
+
+    public NodeId get(Var v) {
+        for (BindingNodeId layer = this; layer != null; layer = layer.parent) {
+            Var[] lv = layer.vars;
+            for (int i = 0, m = layer.n; i < m; i++) {
+                if (lv[i].equals(v)) {
+                    return layer.ids[i];
+                }
+            }
+        }
+        return null;
+    }
+
+    public boolean containsKey(Var v) {
+        return get(v) != null;
+    }
+
+    private void append(Var v, NodeId id) {
+        if (n == vars.length) {
+            int cap = (n == 0) ? 4 : n * 2;
+            vars = Arrays.copyOf(vars, cap);
+            ids = Arrays.copyOf(ids, cap);
+        }
+        vars[n] = v;
+        ids[n] = id;
+        n++;
+    }
 
     /**
      * Binds {@code v} to {@code n}; when {@code v} is already bound, the existing
@@ -45,13 +90,12 @@ public class BindingNodeId extends Map2<Var, NodeId> {
      * must use {@link #putCompatible} and reject the row on a conflict instead -
      * silently keeping the first value made {@code ?s ?p ?s} match every triple.
      */
-    @Override
     public void put(Var v, NodeId n) {
         if ( v == null || n == null )
             throw new IllegalArgumentException("("+v+","+n+")");
         // Includes conversion where we are copying from parent.
-        if (!super.containsKey(v)) {
-            super.put(v, n);
+        if (!containsKey(v)) {
+            append(v, n);
         }
     }
 
@@ -67,7 +111,7 @@ public class BindingNodeId extends Map2<Var, NodeId> {
             throw new IllegalArgumentException("("+v+","+n+")");
         NodeId existing = get(v);
         if (existing == null) {
-            super.put(v, n);
+            append(v, n);
             return true;
         }
         return sameTerm(existing, n, nodeTable);
@@ -95,6 +139,38 @@ public class BindingNodeId extends Map2<Var, NodeId> {
         Node na = nodeTable.getNodeForNodeId(a);
         Node nb = nodeTable.getNodeForNodeId(b);
         return na != null && na.equals(nb);
+    }
+
+    /**
+     * All bound variables: this layer's, then the parent chain's. Duplicate-free
+     * because a layer never re-binds a variable already bound below it.
+     */
+    @Override
+    public Iterator<Var> iterator() {
+        return new Iterator<>() {
+            private BindingNodeId layer = BindingNodeId.this;
+            private int i = 0;
+
+            private void advance() {
+                while (layer != null && i >= layer.n) {
+                    layer = layer.parent;
+                    i = 0;
+                }
+            }
+
+            @Override
+            public boolean hasNext() {
+                advance();
+                return layer != null;
+            }
+
+            @Override
+            public Var next() {
+                advance();
+                if (layer == null) throw new NoSuchElementException();
+                return layer.vars[i++];
+            }
+        };
     }
 
     @Override
