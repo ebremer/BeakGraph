@@ -70,6 +70,7 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-status` | off | Progress bar (per-file mode) and end-of-run counters. |
 | `-endpoint <file.h5>` | — | Serve the store as a SPARQL endpoint instead of converting. |
 | `-port <n>` | `8888` | HTTP port for `-endpoint`. |
+| `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for `-endpoint`; a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. |
 | `-version` / `-v` | — | Print version and exit. |
 | `-help` | — | Usage text. |
 

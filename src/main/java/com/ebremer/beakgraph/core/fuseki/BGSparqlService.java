@@ -41,8 +41,15 @@ public final class BGSparqlService {
      *  readAllBytes lets a single request allocate arbitrary heap. */
     static final int MAX_QUERY_BODY_BYTES = 1 << 20; // 1 MiB
 
-    /** Hard wall-clock limit per query so one pathological query cannot pin the server. */
-    private static final long QUERY_TIMEOUT_SECONDS = 30;
+    /**
+     * Wall-clock limit per query so one pathological query cannot pin the server.
+     * Configurable via the {@code beakgraph.query.timeout.seconds} system property
+     * (the CLI's {@code -timeout} flag sets it); 0 or negative disables the limit.
+     * Read per query, not cached, so embedding applications can adjust it at runtime.
+     */
+    static long queryTimeoutSeconds() {
+        return Long.getLong("beakgraph.query.timeout.seconds", 30L);
+    }
 
     /** Thrown when a POST body exceeds {@link #MAX_QUERY_BODY_BYTES}; callers map it to HTTP 413. */
     public static final class QueryBodyTooLargeException extends IOException {
@@ -84,6 +91,13 @@ public final class BGSparqlService {
             }
         }
         return null;
+    }
+
+    /** Collapses a query onto one log line (bounded, whitespace-normalized). */
+    private static String oneLine(String query) {
+        if (query == null) return "";
+        String s = query.strip().replaceAll("\\s+", " ");
+        return (s.length() > 300) ? s.substring(0, 300) + "..." : s;
     }
 
     /** Read at most {@code max} bytes as UTF-8; reject anything larger. */
@@ -135,8 +149,12 @@ public final class BGSparqlService {
             Query execQuery = resolver.isActive()
                     ? QueryTransformOps.transform(query, resolver.absoluteToStorage(storedTermProbe(ds)))
                     : query;
-            try (QueryExecution qexec = QueryExecution.dataset(ds).query(execQuery)
-                    .timeout(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS).build()) {
+            long timeoutSeconds = queryTimeoutSeconds();
+            var qexecBuilder = QueryExecution.dataset(ds).query(execQuery);
+            if (timeoutSeconds > 0) {
+                qexecBuilder = qexecBuilder.timeout(timeoutSeconds, TimeUnit.SECONDS);
+            }
+            try (QueryExecution qexec = qexecBuilder.build()) {
                 if (execQuery.isSelectType()) {
                     ResultSet rs = resolver.resolve(qexec.execSelect());
                     if (accept.contains("json")) {
@@ -174,6 +192,18 @@ public final class BGSparqlService {
         } catch (org.apache.jena.query.QueryParseException ex) {
             // The client's own query text is at fault; the parse message is theirs.
             resp.sendError(400, "Query parse error: " + ex.getMessage());
+            return true;
+        } catch (org.apache.jena.query.QueryCancelledException ex) {
+            // The wall-clock limit fired - the reader is healthy, the query was just
+            // slow. Tell the client plainly instead of a generic 500.
+            long limit = queryTimeoutSeconds();
+            logger.warn("SPARQL query cancelled by the {}s timeout (raise with -timeout / "
+                    + "beakgraph.query.timeout.seconds): {}", limit, oneLine(queryStr));
+            if (resp.isCommitted()) {
+                throw new QueryExecutionFailedException("Query timed out after the response was committed", ex);
+            }
+            resp.sendError(503, "Query timed out after " + limit
+                    + "s (server limit; adjustable with -timeout)");
             return true;
         } catch (Exception ex) {
             // Internal failure: log the details server-side, but do not echo

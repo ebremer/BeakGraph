@@ -19,6 +19,12 @@ public class Parameters {
     
     @Parameter(names = "-port", description = "Set HTTP port when endpoint started", required = false)
     public int port = 8888;
+
+    @Parameter(names = "-timeout",
+            description = "Per-query wall-clock limit in seconds for -endpoint (0 = unlimited). "
+                        + "A query over the limit is cancelled and answered with HTTP 503",
+            required = false)
+    public long timeout = 30;
     
     @Parameter(names = "-src", description = "Source Folder or File", required = false)
     public File src = null;

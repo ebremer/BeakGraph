@@ -103,6 +103,8 @@ public class BeakGraphCLI {
                             System.err.println("Error: -endpoint does not exist: " + params.sparqlendpoint);
                             System.exit(1);
                         }
+                        // BGSparqlService reads the limit per query from this property.
+                        System.setProperty("beakgraph.query.timeout.seconds", Long.toString(params.timeout));
                         SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);
                         Runtime.getRuntime().addShutdownHook(new Thread(() -> endpoint.shutdown()));
                         System.out.println("Press Ctrl+C to stop the server...");

@@ -265,6 +265,13 @@ public class HDF5Reader implements BGReader {
     }
     
     @Override
+    public long countTriples(Node graph) {
+        // Quads are de-duplicated per graph in the index, so the graph's quad
+        // count is its triple count.
+        return IndexCounts.quads(this, graph);
+    }
+
+    @Override
     public boolean containsGraph(Node graphNode) {
         // Graphs share the universal entity dictionary, so locate() alone matches
         // every subject/object entity too; membership in the columnar graphs list
