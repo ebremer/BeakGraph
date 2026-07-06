@@ -377,12 +377,29 @@ public class BeakGraphCLI {
         return false;
     }
 
+    /**
+     * NT/NQ line formats stream straight off the GSPO index with per-id text
+     * memoization (see IndexExport) when the store supports it; false means
+     * nothing was written and the generic writer below runs instead.
+     */
+    private static boolean tryIndexExport(OutputStream os, org.apache.jena.sparql.core.DatasetGraph dsg,
+            boolean quads) throws IOException {
+        if (dsg instanceof com.ebremer.beakgraph.core.BGDatasetGraph bgd
+                && bgd.getBeakGraph().getReader() instanceof com.ebremer.beakgraph.hdf5.readers.HDF5Reader reader) {
+            return com.ebremer.beakgraph.hdf5.jena.IndexExport.tryWrite(reader, os, quads);
+        }
+        return false;
+    }
+
     private static void writeExport(OutputStream os, org.apache.jena.sparql.core.DatasetGraph dsg, String fmt)
             throws IOException {
         switch (fmt) {
             case "NT", "TTL" -> {
                 // Triple export: by this point the store has no user named
                 // graphs, so the default graph IS the data.
+                if ("NT".equals(fmt) && tryIndexExport(os, dsg, false)) {
+                    return;
+                }
                 org.apache.jena.riot.system.StreamRDF stream = org.apache.jena.riot.system.StreamRDFWriter
                         .getWriterStream(os, "NT".equals(fmt)
                                 ? org.apache.jena.riot.RDFFormat.NTRIPLES
@@ -395,6 +412,9 @@ public class BeakGraphCLI {
                 stream.finish();
             }
             case "NQ", "TRIG" -> {
+                if ("NQ".equals(fmt) && tryIndexExport(os, dsg, true)) {
+                    return;
+                }
                 org.apache.jena.riot.system.StreamRDF stream = org.apache.jena.riot.system.StreamRDFWriter
                         .getWriterStream(os, "NQ".equals(fmt)
                                 ? org.apache.jena.riot.RDFFormat.NQUADS
