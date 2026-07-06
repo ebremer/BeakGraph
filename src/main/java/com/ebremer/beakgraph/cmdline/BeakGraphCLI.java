@@ -36,7 +36,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Command-line entry point for BeakGraph ("beakgraph" command): converts RDF source trees to
- * HDF5-backed graphs, or starts the SPARQL/LWS endpoint.
+ * HDF5-backed graphs, exports them back to RDF, verifies file integrity (-verify), or starts
+ * the SPARQL/LWS endpoint.
  *
  * @author Erich Bremer
  */
@@ -113,6 +114,12 @@ public class BeakGraphCLI {
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
                         }
+                    } else if (params.verify != null) {
+                        if (!params.verify.exists()) {
+                            System.err.println("Error: -verify path does not exist: " + params.verify);
+                            System.exit(1);
+                        }
+                        System.exit(new VerifyCommand(params.verify, params.deep).run());
                     } else if (params.src != null && params.src.exists() && params.export != null) {
                         // Export mode: dump BeakGraph(s) back to RDF; no -dest
                         // involved (output lands beside each source .h5).

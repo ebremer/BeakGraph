@@ -112,6 +112,24 @@ public class Parameters {
             description = "gzip the -export output (adds .gz to the file name)")
     public boolean compress = false;
 
+    @Parameter(names = "-verify",
+            description = "Verify BeakGraph file integrity instead of converting: opens each "
+                        + "file, loads the dictionaries and every index structure, and "
+                        + "enumerates its graphs - catching truncated, partially copied, or "
+                        + "otherwise damaged files before they are served. The path may be one "
+                        + "file or a directory (scanned recursively for *.h5/*.hdf5). Prints one "
+                        + "verdict line per file plus a summary; exit code 2 if any file is "
+                        + "damaged. Add -deep for a data-level pass")
+    public File verify = null;
+
+    @Parameter(names = {"-deep"}, converter = BooleanConverter.class,
+            description = "With -verify: additionally materialize every triple of every graph "
+                        + "(resolving all terms through the dictionaries) and reconcile the "
+                        + "totals against the index-derived counts. Reads through the bulk of "
+                        + "each file - slower, but catches data-region corruption that the "
+                        + "structural checks pass over")
+    public boolean deep = false;
+
     @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)
     public boolean version = false;
 

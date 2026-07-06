@@ -67,6 +67,8 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-huge` | off | Legacy shorthand for `-method 1`. An explicit `-method` takes precedence. |
 | `-export <fmt>` | — | **Export mode**: dump the BeakGraph(s) at `-src` back to RDF instead of converting. Formats: `NT`, `NQ`, `JSON-LD`, `TTL`, `TRIG` (case-insensitive). Output lands next to each `.h5` with the same name and the format's extension. See §5a. |
 | `-compress` | off | gzip the `-export` output (adds `.gz` to the file name). |
+| `-verify <path>` | — | **Verify mode**: integrity-check the BeakGraph file at `<path>`, or every `.h5`/`.hdf5` under it when `<path>` is a directory (recursive). One `OK`/`FAIL` line per file plus a summary; exit code `2` if any file is damaged. See §5b. |
+| `-deep` | off | With `-verify`: additionally materialize every triple of every graph and reconcile against the index-derived counts (reads the bulk of each file). |
 | `-status` | off | Progress bar (per-file mode) and end-of-run counters. |
 | `-endpoint <file.h5>` | — | Serve the store as a SPARQL endpoint instead of converting. |
 | `-port <n>` | `8888` | HTTP port for `-endpoint`. |
@@ -75,7 +77,8 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-help` | — | Usage text. |
 
 **Exit codes:** `0` success · `1` bad arguments / missing paths · `2` at least one conversion failed
-(each failure is also logged with its cause; per-file mode continues past failures).
+(each failure is also logged with its cause; per-file mode continues past failures). `-verify` uses
+the same scheme: `2` means at least one damaged file.
 
 Existing non-empty destination `.h5` files are **skipped** in per-file mode; `-merge` always rebuilds
 its destination. All writers build into a sibling `*.tmp` file and publish with an atomic rename —
@@ -107,6 +110,35 @@ java -jar BeakGraph.jar -src stores/ -export NT                 # every .h5 unde
 * NT/NQ/TTL/TRIG exports stream (any store size); JSON-LD has no streaming writer and
   materializes the dataset in memory - use NQ/TRIG for bulk dumps.
 * Writes are atomic (`.tmp` then rename); an existing export is replaced.
+
+## 5b. Verifying BeakGraph files
+
+```bash
+java -jar BeakGraph.jar -verify data.h5                 # one file
+java -jar BeakGraph.jar -verify stores/                 # every .h5/.hdf5 under stores/, recursive
+java -jar BeakGraph.jar -verify stores/ -deep           # + full data-level pass
+```
+
+Run this before publishing files into served storage: a truncated or partially copied
+`.h5` otherwise opens fine and only fails later, at query time, when a query first
+touches the damaged region (index loading is lazy).
+
+* **Structural pass (default)**: opens each file with the real reader stack - HDF5
+  superblock, `.BG` group, format version, dictionaries - then force-loads every index
+  present (`GSPO`, `GPOS`) and enumerates the graph list. This maps every dataset the
+  readers use, so files cut off anywhere in metadata or data extents are caught.
+  An *absent* index is legal; only a present-but-unloadable one is damage.
+* **`-deep`**: additionally streams every triple of every graph, resolving all terms
+  through the dictionaries, and reconciles the count against the index structure -
+  catching corruption inside data regions that structural checks pass over. Reads
+  most of the file; budget roughly export-NT time per file.
+* Output: one `OK`/`FAIL` line per file (failures list their reasons), then
+  `Verified N file(s): M OK, K FAILED`.
+* **Exit codes**: `0` all files pass · `1` nothing to verify (or bad path) · `2` at
+  least one file is damaged. Verification continues past failures, so one run reports
+  every bad file in a tree.
+* A file named explicitly is verified regardless of extension; directory scans pick up
+  `*.h5` and `*.hdf5` (case-insensitive). Empty files are reported as damaged.
 
 ## 6. Choosing a conversion method
 
