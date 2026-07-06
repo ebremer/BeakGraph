@@ -16,6 +16,8 @@ import io.jhdf.api.Attribute;
 import io.jhdf.api.Group;
 import java.io.File;
 import java.net.URI;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -56,19 +58,65 @@ public class HDF5Reader implements BGReader {
     public HDF5Reader(Path src) {
         this(src.toFile());
     }
-    
+
     public HDF5Reader(File src) {
-        this.hdf = new HdfFile(src.toPath());
+        this(new HdfFile(src.toPath()), src.toURI());
+    }
+
+    /**
+     * Reads a BeakGraph through any {@link SeekableByteChannel} - e.g. an
+     * {@code HTTPSeekableByteChannel} for querying a remote file in place.
+     * The reader takes ownership of the channel: it is closed by
+     * {@link #close()}, and also released if construction fails.
+     *
+     * @param channel positioned at the start of the HDF5 file
+     * @param source  identifies the data for {@link #getURI()} and messages
+     */
+    public HDF5Reader(SeekableByteChannel channel, URI source) {
+        this(open(channel, source), source);
+    }
+
+    private static HdfFile open(SeekableByteChannel channel, URI source) {
+        try {
+            return new HdfFile(channel, jhdfDisplayUri(source));
+        } catch (RuntimeException | Error e) {
+            // jHDF leaves the channel open when construction fails (e.g. not an
+            // HDF5 file); the reader owns the channel, so release it here.
+            try { channel.close(); } catch (Exception ignore) {}
+            throw e;
+        }
+    }
+
+    /**
+     * jHDF derives a display {@link Path} from the URI's path component;
+     * substitute a placeholder for URIs it cannot hold (opaque URNs, path
+     * characters illegal in local paths) so such sources still open.
+     */
+    private static URI jhdfDisplayUri(URI source) {
+        try {
+            String path = source.getPath();
+            if (path != null) {
+                Path.of(path);
+                return source;
+            }
+        } catch (InvalidPathException cannotDisplay) {
+            // fall through to the placeholder
+        }
+        return URI.create("bg:/channel");
+    }
+
+    private HDF5Reader(HdfFile hdf, URI uri) {
+        this.hdf = hdf;
         try {
             this.hdt = (Group) hdf.getChild(Params.BG);
             if (hdt == null) {
                 throw new IllegalStateException(
-                        "Not a BeakGraph file (no '" + Params.BG + "' group): " + src);
+                        "Not a BeakGraph file (no '" + Params.BG + "' group): " + uri);
             }
             this.formatVersion = readFormatVersion(hdt);
             if (formatVersion > Params.FORMAT_VERSION) {
                 throw new IllegalStateException(
-                        "BeakGraph HDF5 format version " + formatVersion + " in " + src
+                        "BeakGraph HDF5 format version " + formatVersion + " in " + uri
                       + " is newer than this build supports (max " + Params.FORMAT_VERSION
                       + "). Upgrade BeakGraph.");
             }
@@ -76,10 +124,11 @@ public class HDF5Reader implements BGReader {
             this.dict = new PositionalDictionaryReader(dictionary);
             this.defaultGraph = Quad.defaultGraphIRI;
             nodeTable = new SimpleNodeTable(dict);
-            this.uri = src.toURI();
+            this.uri = uri;
         } catch (RuntimeException | Error e) {
-            // Close the mapped file before propagating: a leaked HdfFile pins the
-            // file handle (and on Windows, the file lock) with no way to release it.
+            // Close the backing storage before propagating: a leaked HdfFile pins
+            // the file handle (and on Windows, the file lock) - or the channel -
+            // with no way to release it.
             try { hdf.close(); } catch (Exception ignore) {}
             throw e;
         }

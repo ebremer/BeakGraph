@@ -1,6 +1,8 @@
 package com.ebremer.beakgraph.io;
 
 import io.jhdf.api.dataset.ContiguousDataset;
+import io.jhdf.nio.FileChannelFromSeekableByteChannel;
+import io.jhdf.storage.HdfFileChannel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
@@ -14,6 +16,13 @@ import java.nio.ByteBuffer;
  * cannot serve at all) are FFM-mapped directly from the underlying file at
  * {@code dataAddress + userBlockSize} - the same file offset jHDF itself
  * would map - with an automatic arena managing the unmap.
+ *
+ * <p>Channel-backed files (an {@code HdfFile} opened over a
+ * {@code SeekableByteChannel}, e.g. HTTP range requests) take neither path:
+ * they cannot be memory-mapped, the FFM path's local file path does not
+ * correspond to the actual bytes, and {@code getBuffer()} would materialize
+ * the whole dataset up front. They are served by {@link ChannelBytes}, which
+ * reads only the touched ranges through the channel.
  *
  * <p>The threshold is overridable for testing and operations via the
  * {@code beakgraph.ffm.threshold} system property (bytes; datasets strictly
@@ -43,6 +52,12 @@ public final class DatasetBytes {
             return new ByteBufferBytes(ByteBuffer.allocate(0));
         }
         long address = dataset.getDataAddress();
+        if (address >= 0
+                && dataset.getHdfFile().getHdfBackingStorage() instanceof HdfFileChannel hfc
+                && hfc.getFileChannel() instanceof FileChannelFromSeekableByteChannel) {
+            return new ChannelBytes(hfc.getFileChannel(),
+                    address + dataset.getHdfFile().getUserBlockSize(), size);
+        }
         if (size > ffmThreshold && address >= 0) {
             try {
                 long fileOffset = address + dataset.getHdfFile().getUserBlockSize();
