@@ -76,7 +76,7 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
             Iter.removeNulls(Iter.map(candidates.iterator(), id -> {
                 BindingNodeId child = new BindingNodeId(parent);
                 // A conflicting pre-existing binding for the target var drops the row.
-                return child.putCompatible(targetVar, new NodeId(id, NodeType.SUBJECT), nodeTable) ? child : null;
+                return child.putCompatible(targetVar, NodeId.pack(NodeType.SUBJECT, id), nodeTable) ? child : null;
             })));
     }
 
@@ -128,9 +128,9 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
                 Quad pattern = new Quad(Params.SPATIAL, sVar, pred, oVar);
                 BGIteratorPOS it = new BGIteratorPOS(dict, gpos, new BindingNodeId(), pattern, bounds, nodeTable);
                 while (it.hasNext()) {
-                    NodeId sid = it.next().get(sVar);
-                    if (sid != null) {
-                        out.add(sid.getId());
+                    long sid = it.next().get(sVar);
+                    if (sid != NodeId.NONE) {
+                        out.add(NodeId.id(sid));
                     }
                 }
             }

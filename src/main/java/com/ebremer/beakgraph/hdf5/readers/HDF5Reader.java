@@ -177,11 +177,11 @@ public class HDF5Reader implements BGReader {
         // keeps a large union scan free of per-row key/box allocations.
         LongTripleSet seen = new LongTripleSet();
         return Iter.filter(chain, b -> {
-            long k0 = Long.MIN_VALUE, k1 = Long.MIN_VALUE, k2 = Long.MIN_VALUE;
-            NodeId id;
-            if (v0 != null && (id = b.get(v0)) != null) k0 = id.getId();
-            if (v1 != null && (id = b.get(v1)) != null) k1 = id.getId();
-            if (v2 != null && (id = b.get(v2)) != null) k2 = id.getId();
+            // Packed ids (type bits included) key the dedup: identical variable
+            // values across graphs carry identical packed ids by construction.
+            long k0 = (v0 != null) ? b.get(v0) : NodeId.NONE;
+            long k1 = (v1 != null) ? b.get(v1) : NodeId.NONE;
+            long k2 = (v2 != null) ? b.get(v2) : NodeId.NONE;
             return seen.add(k0, k1, k2);
         });
     }
@@ -250,8 +250,7 @@ public class HDF5Reader implements BGReader {
     /** True when {@code n} is a variable already bound to a node that does not exist here. */
     private static boolean boundToMissing(Node n, BindingNodeId bnid) {
         if (bnid != null && n.isVariable()) {
-            NodeId id = bnid.get(Var.alloc(n));
-            return id != null && NodeId.isDoesNotExist(id);
+            return NodeId.isDoesNotExist(bnid.get(Var.alloc(n)));
         }
         return false;
     }
@@ -269,12 +268,11 @@ public class HDF5Reader implements BGReader {
         if (!n.isVariable()) {
             return n;
         }
-        NodeId id = bnid.get(Var.alloc(n));
-        if (id == null || NodeId.isDoesNotExist(id)) {
+        long id = bnid.get(Var.alloc(n));
+        if (id == NodeId.NONE || NodeId.isDoesNotExist(id)) {
             return n; // unbound (or already short-circuited by boundToMissing)
         }
-        boolean idIsPredicateSpace = (id.getType() == NodeType.PREDICATE);
-        if (idIsPredicateSpace == predicatePosition) {
+        if (NodeId.isPredicateSpace(id) == predicatePosition) {
             return n; // same space: the iterator consumes the bound id directly
         }
         Node concrete = nodeTable.getNodeForNodeId(id);

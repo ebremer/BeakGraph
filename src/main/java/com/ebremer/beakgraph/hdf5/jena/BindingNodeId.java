@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.NodeTable;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
@@ -9,29 +8,27 @@ import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.Binding;
 
 /**
- * A Var -&gt; NodeId binding layer, chained to an optional parent layer, carrying
- * the original Jena {@link Binding} for eventual conversion back.
+ * A Var -&gt; packed-NodeId binding layer, chained to an optional parent layer,
+ * carrying the original Jena {@link Binding} for eventual conversion back.
  *
- * <p>Array-backed rather than map-backed: one of these is allocated PER RESULT
- * ROW by every iterator, and a triple/quad pattern binds at most four variables,
- * so the former HashMap-per-row (16-bucket table + node per entry) was nearly
- * all garbage. Lookups linear-scan the own slots (&le; 4) and then the parent
- * chain - cheaper than hashing at these sizes. A layer never re-binds a
- * variable already bound in itself or its chain ({@link #put} keeps the first
- * binding; {@link #putCompatible} reports the conflict), so iteration over the
- * chain never yields duplicate variables.
+ * <p>One of these is allocated PER RESULT ROW by every iterator, so the layout
+ * is a single object with four inline (Var, long) slots - a quad pattern binds
+ * at most four variables per layer - no backing arrays, no per-value NodeId
+ * objects (ids are packed longs, {@link NodeId}). Lookups scan the own slots
+ * and then the parent chain; absence is {@link NodeId#NONE}, not null. A layer
+ * never re-binds a variable already bound in itself or its chain ({@link #put}
+ * keeps the first binding; {@link #putCompatible} reports the conflict), so
+ * iteration over the chain never yields duplicate variables.
  */
 public class BindingNodeId implements Iterable<Var> {
-    private static final Var[] NO_VARS = new Var[0];
-    private static final NodeId[] NO_IDS = new NodeId[0];
 
     // This is the parent binding - which may be several steps up the chain.
     // This just carried around for later use when we go BindingNodeId back to Binding.
     private final Binding parentBinding;
     private final BindingNodeId parent;
 
-    private Var[] vars = NO_VARS;
-    private NodeId[] ids = NO_IDS;
+    private Var v0, v1, v2, v3;
+    private long i0, i1, i2, i3;
     private int n = 0;
 
     private BindingNodeId(BindingNodeId parent, Binding parentBinding) {
@@ -55,90 +52,98 @@ public class BindingNodeId implements Iterable<Var> {
 
     public Binding getParentBinding()    { return parentBinding; }
 
-    public NodeId get(Var v) {
+    /** The packed id bound to {@code v}, or {@link NodeId#NONE}. */
+    public long get(Var v) {
         for (BindingNodeId layer = this; layer != null; layer = layer.parent) {
-            Var[] lv = layer.vars;
-            for (int i = 0, m = layer.n; i < m; i++) {
-                if (lv[i].equals(v)) {
-                    return layer.ids[i];
-                }
-            }
+            int m = layer.n;
+            if (m > 0 && layer.v0.equals(v)) return layer.i0;
+            if (m > 1 && layer.v1.equals(v)) return layer.i1;
+            if (m > 2 && layer.v2.equals(v)) return layer.i2;
+            if (m > 3 && layer.v3.equals(v)) return layer.i3;
         }
-        return null;
+        return NodeId.NONE;
     }
 
     public boolean containsKey(Var v) {
-        return get(v) != null;
+        return get(v) != NodeId.NONE;
     }
 
-    private void append(Var v, NodeId id) {
-        if (n == vars.length) {
-            int cap = (n == 0) ? 4 : n * 2;
-            vars = Arrays.copyOf(vars, cap);
-            ids = Arrays.copyOf(ids, cap);
+    private void append(Var v, long id) {
+        switch (n) {
+            case 0 -> { v0 = v; i0 = id; }
+            case 1 -> { v1 = v; i1 = id; }
+            case 2 -> { v2 = v; i2 = id; }
+            case 3 -> { v3 = v; i3 = id; }
+            default -> throw new IllegalStateException(
+                    "BindingNodeId layer holds at most 4 bindings (a quad pattern's positions); chain a new layer instead");
         }
-        vars[n] = v;
-        ids[n] = id;
         n++;
     }
 
     /**
-     * Binds {@code v} to {@code n}; when {@code v} is already bound, the existing
+     * Binds {@code v} to {@code id}; when {@code v} is already bound, the existing
      * binding is kept. Only safe when the caller guarantees the re-put carries the
      * same term (e.g. re-binding a value derived from this binding's own entry).
      * Row-building code that can see a variable repeated within one triple pattern
      * must use {@link #putCompatible} and reject the row on a conflict instead -
      * silently keeping the first value made {@code ?s ?p ?s} match every triple.
      */
-    public void put(Var v, NodeId n) {
-        if ( v == null || n == null )
-            throw new IllegalArgumentException("("+v+","+n+")");
+    public void put(Var v, long id) {
+        if ( v == null || id == NodeId.NONE )
+            throw new IllegalArgumentException("("+v+","+NodeId.toString(id)+")");
         // Includes conversion where we are copying from parent.
         if (!containsKey(v)) {
-            append(v, n);
+            append(v, id);
         }
     }
 
     /**
-     * Binds {@code v} to {@code n}, or reports a conflict: returns true when the
+     * Binds {@code v} to {@code id}, or reports a conflict: returns true when the
      * binding was added or the existing binding denotes the same term, false when
      * {@code v} is already bound to a different term (the caller must reject the
      * row). {@code nodeTable} is needed only to compare ids across the predicate /
      * entity id-spaces; pass null when that cross-space case cannot occur.
      */
-    public boolean putCompatible(Var v, NodeId n, NodeTable nodeTable) {
-        if ( v == null || n == null )
-            throw new IllegalArgumentException("("+v+","+n+")");
-        NodeId existing = get(v);
-        if (existing == null) {
-            append(v, n);
+    public boolean putCompatible(Var v, long id, NodeTable nodeTable) {
+        if ( v == null || id == NodeId.NONE )
+            throw new IllegalArgumentException("("+v+","+NodeId.toString(id)+")");
+        long existing = get(v);
+        if (existing == NodeId.NONE) {
+            append(v, id);
             return true;
         }
-        return sameTerm(existing, n, nodeTable);
+        return sameTerm(existing, id, nodeTable);
     }
 
     /**
-     * Whether two NodeIds denote the same RDF term. GRAPH, SUBJECT and OBJECT ids
-     * share the universal entity id-space (object literals are offset beyond the
-     * entity range), so within it equal ids mean equal terms. PREDICATE ids live in
-     * an isolated dictionary, so a predicate/entity pair is resolved to Nodes and
-     * compared as terms.
+     * Whether two packed NodeIds denote the same RDF term. GRAPH, SUBJECT and
+     * OBJECT ids share the universal entity id-space (object literals are offset
+     * beyond the entity range), so within it equal ids mean equal terms.
+     * PREDICATE ids live in an isolated dictionary, so a predicate/entity pair is
+     * resolved to Nodes and compared as terms.
      */
-    private static boolean sameTerm(NodeId a, NodeId b, NodeTable nodeTable) {
-        if (a.equals(b)) return true;
-        NodeType ta = a.getType();
-        NodeType tb = b.getType();
-        if (ta == NodeType.SPECIAL || tb == NodeType.SPECIAL) return false; // a.equals(b) already said no
-        boolean aPred = (ta == NodeType.PREDICATE);
-        boolean bPred = (tb == NodeType.PREDICATE);
+    private static boolean sameTerm(long a, long b, NodeTable nodeTable) {
+        if (a == b) return true;
+        if (NodeId.isSpecial(a) || NodeId.isSpecial(b)) return false; // a == b already said no
+        boolean aPred = NodeId.isPredicateSpace(a);
+        boolean bPred = NodeId.isPredicateSpace(b);
         if (aPred == bPred) {
             // Same id-space (both predicate, or both universal entity/object space).
-            return a.getId() == b.getId();
+            return NodeId.id(a) == NodeId.id(b);
         }
         if (nodeTable == null) return false;
         Node na = nodeTable.getNodeForNodeId(a);
         Node nb = nodeTable.getNodeForNodeId(b);
         return na != null && na.equals(nb);
+    }
+
+    private Var slot(int i) {
+        return switch (i) {
+            case 0 -> v0;
+            case 1 -> v1;
+            case 2 -> v2;
+            default -> v3;
+        };
     }
 
     /**
@@ -168,7 +173,7 @@ public class BindingNodeId implements Iterable<Var> {
             public Var next() {
                 advance();
                 if (layer == null) throw new NoSuchElementException();
-                return layer.vars[i++];
+                return layer.slot(i++);
             }
         };
     }
@@ -182,11 +187,11 @@ public class BindingNodeId implements Iterable<Var> {
             if ( ! first )
                 sb.append(" ");
             first = false;
-            NodeId x = get(v);
+            long x = get(v);
             if ( ! NodeId.isDoesNotExist(x)) {
                 sb.append(v);
                 sb.append(" = ");
-                sb.append(x);
+                sb.append(NodeId.toString(x));
             }
         }
         if ( getParentBinding() != null ) {

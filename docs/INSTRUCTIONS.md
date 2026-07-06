@@ -185,6 +185,7 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.dict.search.cache.size` | `65536` | Term → dictionary-position entries per dictionary section (locate/search results, hits and misses). |
 | `beakgraph.fcd.cache.blocks` | `4096` | Decoded front-coded string blocks per FCD section (each block holds `blockSize`, typically 16, strings). |
 | `beakgraph.ffm.threshold` | `2147483647` | Dataset size in bytes above which BeakGraph FFM-maps the region itself instead of using jHDF's ByteBuffer. |
+| `beakgraph.scan.parallel.threshold` | `65536` | Minimum index position range for a scan-shaped first pattern (`?s ?p ?o`, or `?s <p> ?o`) to run as a chunked PARALLEL scan on the shared worker pool. `0` (or negative) disables parallel scanning. Chunks stop on query timeout/cancel and on early close (LIMIT). |
 
 JMH benchmarks for the read path live in `benchmarks/` (see its README) - use
 them to validate any tuning against your own store shape.

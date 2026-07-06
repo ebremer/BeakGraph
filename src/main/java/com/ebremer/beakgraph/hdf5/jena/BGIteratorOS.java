@@ -29,9 +29,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     private long minSubId = 1; // Updated to 1 to gracefully skip dummy IDs
     private long maxSubId = Long.MAX_VALUE;
 
-    // Row-emission plan, computed once: G/P/O NodeIds are constant, only S varies.
+    // Row-emission plan, computed once: G/P/O packed ids are constant, only S varies.
     private Var gVar, pVar, oVar, sVar;
-    private NodeId gId, pId, oId;
+    private long gId, pId, oId;
 
     public BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
@@ -52,8 +52,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // Resolve Graph
         if (quad.getGraph().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph()))) gi = bnid.get(Var.alloc(quad.getGraph())).getId();
-            else return;
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
+            if (bound == NodeId.NONE) return;
+            gi = NodeId.id(bound);
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
@@ -61,8 +62,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // Resolve Predicate
         if (quad.getPredicate().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getPredicate()))) pi = bnid.get(Var.alloc(quad.getPredicate())).getId();
-            else return;
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getPredicate())) : NodeId.NONE;
+            if (bound == NodeId.NONE) return;
+            pi = NodeId.id(bound);
         } else {
             pi = dict.getPredicates().locate(quad.getPredicate());
         }
@@ -70,8 +72,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // Resolve Object
         if (quad.getObject().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getObject()))) oi = bnid.get(Var.alloc(quad.getObject())).getId();
-            else return;
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getObject())) : NodeId.NONE;
+            if (bound == NodeId.NONE) return;
+            oi = NodeId.id(bound);
         } else {
             oi = dict.getObjects().locate(quad.getObject());
         }
@@ -79,13 +82,15 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // Resolve Subject Filter
         long specificSubId = -1;
-        subBound = !quad.getSubject().isVariable() || (bnid != null && bnid.containsKey(Var.alloc(quad.getSubject())));
-        if (subBound) {
-             if (quad.getSubject().isVariable()) specificSubId = bnid.get(Var.alloc(quad.getSubject())).getId();
-             else specificSubId = dict.getSubjects().locate(quad.getSubject());
-
-             if (specificSubId < 1) return;
+        if (quad.getSubject().isVariable()) {
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getSubject())) : NodeId.NONE;
+            subBound = (bound != NodeId.NONE);
+            if (subBound) specificSubId = NodeId.id(bound);
+        } else {
+            subBound = true;
+            specificSubId = dict.getSubjects().locate(quad.getSubject());
         }
+        if (subBound && specificSubId < 1) return;
 
         // --- Traverse GPOS ---
 
@@ -146,21 +151,21 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
             Var v = Var.alloc(quad.getGraph());
             if (parentBinding == null || !parentBinding.containsKey(v)) {
                 gVar = v;
-                gId = new NodeId(gi, NodeType.GRAPH);
+                gId = NodeId.pack(NodeType.GRAPH, gi);
             }
         }
         if (quad.getPredicate().isVariable()) {
             Var v = Var.alloc(quad.getPredicate());
             if (parentBinding == null || !parentBinding.containsKey(v)) {
                 pVar = v;
-                pId = new NodeId(pi, NodeType.PREDICATE);
+                pId = NodeId.pack(NodeType.PREDICATE, pi);
             }
         }
         if (quad.getObject().isVariable()) {
             Var v = Var.alloc(quad.getObject());
             if (parentBinding == null || !parentBinding.containsKey(v)) {
                 oVar = v;
-                oId = new NodeId(oi, NodeType.OBJECT);
+                oId = NodeId.pack(NodeType.OBJECT, oi);
             }
         }
         if (quad.getSubject().isVariable()) {
@@ -247,7 +252,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (gVar != null) result.put(gVar, gId);
         if (pVar != null) result.put(pVar, pId);
         if (oVar != null) result.put(oVar, oId);
-        if (sVar != null) result.put(sVar, new NodeId(currentSubjectId, NodeType.SUBJECT));
+        if (sVar != null) result.put(sVar, NodeId.pack(NodeType.SUBJECT, currentSubjectId));
         i++;
         if (i < j) {
             if (subBound) hasNext = false;

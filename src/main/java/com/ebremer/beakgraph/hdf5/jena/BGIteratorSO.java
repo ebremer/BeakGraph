@@ -32,9 +32,9 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long maxObjId = Long.MAX_VALUE;
 
     // Row-emission plan, computed once: which variables each row binds, with the
-    // constant G/S/P NodeIds pre-built (only the object id varies per row).
+    // constant G/S/P packed NodeIds pre-built (only the object id varies per row).
     private Var gVar, sVar, pVar, oVar;
-    private NodeId gId, sId, pId;
+    private long gId, sId, pId;
 
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
@@ -135,21 +135,21 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
             Var v = Var.alloc(quad.getGraph());
             if (parentBinding == null || !parentBinding.containsKey(v)) {
                 gVar = v;
-                gId = new NodeId(gi, NodeType.GRAPH);
+                gId = NodeId.pack(NodeType.GRAPH, gi);
             }
         }
         if (quad.getSubject().isVariable()) {
             Var v = Var.alloc(quad.getSubject());
             if (parentBinding == null || !parentBinding.containsKey(v)) {
                 sVar = v;
-                sId = new NodeId(si, NodeType.SUBJECT);
+                sId = NodeId.pack(NodeType.SUBJECT, si);
             }
         }
         if (quad.getPredicate().isVariable()) {
             Var v = Var.alloc(quad.getPredicate());
             if (parentBinding == null || !parentBinding.containsKey(v)) {
                 pVar = v;
-                pId = new NodeId(pi, NodeType.PREDICATE);
+                pId = NodeId.pack(NodeType.PREDICATE, pi);
             }
         }
         if (quad.getObject().isVariable()) {
@@ -162,9 +162,11 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
 
     private long resolveNode(Node node, Dictionary dictionary, BindingNodeId bnid) {
         if (node.isVariable()) {
-            Var v = Var.alloc(node);
-            if (bnid != null && bnid.containsKey(v)) {
-                return bnid.get(v).getId();
+            if (bnid != null) {
+                long bound = bnid.get(Var.alloc(node));
+                if (bound != NodeId.NONE) {
+                    return NodeId.id(bound);
+                }
             }
             return -1; // Variable is unbound
         }
@@ -230,7 +232,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         if (gVar != null) result.put(gVar, gId);
         if (sVar != null) result.put(sVar, sId);
         if (pVar != null) result.put(pVar, pId);
-        if (oVar != null) result.put(oVar, new NodeId(So.get(i), NodeType.OBJECT));
+        if (oVar != null) result.put(oVar, NodeId.pack(NodeType.OBJECT, So.get(i)));
         i++;
         hasNext = (i <= j);
         return result;

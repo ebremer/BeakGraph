@@ -113,13 +113,13 @@ class DualRoleUriTest {
             NodeTable nt = reader.getNodeTable();
             Node knows = NodeFactory.createURI("http://ex.org/knows");
 
-            NodeId first = nt.getNodeIdForNode(knows);
+            long first = nt.getNodeIdForNode(knows);
 
             // Reconstruct ex:knows in its entity (subject) role via the reverse mapping.
             long entityId = reader.getDictionary().getSubjects().locate(knows);
-            nt.getNodeForNodeId(new NodeId(entityId, NodeType.SUBJECT));
+            nt.getNodeForNodeId(NodeId.pack(NodeType.SUBJECT, entityId));
 
-            NodeId second = nt.getNodeIdForNode(knows);
+            long second = nt.getNodeIdForNode(knows);
             assertEquals(first, second, "dual-role URI must keep a stable Node -> NodeId mapping");
         }
     }

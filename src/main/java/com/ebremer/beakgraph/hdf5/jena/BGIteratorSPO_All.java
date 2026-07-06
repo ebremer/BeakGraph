@@ -46,9 +46,19 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     // All four stay putCompatible - a variable repeated across positions (or
     // pre-bound in the parent) must agree per row.
     private Var gVar, sVar, pVar, oVar;
-    private NodeId gId;
+    private long gId;
 
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
+    }
+
+    /**
+     * Range-restricted variant for parallel scanning (see ScanChunks): only
+     * subject POSITIONS within [sPosLo, sPosHi] (intersected with the graph's
+     * own subject range) are walked. Each subject's whole P/O sub-tree belongs
+     * to the chunk owning its position, so chunks neither split nor duplicate rows.
+     */
+    BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long sPosLo, long sPosHi) {
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
         BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
@@ -75,9 +85,8 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // variable node returns -1 - silently yielding nothing for a graph
         // that exists.
         if (quad.getGraph().isVariable()) {
-            gi = (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph())))
-                    ? bnid.get(Var.alloc(quad.getGraph())).getId()
-                    : -1;
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
+            gi = (bound != NodeId.NONE) ? NodeId.id(bound) : -1;
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
@@ -108,6 +117,11 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         long sStart = RangeSelect.blockStart(dirS, Bs, gi);
         if (sStart == -1) return;
         long sEnd = RangeSelect.blockEnd(dirS, Bs, gi, sStart);
+        if (sStart > sEnd) return;
+
+        // Parallel-chunk clamp: restrict to this chunk's slice of the graph's range.
+        if (sPosLo > sStart) sStart = sPosLo;
+        if (sPosHi < sEnd) sEnd = sPosHi;
         if (sStart > sEnd) return;
 
         // For a concrete subject, binary-search the (ascending) subject list
@@ -146,7 +160,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
 
         if (quad.getGraph().isVariable()) {
             gVar = Var.alloc(quad.getGraph());
-            gId = new NodeId(gi, NodeType.GRAPH);
+            gId = NodeId.pack(NodeType.GRAPH, gi);
         }
         if (quad.getSubject().isVariable()) sVar = Var.alloc(quad.getSubject());
         if (quad.getPredicate().isVariable()) pVar = Var.alloc(quad.getPredicate());
@@ -350,13 +364,13 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 ok = result.putCompatible(gVar, gId, nodeTable);
             }
             if (ok && sVar != null) {
-                ok = result.putCompatible(sVar, new NodeId(resS, NodeType.SUBJECT), nodeTable);
+                ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, resS), nodeTable);
             }
             if (ok && pVar != null) {
-                ok = result.putCompatible(pVar, new NodeId(resP, NodeType.PREDICATE), nodeTable);
+                ok = result.putCompatible(pVar, NodeId.pack(NodeType.PREDICATE, resP), nodeTable);
             }
             if (ok && oVar != null) {
-                ok = result.putCompatible(oVar, new NodeId(resO, NodeType.OBJECT), nodeTable);
+                ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, resO), nodeTable);
             }
             advance();
             if (ok) return result;

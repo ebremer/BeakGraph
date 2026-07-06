@@ -36,6 +36,16 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private Var oVar, sVar;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
+    }
+
+    /**
+     * Range-restricted variant for parallel scanning (see ScanChunks): only
+     * object POSITIONS within [oPosLo, oPosHi] (intersected with this
+     * predicate's filter-narrowed object range) are walked. An object's whole
+     * subject block belongs to the chunk owning its position.
+     */
+    BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi) {
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
 
@@ -57,8 +67,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
 
         // 1. Resolve Graph
         if (quad.getGraph().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph()))) gi = bnid.get(Var.alloc(quad.getGraph())).getId();
-            else throw new IllegalStateException("BGIteratorPOS requires Graph to be bound."); //return;
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
+            if (bound == NodeId.NONE) throw new IllegalStateException("BGIteratorPOS requires Graph to be bound.");
+            gi = NodeId.id(bound);
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
@@ -66,8 +77,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
 
         // 2. Resolve Predicate
         if (quad.getPredicate().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getPredicate()))) pi = bnid.get(Var.alloc(quad.getPredicate())).getId();
-            else return;
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getPredicate())) : NodeId.NONE;
+            if (bound == NodeId.NONE) return;
+            pi = NodeId.id(bound);
         } else {
             pi = dict.getPredicates().locate(quad.getPredicate());
         }
@@ -95,6 +107,10 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         // boundary object group from FILTER(?o <= X) results.
         this.oStart = (minObjId <= 0) ? rawOStart : So.lowerBound(rawOStart, rawOEnd, minObjId);
         this.oEnd = (maxObjId == Long.MAX_VALUE) ? rawOEnd : So.upperBound(rawOStart, rawOEnd, maxObjId);
+
+        // Parallel-chunk clamp: restrict to this chunk's slice of the object range.
+        if (oPosLo > oStart) oStart = oPosLo;
+        if (oPosHi < oEnd) oEnd = oPosHi;
 
         if (oStart > oEnd || oStart < 0) return;
 
@@ -216,10 +232,10 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             BindingNodeId result = new BindingNodeId(this.parentBinding);
             boolean ok = true;
             if (oVar != null) {
-                ok = result.putCompatible(oVar, new NodeId(So.get(curOIndex), NodeType.OBJECT), nodeTable);
+                ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, So.get(curOIndex)), nodeTable);
             }
             if (ok && sVar != null) {
-                ok = result.putCompatible(sVar, new NodeId(Ss.get(curSIndex), NodeType.SUBJECT), nodeTable);
+                ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, Ss.get(curSIndex)), nodeTable);
             }
             curSIndex++;
             advanceToNextValid();

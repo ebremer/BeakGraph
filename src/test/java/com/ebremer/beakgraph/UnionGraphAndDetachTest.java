@@ -144,7 +144,7 @@ class UnionGraphAndDetachTest {
     @Test
     void detachMaterializesNodeIdBindings() {
         Node s1 = NodeFactory.createURI("http://ex.org/s1");
-        NodeId id = bg.getReader().getNodeTable().getNodeIdForNode(s1);
+        long id = bg.getReader().getNodeTable().getNodeIdForNode(s1);
         assertFalse(NodeId.isDoesNotExist(id), "control: ex:s1 must be in the dictionary");
 
         Node parentTerm = NodeFactory.createURI("http://ex.org/parent");

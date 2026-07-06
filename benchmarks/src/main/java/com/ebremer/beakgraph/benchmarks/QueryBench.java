@@ -71,6 +71,9 @@ public class QueryBench {
     private Query rangeFilter;
     private Query chainJoin;
     private Query graphVarScan;
+    private Query distinctSubjects;
+    private Query distinctObjects;
+    private Query fullScanSparql;
 
     @Setup
     public void setup() {
@@ -89,6 +92,16 @@ public class QueryBench {
                 + "SELECT ?a ?c WHERE { ?a ex:value 7 . ?a ex:link ?b . ?b ex:link ?c }");
         graphVarScan = QueryFactory.create(PREFIX
                 + "SELECT ?g ?s WHERE { GRAPH ?g { ?s ex:tag ?t } }");
+        // Index-answered (GSPO subject-level stream) vs scan+dedup fallback: the
+        // same row count, so the pair isolates the DISTINCT fast path's effect.
+        distinctSubjects = QueryFactory.create(PREFIX
+                + "SELECT DISTINCT ?s WHERE { ?s ?p ?o }");
+        distinctObjects = QueryFactory.create(PREFIX
+                + "SELECT DISTINCT ?o WHERE { ?s ?p ?o }");
+        // Engine-path full scan (unlike fullScanFind's Graph API): eligible for
+        // the chunked parallel scan; A/B via -Dbeakgraph.scan.parallel.threshold.
+        fullScanSparql = QueryFactory.create(PREFIX
+                + "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
     }
 
     @TearDown
@@ -143,6 +156,21 @@ public class QueryBench {
     @Benchmark
     public long graphVarScan() {
         return run(graphVarScan);
+    }
+
+    @Benchmark
+    public long distinctSubjects() {
+        return run(distinctSubjects);
+    }
+
+    @Benchmark
+    public long distinctObjects() {
+        return run(distinctObjects);
+    }
+
+    @Benchmark
+    public long fullScanSparql() {
+        return run(fullScanSparql);
     }
 
     @Benchmark

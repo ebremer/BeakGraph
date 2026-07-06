@@ -83,15 +83,15 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
             if (gVarInPredicate) {
                 Iterator<org.apache.jena.graph.Node> graphNodes = dict.streamGraphs().iterator();
                 chain = Iter.flatMap(graphNodes, n -> {
-                    NodeId gId = new NodeId(dict.getGraphs().locate(n), NodeType.GRAPH);
+                    long gId = NodeId.pack(NodeType.GRAPH, dict.getGraphs().locate(n));
                     Iterator<BindingNodeId> sub = new BGIteratorMaster(reader, dict, bnid,
                             new Quad(n, quad.getSubject(), quad.getPredicate(), quad.getObject()), filter, nodeTable);
                     return Iter.removeNulls(Iter.map(sub,
                             b -> b.putCompatible(gVar, gId, nodeTable) ? b : null));
                 });
             } else {
-                Iterator<NodeId> graphIds = dict.streamGraphIds()
-                        .mapToObj(gid -> new NodeId(gid, NodeType.GRAPH)).iterator();
+                Iterator<Long> graphIds = dict.streamGraphIds()
+                        .mapToObj(gid -> NodeId.pack(NodeType.GRAPH, gid)).iterator();
                 chain = Iter.flatMap(graphIds, gId -> {
                     BindingNodeId child = new BindingNodeId(bnid);
                     child.put(gVar, gId);

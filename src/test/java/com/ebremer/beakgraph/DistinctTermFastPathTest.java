@@ -1,7 +1,7 @@
 package com.ebremer.beakgraph;
 
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.hdf5.jena.DistinctPredicateFastPath;
+import com.ebremer.beakgraph.hdf5.jena.DistinctTermFastPath;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import java.io.File;
@@ -21,16 +21,18 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@code SELECT DISTINCT ?p} answered from the GPOS per-graph predicate level
- * ({@link DistinctPredicateFastPath}) must return exactly what a full scan
- * returns - notably NOT over-reporting predicates that exist only in other
- * named graphs (the flaw that got the previous DISTINCT optimization removed) -
- * and every shape outside the fast path's guards must fall back to normal
- * execution with unchanged results. HITS distinguishes the two paths.
+ * {@code SELECT DISTINCT ?p} (GPOS predicate level) and {@code SELECT DISTINCT ?s}
+ * (GSPO subject level, streamed) answered by {@link DistinctTermFastPath} must
+ * return exactly what a full scan returns - notably NOT over-reporting terms that
+ * exist only in other named graphs (the flaw that got the previous DISTINCT
+ * optimization removed) - and every shape outside the fast path's guards must
+ * fall back to normal execution with unchanged results. HITS distinguishes the
+ * two paths.
  */
-class DistinctPredicateFastPathTest {
+class DistinctTermFastPathTest {
 
     private static final String NS = "http://ex.org/";
     private static final String PREFIX = "PREFIX ex: <" + NS + ">\n";
@@ -51,8 +53,8 @@ class DistinctPredicateFastPathTest {
                 ex:g1 { ex:a ex:p2 ex:b . ex:a ex:shared ex:c . }
                 ex:g2 { ex:d ex:p3 "x" . }
                 """;
-        File src = dir.resolve("dp.trig").toFile();
-        File h5 = dir.resolve("dp.trig.h5").toFile();
+        File src = dir.resolve("dt.trig").toFile();
+        File h5 = dir.resolve("dt.trig.h5").toFile();
         Files.write(src.toPath(), trig.getBytes(StandardCharsets.UTF_8));
         HDF5Writer.Builder().setSource(src).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
         bg = new BeakGraph(new HDF5Reader(h5));
@@ -87,63 +89,114 @@ class DistinctPredicateFastPathTest {
 
     /** Asserts the query returns {@code expected} AND whether the fast path answered it. */
     private static void check(String queryBody, Set<String> expected, boolean expectFastPath) {
-        long before = DistinctPredicateFastPath.HITS.get();
+        long before = DistinctTermFastPath.HITS.get();
         assertEquals(expected, terms(queryBody), "results for: " + queryBody);
-        long used = DistinctPredicateFastPath.HITS.get() - before;
+        long used = DistinctTermFastPath.HITS.get() - before;
         assertEquals(expectFastPath ? 1 : 0, used, "fast-path activations for: " + queryBody);
     }
 
+    // ---------------- DISTINCT ?p (GPOS predicate level) ----------------
+
     @Test
-    void defaultGraphAnswersFromIndexWithoutOverReporting() {
+    void predicatesDefaultGraphAnswersFromIndexWithoutOverReporting() {
         // p2/p3 exist only in named graphs - the old unsound fast path leaked them.
         check("SELECT DISTINCT ?p WHERE { ?s ?p ?o }",
                 ex("p0", "p1", "shared", "refl"), true);
     }
 
     @Test
-    void concreteNamedGraphAnswersFromIndex() {
+    void predicatesConcreteNamedGraphAnswersFromIndex() {
         check("SELECT DISTINCT ?p WHERE { GRAPH ex:g1 { ?s ?p ?o } }",
                 ex("p2", "shared"), true);
     }
 
     @Test
-    void unionGraphAnswersFromIndexAcrossNamedGraphsOnly() {
+    void predicatesUnionGraphAnswersFromIndexAcrossNamedGraphsOnly() {
         check("SELECT DISTINCT ?p WHERE { GRAPH <" + Quad.unionGraph.getURI() + "> { ?s ?p ?o } }",
                 ex("p2", "p3", "shared"), true);
     }
 
     @Test
-    void absentGraphAnswersEmpty() {
+    void predicatesAbsentGraphAnswersEmpty() {
         check("SELECT DISTINCT ?p WHERE { GRAPH ex:nope { ?s ?p ?o } }",
                 Set.of(), true);
+    }
+
+    // ---------------- DISTINCT ?s (GSPO subject level, streamed) ----------------
+
+    @Test
+    void subjectsDefaultGraphAnswersFromIndexWithoutOverReporting() {
+        // a/d are subjects only in named graphs - must not leak into the default graph.
+        check("SELECT DISTINCT ?s WHERE { ?s ?p ?o }",
+                ex("s0", "s1", "s2"), true);
+    }
+
+    @Test
+    void subjectsConcreteNamedGraphAnswersFromIndex() {
+        check("SELECT DISTINCT ?s WHERE { GRAPH ex:g1 { ?s ?p ?o } }",
+                ex("a"), true);
+    }
+
+    @Test
+    void subjectsUnionGraphFallsBack() {
+        // Cross-graph dedup of subject ids is not index-answerable (yet): scan.
+        check("SELECT DISTINCT ?s WHERE { GRAPH <" + Quad.unionGraph.getURI() + "> { ?s ?p ?o } }",
+                ex("a", "d"), false);
+    }
+
+    @Test
+    void subjectsAbsentGraphAnswersEmpty() {
+        check("SELECT DISTINCT ?s WHERE { GRAPH ex:nope { ?s ?p ?o } }",
+                Set.of(), true);
+    }
+
+    @Test
+    void subjectsNonGraphEntityAnswersEmpty() {
+        // ex:o0 is an entity but not a graph: its first-level slot is a padding
+        // block, which must read as empty - not as a neighbor's subjects.
+        check("SELECT DISTINCT ?s WHERE { GRAPH ex:o0 { ?s ?p ?o } }",
+                Set.of(), true);
+    }
+
+    @Test
+    void subjectsStreamUnderLimit() {
+        long before = DistinctTermFastPath.HITS.get();
+        Set<String> got = terms("SELECT DISTINCT ?s WHERE { ?s ?p ?o } LIMIT 2");
+        assertEquals(2, got.size());
+        assertTrue(ex("s0", "s1", "s2").containsAll(got), "LIMIT rows must be real subjects: " + got);
+        assertEquals(1, DistinctTermFastPath.HITS.get() - before);
+    }
+
+    // ---------------- fallback shapes (unchanged results, no fast path) ----------------
+
+    @Test
+    void distinctObjectsFallsBack() {
+        check("SELECT DISTINCT ?o WHERE { ?s ?p ?o }",
+                Set.of(NS + "o0", "lit", NS + "s0", NS + "s2"), false);
     }
 
     @Test
     void filterShapeFallsBackAndRespectsFilter() {
         check("SELECT DISTINCT ?p WHERE { ?s ?p ?o FILTER(isLiteral(?o)) }",
                 ex("p1"), false);
+        check("SELECT DISTINCT ?s WHERE { ?s ?p ?o FILTER(isLiteral(?o)) }",
+                ex("s0"), false);
     }
 
     @Test
-    void concreteSubjectFallsBack() {
-        check("SELECT DISTINCT ?p WHERE { ex:s0 ?p ?o }",
-                ex("p0", "p1"), false);
+    void concreteTermFallsBack() {
+        check("SELECT DISTINCT ?p WHERE { ex:s0 ?p ?o }", ex("p0", "p1"), false);
+        check("SELECT DISTINCT ?s WHERE { ?s ex:shared ?o }", ex("s1"), false);
     }
 
     @Test
     void repeatedVariableFallsBack() {
-        check("SELECT DISTINCT ?p WHERE { ?s ?p ?s }",
-                ex("refl"), false);
+        check("SELECT DISTINCT ?p WHERE { ?s ?p ?s }", ex("refl"), false);
+        check("SELECT DISTINCT ?s WHERE { ?s ?p ?s }", ex("s2"), false);
     }
 
     @Test
-    void distinctSubjectFallsBack() {
-        check("SELECT DISTINCT ?s WHERE { ?s ?p ?o }",
-                ex("s0", "s1", "s2"), false);
-    }
-
-    @Test
-    void valuesBoundSubjectFallsBack() {
+    void valuesBoundVariableFallsBack() {
         check("SELECT DISTINCT ?p WHERE { VALUES ?s { ex:s0 } ?s ?p ?o }",
                 ex("p0", "p1"), false);
     }
@@ -152,6 +205,8 @@ class DistinctPredicateFastPathTest {
     void graphVariableFallsBack() {
         check("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }",
                 ex("p2", "p3", "shared"), false);
+        check("SELECT DISTINCT ?s WHERE { GRAPH ?g { ?s ?p ?o } }",
+                ex("a", "d"), false);
     }
 
     @Test

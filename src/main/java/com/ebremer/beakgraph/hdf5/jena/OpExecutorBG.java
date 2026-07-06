@@ -47,8 +47,9 @@ public class OpExecutorBG extends OpExecutor {
     // default-graph queries over-reported terms), any FILTER wrapped around the
     // pattern was silently dropped, DISTINCT ?g included the default graph, and the
     // incoming iterator (join semantics) was discarded. The replacement below fixes
-    // all of that by reading the GPOS index's PER-GRAPH predicate level and firing
-    // only on the exact algebra shape it can answer - see DistinctPredicateFastPath.
+    // all of that by reading the PER-GRAPH index levels (GPOS predicates / GSPO
+    // subjects) and firing only on the exact algebra shape it can answer - see
+    // DistinctTermFastPath.
 
     @Override
     protected QueryIterator execute(OpDistinct opDistinct, QueryIterator input) {
@@ -58,7 +59,7 @@ public class OpExecutorBG extends OpExecutor {
         // it, so declining costs nothing - the wrapper simply becomes the input.
         if (isForBeakGraph && input instanceof QueryIterRoot) {
             QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
-            QueryIterator fast = DistinctPredicateFastPath.tryExecute(opDistinct, peek, execCxt);
+            QueryIterator fast = DistinctTermFastPath.tryExecute(opDistinct, peek, execCxt);
             if (fast != null) {
                 return fast;
             }

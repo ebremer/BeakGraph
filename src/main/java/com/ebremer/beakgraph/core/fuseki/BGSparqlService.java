@@ -118,10 +118,7 @@ public final class BGSparqlService {
     private static Predicate<Node> storedTermProbe(Dataset ds) {
         if (ds.asDatasetGraph() instanceof BGDatasetGraph bgd) {
             NodeTable nodeTable = bgd.getBeakGraph().getReader().getNodeTable();
-            return n -> {
-                NodeId id = nodeTable.getNodeIdForNode(n);
-                return id != null && !NodeId.isDoesNotExist(id);
-            };
+            return n -> !NodeId.isDoesNotExist(nodeTable.getNodeIdForNode(n));
         }
         return n -> false;
     }
