@@ -4,6 +4,9 @@
 .claude/settings.local.json
 *.h5
 
+# benchmark targets (deployment-specific local paths + URLs, not source)
+testpairs.tsv
+
 # maven-shade artifact
 dependency-reduced-pom.xml
 
