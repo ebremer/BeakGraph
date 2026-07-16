@@ -20,48 +20,51 @@ import org.apache.jena.sparql.expr.ExprList;
  */
 public class BGIteratorOS implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
-    private final Quad queryQuad;
-    private final BitPackedUnSignedLongBuffer Bp, Sp, Bo, So, Bs, Ss;
-    // Accelerated rank/select directories used for select1; raw B*/S* still used for get().
-    private final HDTBitmapDirectory dirP, dirO, dirS;
+    private final BitPackedUnSignedLongBuffer Ss;
     private long i;
     private long j;
     private long gi, pi, oi;
-    private boolean hasNext = false;    
+    private boolean hasNext = false;
+    private boolean subBound = false;
     private long minSubId = 1; // Updated to 1 to gracefully skip dummy IDs
     private long maxSubId = Long.MAX_VALUE;
 
+    // Row-emission plan, computed once: G/P/O packed ids are constant, only S varies.
+    private Var gVar, pVar, oVar, sVar;
+    private long gId, pId, oId;
+
     public BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
-        this.queryQuad = quad;
-        
+
         // GPOS Structure
-        this.Bp = reader.getBitmapBuffer('P'); 
-        this.Sp = reader.getIDBuffer('P');     
-        this.Bo = reader.getBitmapBuffer('O'); 
-        this.So = reader.getIDBuffer('O');     
-        this.Bs = reader.getBitmapBuffer('S'); 
-        this.Ss = reader.getIDBuffer('S');     
-        
-        this.dirP = reader.getDirectory('P');
-        this.dirO = reader.getDirectory('O');
-        this.dirS = reader.getDirectory('S');
+        BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
+        BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
+        BitPackedUnSignedLongBuffer Bo = reader.getBitmapBuffer('O');
+        BitPackedUnSignedLongBuffer So = reader.getIDBuffer('O');
+        BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
+        this.Ss = reader.getIDBuffer('S');
+
+        HDTBitmapDirectory dirP = reader.getDirectory('P');
+        HDTBitmapDirectory dirO = reader.getDirectory('O');
+        HDTBitmapDirectory dirS = reader.getDirectory('S');
 
         if (filter != null && !filter.isEmpty()) analyzeFilters(filter, dict, quad);
-        
+
         // Resolve Graph
         if (quad.getGraph().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph()))) gi = bnid.get(Var.alloc(quad.getGraph())).getId();
-            else return; 
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
+            if (bound == NodeId.NONE) return;
+            gi = NodeId.id(bound);
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
-        if (gi < 1) return; 
-        
+        if (gi < 1) return;
+
         // Resolve Predicate
         if (quad.getPredicate().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getPredicate()))) pi = bnid.get(Var.alloc(quad.getPredicate())).getId();
-            else return; 
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getPredicate())) : NodeId.NONE;
+            if (bound == NodeId.NONE) return;
+            pi = NodeId.id(bound);
         } else {
             pi = dict.getPredicates().locate(quad.getPredicate());
         }
@@ -69,8 +72,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // Resolve Object
         if (quad.getObject().isVariable()) {
-            if (bnid != null && bnid.containsKey(Var.alloc(quad.getObject()))) oi = bnid.get(Var.alloc(quad.getObject())).getId();
-            else return; 
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getObject())) : NodeId.NONE;
+            if (bound == NodeId.NONE) return;
+            oi = NodeId.id(bound);
         } else {
             oi = dict.getObjects().locate(quad.getObject());
         }
@@ -78,42 +82,42 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
 
         // Resolve Subject Filter
         long specificSubId = -1;
-        boolean isSubBound = !quad.getSubject().isVariable() || (bnid != null && bnid.containsKey(Var.alloc(quad.getSubject())));
-        if (isSubBound) {
-             if (quad.getSubject().isVariable()) specificSubId = bnid.get(Var.alloc(quad.getSubject())).getId();
-             else specificSubId = dict.getSubjects().locate(quad.getSubject());
-             
-             if (specificSubId < 1) return;
+        if (quad.getSubject().isVariable()) {
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getSubject())) : NodeId.NONE;
+            subBound = (bound != NodeId.NONE);
+            if (subBound) specificSubId = NodeId.id(bound);
+        } else {
+            subBound = true;
+            specificSubId = dict.getSubjects().locate(quad.getSubject());
         }
+        if (subBound && specificSubId < 1) return;
 
         // --- Traverse GPOS ---
 
         // A. Level 2: Predicate Range for G
-        long pStart = select1Safe(dirP, Bp,gi);
-        long nextGraphStart = select1Safe(dirP, Bp,gi + 1);
-        long pEnd = (nextGraphStart == -1) ? (Sp.getNumEntries() - 1) : (nextGraphStart - 1);
-        
-        if (pStart == -1 || pStart > pEnd) return;
-        
+        long pStart = RangeSelect.blockStart(dirP, Bp, gi);
+        if (pStart == -1) return;
+        long pEnd = RangeSelect.blockEnd(dirP, Bp, gi, pStart);
+        if (pStart > pEnd) return;
+
         long pIndex = Sp.binarySearch(pStart, pEnd, pi);
         if (pIndex < 0) return;
 
         // C. Level 3: Object Range for P
-        long oStart = select1Safe(dirO, Bo,pIndex + 1);
-        long nextPStart = select1Safe(dirO, Bo,pIndex + 2);
-        long oEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);        
-        if (oStart == -1 || oStart > oEnd) return;        
-        
+        long oStart = RangeSelect.blockStart(dirO, Bo, pIndex + 1);
+        if (oStart == -1) return;
+        long oEnd = RangeSelect.blockEnd(dirO, Bo, pIndex + 1, oStart);
+        if (oStart > oEnd) return;
+
         long oIndex = So.binarySearch(oStart, oEnd, oi);
         if (oIndex < 0) return;
 
         // E. Level 4: Subject Range for O
-        long sStart = select1Safe(dirS, Bs,oIndex + 1);
-        long nextOStart = select1Safe(dirS, Bs,oIndex + 2);
-        long sEnd = (nextOStart == -1) ? (Ss.getNumEntries() - 1) : (nextOStart - 1);
-        
-        if (sStart == -1 || sStart > sEnd) return;
-        
+        long sStart = RangeSelect.blockStart(dirS, Bs, oIndex + 1);
+        if (sStart == -1) return;
+        long sEnd = RangeSelect.blockEnd(dirS, Bs, oIndex + 1, sStart);
+        if (sStart > sEnd) return;
+
         this.i = sStart;
         this.j = sEnd + 1;
 
@@ -135,27 +139,55 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         } else {
             advanceToNextValid();
         }
+
+        if (hasNext) {
+            planRowEmission(quad);
+        }
     }
 
-    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
-        if (rank < 1) return -1;
-        // Accelerated O(log n) select via the superblock/block directory when present;
-        // fall back to the buffer's linear scan only for indexes written without it.
-        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
+    /** See BGIteratorSO.planRowEmission: constants pre-built, only S varies per row. */
+    private void planRowEmission(Quad quad) {
+        if (quad.getGraph().isVariable()) {
+            Var v = Var.alloc(quad.getGraph());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                gVar = v;
+                gId = NodeId.pack(NodeType.GRAPH, gi);
+            }
+        }
+        if (quad.getPredicate().isVariable()) {
+            Var v = Var.alloc(quad.getPredicate());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                pVar = v;
+                pId = NodeId.pack(NodeType.PREDICATE, pi);
+            }
+        }
+        if (quad.getObject().isVariable()) {
+            Var v = Var.alloc(quad.getObject());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                oVar = v;
+                oId = NodeId.pack(NodeType.OBJECT, oi);
+            }
+        }
+        if (quad.getSubject().isVariable()) {
+            Var v = Var.alloc(quad.getSubject());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                sVar = v;
+            }
+        }
     }
-    
+
     private void advanceToNextValid() {
         hasNext = false;
         while (i < j) {
             long subId = Ss.get(i);
-            
+
             if (subId < minSubId) {
                 i++;
                 continue;
             }
             if (subId > maxSubId) {
                 i++;
-                continue; 
+                continue;
             }
             hasNext = true;
             return;
@@ -217,14 +249,13 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (!hasNext) throw new NoSuchElementException();
         BindingNodeId result = new BindingNodeId(this.parentBinding);
         long currentSubjectId = Ss.get(i);
-        if (queryQuad.getGraph().isVariable()) result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
-        if (queryQuad.getPredicate().isVariable()) result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
-        if (queryQuad.getObject().isVariable()) result.put(Var.alloc(queryQuad.getObject()), new NodeId(oi, NodeType.OBJECT));
-        if (queryQuad.getSubject().isVariable()) result.put(Var.alloc(queryQuad.getSubject()), new NodeId(currentSubjectId, NodeType.SUBJECT));
+        if (gVar != null) result.put(gVar, gId);
+        if (pVar != null) result.put(pVar, pId);
+        if (oVar != null) result.put(oVar, oId);
+        if (sVar != null) result.put(sVar, NodeId.pack(NodeType.SUBJECT, currentSubjectId));
         i++;
         if (i < j) {
-            boolean isSubBound = !queryQuad.getSubject().isVariable() || (parentBinding != null && parentBinding.containsKey(Var.alloc(queryQuad.getSubject())));
-            if (isSubBound) hasNext = false;
+            if (subBound) hasNext = false;
             else advanceToNextValid();
         } else {
             hasNext = false;

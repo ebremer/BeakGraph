@@ -3,7 +3,6 @@ import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import com.ebremer.beakgraph.pool.BeakGraphPool;
 import com.ebremer.ns.LWS;
-import org.apache.jena.query.*;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.riot.RDFDataMgr;
@@ -19,7 +18,11 @@ import java.io.*;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
@@ -27,6 +30,35 @@ import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.rdf.model.Statement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+/**
+ * Read-only LWS (W3C Linked Web Storage) storage endpoint over a generated
+ * metadata model + on-disk files. The unauthenticated read surface follows the
+ * LWS Protocol 1.0 draft (w3c.github.io/lws-protocol/lws10-core/):
+ *
+ * <ul>
+ *   <li>Container GETs return the LWS container representation (JSON-LD with
+ *       the {@code https://www.w3.org/ns/lws/v1} context: id / type /
+ *       totalItems / items) negotiated among {@code application/lws+json},
+ *       {@code application/ld+json} and {@code application/json} with an
+ *       identical body; Turtle and HTML remain as additional representations.</li>
+ *   <li>Pagination is link-based per the spec: when membership exceeds
+ *       {@link #PAGE_SIZE}, responses carry {@code Link} headers with
+ *       {@code rel="first"/"last"/"next"/"prev"}; the body's {@code items}
+ *       holds only the current page while {@code totalItems} stays the full
+ *       count. A bare GET of a large container IS the first page.</li>
+ *   <li>Every GET/HEAD response carries {@code rel="linkset"},
+ *       {@code rel="https://www.w3.org/ns/lws#storageDescription"},
+ *       {@code rel="type"}, and (for non-root resources) {@code rel="up"}
+ *       Link headers, plus ETag and Last-Modified with conditional-request
+ *       (304) support.</li>
+ *   <li>Data resources support single-range requests (206/416,
+ *       {@code Accept-Ranges: bytes}).</li>
+ * </ul>
+ *
+ * Write operations are not served: this deployment is read-only, so linkset
+ * responses honestly advertise {@code Allow: GET, HEAD} rather than PATCH.
+ */
 public class LWSStorageServlet extends HttpServlet {
     private static final long serialVersionUID = 1L;
     private static String BASE;
@@ -38,15 +70,34 @@ public class LWSStorageServlet extends HttpServlet {
     private static final Property AS_MEDIA_TYPE = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#mediaType");
     private static final Property SCHEMA_SIZE = ResourceFactory.createProperty("https://schema.org/size");
     private static final Property AS_UPDATED = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#updated");
+    // Body-embedded pagination navigation (mirrors of the normative Link headers;
+    // the as: prefix is defined by the lws/v1 context, so "as:next" etc. expand
+    // to real IRIs under JSON-LD processing).
+    private static final Property AS_FIRST = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#first");
+    private static final Property AS_LAST = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#last");
+    private static final Property AS_NEXT = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#next");
+    private static final Property AS_PREV = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#prev");
     private static final Logger logger = LoggerFactory.getLogger(LWSStorageServlet.class);
-    
+
+    /** LWS media type for container representations and the storage description. */
+    static final String LWS_JSON = "application/lws+json";
+    /** rel value for storage-description discovery (the full URI, per LWS Discovery). */
+    static final String REL_STORAGE_DESCRIPTION = "https://www.w3.org/ns/lws#storageDescription";
+    /** Server-determined page size; containers larger than this paginate. */
+    static final int PAGE_SIZE = 5;
+
+    /** Container listing ETags; the metadata model is immutable per servlet instance. */
+    private final transient Map<String, String> etagCache = new ConcurrentHashMap<>();
+    /** Stable Last-Modified fallback for metadata without a timestamp. */
+    private final long initTime = System.currentTimeMillis();
+
     public LWSStorageServlet(Model model) {
         this.MODEL = model;
     }
     public static void setBase(String b) {
         BASE = b;
     }
- 
+
     public static void setStorageRoot(Path root) {
         STORAGE_ROOT = root;
     }
@@ -54,7 +105,7 @@ public class LWSStorageServlet extends HttpServlet {
         String name = file.getFileName().toString().toLowerCase();
         return name.endsWith(".h5");
     }
-    
+
     private boolean isSparqlRequest(HttpServletRequest req) {
         String method = req.getMethod();
         String ct = req.getContentType();
@@ -141,6 +192,9 @@ public class LWSStorageServlet extends HttpServlet {
         String updated = r.hasProperty(AS_UPDATED) ? r.getProperty(AS_UPDATED).getString() : null;
         resp.setContentType("application/linkset+json");
         resp.setCharacterEncoding("UTF-8");
+        // Read-only deployment: advertise exactly the methods this linkset supports.
+        resp.setHeader("Allow", "GET, HEAD");
+        addStorageDescriptionLink(resp);
         // anchor/up are advertised on the LIVE base, never the canonical one.
         resp.getWriter().write(linksetJson(toLiveUri(resourceURI), typeHref,
                 up == null ? null : toLiveUri(up), media, size, updated));
@@ -166,11 +220,15 @@ public class LWSStorageServlet extends HttpServlet {
         return writeJson(root);
     }
 
-    /** The LWS service-description document (application/ld+json). */
+    /**
+     * The LWS storage description document. Data model per LWS Discovery: id +
+     * type "Storage" + services, including the mandatory StorageDescription
+     * service pointing at this document.
+     */
     static String descriptionJson(String base) {
         JsonObject doc = Json.createObjectBuilder()
             .add("@context", "https://www.w3.org/ns/lws/v1")
-            .add("@id", base)
+            .add("id", base)
             .add("type", "Storage")
             .add("service", Json.createArrayBuilder()
                 .add(Json.createObjectBuilder()
@@ -262,9 +320,15 @@ public class LWSStorageServlet extends HttpServlet {
         return toLiveUri(canonicalUri, BASE);
     }
 
-    /** Container page URI on the live base; reqPath carries no leading slash and BASE ends with '/'. */
+    /**
+     * Container page URI on the live base; reqPath carries no leading slash and
+     * BASE ends with '/'. The path is percent-encoded: reqPath is the DECODED
+     * path, and a subcontainer named "my slides" must yield
+     * {@code .../my%20slides?page=2}, not a Link target with a raw space that
+     * clients reject or mangle.
+     */
     private String pageUri(String reqPath, int page) {
-        return BASE + reqPath + "?page=" + page;
+        return BASE + encodeHref(reqPath) + "?page=" + page;
     }
 
     /**
@@ -313,8 +377,183 @@ public class LWSStorageServlet extends HttpServlet {
         }
         return resolved;
     }
+
+    /**
+     * Parse a single-range {@code Range: bytes=...} header against a resource of
+     * {@code size} bytes. Returns {@code null} when the header is absent,
+     * malformed, multi-range, or not a bytes range (the request is then served
+     * whole, as RFC 9110 permits); a {start,end} pair when satisfiable; and
+     * {@code {-1,-1}} when the range is syntactically valid but unsatisfiable
+     * (416 with {@code Content-Range: bytes *}{@code /size}).
+     */
+    static long[] parseRange(String header, long size) {
+        if (header == null || !header.startsWith("bytes=") || header.contains(",")) {
+            return null;
+        }
+        String spec = header.substring("bytes=".length()).trim();
+        int dash = spec.indexOf('-');
+        if (dash < 0) return null;
+        String startStr = spec.substring(0, dash).trim();
+        String endStr = spec.substring(dash + 1).trim();
+        try {
+            if (startStr.isEmpty()) {
+                // suffix form: last N bytes
+                if (endStr.isEmpty()) return null;
+                long suffix = Long.parseLong(endStr);
+                if (suffix <= 0 || size == 0) return new long[]{-1, -1};
+                long start = Math.max(0, size - suffix);
+                return new long[]{start, size - 1};
+            }
+            long start = Long.parseLong(startStr);
+            if (start < 0) return null;
+            if (start >= size) return new long[]{-1, -1};
+            long end = endStr.isEmpty() ? size - 1 : Long.parseLong(endStr);
+            if (end < start) return null;
+            return new long[]{start, Math.min(end, size - 1)};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** rel="https://www.w3.org/ns/lws#storageDescription" on every storage response (LWS Discovery). */
+    private void addStorageDescriptionLink(HttpServletResponse resp) {
+        resp.addHeader("Link", "<" + BASE + "description>; rel=\"" + REL_STORAGE_DESCRIPTION + "\"");
+    }
+
+    /** The Link headers every resource/container response must carry. */
+    private void addCommonLinks(HttpServletResponse resp, String resourceURI, boolean isContainer) {
+        resp.addHeader("Link", "<" + getLinksetURI(toLiveUri(resourceURI)) + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
+        addStorageDescriptionLink(resp);
+        resp.addHeader("Link", "<" + (isContainer ? LWS.Container.getURI() : LWS.DataResource.getURI()) + ">; rel=\"type\"");
+        String up = getParentURI(resourceURI);
+        if (up != null) {
+            resp.addHeader("Link", "<" + toLiveUri(up) + ">; rel=\"up\"");
+        }
+    }
+
+    /** Items sorted by URI: pagination needs a stable order across requests. */
+    private List<Resource> sortedItems(Resource container) {
+        List<Resource> items = container.listProperties(LWS_ITEMS).mapWith(Statement::getResource).toList();
+        items.sort(Comparator.comparing(Resource::getURI));
+        return items;
+    }
+
+    /**
+     * Listing-version ETag (changes when the generated membership metadata
+     * changes). The model is immutable per servlet instance, so it is cached.
+     */
+    private String containerEtag(Resource r, String resourceURI, List<Resource> items) {
+        return etagCache.computeIfAbsent(resourceURI, k -> {
+            try {
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                md.update(resourceURI.getBytes(StandardCharsets.UTF_8));
+                // The page size shapes the representation (which items land on
+                // which page): without it in the validator, changing PAGE_SIZE
+                // between server runs would 304-revalidate clients' stale slicings.
+                md.update(Integer.toString(PAGE_SIZE).getBytes(StandardCharsets.UTF_8));
+                md.update(Long.toString(items.size()).getBytes(StandardCharsets.UTF_8));
+                Statement own = r.getProperty(AS_UPDATED);
+                if (own != null) md.update(own.getString().getBytes(StandardCharsets.UTF_8));
+                for (Resource it : items) {
+                    md.update(it.getURI().getBytes(StandardCharsets.UTF_8));
+                    Statement mod = it.getProperty(AS_UPDATED);
+                    if (mod != null) md.update(mod.getString().getBytes(StandardCharsets.UTF_8));
+                }
+                byte[] d = md.digest();
+                StringBuilder sb = new StringBuilder("\"");
+                for (int i = 0; i < 16; i++) sb.append(String.format("%02x", d[i]));
+                return sb.append('"').toString();
+            } catch (NoSuchAlgorithmException e) {
+                throw new IllegalStateException(e); // SHA-256 is mandatory in every JRE
+            }
+        });
+    }
+
+    /** Container Last-Modified: its own timestamp, else the newest member's, else server start. */
+    private long containerLastModified(Resource r, List<Resource> items) {
+        long best = parseInstantMillis(r.getProperty(AS_UPDATED));
+        for (Resource it : items) {
+            best = Math.max(best, parseInstantMillis(it.getProperty(AS_UPDATED)));
+        }
+        return best > 0 ? best : initTime;
+    }
+
+    private static long parseInstantMillis(Statement s) {
+        if (s == null) return -1;
+        try {
+            return Instant.parse(s.getString()).toEpochMilli();
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
+    /** True (and 304 sent) when the request's validators match. Headers must be set first. */
+    private static boolean notModified(HttpServletRequest req, HttpServletResponse resp, String etag, long lastModified) {
+        String ifNoneMatch = req.getHeader("If-None-Match");
+        long ifModifiedSince = req.getDateHeader("If-Modified-Since");
+        if (etag.equals(ifNoneMatch)
+                || (ifNoneMatch == null && ifModifiedSince >= 0 && lastModified / 1000 <= ifModifiedSince / 1000)) {
+            resp.setStatus(HttpServletResponse.SC_NOT_MODIFIED);
+            return true;
+        }
+        return false;
+    }
+
+    /** A {@code {"id": <uri>}} node reference ("id" maps to @id in the lws/v1 context). */
+    private static JsonObjectBuilder nodeRef(String uri) {
+        return Json.createObjectBuilder().add("id", uri);
+    }
+
+    /**
+     * The LWS container representation (JSON-LD, {@code https://www.w3.org/ns/lws/v1}
+     * context): id / type / totalItems reflect the full membership; {@code items}
+     * holds the (possibly paginated) current page. When paginated, the
+     * navigation URIs are ALSO embedded as {@code as:first/as:last/as:next/as:prev}
+     * node references - a convenience mirror of the normative Link headers
+     * (extra representation properties the spec does not forbid), so the body
+     * alone is navigable.
+     */
+    private String containerJson(String liveId, long totalItems, List<Resource> pageItems,
+                                 String first, String last, String next, String prev) {
+        JsonObjectBuilder root = Json.createObjectBuilder()
+            .add("@context", "https://www.w3.org/ns/lws/v1")
+            .add("id", liveId)
+            .add("type", "Container")
+            .add("totalItems", totalItems);
+        if (first != null) root.add("as:first", nodeRef(first));
+        if (last != null)  root.add("as:last", nodeRef(last));
+        if (next != null)  root.add("as:next", nodeRef(next));
+        if (prev != null)  root.add("as:prev", nodeRef(prev));
+        JsonArrayBuilder arr = Json.createArrayBuilder();
+        for (Resource it : pageItems) {
+            JsonObjectBuilder o = Json.createObjectBuilder();
+            boolean isC = it.hasProperty(RDF.type, LWS_CONTAINER);
+            o.add("id", toLiveUri(it.getURI()));
+            o.add("type", isC ? "Container" : "DataResource");
+            if (!isC) {
+                // mediaType is REQUIRED for DataResources in the representation.
+                Statement m = it.getProperty(AS_MEDIA_TYPE);
+                o.add("mediaType", m != null ? m.getString() : "application/octet-stream");
+            }
+            Statement sz = it.getProperty(SCHEMA_SIZE);
+            if (sz != null) {
+                try {
+                    o.add("size", sz.getLong());
+                } catch (RuntimeException ignore) {
+                    // a malformed size literal is dropped, not fatal (size is a SHOULD)
+                }
+            }
+            Statement mod = it.getProperty(AS_UPDATED);
+            if (mod != null) o.add("modified", mod.getString());
+            arr.add(o);
+        }
+        root.add("items", arr);
+        return writeJson(root.build());
+    }
+
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        boolean isHead = "HEAD".equals(req.getMethod());
         // Stop browsers from MIME-sniffing served content into something executable.
         resp.setHeader("X-Content-Type-Options", "nosniff");
         String reqPath = decodePath(req.getRequestURI());
@@ -332,6 +571,8 @@ public class LWSStorageServlet extends HttpServlet {
                 // not in the metadata model, so answer it directly instead of 404.
                 resp.setContentType("application/linkset+json");
                 resp.setCharacterEncoding("UTF-8");
+                resp.setHeader("Allow", "GET, HEAD");
+                addStorageDescriptionLink(resp);
                 resp.getWriter().write(linksetJson(BASE + "description",
                         LWS.MetadataResource.getURI(), BASE, null, null, null));
                 return;
@@ -341,13 +582,20 @@ public class LWSStorageServlet extends HttpServlet {
             return;
         }
         if (reqPath.equals("description")) {
-            resp.setContentType("application/ld+json");
-            resp.setHeader("Link", "<" + BASE + "description>; rel=\"storageDescription\"");
+            // The storage description MUST be available as application/lws+json;
+            // ld+json / json are equivalent bodies with a different Content-Type.
+            String acceptHdr = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase() : "";
+            String ct = acceptHdr.contains("ld+json") && !acceptHdr.contains("lws+json")
+                    ? "application/ld+json"
+                    : (acceptHdr.contains("lws+json") || acceptHdr.isEmpty() || !acceptHdr.contains("json"))
+                        ? LWS_JSON : "application/json";
+            resp.setContentType(ct);
+            addStorageDescriptionLink(resp);
             // addHeader, not setHeader: a second setHeader replaces the first Link
             // header, which silently dropped the storageDescription link.
             resp.addHeader("Link", "<" + getLinksetURI(BASE + "description") + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
             resp.setHeader("Vary", "Accept");
-            resp.getWriter().write(descriptionJson(BASE));
+            if (!isHead) resp.getWriter().write(descriptionJson(BASE));
             return;
         }
         if (reqPath.startsWith("HalcyonStorage")) {
@@ -360,17 +608,16 @@ public class LWSStorageServlet extends HttpServlet {
             resp.sendError(404, "Resource not found: " + resourceURI);
             return;
         }
-        // SPARQL on .h5 files now checked FIRST (fixes Jena Accept header triggering metadata instead of query)
+        // SPARQL on .h5 files checked FIRST (fixes Jena Accept header triggering metadata instead of query)
         Path h5Candidate = resolveWithin(STORAGE_ROOT, reqPath);
         if (h5Candidate != null && Files.exists(h5Candidate) && !Files.isDirectory(h5Candidate)
                 && isHDF5(h5Candidate) && isSparqlRequest(req)) {
             handleSparqlQuery(req, resp, h5Candidate);
             return;
         }
-        String linksetURI = getLinksetURI(toLiveUri(resourceURI));
-        resp.addHeader("Link", "<" + linksetURI + ">; rel=\"linkset\"; type=\"application/linkset+json\"");
-        resp.setHeader("Vary", "Accept");
         boolean isContainer = r.hasProperty(RDF.type, LWS_CONTAINER);
+        addCommonLinks(resp, resourceURI, isContainer);
+        resp.setHeader("Vary", "Accept");
         String accept = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase() : "";
         String formatParam = req.getParameter("format");
         boolean forceTurtle = "turtle".equalsIgnoreCase(formatParam);
@@ -378,37 +625,166 @@ public class LWSStorageServlet extends HttpServlet {
         boolean wantHtml = acceptsHtmlRepresentation(accept) && !forceTurtle && !forceJsonLd;
         boolean wantTurtle = accept.contains("turtle") || forceTurtle;
         boolean wantJson = (accept.contains("ld+json") || accept.contains("json")) || forceJsonLd;
-        if (isContainer && wantHtml) {
-            resp.setContentType("text/html; charset=utf-8");
-            // The request path and item names come from the URL / the filesystem;
-            // escape them for HTML and percent-encode hrefs (stored-XSS sink).
-            String safePath = escapeHtml(reqPath);
-            try (PrintWriter out = resp.getWriter()) {
-                out.println("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LWS Storage – /" + safePath + "</title>");
-                out.println("<style>body{font-family:sans-serif;margin:40px} ul{list-style:none;padding:0} a{color:#0066cc}</style></head><body>");
-                out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> Linked Web Storage: /" + safePath + "</h1>");
-                out.println("<p><a href=\"" + BASE + "description\">Storage Description</a> | ");
-                out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
-                out.println("<a href=\"/sparql/index.html\" target=\"_blank\">SPARQL Endpoint</a></p><hr>");
-                List<Resource> items = r.listProperties(LWS_ITEMS).mapWith(Statement::getResource).toList();
-                if (items.isEmpty()) {
-                    out.println("<p><em>Empty container.</em></p>");
-                } else {
-                    out.println("<ul>");
-                    for (Resource item : items) {
-                        String name = item.getURI().substring(HTTP_ROOT.length());
-                        if (name.isEmpty()) name = "(root)";
-                        String link = name.startsWith("/") ? name : "/" + name;
-                        out.printf("<li><a href=\"%s\">%s</a></li>%n",
-                                escapeHtml(encodeHref(link)), escapeHtml(name));
-                    }
-                    out.println("</ul>");
+
+        if (isContainer) {
+            List<Resource> items = sortedItems(r);
+            int total = items.size();
+
+            // ---- Pagination (link-based, per LWS): the bare container URI IS the
+            // first page once membership exceeds the threshold; ?page=N addresses
+            // pages directly. Navigation travels in Link headers only.
+            int page = 1;
+            boolean paginated = total > PAGE_SIZE;
+            String pageStr = req.getParameter("page");
+            if (pageStr != null) {
+                try {
+                    page = Integer.parseInt(pageStr.trim());
+                } catch (NumberFormatException e) {
+                    resp.sendError(400, "Invalid 'page' parameter: " + pageStr);
+                    return;
                 }
-                out.println("</body></html>");
+                if (page < 1) { resp.sendError(400, "'page' must be >= 1"); return; }
+                paginated = true;
+                long start = (long)(page-1) * PAGE_SIZE;   // long: a huge page must not overflow to a negative index
+                if (start >= total && total > 0) { resp.sendError(404); return; }
+                if (total == 0 && page > 1) { resp.sendError(404); return; }
             }
+            List<Resource> pageItems = items;
+            String firstUri = null, lastUri = null, nextUri = null, prevUri = null;
+            if (paginated) {
+                int pages = Math.max(1, (total + PAGE_SIZE - 1) / PAGE_SIZE);
+                int startIdx = (page - 1) * PAGE_SIZE;
+                pageItems = items.subList(Math.min(startIdx, total), Math.min(startIdx + PAGE_SIZE, total));
+                firstUri = pageUri(reqPath, 1);
+                lastUri = pageUri(reqPath, pages);
+                if (page < pages) nextUri = pageUri(reqPath, page + 1);
+                if (page > 1)     prevUri = pageUri(reqPath, page - 1);
+                // Normative navigation (LWS): Link headers. The same URIs are
+                // mirrored into the JSON-LD / Turtle bodies below.
+                resp.addHeader("Link", "<" + firstUri + ">; rel=\"first\"");
+                resp.addHeader("Link", "<" + lastUri + ">; rel=\"last\"");
+                if (nextUri != null) resp.addHeader("Link", "<" + nextUri + ">; rel=\"next\"");
+                if (prevUri != null) resp.addHeader("Link", "<" + prevUri + ">; rel=\"prev\"");
+            }
+
+            // ---- Listing-version validators + conditional GET (ETag is
+            // membership-scoped: the listing version, not the page).
+            String etag = containerEtag(r, resourceURI, items);
+            long lastModified = containerLastModified(r, items);
+            resp.setHeader("ETag", etag);
+            resp.setDateHeader("Last-Modified", lastModified);
+            // no-cache = "revalidate before reuse", not "don't cache": without it,
+            // heuristic freshness (from Last-Modified) lets browsers replay stale
+            // listings for days without ever asking the server again.
+            resp.setHeader("Cache-Control", "no-cache");
+            if (notModified(req, resp, etag, lastModified)) return;
+
+            String liveSelf = toLiveUri(resourceURI);
+
+            if (wantHtml) {
+                resp.setContentType("text/html; charset=utf-8");
+                // The request path and item names come from the URL / the filesystem;
+                // escape them for HTML and percent-encode hrefs (stored-XSS sink).
+                String safePath = escapeHtml(reqPath);
+                if (isHead) return;
+                try (PrintWriter out = resp.getWriter()) {
+                    out.println("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>LWS Storage – /" + safePath + "</title>");
+                    out.println("<style>body{font-family:sans-serif;margin:40px} ul{list-style:none;padding:0} a{color:#0066cc}</style></head><body>");
+                    out.println("<h1><img src=\"/sparql/beakgraph.png\" width=\"100\"> Linked Web Storage: /" + safePath + "</h1>");
+                    out.println("<p>");
+                    String up = getParentURI(resourceURI);
+                    if (up != null) {
+                        // Same target as the rel="up" Link header, percent-encoded
+                        // like every other href (parent names may need it).
+                        String upRest = up.substring(HTTP_ROOT.length());
+                        while (upRest.startsWith("/")) upRest = upRest.substring(1);
+                        out.println("<a href=\"" + escapeHtml(BASE + encodeHref(upRest)) + "\">&#8679; Parent</a> | ");
+                    }
+                    out.println("<a href=\"" + BASE + "description\">Storage Description</a> | ");
+                    out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
+                    out.println("<a href=\"/sparql/index.html\" target=\"_blank\">SPARQL Endpoint</a></p><hr>");
+                    if (pageItems.isEmpty()) {
+                        out.println("<p><em>Empty container.</em></p>");
+                    } else {
+                        out.println("<ul>");
+                        for (Resource item : pageItems) {
+                            String name = item.getURI().substring(HTTP_ROOT.length());
+                            if (name.isEmpty()) name = "(root)";
+                            String link = name.startsWith("/") ? name : "/" + name;
+                            out.printf("<li><a href=\"%s\">%s</a></li>%n",
+                                    escapeHtml(encodeHref(link)), escapeHtml(name));
+                        }
+                        out.println("</ul>");
+                    }
+                    if (paginated) {
+                        int pages = Math.max(1, (total + PAGE_SIZE - 1) / PAGE_SIZE);
+                        out.println("<hr><p>");
+                        if (page > 1) out.println("<a href=\"?page=" + (page - 1) + "\">&laquo; Prev</a> ");
+                        out.println("Page " + page + " of " + pages + " (" + total + " items)");
+                        if (page < pages) out.println(" <a href=\"?page=" + (page + 1) + "\">Next &raquo;</a>");
+                        out.println("</p>");
+                    }
+                    out.println("</body></html>");
+                }
+                return;
+            }
+            if (wantJson && !wantTurtle) {
+                // LWS container representation: identical body for all three JSON
+                // flavors, only the Content-Type varies (spec MUST).
+                String ct = forceJsonLd ? "application/ld+json"
+                        : accept.contains("lws+json") ? LWS_JSON
+                        : accept.contains("ld+json") ? "application/ld+json"
+                        : "application/json";
+                resp.setContentType(ct);
+                resp.setCharacterEncoding("UTF-8");
+                if (!isHead) resp.getWriter().write(
+                        containerJson(liveSelf, total, pageItems, firstUri, lastUri, nextUri, prevUri));
+                return;
+            }
+            if (wantTurtle) {
+                // Additional RDF representation: the same information as the LWS
+                // shape, expressed as model triples (page-scoped items).
+                Model out = ModelFactory.createDefaultModel();
+                Resource httpR = out.createResource(liveSelf);
+                r.listProperties().forEachRemaining(s -> {
+                    RDFNode obj = s.getObject();
+                    if (!exposableToClient(obj)) return; // never leak file:/// server paths
+                    if (s.getPredicate().equals(LWS_ITEMS)) return; // page-scoped below
+                    if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
+                        httpR.addProperty(s.getPredicate(), out.createResource(toLiveUri(obj.asResource().getURI())));
+                    } else {
+                        httpR.addProperty(s.getPredicate(), obj);
+                    }
+                });
+                // Body-embedded navigation, mirroring the Link headers.
+                if (firstUri != null) httpR.addProperty(AS_FIRST, out.createResource(firstUri));
+                if (lastUri != null)  httpR.addProperty(AS_LAST, out.createResource(lastUri));
+                if (nextUri != null)  httpR.addProperty(AS_NEXT, out.createResource(nextUri));
+                if (prevUri != null)  httpR.addProperty(AS_PREV, out.createResource(prevUri));
+                for (Resource it : pageItems) {
+                    String itHttp = toLiveUri(it.getURI());
+                    httpR.addProperty(LWS_ITEMS, out.createResource(itHttp));
+                    it.listProperties().forEachRemaining(st -> {
+                        RDFNode obj = st.getObject();
+                        if (!exposableToClient(obj)) return; // never leak file:/// server paths
+                        if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
+                            out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(toLiveUri(obj.asResource().getURI())));
+                        } else {
+                            out.getResource(itHttp).addProperty(st.getPredicate(), obj);
+                        }
+                    });
+                }
+                resp.setContentType("text/turtle");
+                if (!isHead) RDFDataMgr.write(resp.getOutputStream(), out, RDFFormat.TURTLE);
+                return;
+            }
+            resp.sendError(406);
             return;
         }
-        if (wantTurtle || wantJson) {
+
+        // ---- Non-container (data resource) ----
+        if (wantTurtle || (wantJson && !wantHtml)) {
+            // RDF description of the data resource (its metadata triples).
             Model out = ModelFactory.createDefaultModel();
             Resource httpR = out.createResource(BASE + (reqPath.isEmpty() ? "" : reqPath));
             r.listProperties().forEachRemaining(s -> {
@@ -420,72 +796,10 @@ public class LWSStorageServlet extends HttpServlet {
                     httpR.addProperty(s.getPredicate(), obj);
                 }
             });
-            if (isContainer) {
-                List<Resource> items = r.listProperties(LWS_ITEMS).mapWith(Statement::getResource).toList();
-                String pageStr = req.getParameter("page");
-                if (pageStr != null) {
-                    int page;
-                    try {
-                        page = Integer.parseInt(pageStr.trim());
-                    } catch (NumberFormatException e) {
-                        resp.sendError(400, "Invalid 'page' parameter: " + pageStr);
-                        return;
-                    }
-                    if (page < 1) { resp.sendError(400, "'page' must be >= 1"); return; }
-                    int size = 20;
-                    int total = items.size();
-                    long start = (long)(page-1) * size;   // long: a huge page must not overflow to a negative index
-                    if (start >= total) { resp.sendError(404); return; }
-                    int startIdx = (int) start;
-                    List<Resource> paged = items.subList(startIdx, Math.min(startIdx+size, total));
-                    // Self and first/last/prev/next all use the same URI shape,
-                    // and the navigation links are RESOURCES (they are page URIs,
-                    // and were emitted as plain literals with a divergent shape).
-                    Resource pageR = out.createResource(pageUri(reqPath, page));
-                    r.listProperties().forEachRemaining(s -> {
-                        if (!s.getPredicate().equals(LWS_ITEMS) && exposableToClient(s.getObject())) {
-                            pageR.addProperty(s.getPredicate(), s.getObject());
-                        }
-                    });
-                    pageR.addProperty(RDF.type, LWS.ContainerPage);
-                    pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#first"), out.createResource(pageUri(reqPath, 1)));
-                    int pages = (total + size - 1) / size;
-                    pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#last"), out.createResource(pageUri(reqPath, pages)));
-                    if (page > 1) pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#prev"), out.createResource(pageUri(reqPath, page-1)));
-                    if (page < pages) pageR.addProperty(ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#next"), out.createResource(pageUri(reqPath, page+1)));
-                    for (Resource it : paged) {
-                        String itHttp = toLiveUri(it.getURI());
-                        pageR.addProperty(LWS_ITEMS, out.createResource(itHttp));
-                        it.listProperties().forEachRemaining(st -> {
-                            RDFNode obj = st.getObject();
-                            if (!exposableToClient(obj)) return; // never leak file:/// server paths
-                            if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
-                                out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(toLiveUri(obj.asResource().getURI())));
-                            } else {
-                                out.getResource(itHttp).addProperty(st.getPredicate(), obj);
-                            }
-                        });
-                    }
-                } else {
-                    for (Resource it : items) {
-                        String itHttp = toLiveUri(it.getURI());
-                        it.listProperties().forEachRemaining(st -> {
-                            RDFNode obj = st.getObject();
-                            if (!exposableToClient(obj)) return; // never leak file:/// server paths
-                            if (obj.isResource() && obj.asResource().getURI() != null && obj.asResource().getURI().startsWith(HTTP_ROOT)) {
-                                out.getResource(itHttp).addProperty(st.getPredicate(), out.createResource(toLiveUri(obj.asResource().getURI())));
-                            } else {
-                                out.getResource(itHttp).addProperty(st.getPredicate(), obj);
-                            }
-                        });
-                    }
-                }
-            }
             resp.setContentType(wantTurtle ? "text/turtle" : "application/ld+json");
-            RDFDataMgr.write(resp.getOutputStream(), out, wantTurtle ? RDFFormat.TURTLE : RDFFormat.JSONLD);
+            if (!isHead) RDFDataMgr.write(resp.getOutputStream(), out, wantTurtle ? RDFFormat.TURTLE : RDFFormat.JSONLD);
             return;
         }
-        if (isContainer) { resp.sendError(406); return; }
         if (STORAGE_ROOT == null) { resp.sendError(500, "Storage root not set"); return; }
         Path localFile = resolveWithin(STORAGE_ROOT, reqPath);
         if (localFile == null) { resp.sendError(403, "Forbidden"); return; }
@@ -508,24 +822,60 @@ public class LWSStorageServlet extends HttpServlet {
         String etag = "\"" + size + "-" + lastModified + "\"";
         resp.setHeader("ETag", etag);
         resp.setDateHeader("Last-Modified", lastModified);
-        String ifNoneMatch = req.getHeader("If-None-Match");
-        long ifModifiedSince = req.getDateHeader("If-Modified-Since");
-        if (etag.equals(ifNoneMatch)
-                || (ifNoneMatch == null && ifModifiedSince >= 0 && lastModified / 1000 <= ifModifiedSince / 1000)) {
-            resp.setStatus(HttpServletResponse.SC_NOT_MODIFIED);
-            return;
-        }
+        resp.setHeader("Accept-Ranges", "bytes");
+        if (notModified(req, resp, etag, lastModified)) return;
         resp.setContentType(media);
         // Stored bytes are served as a download: with nosniff above, this keeps an
         // HTML/SVG file someone placed under the root from rendering in this origin.
         String filename = localFile.getFileName().toString().replace("\"", "");
         resp.setHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+
+        // ---- Range requests (RFC 9110 / LWS MUST). Single ranges only; anything
+        // else is served whole, which RFC 9110 permits. Range is defined for GET.
+        long[] range = isHead ? null : parseRange(req.getHeader("Range"), size);
+        String ifRange = req.getHeader("If-Range");
+        if (range != null && ifRange != null && !ifRange.equals(etag)) {
+            range = null; // validator changed: send the full representation
+        }
+        if (range != null && range[0] == -1) {
+            // setStatus, not sendError: sendError may reset the buffer/headers and
+            // the 416 MUST carry Content-Range: bytes */size.
+            resp.setStatus(416);
+            resp.setHeader("Content-Range", "bytes */" + size);
+            resp.setContentLength(0);
+            return;
+        }
+        if (range != null) {
+            long start = range[0];
+            long end = range[1];
+            long len = end - start + 1;
+            resp.setStatus(206);
+            resp.setHeader("Content-Range", "bytes " + start + "-" + end + "/" + size);
+            resp.setContentLengthLong(len);
+            try (InputStream in = Files.newInputStream(localFile)) {
+                in.skipNBytes(start);
+                copyBounded(in, resp.getOutputStream(), len);
+            }
+            return;
+        }
         resp.setContentLengthLong(size);
         // HEAD gets the same headers without the body (and without the file copy).
-        if (!"HEAD".equals(req.getMethod())) {
+        if (!isHead) {
             Files.copy(localFile, resp.getOutputStream());
         }
     }
+
+    private static void copyBounded(InputStream in, OutputStream out, long len) throws IOException {
+        byte[] buf = new byte[64 * 1024];
+        long remaining = len;
+        while (remaining > 0) {
+            int n = in.read(buf, 0, (int) Math.min(buf.length, remaining));
+            if (n < 0) throw new EOFException("File shrank while serving range");
+            out.write(buf, 0, n);
+            remaining -= n;
+        }
+    }
+
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         resp.setHeader("X-Content-Type-Options", "nosniff");
@@ -562,8 +912,8 @@ public class LWSStorageServlet extends HttpServlet {
     }
     @Override
     protected void doHead(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        // Same routing and headers as GET; the file-serving branch checks the
-        // method and skips the body copy for HEAD.
+        // Same routing and headers as GET; each body-writing branch checks the
+        // method and skips the body for HEAD.
         doGet(req, resp);
     }
 }

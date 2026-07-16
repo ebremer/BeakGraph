@@ -51,7 +51,7 @@ public class BindingBG extends BindingBase {
     @Override
     protected Node get1(Var var) {
         if (ownVar(var)) {
-            NodeId id = idBinding.get(var);
+            long id = idBinding.get(var);
             // A var bound to "does not exist" has no node here; return null so
             // BindingBase falls back to the parent binding.
             if (NodeId.isDoesNotExist(id)) {

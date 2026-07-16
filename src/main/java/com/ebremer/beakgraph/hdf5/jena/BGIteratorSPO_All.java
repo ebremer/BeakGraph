@@ -21,15 +21,18 @@ import org.apache.jena.sparql.expr.ExprList;
  */
 public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
-    private final Quad queryQuad;
-    
-    private final BitPackedUnSignedLongBuffer Bs, Ss, Bp, Sp, Bo, So;
+
+    private final BitPackedUnSignedLongBuffer Ss, Bp, Sp, Bo, So;
     // Accelerated rank/select directories used for select1; raw B*/S* still used for get().
-    private final HDTBitmapDirectory dirS, dirP, dirO;
+    private final HDTBitmapDirectory dirP, dirO;
+    // Word-caching probes for the per-row "did a new block start here" checks:
+    // idxO/idxP advance monotonically, so one word read serves up to 64 probes.
+    private final BitPackedUnSignedLongBuffer.BitReader boBit, bpBit;
+    private final long spNum, soNum;
     private long idxS, endS, idxP, idxO;
     private long curSID, curPID, curOID;
     private long resS, resP, resO;
-    private final long gi; 
+    private final long gi;
     private boolean hasNext = false;
     // minSubId starts at 1, not 0: real subject ids are 1-based, and the writer pads
     // empty graph blocks with (S=0,P=0,O=0) dummy rows. Starting at 0 leaked those
@@ -37,23 +40,40 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private long minSubId = 1, maxSubId = Long.MAX_VALUE;
     private long minPid = 0, maxPid = Long.MAX_VALUE;
     private long minObjId = 0, maxObjId = Long.MAX_VALUE;
-    private final PositionalDictionaryReader dict;
     private final NodeTable nodeTable;
 
+    // Row-emission plan (see BGIteratorSO): Var.alloc hoisted out of the row loop.
+    // All four stay putCompatible - a variable repeated across positions (or
+    // pre-bound in the parent) must agree per row.
+    private Var gVar, sVar, pVar, oVar;
+    private long gId;
+
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
+    }
+
+    /**
+     * Range-restricted variant for parallel scanning (see ScanChunks): only
+     * subject POSITIONS within [sPosLo, sPosHi] (intersected with the graph's
+     * own subject range) are walked. Each subject's whole P/O sub-tree belongs
+     * to the chunk owning its position, so chunks neither split nor duplicate rows.
+     */
+    BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long sPosLo, long sPosHi) {
         this.parentBinding = bnid;
-        this.queryQuad = quad;
-        this.dict = dict;
         this.nodeTable = nodeTable;
-        this.Bs = reader.getBitmapBuffer('S');
+        BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
         this.Ss = reader.getIDBuffer('S');
         this.Bp = reader.getBitmapBuffer('P');
         this.Sp = reader.getIDBuffer('P');
         this.Bo = reader.getBitmapBuffer('O');
         this.So = reader.getIDBuffer('O');
-        this.dirS = reader.getDirectory('S');
+        HDTBitmapDirectory dirS = reader.getDirectory('S');
         this.dirP = reader.getDirectory('P');
         this.dirO = reader.getDirectory('O');
+        this.boBit = Bo.bitReader();
+        this.bpBit = Bp.bitReader();
+        this.spNum = Sp.getNumEntries();
+        this.soNum = So.getNumEntries();
 
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
@@ -65,9 +85,8 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // variable node returns -1 - silently yielding nothing for a graph
         // that exists.
         if (quad.getGraph().isVariable()) {
-            gi = (bnid != null && bnid.containsKey(Var.alloc(quad.getGraph())))
-                    ? bnid.get(Var.alloc(quad.getGraph())).getId()
-                    : -1;
+            long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
+            gi = (bound != NodeId.NONE) ? NodeId.id(bound) : -1;
         } else {
             gi = dict.getGraphs().locate(quad.getGraph());
         }
@@ -93,15 +112,17 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // -----------------------------------------------------------------
         // LEVEL 1: Subject Range (Graph Scope)
         // -----------------------------------------------------------------
-        // select1 is 1-based.
-        // Start of Graph gi is the gi-th '1' in Bs.
-        long sStart = select1Safe(dirS, Bs,gi);
-        
-        // Start of Next Graph is the (gi+1)-th '1'.
-        long nextGraphStart = select1Safe(dirS, Bs,gi + 1);
-        long sEnd = (nextGraphStart == -1) ? (Ss.getNumEntries() - 1) : (nextGraphStart - 1);
+        // select1 is 1-based. Start of Graph gi is the gi-th '1' in Bs; the end is
+        // one before the next block's start.
+        long sStart = RangeSelect.blockStart(dirS, Bs, gi);
+        if (sStart == -1) return;
+        long sEnd = RangeSelect.blockEnd(dirS, Bs, gi, sStart);
+        if (sStart > sEnd) return;
 
-        if (sStart == -1 || sStart > sEnd) return;
+        // Parallel-chunk clamp: restrict to this chunk's slice of the graph's range.
+        if (sPosLo > sStart) sStart = sPosLo;
+        if (sPosHi < sEnd) sEnd = sPosHi;
+        if (sStart > sEnd) return;
 
         // For a concrete subject, binary-search the (ascending) subject list
         // for it instead of scanning the graph's subjects one block at a time.
@@ -117,26 +138,34 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // LEVEL 2: Predicate Cursor
         // -----------------------------------------------------------------
         // Start of Predicates for Subject `idxS` is the (idxS + 1)-th '1' in Bp.
-        this.idxP = select1Safe(dirP, Bp,idxS + 1);
+        this.idxP = select1Safe(dirP, Bp, idxS + 1);
 
         // -----------------------------------------------------------------
         // LEVEL 3: Object Cursor
         // -----------------------------------------------------------------
         // Start of Objects for Predicate `idxP` is the (idxP + 1)-th '1' in Bo.
-        this.idxO = select1Safe(dirO, Bo,idxP + 1);
+        this.idxO = select1Safe(dirO, Bo, idxP + 1);
 
         // --- Safety Checks ---
         // If idxP or idxO are -1 (not found), it means the lists are empty or we overshot.
         // However, select1(1) should always return 0 for non-empty.
         if (idxP == -1 || idxO == -1) return;
-        
+
         // Ensure we are within bounds
-        if (idxP >= Sp.getNumEntries() || idxO >= So.getNumEntries()) return;
+        if (idxP >= spNum || idxO >= soNum) return;
 
         // Load Initial Values
         this.curSID = Ss.get(idxS);
         this.curPID = Sp.get(idxP);
-        
+
+        if (quad.getGraph().isVariable()) {
+            gVar = Var.alloc(quad.getGraph());
+            gId = NodeId.pack(NodeType.GRAPH, gi);
+        }
+        if (quad.getSubject().isVariable()) sVar = Var.alloc(quad.getSubject());
+        if (quad.getPredicate().isVariable()) pVar = Var.alloc(quad.getPredicate());
+        if (quad.getObject().isVariable()) oVar = Var.alloc(quad.getObject());
+
         advance();
     }
 
@@ -171,7 +200,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 skipSubjectBlock();
                 continue;
             } else if (curSID > maxSubId) {
-                return; 
+                return;
             }
             if (curPID < minPid) {
                 skipPredicateBlock();
@@ -182,7 +211,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 skipSubjectBlock();
                 continue;
             }
-            if (idxO >= So.getNumEntries()) {
+            if (idxO >= soNum) {
                 skipPredicateBlock();
                 continue;
             }
@@ -196,63 +225,63 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 this.resO = curOID;
                 hasNext = true;
             }
-            idxO++; 
-            boolean endOfObjectList = (idxO >= So.getNumEntries()) || (Bo.get(idxO) == 1);
+            idxO++;
+            boolean endOfObjectList = (idxO >= soNum) || boBit.bit(idxO);
             if (endOfObjectList) {
                 idxP++;
-                boolean endOfPredicateList = (idxP >= Sp.getNumEntries()) || (Bp.get(idxP) == 1);
+                boolean endOfPredicateList = (idxP >= spNum) || bpBit.bit(idxP);
                 if (endOfPredicateList) {
                     idxS++;
                     if (idxS <= endS) {
                         curSID = Ss.get(idxS);
                     }
-                }   
-                if (idxP < Sp.getNumEntries()) {
+                }
+                if (idxP < spNum) {
                       curPID = Sp.get(idxP);
                 }
-            }            
+            }
             if (hasNext) return;
         }
     }
-    
+
     private void skipPredicateBlock() {
         // Find start of NEXT predicate block
         // Current Predicate is idxP. Its start was select1(idxP+1).
         // Next Predicate is idxP+1. Its start is select1(idxP+2).
-        long nextPStart = select1Safe(dirO, Bo,idxP + 2);
-        idxO = (nextPStart == -1) ? So.getNumEntries() : nextPStart;
-        
+        long nextPStart = select1Safe(dirO, Bo, idxP + 2);
+        idxO = (nextPStart == -1) ? soNum : nextPStart;
+
         idxP++;
-        
-        boolean endOfPredicateList = (idxP >= Sp.getNumEntries()) || (Bp.get(idxP) == 1);
+
+        boolean endOfPredicateList = (idxP >= spNum) || bpBit.bit(idxP);
         if (endOfPredicateList) {
             idxS++;
             if (idxS <= endS) curSID = Ss.get(idxS);
         }
-        
-        if (idxP < Sp.getNumEntries()) curPID = Sp.get(idxP);
+
+        if (idxP < spNum) curPID = Sp.get(idxP);
     }
 
     private void skipSubjectBlock() {
         // Find start of NEXT Subject block
         // Current Subject idxS. Start was select1(idxS+1).
         // Next Subject idxS+1. Start is select1(idxS+2).
-        long nextSStartP = select1Safe(dirP, Bp,idxS + 2);
-        
+        long nextSStartP = select1Safe(dirP, Bp, idxS + 2);
+
         if (nextSStartP == -1) {
-            idxP = Sp.getNumEntries();
-            idxO = So.getNumEntries();
+            idxP = spNum;
+            idxO = soNum;
         } else {
             idxP = nextSStartP;
             // Now align Object cursor to the new Predicate
-            long nextSStartO = select1Safe(dirO, Bo,idxP + 1);
-            idxO = (nextSStartO == -1) ? So.getNumEntries() : nextSStartO;
+            long nextSStartO = select1Safe(dirO, Bo, idxP + 1);
+            idxO = (nextSStartO == -1) ? soNum : nextSStartO;
         }
 
         idxS++;
-        
+
         if (idxS <= endS) curSID = Ss.get(idxS);
-        if (idxP < Sp.getNumEntries()) curPID = Sp.get(idxP);
+        if (idxP < spNum) curPID = Sp.get(idxP);
     }
 
     private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
@@ -331,17 +360,17 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         while (hasNext) {
             BindingNodeId result = new BindingNodeId(parentBinding);
             boolean ok = true;
-            if (queryQuad.getGraph().isVariable()) {
-                ok = result.putCompatible(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH), nodeTable);
+            if (gVar != null) {
+                ok = result.putCompatible(gVar, gId, nodeTable);
             }
-            if (ok && queryQuad.getSubject().isVariable()) {
-                ok = result.putCompatible(Var.alloc(queryQuad.getSubject()), new NodeId(resS, NodeType.SUBJECT), nodeTable);
+            if (ok && sVar != null) {
+                ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, resS), nodeTable);
             }
-            if (ok && queryQuad.getPredicate().isVariable()) {
-                ok = result.putCompatible(Var.alloc(queryQuad.getPredicate()), new NodeId(resP, NodeType.PREDICATE), nodeTable);
+            if (ok && pVar != null) {
+                ok = result.putCompatible(pVar, NodeId.pack(NodeType.PREDICATE, resP), nodeTable);
             }
-            if (ok && queryQuad.getObject().isVariable()) {
-                ok = result.putCompatible(Var.alloc(queryQuad.getObject()), new NodeId(resO, NodeType.OBJECT), nodeTable);
+            if (ok && oVar != null) {
+                ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, resO), nodeTable);
             }
             advance();
             if (ok) return result;

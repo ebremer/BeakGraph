@@ -4,14 +4,13 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.utils.ImageTools;
+import com.ebremer.beakgraph.utils.RdfSources;
 import com.ebremer.halcyon.hilbert.HilbertSpace;
 import com.ebremer.halcyon.hilbert.PolygonScaler;
 import com.ebremer.halcyon.hilbert.WKTDatatype;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,14 +21,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.zip.GZIPInputStream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.irix.IRIx;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFLanguages;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
@@ -56,6 +52,10 @@ public class PositionalDictionaryWriterBuilder {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
     private File src;
     private File dest;
+    /** When non-empty, ALL of these documents are parsed into ONE store (-merge); src is ignored. */
+    private final List<File> sources = new ArrayList<>();
+    /** Replacement-label counter for AlignBnodes; never resets, so labels stay unique across merged sources. */
+    private long bnodeCounter = 0;
     private final HashSet<Node> entities = new HashSet<>();   // URIs & BNodes from G, S, O
     private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
     private final HashSet<Node> literals = new HashSet<>();   // Literals from O
@@ -77,8 +77,9 @@ public class PositionalDictionaryWriterBuilder {
     // Sentinel base: relative references in the source are parsed against this
     // stable, reserved (.invalid) host that survives IRI normalization, then
     // stripped back to relative form for storage and resolved at query time
-    // against the URL the .h5 file is served from.
-    private static final String REL_BASE = "http://beakgraph.invalid/document";
+    // against the URL the .h5 file is served from. Protected: the ultra
+    // subclass parses documents itself and must use the identical base.
+    protected static final String REL_BASE = "http://beakgraph.invalid/document";
     private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
     private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
     
@@ -139,7 +140,16 @@ public class PositionalDictionaryWriterBuilder {
     public static final int MAX_INDEX_SCALE = 30;
 
 
-    private BGVoIDSD xvoid = new BGVoIDSD("https://ebremer.com/void/");
+    // Null when voidMode == NONE (the default): no statistics are collected
+    // and no urn:x-beakgraph:void graph is written.
+    private BGVoIDSD xvoid;
+    private com.ebremer.beakgraph.core.VoidMode voidMode = com.ebremer.beakgraph.core.VoidMode.NONE;
+
+    /** VoID statistics mode (NONE default, EXACT = -void, SKETCH = -voidsketch). */
+    public PositionalDictionaryWriterBuilder setVoidMode(com.ebremer.beakgraph.core.VoidMode mode) {
+        this.voidMode = mode;
+        return this;
+    }
     
     public File getDestination() { return dest; }
     public Quad[] getQuads() { return quads; }
@@ -155,6 +165,17 @@ public class PositionalDictionaryWriterBuilder {
     
     public PositionalDictionaryWriterBuilder setSource(File src) {
         this.src = src; return this;
+    }
+
+    /**
+     * Merge mode: parse every given document into the one store being built.
+     * Blank nodes stay distinct per document; everything else (dictionaries,
+     * VoID statistics, indexes) is computed over the union.
+     */
+    public PositionalDictionaryWriterBuilder setSources(List<File> files) {
+        this.sources.clear();
+        this.sources.addAll(files);
+        return this;
     }
 
     public PositionalDictionaryWriterBuilder setSpatial(boolean flag) {
@@ -212,7 +233,10 @@ public class PositionalDictionaryWriterBuilder {
         return intersectingURNs;
     }
     
-    private ArrayList<Quad> addSpatial(Quad quad) {
+    // Protected, not private: thread-safe per-quad augmentation (guarded by the
+    // spatial/features flags only), reused by the ultra subclass's per-document
+    // parallel parse. Both callers already invoke it concurrently.
+    protected ArrayList<Quad> addSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
         // The GeoSPARQL-standard "<crs-uri> WKT" form must be indexed too: strip the
         // prefix once here so the parser and the scaler both see plain WKT
@@ -357,7 +381,7 @@ public class PositionalDictionaryWriterBuilder {
         if (g.isBlank()||s.isBlank()||o.isBlank()) {
             if (g.isBlank()) {
                 if (!bmap.containsKey(g)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bmap.size()));
+                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
                     bmap.put(g, neo);
                     g = neo;
                 } else {
@@ -366,7 +390,7 @@ public class PositionalDictionaryWriterBuilder {
             }
             if (s.isBlank()) {
                 if (!bmap.containsKey(s)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bmap.size()));
+                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
                     bmap.put(s, neo);
                     s = neo;
                 } else {
@@ -375,7 +399,7 @@ public class PositionalDictionaryWriterBuilder {
             }
             if (o.isBlank()) {
                 if (!bmap.containsKey(o)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bmap.size()));
+                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
                     bmap.put(o, neo);
                     o = neo;
                 } else {
@@ -393,7 +417,7 @@ public class PositionalDictionaryWriterBuilder {
      * {@code <>} becomes "" and a sibling {@code <x.png>} becomes "x.png". They
      * are resolved against the serving URL at query time.
      */
-    private Quad relativize(Quad q) {
+    protected final Quad relativize(Quad q) {
         Node qg = q.getGraph();
         Node qs = q.getSubject();
         Node qp = q.getPredicate();
@@ -442,7 +466,7 @@ public class PositionalDictionaryWriterBuilder {
      * and extract() symmetric. (The value-typed storage never preserved the
      * non-canonical lexical form anyway.)
      */
-    private Quad canonicalizeNumericObject(Quad quad) {
+    protected final Quad canonicalizeNumericObject(Quad quad) {
         Node o = quad.getObject();
         if (!o.isLiteral()) return quad;
         String dt = o.getLiteralDatatypeURI();
@@ -479,10 +503,76 @@ public class PositionalDictionaryWriterBuilder {
         }
     }
 
-    private void countStringStored(String lex) {
-        this.stats.longestStringLength = Math.max(this.stats.longestStringLength, lex.length());
-        this.stats.shortestStringLength = Math.min(this.stats.shortestStringLength, lex.length());
-        this.stats.numStrings++;
+    private static void countStringStored(Stats stats, String lex) {
+        stats.longestStringLength = Math.max(stats.longestStringLength, lex.length());
+        stats.shortestStringLength = Math.min(stats.shortestStringLength, lex.length());
+        stats.numStrings++;
+    }
+
+    /**
+     * Counts one DISTINCT literal into {@code stats}, choosing the same storage
+     * class (long/int/float/double/strings, with the ill-typed and dateTime
+     * special cases) that {@link MultiTypeDictionaryWriter} will pick when it
+     * encodes the node. Extracted from {@link #ProcessQuad} so the ultra
+     * writer's post-dedup, chunk-parallel stats pass counts literals with
+     * EXACTLY the sequential rules (a drifted copy here would corrupt buffer
+     * allocation, not just reporting). Must be called once per unique literal.
+     */
+    protected static void countLiteralStats(Node o, Stats stats) {
+        String dt = o.getLiteralDatatypeURI();
+        if (dt.equals(XSD.xlong.getURI())) {
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxLong = Math.max(stats.maxLong, n.longValue());
+                stats.minLong = Math.min(stats.minLong, n.longValue());
+                stats.numLong++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xint.getURI())) {
+            // Only xsd:int (32-bit bounded) is bit-packed here. xsd:integer is
+            // unbounded, so it is handled by the string fallback below instead;
+            // bit-packing it would truncate large values and change the datatype
+            // to xsd:int on read-back.
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxInteger = Math.max(stats.maxInteger, n.intValue());
+                stats.minInteger = Math.min(stats.minInteger, n.intValue());
+                stats.numInteger++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xfloat.getURI())) {
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxFloat = Math.max(stats.maxFloat, n.floatValue());
+                stats.minFloat = Math.min(stats.minFloat, n.floatValue());
+                stats.numFloat++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xdouble.getURI())) {
+            if (literalValueOrNull(o) instanceof Number n) {
+                stats.maxDouble = Math.max(stats.maxDouble, n.doubleValue());
+                stats.minDouble = Math.min(stats.minDouble, n.doubleValue());
+                stats.numDouble++;
+            } else {
+                countStringStored(stats, o.getLiteralLexicalForm()); // ill-typed: strings path
+            }
+        } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
+            // rdf:langString shares the strings buffer; its language tag is
+            // stored separately by MultiTypeDictionaryWriter (langs/langTags).
+            countStringStored(stats, o.getLiteralLexicalForm());
+        } else if (dt.equals(XSD.dateTime.getURI())) {
+            String lex = o.getLiteralLexicalForm();
+            int t = lex.indexOf('T');
+            countStringStored(stats, (t > 0) ? lex.substring(0, t) : lex);
+        } else {
+            // Any other datatype (xsd:integer, xsd:decimal, xsd:date, custom
+            // datatypes, ...) is stored verbatim in the strings buffer by
+            // MultiTypeDictionaryWriter, tagged with its datatype IRI. Count it
+            // toward numStrings so that buffer is always allocated; otherwise the
+            // writer would have nowhere to put it and would drop the node,
+            // desynchronising the offset/datatype buffers and corrupting the dictionary.
+            countStringStored(stats, o.getLiteralLexicalForm());
+        }
     }
 
     private void ProcessQuad(Quad quad) {
@@ -522,61 +612,8 @@ public class PositionalDictionaryWriterBuilder {
         }
         if (o.isLiteral()) {
             if (!literals.contains(o)) {
-                String dt = o.getLiteralDatatypeURI();
-                dataTypes.add(dt);
-                if (dt.equals(XSD.xlong.getURI())) {
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxLong = Math.max(this.stats.maxLong, n.longValue());
-                        this.stats.minLong = Math.min(this.stats.minLong, n.longValue());
-                        this.stats.numLong++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xint.getURI())) {
-                    // Only xsd:int (32-bit bounded) is bit-packed here. xsd:integer is
-                    // unbounded, so it is handled by the string fallback below instead;
-                    // bit-packing it would truncate large values and change the datatype
-                    // to xsd:int on read-back.
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxInteger = Math.max(this.stats.maxInteger, n.intValue());
-                        this.stats.minInteger = Math.min(this.stats.minInteger, n.intValue());
-                        this.stats.numInteger++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xfloat.getURI())) {
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxFloat = Math.max(this.stats.maxFloat, n.floatValue());
-                        this.stats.minFloat = Math.min(this.stats.minFloat, n.floatValue());
-                        this.stats.numFloat++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xdouble.getURI())) {
-                    if (literalValueOrNull(o) instanceof Number n) {
-                        this.stats.maxDouble = Math.max(this.stats.maxDouble, n.doubleValue());
-                        this.stats.minDouble = Math.min(this.stats.minDouble, n.doubleValue());
-                        this.stats.numDouble++;
-                    } else {
-                        countStringStored(o.getLiteralLexicalForm()); // ill-typed: strings path
-                    }
-                } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI()) || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
-                    // rdf:langString shares the strings buffer; its language tag is
-                    // stored separately by MultiTypeDictionaryWriter (langs/langTags).
-                    countStringStored(o.getLiteralLexicalForm());
-                } else if (dt.equals(XSD.dateTime.getURI())) {
-                    String lex = o.getLiteralLexicalForm();
-                    int t = lex.indexOf('T');
-                    countStringStored((t > 0) ? lex.substring(0, t) : lex);
-                } else {
-                    // Any other datatype (xsd:integer, xsd:decimal, xsd:date, custom
-                    // datatypes, ...) is stored verbatim in the strings buffer by
-                    // MultiTypeDictionaryWriter, tagged with its datatype IRI. Count it
-                    // toward numStrings so that buffer is always allocated; otherwise the
-                    // writer would have nowhere to put it and would drop the node,
-                    // desynchronising the offset/datatype buffers and corrupting the dictionary.
-                    countStringStored(o.getLiteralLexicalForm());
-                }
+                dataTypes.add(o.getLiteralDatatypeURI());
+                countLiteralStats(o, stats);
                 literals.add(o);
             }
         } else {
@@ -594,26 +631,79 @@ public class PositionalDictionaryWriterBuilder {
     }
     
     public PositionalDictionaryWriter build() throws IOException {
+        parse();
+        return new PositionalDictionaryWriter(this);
+    }
+
+    /**
+     * Runs the full ingest pipeline - parse, bnode alignment, numeric
+     * canonicalization, spatial/feature augmentation, VoID statistics - leaving
+     * the collected quads, node sets, and stats in this builder. Shared verbatim
+     * by {@link #build()} and the parallel subclass
+     * (com.ebremer.beakgraph.hdf5.writers.parallel), which differ only in which
+     * dictionary writer they construct from the collected state.
+     */
+    protected final void parse() throws IOException {
         final AtomicLong quadcount = new AtomicLong();
-        logger.trace("Creating dictionary...");        
-        try (InputStream xis = src.toString().endsWith(".gz")
-                ? new GZIPInputStream(new FileInputStream(src))
-                : new FileInputStream(src)) {
-            // Detect the syntax from the file name (TriG, N-Quads, N-Triples,
-            // Turtle, ...; .gz handled) instead of hardcoding Turtle: this is a
-            // quad store, and named graphs can only arrive through a quad-capable
-            // syntax.
-            String fname = src.getName();
-            if (fname.endsWith(".gz")) {
-                fname = fname.substring(0, fname.length() - 3);
-            }
-            Lang lang = RDFLanguages.filenameToLang(fname, Lang.TURTLE);
+        logger.trace("Creating dictionary...");
+        if (sources.isEmpty() && src == null) {
+            throw new IllegalStateException("No source set: call setSource() or setSources()");
+        }
+        final List<File> inputs = sources.isEmpty() ? List.of(src) : List.copyOf(sources);
+        this.xvoid = BGVoIDSD.forMode(voidMode, "https://ebremer.com/void/");
+        for (File input : inputs) {
+            parseSource(input, quadcount);
+            // Blank-node labels are document-scoped in RDF: two sources may both
+            // say _:b0 and mean different nodes (the parser keeps labels as
+            // given). Clearing the alignment map per document keeps them
+            // distinct, while the never-reset bnodeCounter keeps the replacement
+            // labels unique across the whole (possibly merged) store.
+            bmap.clear();
+        }
+        // VoID/SD metadata accumulated over ALL sources (only when requested)
+        if (xvoid != null) {
+            Model xxx = xvoid.getModel();
+            xxx.setNsPrefix("void", VOID.NS);
+            xxx.setNsPrefix("sd", SD.getURI());
+            xxx.setNsPrefix("xsd", XSD.getURI());
+            xxx.setNsPrefix("rdfs", RDFS.getURI());
+            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
+            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
+            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
+            xxx.listStatements().forEach(s -> {
+                Triple ff = s.asTriple();
+                Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
+                ProcessQuad(qqq);
+                quadslist.add(qqq);
+            });
+        }
+        // Set sum logic for backward compatibility in Stats object
+        stats.numGraphs = entities.size();
+        stats.numSubjects = entities.size();
+        stats.numPredicates = predicates.size();
+        stats.numObjects = entities.size() + literals.size();
+
+        this.numQuads = quadcount.get();
+        this.quads = quadslist.toArray(Quad[]::new);
+        quadslist.clear();
+        logger.info("Dictionary created. Total quads: {}", this.numQuads);
+    }
+
+    /** Parses one source document into the shared collected state. */
+    private void parseSource(File input, AtomicLong quadcount) throws IOException {
+        // The syntax comes from the file name (TriG, N-Quads, N-Triples,
+        // RDF/XML, JSON-LD, Turtle; .gz and .zip handled) instead of
+        // hardcoding Turtle: this is a quad store, and named graphs can only
+        // arrive through a quad-capable syntax.
+        try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
             // Parse relative references against a stable sentinel base so they
             // resolve deterministically (not against the process working
             // directory). The relativize() step below strips the sentinel back
             // off; the relative form is resolved at query time against the URL
             // the .h5 file is served from.
-            AsyncParserBuilder parserBuilder = AsyncParser.of(xis, lang, REL_BASE);
+            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), REL_BASE);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
@@ -639,7 +729,9 @@ public class PositionalDictionaryWriterBuilder {
                         // its dictionary accounting (the quad is already in quadslist, so a
                         // skip would only fail later, opaquely, when the index can't locate it).
                         ProcessQuad(quad);
-                        xvoid.add(quad);
+                        if (xvoid != null) {
+                            xvoid.add(quad);
+                        }
                         if (spatial && isGeoLiteral(quad)) {
                             spatialTasks.add(scope.submit(() -> addSpatial(quad)));
                         }
@@ -647,7 +739,7 @@ public class PositionalDictionaryWriterBuilder {
             } catch (Exception ex) {
                 // Don't swallow a parse/processing failure - that would leave a silently
                 // truncated dictionary. Abort the write; Error/OOM still propagate.
-                throw new IOException("Failed while parsing/processing RDF source: " + src, ex);
+                throw new IOException("Failed while parsing/processing RDF source: " + input, ex);
             }
             for (Future<ArrayList<Quad>> task : spatialTasks) {
                 ArrayList<Quad> extraQuads;
@@ -655,9 +747,9 @@ public class PositionalDictionaryWriterBuilder {
                     extraQuads = task.get();
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while collecting spatial results: " + src, ex);
+                    throw new IOException("Interrupted while collecting spatial results: " + input, ex);
                 } catch (ExecutionException ex) {
-                    throw new IOException("Spatial processing failed for " + src, ex.getCause());
+                    throw new IOException("Spatial processing failed for " + input, ex.getCause());
                 }
                 extraQuads.forEach(q -> {
                     Quad canon = canonicalizeNumericObject(q);
@@ -665,41 +757,14 @@ public class PositionalDictionaryWriterBuilder {
                     ProcessQuad(canon);
                 });
             }
-            Model xxx = xvoid.getModel();
-            xxx.setNsPrefix("void", VOID.NS);
-            xxx.setNsPrefix("sd", SD.getURI());
-            xxx.setNsPrefix("xsd", XSD.getURI());
-            xxx.setNsPrefix("rdfs", RDFS.getURI());
-            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
-            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
-            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
-            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
-            xvoid.getModel().listStatements().forEach(s->{
-                Triple ff = s.asTriple();
-                Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
-                ProcessQuad(qqq);
-                quadslist.add(qqq);
-            });
-            // Set sum logic for backward compatibility in Stats object
-            stats.numGraphs = entities.size(); 
-            stats.numSubjects = entities.size();
-            stats.numPredicates = predicates.size();
-            stats.numObjects = entities.size() + literals.size();
-            
         } catch (FileNotFoundException e) {
-            throw new IOException("Source file not found: " + src, e);
+            throw new IOException("Source file not found: " + input, e);
         } catch (IOException e) {
-            throw new IOException("I/O error while reading RDF source", e);
+            throw new IOException("I/O error while reading RDF source: " + input, e);
         }
-        this.numQuads = quadcount.get();
-        this.quads = quadslist.toArray(Quad[]::new);
-        quadslist.clear();
-        logger.info("Dictionary created. Total quads: {}", this.numQuads);
-        return new PositionalDictionaryWriter(this);
     }
 
-    private boolean isGeoLiteral(Quad quad) {
+    protected final boolean isGeoLiteral(Quad quad) {
         Node o = quad.getObject();
         return o.isLiteral() && GEO.wktLiteral.getURI().equals(o.getLiteralDatatypeURI());
     }

@@ -54,10 +54,46 @@ public class HDTBitmapDirectory {
     public long select1(long rank) {
         if (rank <= 0) return -1L;
 
-        // Step 1: Find Superblock
+        // Step 1: Find Superblock - the greatest index whose cumulative count is
+        // still below the target rank. The cumulative counts of real index bitmaps
+        // grow near-linearly, so ONE interpolated probe plus an exponential gallop
+        // usually brackets the answer within a handful of reads (a plain binary
+        // search costs ~22 probes on a PubMed-scale directory of ~5.6M
+        // superblocks). The closing binary search keeps the O(log n) worst case
+        // for skewed bitmaps (e.g. dense padding runs next to sparse data runs).
+        // Stateless on purpose: directories are shared across concurrent queries.
         long low = 0;
         long high = numSuperblockEntries - 1;
         long sbIdx = 0; // Default to 0 if not found or first
+
+        if (high > 8) {
+            long last = superblock.get(high);
+            long guess = (last > 0) ? (long) ((double) rank / last * high) : 0;
+            if (guess < 0) guess = 0;
+            if (guess > high) guess = high;
+            long step = 1;
+            long cur = guess;
+            if (superblock.get(guess) < rank) {
+                // Answer is at or to the right of the guess: gallop right.
+                sbIdx = guess;
+                while (cur + step <= high && superblock.get(cur + step) < rank) {
+                    cur += step;
+                    sbIdx = cur;
+                    step <<= 1;
+                }
+                low = cur + 1;
+                high = Math.min(high, cur + step);
+            } else {
+                // Answer is strictly left of the guess: gallop left. Index 0 always
+                // qualifies (the seeded count is 0 < rank), so the bracket is never empty.
+                while (cur - step >= 0 && superblock.get(cur - step) >= rank) {
+                    cur -= step;
+                    step <<= 1;
+                }
+                low = Math.max(0, cur - step);
+                high = cur - 1;
+            }
+        }
 
         while (low <= high) {
             long mid = (low + high) >>> 1;

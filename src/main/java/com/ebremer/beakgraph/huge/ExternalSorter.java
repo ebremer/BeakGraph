@@ -35,21 +35,15 @@ import org.slf4j.LoggerFactory;
  *
  * @author Erich Bremer
  */
-final class ExternalSorter<T> implements AutoCloseable {
+public final class ExternalSorter<T> implements RecordSorter<T> {
 
     private static final Logger logger = LoggerFactory.getLogger(ExternalSorter.class);
 
     /** Serializes records for spill runs. {@code read} throws {@link EOFException} at run end. */
-    interface Codec<T> {
+    public interface Codec<T> {
         void write(DataOutput out, T record) throws IOException;
 
         T read(DataInput in) throws IOException;
-    }
-
-    /** A sorted record stream that owns temp files; must be closed. */
-    interface SortedStream<T> extends Iterator<T>, AutoCloseable {
-        @Override
-        void close();
     }
 
     private final Path workDir;
@@ -64,8 +58,8 @@ final class ExternalSorter<T> implements AutoCloseable {
     private int runCounter = 0;
     private boolean consumed = false;
 
-    ExternalSorter(Path workDir, String tag, Codec<T> codec, Comparator<? super T> comparator,
-                   int maxRecordsInMemory, int mergeFanIn) {
+    public ExternalSorter(Path workDir, String tag, Codec<T> codec, Comparator<? super T> comparator,
+                          int maxRecordsInMemory, int mergeFanIn) {
         if (maxRecordsInMemory < 1 || mergeFanIn < 2) {
             throw new IllegalArgumentException("maxRecordsInMemory >= 1 and mergeFanIn >= 2 required");
         }
@@ -77,7 +71,8 @@ final class ExternalSorter<T> implements AutoCloseable {
         this.mergeFanIn = mergeFanIn;
     }
 
-    void add(T record) throws IOException {
+    @Override
+    public void add(T record) throws IOException {
         if (consumed) {
             throw new IllegalStateException("Sorter '" + tag + "' already consumed");
         }
@@ -89,7 +84,8 @@ final class ExternalSorter<T> implements AutoCloseable {
     }
 
     /** Total records added. */
-    long size() {
+    @Override
+    public long size() {
         return size;
     }
 
@@ -121,7 +117,8 @@ final class ExternalSorter<T> implements AutoCloseable {
      * Finishes ingestion and returns the fully sorted stream. All-in-RAM inputs
      * (no spilled run) sort and iterate without touching disk.
      */
-    SortedStream<T> sorted() throws IOException {
+    @Override
+    public RecordSorter.SortedCursor<T> sorted() throws IOException {
         if (consumed) {
             throw new IllegalStateException("Sorter '" + tag + "' already consumed");
         }
@@ -130,7 +127,7 @@ final class ExternalSorter<T> implements AutoCloseable {
             T[] arr = sortedBufferArray();
             buffer = new ArrayList<>();
             Iterator<T> it = Arrays.asList(arr).iterator();
-            return new SortedStream<T>() {
+            return new RecordSorter.SortedCursor<T>() {
                 @Override public boolean hasNext() { return it.hasNext(); }
                 @Override public T next() { return it.next(); }
                 @Override public void close() {}
@@ -199,7 +196,7 @@ final class ExternalSorter<T> implements AutoCloseable {
         }
     }
 
-    private final class MergeIterator implements SortedStream<T> {
+    private final class MergeIterator implements RecordSorter.SortedCursor<T> {
         private final PriorityQueue<RunReader> heap;
         private final List<RunReader> readers = new ArrayList<>();
 

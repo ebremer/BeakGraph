@@ -65,7 +65,7 @@ class UnionGraphAndDetachTest {
         File ttl = dir.resolve("union.ttl").toFile();
         File h5 = dir.resolve("union.ttl.h5").toFile();
         Files.write(ttl.toPath(), TTL.getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder()
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT)
                 .setSource(ttl).setDestination(h5)
                 .setSpatial(false).setFeatures(false)
                 .build().write();
@@ -144,7 +144,7 @@ class UnionGraphAndDetachTest {
     @Test
     void detachMaterializesNodeIdBindings() {
         Node s1 = NodeFactory.createURI("http://ex.org/s1");
-        NodeId id = bg.getReader().getNodeTable().getNodeIdForNode(s1);
+        long id = bg.getReader().getNodeTable().getNodeIdForNode(s1);
         assertFalse(NodeId.isDoesNotExist(id), "control: ex:s1 must be in the dictionary");
 
         Node parentTerm = NodeFactory.createURI("http://ex.org/parent");

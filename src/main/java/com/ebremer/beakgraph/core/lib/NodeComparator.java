@@ -24,7 +24,18 @@ public class NodeComparator implements Comparator<Node> {
 
     public static final NodeComparator INSTANCE = new NodeComparator();
 
-    private NodeComparator() {}
+    protected NodeComparator() {}
+
+    /**
+     * Node-to-NodeValue conversion hook. {@code NodeValue.makeNode} funnels
+     * through Jena's ONE global bounded cache; under a multi-threaded sort of
+     * literal-heavy data that cache's eviction lock becomes the bottleneck
+     * (Caffeine "excessive wait times" warnings). Subclasses may override with
+     * a local cache - the ordering semantics must remain exactly makeNode's.
+     */
+    protected NodeValue nodeValue(Node n) {
+        return NodeValue.makeNode(n);
+    }
 
     @Override
     public int compare(Node n1, Node n2) {
@@ -59,8 +70,8 @@ public class NodeComparator implements Comparator<Node> {
         // If they are both Literals, we must sort by actual Value (e.g. 2 < 10), not String ("10" < "2")
         if (n1.isLiteral() && n2.isLiteral()) {
             try {
-                NodeValue nv1 = NodeValue.makeNode(n1);
-                NodeValue nv2 = NodeValue.makeNode(n2);
+                NodeValue nv1 = nodeValue(n1);
+                NodeValue nv2 = nodeValue(n2);
 
                 // Timezone-sensitive value spaces cannot go through compareAlways:
                 // it answers value order for XSD-determinate pairs but silently falls

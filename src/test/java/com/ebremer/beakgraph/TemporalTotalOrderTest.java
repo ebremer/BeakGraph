@@ -91,7 +91,9 @@ class TemporalTotalOrderTest {
         nodes.add(NodeFactory.createLiteralDT("42", XSDDatatype.XSDinteger));
         nodes.add(NodeFactory.createLiteralDT("41.5", XSDDatatype.XSDdouble));
         nodes.add(NodeFactory.createLiteralDT("not-a-date", XSDDatatype.XSDdateTime)); // ill-formed
-        nodes.add(NodeFactory.createLiteral("plain"));
+        // Jena 6 removed createLiteral(String); createLiteralString is the
+        // equivalent (a plain literal IS an xsd:string in RDF 1.1).
+        nodes.add(NodeFactory.createLiteralString("plain"));
 
         assertTotallyOrdered(nodes);
 

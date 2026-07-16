@@ -30,6 +30,16 @@ Core Library Jar Library
 mvn -Plib clean package
 ```
 
+## Benchmarks
+
+JMH benchmarks for the read path live in [`benchmarks/`](benchmarks/) as a standalone module:
+
+```
+mvn -DskipTests install          # install BeakGraph into the local repo
+cd benchmarks && mvn package     # build the benchmarks jar
+java -jar target/benchmarks.jar  # run (see benchmarks/README.md for options)
+```
+
 ## Using BeakGraph in your code
 
 ### Creating a BeakGraph from your data

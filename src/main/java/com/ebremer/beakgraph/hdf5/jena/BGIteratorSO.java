@@ -21,35 +21,35 @@ import org.apache.jena.sparql.expr.ExprList;
  */
 public class BGIteratorSO implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
-    private final Quad queryQuad;
-    private final BitPackedUnSignedLongBuffer Bs, Ss, Bp, Sp, Bo, So;
-    // Accelerated rank/select directories (one per traversed component) used for
-    // select1; the raw B*/S* buffers above are still used for get()/binarySearch().
-    private final HDTBitmapDirectory dirS, dirP, dirO;
-    
+    private final BitPackedUnSignedLongBuffer So;
+
     private long i;  // current object index
     private long j;  // end object index (inclusive)
     private long gi, si, pi;
     private boolean hasNext = false;
-    
+
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
 
+    // Row-emission plan, computed once: which variables each row binds, with the
+    // constant G/S/P packed NodeIds pre-built (only the object id varies per row).
+    private Var gVar, sVar, pVar, oVar;
+    private long gId, sId, pId;
+
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
-        this.queryQuad = quad;
 
         // GSPO Structure mapping
-        this.Bs = reader.getBitmapBuffer('S'); 
-        this.Ss = reader.getIDBuffer('S');     
-        this.Bp = reader.getBitmapBuffer('P'); 
-        this.Sp = reader.getIDBuffer('P');     
-        this.Bo = reader.getBitmapBuffer('O'); 
-        this.So = reader.getIDBuffer('O');     
-        
-        this.dirS = reader.getDirectory('S');
-        this.dirP = reader.getDirectory('P');
-        this.dirO = reader.getDirectory('O');
+        BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
+        BitPackedUnSignedLongBuffer Ss = reader.getIDBuffer('S');
+        BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
+        BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
+        BitPackedUnSignedLongBuffer Bo = reader.getBitmapBuffer('O');
+        this.So = reader.getIDBuffer('O');
+
+        HDTBitmapDirectory dirS = reader.getDirectory('S');
+        HDTBitmapDirectory dirP = reader.getDirectory('P');
+        HDTBitmapDirectory dirO = reader.getDirectory('O');
 
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
@@ -58,7 +58,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         // Resolve Graph
         gi = resolveNode(quad.getGraph(), dict.getGraphs(), bnid);
         if (gi < 1) return;
-        
+
         // Resolve Subject
         si = resolveNode(quad.getSubject(), dict.getSubjects(), bnid);
         if (si < 1) return;
@@ -70,29 +70,26 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         // --- Traverse GSPO ---
 
         // A. Find Subject Index under Graph
-        long sStart = select1Safe(dirS, Bs,gi);
-        long nextGraphStart = select1Safe(dirS, Bs,gi + 1);
-        long sEnd = (nextGraphStart == -1) ? (Ss.getNumEntries() - 1) : (nextGraphStart - 1);
-        
-        if (sStart == -1 || sStart > sEnd) return;
+        long sStart = RangeSelect.blockStart(dirS, Bs, gi);
+        if (sStart == -1) return;
+        long sEnd = RangeSelect.blockEnd(dirS, Bs, gi, sStart);
+        if (sStart > sEnd) return;
         long sIndex = Ss.binarySearch(sStart, sEnd, si);
         if (sIndex < 0) return;
 
         // B. Find Predicate Index under Subject
-        long pStart = select1Safe(dirP, Bp,sIndex + 1);
-        long nextSStart = select1Safe(dirP, Bp,sIndex + 2);
-        long pEnd = (nextSStart == -1) ? (Sp.getNumEntries() - 1) : (nextSStart - 1);
-        
-        if (pStart == -1 || pStart > pEnd) return;
+        long pStart = RangeSelect.blockStart(dirP, Bp, sIndex + 1);
+        if (pStart == -1) return;
+        long pEnd = RangeSelect.blockEnd(dirP, Bp, sIndex + 1, pStart);
+        if (pStart > pEnd) return;
         long pIndex = Sp.binarySearch(pStart, pEnd, pi);
         if (pIndex < 0) return;
 
         // C. Find Object Range for Predicate
-        long rawOStart = select1Safe(dirO, Bo,pIndex + 1);
-        long nextPStart = select1Safe(dirO, Bo,pIndex + 2);
-        long rawOEnd = (nextPStart == -1) ? (So.getNumEntries() - 1) : (nextPStart - 1);
-        
-        if (rawOStart == -1 || rawOStart > rawOEnd) return;
+        long rawOStart = RangeSelect.blockStart(dirO, Bo, pIndex + 1);
+        if (rawOStart == -1) return;
+        long rawOEnd = RangeSelect.blockEnd(dirO, Bo, pIndex + 1, rawOStart);
+        if (rawOStart > rawOEnd) return;
 
         // D. Apply Specific Object Bound or Range Filters
         // Distinguish "object is an unbound variable" from "object is a concrete
@@ -122,24 +119,58 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
                 this.hasNext = true;
             }
         }
+
+        if (hasNext) {
+            planRowEmission(quad);
+        }
+    }
+
+    /**
+     * Precomputes which variables each row binds - the pattern and the parent
+     * binding are fixed for this iterator's lifetime, so the per-row work
+     * reduces to appends of pre-built NodeIds (only the object id varies).
+     */
+    private void planRowEmission(Quad quad) {
+        if (quad.getGraph().isVariable()) {
+            Var v = Var.alloc(quad.getGraph());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                gVar = v;
+                gId = NodeId.pack(NodeType.GRAPH, gi);
+            }
+        }
+        if (quad.getSubject().isVariable()) {
+            Var v = Var.alloc(quad.getSubject());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                sVar = v;
+                sId = NodeId.pack(NodeType.SUBJECT, si);
+            }
+        }
+        if (quad.getPredicate().isVariable()) {
+            Var v = Var.alloc(quad.getPredicate());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                pVar = v;
+                pId = NodeId.pack(NodeType.PREDICATE, pi);
+            }
+        }
+        if (quad.getObject().isVariable()) {
+            Var v = Var.alloc(quad.getObject());
+            if (parentBinding == null || !parentBinding.containsKey(v)) {
+                oVar = v;
+            }
+        }
     }
 
     private long resolveNode(Node node, Dictionary dictionary, BindingNodeId bnid) {
         if (node.isVariable()) {
-            Var v = Var.alloc(node);
-            if (bnid != null && bnid.containsKey(v)) {
-                return bnid.get(v).getId();
+            if (bnid != null) {
+                long bound = bnid.get(Var.alloc(node));
+                if (bound != NodeId.NONE) {
+                    return NodeId.id(bound);
+                }
             }
             return -1; // Variable is unbound
         }
         return dictionary.locate(node);
-    }
-
-    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
-        if (rank < 1) return -1;
-        // Accelerated O(log n) select via the superblock/block directory when present;
-        // fall back to the buffer's linear scan only for indexes written without it.
-        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
     }
 
     private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
@@ -196,18 +227,12 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
 
     @Override
     public BindingNodeId next() {
-        if (!hasNext) throw new NoSuchElementException();        
+        if (!hasNext) throw new NoSuchElementException();
         BindingNodeId result = new BindingNodeId(this.parentBinding);
-        long currentObjId = So.get(i);
-        if (queryQuad.getGraph().isVariable() && !result.containsKey(Var.alloc(queryQuad.getGraph()))) 
-            result.put(Var.alloc(queryQuad.getGraph()), new NodeId(gi, NodeType.GRAPH));
-        if (queryQuad.getSubject().isVariable() && !result.containsKey(Var.alloc(queryQuad.getSubject()))) 
-            result.put(Var.alloc(queryQuad.getSubject()), new NodeId(si, NodeType.SUBJECT));
-        if (queryQuad.getPredicate().isVariable() && !result.containsKey(Var.alloc(queryQuad.getPredicate()))) 
-            result.put(Var.alloc(queryQuad.getPredicate()), new NodeId(pi, NodeType.PREDICATE));
-        if (queryQuad.getObject().isVariable()) { 
-            result.put(Var.alloc(queryQuad.getObject()), new NodeId(currentObjId, NodeType.OBJECT));
-        }
+        if (gVar != null) result.put(gVar, gId);
+        if (sVar != null) result.put(sVar, sId);
+        if (pVar != null) result.put(pVar, pId);
+        if (oVar != null) result.put(oVar, NodeId.pack(NodeType.OBJECT, So.get(i)));
         i++;
         hasNext = (i <= j);
         return result;

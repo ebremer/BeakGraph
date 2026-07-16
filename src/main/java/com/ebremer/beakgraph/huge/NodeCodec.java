@@ -21,7 +21,7 @@ import org.apache.jena.graph.NodeFactory;
  *
  * @author Erich Bremer
  */
-final class NodeCodec implements ExternalSorter.Codec<Node> {
+public final class NodeCodec implements ExternalSorter.Codec<Node> {
 
     static final NodeCodec INSTANCE = new NodeCodec();
 
@@ -43,7 +43,7 @@ final class NodeCodec implements ExternalSorter.Codec<Node> {
         return readNode(in);
     }
 
-    static void writeNode(DataOutput out, Node n) throws IOException {
+    public static void writeNode(DataOutput out, Node n) throws IOException {
         if (n.isURI()) {
             out.writeByte(T_URI);
             writeString(out, n.getURI());
@@ -68,7 +68,7 @@ final class NodeCodec implements ExternalSorter.Codec<Node> {
         }
     }
 
-    static Node readNode(DataInput in) throws IOException {
+    public static Node readNode(DataInput in) throws IOException {
         byte tag = in.readByte();
         return switch (tag) {
             case T_URI -> NodeFactory.createURI(readString(in));
@@ -103,3 +103,4 @@ final class NodeCodec implements ExternalSorter.Codec<Node> {
         return new String(HugeIO.readBytes(in, (int) len), StandardCharsets.UTF_8);
     }
 }
+

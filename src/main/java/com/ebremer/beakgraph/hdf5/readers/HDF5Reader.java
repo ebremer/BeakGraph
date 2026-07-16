@@ -6,6 +6,7 @@ import com.ebremer.beakgraph.hdf5.jena.BGIteratorMaster;
 import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.NodeId;
+import com.ebremer.beakgraph.hdf5.jena.NodeType;
 import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.jena.SimpleNodeTable;
@@ -15,14 +16,14 @@ import io.jhdf.api.Attribute;
 import io.jhdf.api.Group;
 import java.io.File;
 import java.net.URI;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Node;
@@ -57,19 +58,65 @@ public class HDF5Reader implements BGReader {
     public HDF5Reader(Path src) {
         this(src.toFile());
     }
-    
+
     public HDF5Reader(File src) {
-        this.hdf = new HdfFile(src.toPath());
+        this(new HdfFile(src.toPath()), src.toURI());
+    }
+
+    /**
+     * Reads a BeakGraph through any {@link SeekableByteChannel} - e.g. an
+     * {@code HTTPSeekableByteChannel} for querying a remote file in place.
+     * The reader takes ownership of the channel: it is closed by
+     * {@link #close()}, and also released if construction fails.
+     *
+     * @param channel positioned at the start of the HDF5 file
+     * @param source  identifies the data for {@link #getURI()} and messages
+     */
+    public HDF5Reader(SeekableByteChannel channel, URI source) {
+        this(open(channel, source), source);
+    }
+
+    private static HdfFile open(SeekableByteChannel channel, URI source) {
+        try {
+            return new HdfFile(channel, jhdfDisplayUri(source));
+        } catch (RuntimeException | Error e) {
+            // jHDF leaves the channel open when construction fails (e.g. not an
+            // HDF5 file); the reader owns the channel, so release it here.
+            try { channel.close(); } catch (Exception ignore) {}
+            throw e;
+        }
+    }
+
+    /**
+     * jHDF derives a display {@link Path} from the URI's path component;
+     * substitute a placeholder for URIs it cannot hold (opaque URNs, path
+     * characters illegal in local paths) so such sources still open.
+     */
+    private static URI jhdfDisplayUri(URI source) {
+        try {
+            String path = source.getPath();
+            if (path != null) {
+                Path.of(path);
+                return source;
+            }
+        } catch (InvalidPathException cannotDisplay) {
+            // fall through to the placeholder
+        }
+        return URI.create("bg:/channel");
+    }
+
+    private HDF5Reader(HdfFile hdf, URI uri) {
+        this.hdf = hdf;
         try {
             this.hdt = (Group) hdf.getChild(Params.BG);
             if (hdt == null) {
                 throw new IllegalStateException(
-                        "Not a BeakGraph file (no '" + Params.BG + "' group): " + src);
+                        "Not a BeakGraph file (no '" + Params.BG + "' group): " + uri);
             }
             this.formatVersion = readFormatVersion(hdt);
             if (formatVersion > Params.FORMAT_VERSION) {
                 throw new IllegalStateException(
-                        "BeakGraph HDF5 format version " + formatVersion + " in " + src
+                        "BeakGraph HDF5 format version " + formatVersion + " in " + uri
                       + " is newer than this build supports (max " + Params.FORMAT_VERSION
                       + "). Upgrade BeakGraph.");
             }
@@ -77,10 +124,11 @@ public class HDF5Reader implements BGReader {
             this.dict = new PositionalDictionaryReader(dictionary);
             this.defaultGraph = Quad.defaultGraphIRI;
             nodeTable = new SimpleNodeTable(dict);
-            this.uri = src.toURI();
+            this.uri = uri;
         } catch (RuntimeException | Error e) {
-            // Close the mapped file before propagating: a leaked HdfFile pins the
-            // file handle (and on Windows, the file lock) with no way to release it.
+            // Close the backing storage before propagating: a leaked HdfFile pins
+            // the file handle (and on Windows, the file lock) - or the channel -
+            // with no way to release it.
             try { hdf.close(); } catch (Exception ignore) {}
             throw e;
         }
@@ -138,9 +186,15 @@ public class HDF5Reader implements BGReader {
         }
         boolean isDefault = ng.equals(Quad.defaultGraphNodeGenerated) || ng.equals(Quad.defaultGraphIRI);
         Node g = isDefault ? this.defaultGraph : ng;
-        Node s = substitute(triple.getSubject(), bnid, nodeTable);
-        Node p = substitute(triple.getPredicate(), bnid, nodeTable);
-        Node o = substitute(triple.getObject(), bnid, nodeTable);
+        // A bound variable's id is used DIRECTLY by the iterators (they consult the
+        // binding before the dictionary) whenever its id-space matches the position;
+        // only a cross-space binding (predicate id used in an entity position or
+        // vice versa) is materialized to its term here so the iterator re-locates it
+        // in the position's own dictionary. The former unconditional substitution
+        // paid an extract() + full binary search per bound variable per input row.
+        Node s = substituteIfCrossSpace(triple.getSubject(), bnid, nodeTable, false);
+        Node p = substituteIfCrossSpace(triple.getPredicate(), bnid, nodeTable, true);
+        Node o = substituteIfCrossSpace(triple.getObject(), bnid, nodeTable, false);
         Quad quadPattern = new Quad(g, s, p, o);
         return new BGIteratorMaster(this, dict, bnid, quadPattern, filter, nodeTable);
     }
@@ -153,10 +207,13 @@ public class HDF5Reader implements BGReader {
      * construction).
      */
     private Iterator<BindingNodeId> readUnion(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
-        List<Var> vars = new ArrayList<>(3);
+        List<Var> varList = new ArrayList<>(3);
         for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
-            if (n.isVariable()) vars.add(Var.alloc(n));
+            if (n.isVariable()) varList.add(Var.alloc(n));
         }
+        Var v0 = varList.size() > 0 ? varList.get(0) : null;
+        Var v1 = varList.size() > 1 ? varList.get(1) : null;
+        Var v2 = varList.size() > 2 ? varList.get(2) : null;
         // Lazy per-graph chaining: constructing every graph's iterator up front
         // paid each one's index binary searches before the first row came back
         // (spatial stores hold thousands of tile graphs).
@@ -165,46 +222,110 @@ public class HDF5Reader implements BGReader {
             .iterator();
         Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gn -> read(gn, bnid, triple, filter, nodeTable));
         // The dedup set is inherent to union set-semantics (rows arrive per
-        // graph, not globally sorted); the key is a record of three primitive
-        // longs rather than a boxed List<Long>, cutting the per-row footprint
-        // of a large union scan several-fold.
-        record RowKey(long a, long b, long c) {}
-        Set<RowKey> seen = new HashSet<>();
+        // graph, not globally sorted); an open-addressing set of three raw longs
+        // keeps a large union scan free of per-row key/box allocations.
+        LongTripleSet seen = new LongTripleSet();
         return Iter.filter(chain, b -> {
-            long[] k = {Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE};
-            for (int i = 0; i < vars.size(); i++) {
-                NodeId id = b.get(vars.get(i));
-                if (id != null) k[i] = id.getId();
-            }
-            return seen.add(new RowKey(k[0], k[1], k[2]));
+            // Packed ids (type bits included) key the dedup: identical variable
+            // values across graphs carry identical packed ids by construction.
+            long k0 = (v0 != null) ? b.get(v0) : NodeId.NONE;
+            long k1 = (v1 != null) ? b.get(v1) : NodeId.NONE;
+            long k2 = (v2 != null) ? b.get(v2) : NodeId.NONE;
+            return seen.add(k0, k1, k2);
         });
+    }
+
+    /**
+     * Open-addressing hash set of (long, long, long) keys - the union scan's
+     * dedup structure. Linear probing at &le; 50% load; grows by doubling.
+     * Not thread-safe (one per union iterator).
+     */
+    private static final class LongTripleSet {
+        private long[] a, b, c;
+        private boolean[] used;
+        private int size;
+
+        LongTripleSet() {
+            alloc(1 << 10);
+        }
+
+        private void alloc(int capacity) {
+            a = new long[capacity];
+            b = new long[capacity];
+            c = new long[capacity];
+            used = new boolean[capacity];
+            size = 0;
+        }
+
+        /** splitmix64 finalizer - full-avalanche mix. */
+        private static long mix(long z) {
+            z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+            z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+            return z ^ (z >>> 31);
+        }
+
+        boolean add(long x, long y, long z) {
+            if ((size << 1) >= used.length) {
+                grow();
+            }
+            int mask = used.length - 1;
+            int i = (int) (mix(x ^ mix(y ^ mix(z))) & mask);
+            while (used[i]) {
+                if (a[i] == x && b[i] == y && c[i] == z) {
+                    return false;
+                }
+                i = (i + 1) & mask;
+            }
+            used[i] = true;
+            a[i] = x;
+            b[i] = y;
+            c[i] = z;
+            size++;
+            return true;
+        }
+
+        private void grow() {
+            long[] oa = a, ob = b, oc = c;
+            boolean[] ou = used;
+            alloc(ou.length << 1);
+            for (int i = 0; i < ou.length; i++) {
+                if (ou[i]) {
+                    add(oa[i], ob[i], oc[i]);
+                }
+            }
+        }
     }
 
     /** True when {@code n} is a variable already bound to a node that does not exist here. */
     private static boolean boundToMissing(Node n, BindingNodeId bnid) {
         if (bnid != null && n.isVariable()) {
-            NodeId id = bnid.get(Var.alloc(n));
-            return id != null && NodeId.isDoesNotExist(id);
+            return NodeId.isDoesNotExist(bnid.get(Var.alloc(n)));
         }
         return false;
     }
 
     /**
-     * Helper to replace Variables in the query pattern with concrete Nodes from the parent binding.
+     * Replaces a bound variable with its concrete term ONLY when its NodeId lives
+     * in a different id-space than the position it is used at. GRAPH/SUBJECT ids
+     * are entity-space and OBJECT ids are entity-space plus offset literals, so
+     * among those three positions a bound id is directly comparable (a literal id
+     * in an entity position simply never matches - correct, since a literal cannot
+     * be a subject or graph). Only the isolated PREDICATE space needs the
+     * materialize-and-relocate round trip, in either direction.
      */
-    private Node substitute(Node n, BindingNodeId bnid, NodeTable nodeTable) {
-        if (n.isVariable()) {
-            Var v = Var.alloc(n);
-            NodeId id = bnid.get(v);
-            if (id != null) {
-                // We found a binding. Resolve the ID to a Node so the Iterator can locate it.
-                Node concrete = nodeTable.getNodeForNodeId(id);
-                if (concrete != null) {
-                    return concrete;
-                }
-            }
+    private Node substituteIfCrossSpace(Node n, BindingNodeId bnid, NodeTable nodeTable, boolean predicatePosition) {
+        if (!n.isVariable()) {
+            return n;
         }
-        return n;
+        long id = bnid.get(Var.alloc(n));
+        if (id == NodeId.NONE || NodeId.isDoesNotExist(id)) {
+            return n; // unbound (or already short-circuited by boundToMissing)
+        }
+        if (NodeId.isPredicateSpace(id) == predicatePosition) {
+            return n; // same space: the iterator consumes the bound id directly
+        }
+        Node concrete = nodeTable.getNodeForNodeId(id);
+        return (concrete != null) ? concrete : n;
     }
 
     @Override
@@ -217,6 +338,10 @@ public class HDF5Reader implements BGReader {
         Node s = tp.getSubject().isConcrete() ? tp.getSubject() : sVar;
         Node p = tp.getPredicate().isConcrete() ? tp.getPredicate() : pVar;
         Node o = tp.getObject().isConcrete() ? tp.getObject() : oVar;
+        // Absent-term early exit. The iterators would answer empty anyway, but for a
+        // union/named-graph fan-out this saves constructing per-graph iterators; the
+        // "duplicate" locate the iterator then performs is a dictionary search-cache
+        // hit, not a second binary search.
         if (s.isConcrete() && dict.getSubjects().locate(s) == -1) {
             return new NullIterator<>();
         }
@@ -264,6 +389,13 @@ public class HDF5Reader implements BGReader {
         return dict.streamGraphs().iterator();
     }
     
+    @Override
+    public long countTriples(Node graph) {
+        // Quads are de-duplicated per graph in the index, so the graph's quad
+        // count is its triple count.
+        return IndexCounts.quads(this, graph);
+    }
+
     @Override
     public boolean containsGraph(Node graphNode) {
         // Graphs share the universal entity dictionary, so locate() alone matches

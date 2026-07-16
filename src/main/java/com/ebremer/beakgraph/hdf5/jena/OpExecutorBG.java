@@ -10,6 +10,7 @@ import org.apache.jena.sparql.core.Substitute;
 import org.apache.jena.sparql.engine.ExecutionContext;
 import org.apache.jena.sparql.engine.QueryIterator;
 import org.apache.jena.sparql.engine.iterator.QueryIterPeek;
+import org.apache.jena.sparql.engine.iterator.QueryIterRoot;
 import org.apache.jena.sparql.engine.main.OpExecutor;
 import org.apache.jena.sparql.engine.main.OpExecutorFactory;
 import org.apache.jena.sparql.engine.main.QC;
@@ -45,9 +46,42 @@ public class OpExecutorBG extends OpExecutor {
     // span every named graph, including the always-present VoID metadata graph, so
     // default-graph queries over-reported terms), any FILTER wrapped around the
     // pattern was silently dropped, DISTINCT ?g included the default graph, and the
-    // incoming iterator (join semantics) was discarded. A correct fast path would
-    // need per-graph id lists in the format plus filter/join guards; until then
-    // DISTINCT executes normally.
+    // incoming iterator (join semantics) was discarded. The replacement below fixes
+    // all of that by reading the PER-GRAPH index levels (GPOS predicates / GSPO
+    // subjects) and firing only on the exact algebra shape it can answer - see
+    // DistinctTermFastPath.
+
+    @Override
+    protected QueryIterator execute(OpDistinct opDistinct, QueryIterator input) {
+        // Only the plain top-level execution shape (the engine's single-binding root
+        // iterator) is eligible; a joined/nested input keeps normal semantics. The
+        // peek wrapper lets the fast path inspect the root binding without consuming
+        // it, so declining costs nothing - the wrapper simply becomes the input.
+        if (isForBeakGraph && input instanceof QueryIterRoot) {
+            QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
+            QueryIterator fast = DistinctTermFastPath.tryExecute(opDistinct, peek, execCxt);
+            if (fast != null) {
+                return fast;
+            }
+            input = peek;
+        }
+        return super.execute(opDistinct, input);
+    }
+
+    @Override
+    protected QueryIterator execute(OpGroup opGroup, QueryIterator input) {
+        // Whole-graph COUNT aggregates over {?s ?p ?o} answered from index structure
+        // (same eligibility rules as the DISTINCT fast path above).
+        if (isForBeakGraph && input instanceof QueryIterRoot) {
+            QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
+            QueryIterator fast = AggregateCountFastPath.tryExecute(opGroup, peek, execCxt);
+            if (fast != null) {
+                return fast;
+            }
+            input = peek;
+        }
+        return super.execute(opGroup, input);
+    }
 
     @Override
     protected QueryIterator execute(OpPropFunc opPropFunc, QueryIterator input) {
@@ -112,27 +146,35 @@ public class OpExecutorBG extends OpExecutor {
     }
     
     private static QueryIterator plainExecute(Op op, QueryIterator input, ExecutionContext execCxt) {
-        ExecutionContextBG ec = new ExecutionContextBG(execCxt, op);
-        ec.setExecutor(plainFactory);
+        // Jena 6: ExecutionContext is final, so the placed filter can no longer
+        // ride on a context subclass (the old ExecutionContextBG). It rides on a
+        // per-call executor FACTORY instead - immutable and per-execution, so
+        // executors created lazily during iteration (e.g. substitution joins
+        // re-executing the RHS per binding) still see exactly their op's filter.
+        ExprList filter = (op instanceof OpFilter opFilter) ? opFilter.getExprs() : null;
+        ExecutionContext ec = ExecutionContext.copyChangeExecutor(execCxt, new OpExecutorPlainFactoryBeak(filter));
         return QC.execute(op, input, ec) ;
     }
-    
-    private static final OpExecutorFactory plainFactory = new OpExecutorPlainFactoryBeak();
-    
+
     private static class OpExecutorPlainFactoryBeak implements OpExecutorFactory {
+        private final ExprList filter;
+
+        OpExecutorPlainFactoryBeak(ExprList filter) {
+            this.filter = filter;
+        }
+
         @Override
         public OpExecutor create(ExecutionContext execCxt) {
-            return new OpExecutorPlainBeak(execCxt) ;
+            return new OpExecutorPlainBeak(execCxt, filter) ;
         }
     }
-    
+
     private static class OpExecutorPlainBeak extends OpExecutor {
         final ExprList filter;
 
-        public OpExecutorPlainBeak(ExecutionContext execCxt) {
+        public OpExecutorPlainBeak(ExecutionContext execCxt, ExprList filter) {
             super(execCxt);
-            ExecutionContextBG ecr = (ExecutionContextBG) execCxt;
-            filter = ecr.getFilter();
+            this.filter = filter;
         }
 
         @Override

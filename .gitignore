@@ -1,7 +1,11 @@
 /target/
+/benchmarks/target/
 *.log
 .claude/settings.local.json
 *.h5
+
+# benchmark targets (deployment-specific local paths + URLs, not source)
+testpairs.tsv
 
 # maven-shade artifact
 dependency-reduced-pom.xml
@@ -11,4 +15,6 @@ nb-configuration.xml
 nbactions.xml
 nbactions-*.xml
 
-
+REVIEW.md
+TODO.md
+PLAN.md

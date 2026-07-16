@@ -50,22 +50,59 @@ public class PatternMatchBG {
 
         // Execute all triple patterns (the ExprList is range-pushdown hints only;
         // full filter semantics are enforced by the surrounding OpFilter).
+        // Jena 6: makeAbortable takes the execution's cancel signal directly,
+        // mirroring Jena's own solvers. The FIRST pattern - where a scan appears
+        // when the input is the single root binding - may be answered by a
+        // parallel chunked scan; join steps stay sequential (per-binding index
+        // lookups, not scans).
+        boolean first = true;
         for (Triple triple : triples) {
-            chain = solve(bGraph, triple, filter, chain, execCxt);
-            chain = makeAbortable(chain, killList);
+            if (first) {
+                first = false;
+                chain = solveFirst(bGraph, triple, filter, chain, execCxt, killList);
+            } else {
+                chain = solve(bGraph, triple, filter, chain, execCxt);
+            }
+            chain = makeAbortable(chain, killList, execCxt.getCancelSignal());
         }
 
         // Convert back to Jena bindings
         Iterator<Binding> iterBinding = SolverLibBeak.convertToNodes(chain, bGraph);
-        iterBinding = makeAbortable(iterBinding, killList);
+        iterBinding = makeAbortable(iterBinding, killList, execCxt.getCancelSignal());
         return new QueryIterAbortable(iterBinding, killList, input, execCxt);
     }
 
-    private static Iterator<BindingNodeId> solve(BeakGraph bGraph, Triple triple, ExprList filter, 
+    private static Iterator<BindingNodeId> solve(BeakGraph bGraph, Triple triple, ExprList filter,
                                                   Iterator<BindingNodeId> chain, ExecutionContext execCxt) {
-        Function<BindingNodeId, Iterator<BindingNodeId>> step = 
+        Function<BindingNodeId, Iterator<BindingNodeId>> step =
             bnid -> find(bGraph, bnid, triple, filter, execCxt);
         return Iter.flatMap(chain, step);
+    }
+
+    /**
+     * First pattern of the BGP. When the input is exactly one binding (the plain
+     * top-level root - by far the common case for scan queries) and the pattern
+     * is scan-shaped, answer it with a chunked parallel scan; the scan is
+     * registered in the kill-list so cancellation stops its workers, and close
+     * reaches it through the Iter close cascade. Multi-binding inputs (spatial
+     * seeding, joins) keep the ordinary lazy per-binding chaining.
+     */
+    private static Iterator<BindingNodeId> solveFirst(BeakGraph bGraph, Triple triple, ExprList filter,
+                                                      Iterator<BindingNodeId> chain, ExecutionContext execCxt,
+                                                      List<Abortable> killList) {
+        if (!chain.hasNext()) {
+            return chain;
+        }
+        BindingNodeId b0 = chain.next();
+        if (chain.hasNext()) {
+            return solve(bGraph, triple, filter, Iter.concat(List.of(b0).iterator(), chain), execCxt);
+        }
+        ParallelScan parallel = ScanChunks.tryParallel(bGraph, b0, triple, filter, execCxt);
+        if (parallel != null) {
+            killList.add(parallel);
+            return parallel;
+        }
+        return find(bGraph, b0, triple, filter, execCxt);
     }
     
     private static Iterator<BindingNodeId> find(BeakGraph bGraph, BindingNodeId bnid, Triple xPattern, 

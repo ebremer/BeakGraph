@@ -15,11 +15,20 @@ import java.util.stream.Stream;
 import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
+import org.apache.jena.sparql.expr.NodeValue;
 
 public class MultiTypeDictionaryReader extends AbstractDictionary {
     private static final DataType[] DT_VALUES = DataType.values();
     private static final TypeMapper tm = TypeMapper.getInstance();
     private static final int TIER_SPACING = 1024;
+    /**
+     * Term -> raw search result (id, or negative insertion point). The store is
+     * immutable, so both hits and misses are permanent - and query execution
+     * re-locates the SAME concrete pattern terms once per input binding (each
+     * incoming row constructs fresh iterators), which made the tiered binary
+     * search the dominant join cost. Sized via -Dbeakgraph.dict.search.cache.size.
+     */
+    private static final long SEARCH_CACHE_SIZE = Long.getLong("beakgraph.dict.search.cache.size", 65_536L);
     private final BitPackedUnSignedLongBuffer offsets;
     private final BitPackedUnSignedLongBuffer integers;
     private final BitPackedUnSignedLongBuffer longs;
@@ -44,6 +53,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // Volatile publication keeps concurrent first-searchers safe; the benign
     // race builds identical content over immutable data.
     private volatile TieredIndex tiered;
+
+    private final com.github.benmanes.caffeine.cache.Cache<Node, Long> searchCache =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                    .maximumSize(SEARCH_CACHE_SIZE)
+                    .build();
 
     private record TieredIndex(long[] ids, Node[] nodes) {}
     private static final TieredIndex EMPTY_TIER = new TieredIndex(new long[0], new Node[0]);
@@ -158,9 +172,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
     @Override
     public long search(Node element) {
-        return this.searchFAST(element);
+        return searchCache.get(element, this::searchFAST);
     }
-    
+
     /**
      * Tiered binary search: narrows the id range to ~1024 via the tiered index, then
      * binary-searches with extract() + NodeComparator for a correct total ordering.
@@ -169,11 +183,29 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         long low = 1;
         long high = numEntries;
 
+        // A literal target's NodeValue is needed at every literal-vs-literal probe;
+        // memoize it (by identity - `element` is the same object throughout this
+        // search) instead of re-deriving it ~log(n) times. The comparator's
+        // ordering semantics are untouched: nodeValue() is the designated hook.
+        NodeComparator cmp = !element.isLiteral() ? NodeComparator.INSTANCE : new NodeComparator() {
+            private NodeValue targetValue;
+            @Override
+            protected NodeValue nodeValue(Node n) {
+                if (n != element) {
+                    return super.nodeValue(n);
+                }
+                if (targetValue == null) {
+                    targetValue = super.nodeValue(n);
+                }
+                return targetValue;
+            }
+        };
+
         // 1. Tiered Index Lookup to narrow the range
         // This is safe because the tier nodes are actual Node objects compared using your specific Comparator
         TieredIndex tier = tieredIndex();
         if (tier.nodes().length > 0) {
-            int tierIdx = Arrays.binarySearch(tier.nodes(), element, NodeComparator.INSTANCE);
+            int tierIdx = Arrays.binarySearch(tier.nodes(), element, cmp);
             if (tierIdx >= 0) return tier.ids()[tierIdx];
 
             int insertionPoint = -(tierIdx + 1);
@@ -192,11 +224,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             long midId = low + (high - low) / 2;
             Node midNode = extract(midId);
             if (midNode == null) throw new IllegalStateException("Dictionary corruption at ID: " + midId);
-            
-            int cmp = NodeComparator.INSTANCE.compare(midNode, element);
 
-            if (cmp == 0) return midId;
-            else if (cmp < 0) low = midId + 1;
+            int c = cmp.compare(midNode, element);
+
+            if (c == 0) return midId;
+            else if (c < 0) low = midId + 1;
             else high = midId - 1;
         }
         return -low - 1;

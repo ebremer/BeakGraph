@@ -1,0 +1,1306 @@
+[
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.BitPackedBufferBench.binarySearch",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "width" : "13"
+        },
+        "primaryMetric" : {
+            "score" : 5.328323009318994,
+            "scoreError" : 0.4997569415921271,
+            "scoreConfidence" : [
+                4.828566067726866,
+                5.828079950911121
+            ],
+            "scorePercentiles" : {
+                "0.0" : 5.167947723923546,
+                "50.0" : 5.3533926993731695,
+                "90.0" : 5.509508894943548,
+                "95.0" : 5.509508894943548,
+                "99.0" : 5.509508894943548,
+                "99.9" : 5.509508894943548,
+                "99.99" : 5.509508894943548,
+                "99.999" : 5.509508894943548,
+                "99.9999" : 5.509508894943548,
+                "100.0" : 5.509508894943548
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    5.509508894943548,
+                    5.167947723923546,
+                    5.245602685521753,
+                    5.3651630428329495,
+                    5.3533926993731695
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.BitPackedBufferBench.randomGet",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "width" : "13"
+        },
+        "primaryMetric" : {
+            "score" : 4.960899741214621,
+            "scoreError" : 0.346234358923297,
+            "scoreConfidence" : [
+                4.6146653822913235,
+                5.307134100137918
+            ],
+            "scorePercentiles" : {
+                "0.0" : 4.878715284608903,
+                "50.0" : 4.937910538718751,
+                "90.0" : 5.094497629210883,
+                "95.0" : 5.094497629210883,
+                "99.0" : 5.094497629210883,
+                "99.9" : 5.094497629210883,
+                "99.99" : 5.094497629210883,
+                "99.999" : 5.094497629210883,
+                "99.9999" : 5.094497629210883,
+                "100.0" : 5.094497629210883
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    5.094497629210883,
+                    4.937910538718751,
+                    5.0050158770280735,
+                    4.878715284608903,
+                    4.888359376506492
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.BitPackedBufferBench.sequentialSumViaGet",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "width" : "13"
+        },
+        "primaryMetric" : {
+            "score" : 2.827126637291048,
+            "scoreError" : 0.14889815511846216,
+            "scoreConfidence" : [
+                2.678228482172586,
+                2.9760247924095102
+            ],
+            "scorePercentiles" : {
+                "0.0" : 2.7930117489998803,
+                "50.0" : 2.816295623779297,
+                "90.0" : 2.8809872018285545,
+                "95.0" : 2.8809872018285545,
+                "99.0" : 2.8809872018285545,
+                "99.9" : 2.8809872018285545,
+                "99.99" : 2.8809872018285545,
+                "99.999" : 2.8809872018285545,
+                "99.9999" : 2.8809872018285545,
+                "100.0" : 2.8809872018285545
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    2.7930117489998803,
+                    2.816295623779297,
+                    2.8523268628476273,
+                    2.7930117489998803,
+                    2.8809872018285545
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.BitPackedBufferBench.sequentialSumViaStream",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "width" : "13"
+        },
+        "primaryMetric" : {
+            "score" : 2.9288569370215183,
+            "scoreError" : 0.18205721505503933,
+            "scoreConfidence" : [
+                2.746799721966479,
+                3.1109141520765577
+            ],
+            "scorePercentiles" : {
+                "0.0" : 2.864829366078634,
+                "50.0" : 2.9571128703492344,
+                "90.0" : 2.969318295117491,
+                "95.0" : 2.969318295117491,
+                "99.0" : 2.969318295117491,
+                "99.9" : 2.969318295117491,
+                "99.99" : 2.969318295117491,
+                "99.999" : 2.969318295117491,
+                "99.9999" : 2.969318295117491,
+                "100.0" : 2.969318295117491
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    2.9571128703492344,
+                    2.961120074009379,
+                    2.8919040795528526,
+                    2.969318295117491,
+                    2.864829366078634
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.DictionaryBench.entityLocateHit",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 17.093041407296255,
+            "scoreError" : 0.9424939019793735,
+            "scoreConfidence" : [
+                16.150547505316883,
+                18.035535309275627
+            ],
+            "scorePercentiles" : {
+                "0.0" : 16.779127779383348,
+                "50.0" : 17.09862562780237,
+                "90.0" : 17.413706794683385,
+                "95.0" : 17.413706794683385,
+                "99.0" : 17.413706794683385,
+                "99.9" : 17.413706794683385,
+                "99.99" : 17.413706794683385,
+                "99.999" : 17.413706794683385,
+                "99.9999" : 17.413706794683385,
+                "100.0" : 17.413706794683385
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    16.948743520400573,
+                    17.09862562780237,
+                    17.225003314211598,
+                    16.779127779383348,
+                    17.413706794683385
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.DictionaryBench.extractEntity",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 72.96370384218977,
+            "scoreError" : 5.574082885119737,
+            "scoreConfidence" : [
+                67.38962095707004,
+                78.53778672730951
+            ],
+            "scorePercentiles" : {
+                "0.0" : 70.74497130211397,
+                "50.0" : 73.00233339345215,
+                "90.0" : 74.71736382719318,
+                "95.0" : 74.71736382719318,
+                "99.0" : 74.71736382719318,
+                "99.9" : 74.71736382719318,
+                "99.99" : 74.71736382719318,
+                "99.999" : 74.71736382719318,
+                "99.9999" : 74.71736382719318,
+                "100.0" : 74.71736382719318
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    70.74497130211397,
+                    73.00233339345215,
+                    72.79525929953114,
+                    74.71736382719318,
+                    73.5585913886584
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.DictionaryBench.extractObject",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 108.14778725923993,
+            "scoreError" : 10.391620509608645,
+            "scoreConfidence" : [
+                97.75616674963129,
+                118.53940776884858
+            ],
+            "scorePercentiles" : {
+                "0.0" : 104.2998222745544,
+                "50.0" : 108.87552008591153,
+                "90.0" : 110.795678755083,
+                "95.0" : 110.795678755083,
+                "99.0" : 110.795678755083,
+                "99.9" : 110.795678755083,
+                "99.99" : 110.795678755083,
+                "99.999" : 110.795678755083,
+                "99.9999" : 110.795678755083,
+                "100.0" : 110.795678755083
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    110.795678755083,
+                    108.87552008591153,
+                    110.21042761921144,
+                    104.2998222745544,
+                    106.55748756143934
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.DictionaryBench.locateMiss",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 13.475326645889556,
+            "scoreError" : 1.2143447894018062,
+            "scoreConfidence" : [
+                12.26098185648775,
+                14.689671435291363
+            ],
+            "scorePercentiles" : {
+                "0.0" : 13.124260503666685,
+                "50.0" : 13.352741500431314,
+                "90.0" : 13.947778351216831,
+                "95.0" : 13.947778351216831,
+                "99.0" : 13.947778351216831,
+                "99.9" : 13.947778351216831,
+                "99.99" : 13.947778351216831,
+                "99.999" : 13.947778351216831,
+                "99.9999" : 13.947778351216831,
+                "100.0" : 13.947778351216831
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    13.610695830207685,
+                    13.124260503666685,
+                    13.947778351216831,
+                    13.352741500431314,
+                    13.34115704392526
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.DictionaryBench.nodeTableLookup",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 20.513778145581277,
+            "scoreError" : 2.2839186189300507,
+            "scoreConfidence" : [
+                18.229859526651225,
+                22.79769676451133
+            ],
+            "scorePercentiles" : {
+                "0.0" : 19.97558265775591,
+                "50.0" : 20.560513280634847,
+                "90.0" : 21.441907485828047,
+                "95.0" : 21.441907485828047,
+                "99.0" : 21.441907485828047,
+                "99.9" : 21.441907485828047,
+                "99.99" : 21.441907485828047,
+                "99.999" : 21.441907485828047,
+                "99.9999" : 21.441907485828047,
+                "100.0" : 21.441907485828047
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    21.441907485828047,
+                    20.560513280634847,
+                    20.57704020193087,
+                    19.97558265775591,
+                    20.01384710175671
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.DictionaryBench.objectLocateHit",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 21.215856461281184,
+            "scoreError" : 1.8088997836918395,
+            "scoreConfidence" : [
+                19.406956677589346,
+                23.024756244973023
+            ],
+            "scorePercentiles" : {
+                "0.0" : 20.56231934977823,
+                "50.0" : 21.131122384476203,
+                "90.0" : 21.766624423920266,
+                "95.0" : 21.766624423920266,
+                "99.0" : 21.766624423920266,
+                "99.9" : 21.766624423920266,
+                "99.99" : 21.766624423920266,
+                "99.999" : 21.766624423920266,
+                "99.9999" : 21.766624423920266,
+                "100.0" : 21.766624423920266
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    21.131122384476203,
+                    21.766624423920266,
+                    20.56231934977823,
+                    21.057116577086834,
+                    21.5620995711444
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.DictionaryBench.predicateLocateHit",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 12.036731896417493,
+            "scoreError" : 0.6438169113783212,
+            "scoreConfidence" : [
+                11.392914985039171,
+                12.680548807795814
+            ],
+            "scorePercentiles" : {
+                "0.0" : 11.764343556450184,
+                "50.0" : 12.085678935883108,
+                "90.0" : 12.188468107573454,
+                "95.0" : 12.188468107573454,
+                "99.0" : 12.188468107573454,
+                "99.9" : 12.188468107573454,
+                "99.99" : 12.188468107573454,
+                "99.999" : 12.188468107573454,
+                "99.9999" : 12.188468107573454,
+                "100.0" : 12.188468107573454
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    11.764343556450184,
+                    12.003180851579586,
+                    12.085678935883108,
+                    12.188468107573454,
+                    12.14198803060113
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.QueryBench.chainJoin",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 88.46081554234432,
+            "scoreError" : 7.576259861793013,
+            "scoreConfidence" : [
+                80.8845556805513,
+                96.03707540413734
+            ],
+            "scorePercentiles" : {
+                "0.0" : 86.71447983382379,
+                "50.0" : 87.6770988356824,
+                "90.0" : 91.80050444831697,
+                "95.0" : 91.80050444831697,
+                "99.0" : 91.80050444831697,
+                "99.9" : 91.80050444831697,
+                "99.99" : 91.80050444831697,
+                "99.999" : 91.80050444831697,
+                "99.9999" : 91.80050444831697,
+                "100.0" : 91.80050444831697
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    88.46802227919724,
+                    87.64397231470124,
+                    87.6770988356824,
+                    86.71447983382379,
+                    91.80050444831697
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.QueryBench.fullScanFind",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 42786.73773043478,
+            "scoreError" : 4122.904048804436,
+            "scoreConfidence" : [
+                38663.83368163035,
+                46909.64177923922
+            ],
+            "scorePercentiles" : {
+                "0.0" : 41650.16,
+                "50.0" : 43025.94583333333,
+                "90.0" : 44317.79565217391,
+                "95.0" : 44317.79565217391,
+                "99.0" : 44317.79565217391,
+                "99.9" : 44317.79565217391,
+                "99.99" : 44317.79565217391,
+                "99.999" : 44317.79565217391,
+                "99.9999" : 44317.79565217391,
+                "100.0" : 44317.79565217391
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    41881.808,
+                    44317.79565217391,
+                    43057.979166666664,
+                    41650.16,
+                    43025.94583333333
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.QueryBench.graphVarScan",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 4548.40864923084,
+            "scoreError" : 1717.171946587696,
+            "scoreConfidence" : [
+                2831.236702643144,
+                6265.580595818536
+            ],
+            "scorePercentiles" : {
+                "0.0" : 4115.7196721311475,
+                "50.0" : 4628.084331797235,
+                "90.0" : 5178.097422680413,
+                "95.0" : 5178.097422680413,
+                "99.0" : 5178.097422680413,
+                "99.9" : 5178.097422680413,
+                "99.99" : 5178.097422680413,
+                "99.999" : 5178.097422680413,
+                "99.9999" : 5178.097422680413,
+                "100.0" : 5178.097422680413
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    5178.097422680413,
+                    4628.084331797235,
+                    4121.008641975309,
+                    4115.7196721311475,
+                    4699.133177570094
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.QueryBench.pointLookup",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 4.234648469464547,
+            "scoreError" : 0.22656592423025326,
+            "scoreConfidence" : [
+                4.008082545234294,
+                4.4612143936948
+            ],
+            "scorePercentiles" : {
+                "0.0" : 4.160761296537749,
+                "50.0" : 4.227462798781853,
+                "90.0" : 4.322635820097147,
+                "95.0" : 4.322635820097147,
+                "99.0" : 4.322635820097147,
+                "99.9" : 4.322635820097147,
+                "99.99" : 4.322635820097147,
+                "99.999" : 4.322635820097147,
+                "99.9999" : 4.322635820097147,
+                "100.0" : 4.322635820097147
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    4.160761296537749,
+                    4.227462798781853,
+                    4.322635820097147,
+                    4.2142911269307355,
+                    4.248091304975255
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.QueryBench.predicateScan",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 18799.01896249958,
+            "scoreError" : 2296.5389455474606,
+            "scoreConfidence" : [
+                16502.48001695212,
+                21095.55790804704
+            ],
+            "scorePercentiles" : {
+                "0.0" : 18327.96,
+                "50.0" : 18635.233333333334,
+                "90.0" : 19777.176470588234,
+                "95.0" : 19777.176470588234,
+                "99.0" : 19777.176470588234,
+                "99.9" : 19777.176470588234,
+                "99.99" : 19777.176470588234,
+                "99.999" : 19777.176470588234,
+                "99.9999" : 19777.176470588234,
+                "100.0" : 19777.176470588234
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    19777.176470588234,
+                    18635.233333333334,
+                    18327.96,
+                    18345.987272727274,
+                    18908.737735849056
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.QueryBench.rangeFilter",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 96.81828666269104,
+            "scoreError" : 14.102255682983545,
+            "scoreConfidence" : [
+                82.7160309797075,
+                110.92054234567458
+            ],
+            "scorePercentiles" : {
+                "0.0" : 91.97920764776174,
+                "50.0" : 97.4371083868457,
+                "90.0" : 101.82273975388996,
+                "95.0" : 101.82273975388996,
+                "99.0" : 101.82273975388996,
+                "99.9" : 101.82273975388996,
+                "99.99" : 101.82273975388996,
+                "99.999" : 101.82273975388996,
+                "99.9999" : 101.82273975388996,
+                "100.0" : 101.82273975388996
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    91.97920764776174,
+                    94.92645051194539,
+                    101.82273975388996,
+                    97.92592701301243,
+                    97.4371083868457
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.QueryBench.starJoin",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 6.894986148751185,
+            "scoreError" : 0.5407437679295438,
+            "scoreConfidence" : [
+                6.354242380821641,
+                7.435729916680729
+            ],
+            "scorePercentiles" : {
+                "0.0" : 6.671410497999081,
+                "50.0" : 6.9201506891016775,
+                "90.0" : 7.053139388127789,
+                "95.0" : 7.053139388127789,
+                "99.0" : 7.053139388127789,
+                "99.9" : 7.053139388127789,
+                "99.99" : 7.053139388127789,
+                "99.999" : 7.053139388127789,
+                "99.9999" : 7.053139388127789,
+                "100.0" : 7.053139388127789
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [
+                    6.880189529134259,
+                    6.9201506891016775,
+                    7.053139388127789,
+                    6.671410497999081,
+                    6.9500406393931184
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.SelectBench.adjacentPair",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 215.19250353148442,
+            "scoreError" : 8.563931636994601,
+            "scoreConfidence" : [
+                206.62857189448982,
+                223.75643516847902
+            ],
+            "scorePercentiles" : {
+                "0.0" : 211.659323472634,
+                "50.0" : 215.4722832679748,
+                "90.0" : 217.79014408985125,
+                "95.0" : 217.79014408985125,
+                "99.0" : 217.79014408985125,
+                "99.9" : 217.79014408985125,
+                "99.99" : 217.79014408985125,
+                "99.999" : 217.79014408985125,
+                "99.9999" : 217.79014408985125,
+                "100.0" : 217.79014408985125
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    211.659323472634,
+                    215.4722832679748,
+                    215.1592885536016,
+                    217.79014408985125,
+                    215.88147827336056
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.SelectBench.directorySelect1",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 112.3289637324965,
+            "scoreError" : 5.86242966299423,
+            "scoreConfidence" : [
+                106.46653406950227,
+                118.19139339549073
+            ],
+            "scorePercentiles" : {
+                "0.0" : 109.89971806349395,
+                "50.0" : 112.50365189866169,
+                "90.0" : 113.97632413589174,
+                "95.0" : 113.97632413589174,
+                "99.0" : 113.97632413589174,
+                "99.9" : 113.97632413589174,
+                "99.99" : 113.97632413589174,
+                "99.999" : 113.97632413589174,
+                "99.9999" : 113.97632413589174,
+                "100.0" : 113.97632413589174
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    109.89971806349395,
+                    112.50365189866169,
+                    113.10244432034904,
+                    112.16268024408603,
+                    113.97632413589174
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.ebremer.beakgraph.benchmarks.SelectBench.linearSelect1",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 1,
+        "jvm" : "C:\\bin\\graalvm\\bin\\java.exe",
+        "jvmArgs" : [
+            "-XX:ThreadPriorityPolicy=1",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+EnableJVMCIProduct",
+            "-XX:+EnableJVMCI",
+            "-XX:-UnlockExperimentalVMOptions",
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-Xmx4g"
+        ],
+        "jdkVersion" : "25.0.2",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "25.0.2+10-jvmci-b01",
+        "warmupIterations" : 3,
+        "warmupTime" : "1 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 5,
+        "measurementTime" : "1 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "subjects" : "50000"
+        },
+        "primaryMetric" : {
+            "score" : 1792.4609188348404,
+            "scoreError" : 103.12933918614627,
+            "scoreConfidence" : [
+                1689.331579648694,
+                1895.5902580209868
+            ],
+            "scorePercentiles" : {
+                "0.0" : 1759.7531711264755,
+                "50.0" : 1788.3589813281644,
+                "90.0" : 1826.2539408004204,
+                "95.0" : 1826.2539408004204,
+                "99.0" : 1826.2539408004204,
+                "99.9" : 1826.2539408004204,
+                "99.99" : 1826.2539408004204,
+                "99.999" : 1826.2539408004204,
+                "99.9999" : 1826.2539408004204,
+                "100.0" : 1826.2539408004204
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [
+                    1811.8023449615212,
+                    1776.1361559576217,
+                    1788.3589813281644,
+                    1826.2539408004204,
+                    1759.7531711264755
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+        }
+    }
+]
+
+

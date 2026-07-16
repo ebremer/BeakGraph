@@ -5,6 +5,8 @@ import com.ebremer.beakgraph.utils.UTIL;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.regex.Pattern;
 import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.Node;
@@ -20,26 +22,58 @@ import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.VOID;
 
 /**
- * A class for accumulating statistics over quads in an RDF dataset and generating
- * VoID and SPARQL Service Description (sd:) metadata.
+ * A class for accumulating statistics over quads in an RDF dataset and
+ * generating VoID and SPARQL Service Description (sd:) metadata.
+ *
+ * <p>Memory is BOUNDED regardless of dataset size: distinct-subject,
+ * distinct-object, and per-class instance counts are exact up to
+ * {@value Stats#EXACT_LIMIT} distinct nodes per graph and then spill into
+ * HyperLogLog sketches ({@link DistinctNodeCounter}); the
+ * {@code void:uriSpace} common prefix and {@code void:vocabulary} namespaces
+ * are maintained incrementally (exact, tiny state) instead of over retained
+ * node sets. Small and medium stores therefore report byte-identical VoID
+ * to previous versions; billion-quad disk builds report deterministic
+ * estimates (~0.8% error) instead of holding much of their dictionary on
+ * the heap. Fully thread-safe: parallel-ingest writers call {@link #add}
+ * from many threads.
  */
 public class BGVoIDSD {
 
     private final String datasetURI;
+    private final int exactLimit;
     private final Stats defaultStats;
     private final ConcurrentHashMap<Node, Stats> namedStats = new ConcurrentHashMap<>();
 
     /**
-     * Constructs a new BGVoIDSD instance.
+     * Constructs a new BGVoIDSD instance with the bounded-memory (sketch)
+     * counting behaviour.
      *
      * @param datasetURI the URI of the dataset being analyzed (must not be null)
      */
     public BGVoIDSD(String datasetURI) {
+        this(datasetURI, Stats.EXACT_LIMIT);
+    }
+
+    private BGVoIDSD(String datasetURI, int exactLimit) {
         if (datasetURI == null || datasetURI.trim().isEmpty()) {
             throw new IllegalArgumentException("Dataset URI must not be null or empty");
         }
         this.datasetURI = datasetURI;
-        this.defaultStats = new Stats();
+        this.exactLimit = exactLimit;
+        this.defaultStats = new Stats(exactLimit);
+    }
+
+    /**
+     * The accumulator for a writer's {@link com.ebremer.beakgraph.core.VoidMode},
+     * or {@code null} for {@link com.ebremer.beakgraph.core.VoidMode#NONE}
+     * (callers skip statistics entirely).
+     */
+    public static BGVoIDSD forMode(com.ebremer.beakgraph.core.VoidMode mode, String datasetURI) {
+        return switch (mode) {
+            case NONE -> null;
+            case EXACT -> new BGVoIDSD(datasetURI, Integer.MAX_VALUE); // never spills to a sketch
+            case SKETCH -> new BGVoIDSD(datasetURI, Stats.EXACT_LIMIT);
+        };
     }
 
     /**
@@ -55,7 +89,7 @@ public class BGVoIDSD {
         if (Quad.isDefaultGraph(graphNode)) {
             return defaultStats;
         }
-        return namedStats.computeIfAbsent(graphNode, k -> new Stats());
+        return namedStats.computeIfAbsent(graphNode, k -> new Stats(exactLimit));
     }
 
     /**
@@ -89,38 +123,80 @@ public class BGVoIDSD {
     }
 
     private static class Stats {
-        private long numtriples = 0;
-        private final ConcurrentHashMap<Node, Long> predicateCounts = new ConcurrentHashMap<>();
-        private final ConcurrentHashMap<Node, Set<Node>> classInstances = new ConcurrentHashMap<>();
-        private final Set<Node> distinctSubjects = ConcurrentHashMap.newKeySet();
-        private final Set<Node> distinctObjects = ConcurrentHashMap.newKeySet();
+        /** Distinct nodes tracked exactly per counter before spilling to a sketch. */
+        static final int EXACT_LIMIT = 1 << 16;
 
-        public Stats() {}
+        private final int exactLimit;
+        private final LongAdder numtriples = new LongAdder();
+        private final ConcurrentHashMap<Node, Long> predicateCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Node, DistinctNodeCounter> classInstances = new ConcurrentHashMap<>();
+        private final DistinctNodeCounter distinctSubjects;
+        private final DistinctNodeCounter distinctObjects;
+        // Incremental replacements for what used to be derived from the FULL
+        // retained node sets: object-URI namespaces (small set of strings) and
+        // the running longest common prefix of absolute subject URIs (one
+        // string; null = none seen yet, "" = no common prefix).
+        private final Set<String> objectNamespaces = ConcurrentHashMap.newKeySet();
+        private final AtomicReference<String> subjectPrefix = new AtomicReference<>(null);
+
+        Stats(int exactLimit) {
+            this.exactLimit = exactLimit;
+            this.distinctSubjects = new DistinctNodeCounter(exactLimit);
+            this.distinctObjects = new DistinctNodeCounter(exactLimit);
+        }
 
         public void add(Quad quad) {
-            numtriples++;
+            numtriples.increment();
             Node sNode = quad.getSubject();
             Node pNode = quad.getPredicate();
             Node oNode = quad.getObject();
             predicateCounts.merge(pNode, 1L, Long::sum);
             distinctSubjects.add(sNode);
             distinctObjects.add(oNode);
+            if (sNode.isURI() && !UTIL.isRelativeIRI(sNode.getURI())) {
+                updateSubjectPrefix(sNode.getURI());
+            }
+            if (oNode.isURI() && !UTIL.isRelativeIRI(oNode.getURI())) {
+                objectNamespaces.add(getNamespaceBase(oNode.getURI()));
+            }
             // Classes and instances (rdf:type)
             if (pNode.equals(RDF.type.asNode()) && oNode.isURI() && sNode.isURI()) {
-                classInstances.computeIfAbsent(oNode, c -> ConcurrentHashMap.newKeySet()).add(sNode);
+                classInstances.computeIfAbsent(oNode, c -> new DistinctNodeCounter(exactLimit)).add(sNode);
+            }
+        }
+
+        /** Running LCP over absolute subject URIs; duplicates are naturally idempotent. */
+        private void updateSubjectPrefix(String uri) {
+            while (true) {
+                String cur = subjectPrefix.get();
+                String next;
+                if (cur == null) {
+                    next = uri;
+                } else {
+                    int len = Math.min(cur.length(), uri.length());
+                    int i = 0;
+                    while (i < len && cur.charAt(i) == uri.charAt(i)) i++;
+                    if (i == cur.length()) {
+                        return; // uri extends the current prefix: nothing shrinks
+                    }
+                    next = cur.substring(0, i);
+                }
+                if (subjectPrefix.compareAndSet(cur, next)) {
+                    return;
+                }
             }
         }
 
         public void applyTo(Resource graphRes, Model m) {
-            long entities = classInstances.values().stream().mapToLong(Set::size).sum();
+            long entities = classInstances.values().stream().mapToLong(DistinctNodeCounter::count).sum();
             graphRes.addProperty(RDF.type, VOID.Dataset)
-                    .addLiteral(VOID.triples, numtriples)
+                    .addLiteral(VOID.triples, numtriples.sum())
                     .addLiteral(VOID.classes, (long) classInstances.size())
                     .addLiteral(VOID.properties, (long) predicateCounts.size())
-                    .addLiteral(VOID.distinctSubjects, (long) distinctSubjects.size())
-                    .addLiteral(VOID.distinctObjects, (long) distinctObjects.size())
+                    .addLiteral(VOID.distinctSubjects, distinctSubjects.count())
+                    .addLiteral(VOID.distinctObjects, distinctObjects.count())
                     .addLiteral(VOID.entities, entities);
-            Set<String> vocabNamespaces = new HashSet<>();
+            Set<String> vocabNamespaces = new HashSet<>(objectNamespaces);
             // Process Property Partitions & capture predicate namespaces
             predicateCounts.forEach((pNode, count) -> {
                 if (pNode.isURI()) {
@@ -141,21 +217,15 @@ public class BGVoIDSD {
                     graphRes.addProperty(VOID.classPartition,
                         graphRes.getModel().createResource()
                             .addProperty(VOID._class, clazz)
-                            .addLiteral(VOID.entities, (long) instances.size()));
-                }
-            });
-            // Evaluate Distinct Objects to grab the remaining namespaces
-            distinctObjects.forEach(oNode -> {
-                if (oNode.isURI() && !UTIL.isRelativeIRI(oNode.getURI())) {
-                    vocabNamespaces.add(getNamespaceBase(oNode.getURI()));
+                            .addLiteral(VOID.entities, instances.count()));
                 }
             });
             // Write void:vocabulary
             vocabNamespaces.forEach(ns -> {
                 graphRes.addProperty(VOID.vocabulary, ResourceFactory.createResource(ns));
             });
-            // Infer void:uriSpace and void:uriRegexPattern iteratively over distinct subjects
-            String commonPrefix = computeLongestCommonPrefix();
+            // Infer void:uriSpace and void:uriRegexPattern from the running prefix
+            String commonPrefix = trimToNamespace(subjectPrefix.get());
             if (commonPrefix != null && commonPrefix.length() > 10) {
                 graphRes.addProperty(VOID.uriSpace, commonPrefix);
                 String regex = "^" + Pattern.quote(commonPrefix) + ".*$";
@@ -171,32 +241,16 @@ public class BGVoIDSD {
                 });
         }
 
-        private String computeLongestCommonPrefix() {
-            if (distinctSubjects.isEmpty()) return null;
-            String prefix = null;
-            for (Node sNode : distinctSubjects) {
-                // Only absolute IRIs have a stable uriSpace; document-relative
-                // storage-form IRIs resolve per serving URL, so skip them.
-                if (sNode.isURI() && !UTIL.isRelativeIRI(sNode.getURI())) {
-                    String uri = sNode.getURI();
-                    if (prefix == null) {
-                        prefix = uri;
-                    } else {
-                        int len = Math.min(prefix.length(), uri.length());
-                        int i = 0;
-                        while (i < len && prefix.charAt(i) == uri.charAt(i)) i++;
-                        prefix = prefix.substring(0, i);
-                        if (prefix.isEmpty()) return null;
-                    }
-                }
+        /** Same trailing cut the retained-set version applied: back to the last '/' or '#'. */
+        private static String trimToNamespace(String prefix) {
+            if (prefix == null) {
+                return null;
             }
-            if (prefix != null) {
-                int lastSlash = prefix.lastIndexOf('/');
-                int lastHash = prefix.lastIndexOf('#');
-                int cut = Math.max(lastSlash, lastHash);
-                if (cut > 0) {
-                    prefix = prefix.substring(0, cut + 1);
-                }
+            int lastSlash = prefix.lastIndexOf('/');
+            int lastHash = prefix.lastIndexOf('#');
+            int cut = Math.max(lastSlash, lastHash);
+            if (cut > 0) {
+                return prefix.substring(0, cut + 1);
             }
             return prefix;
         }

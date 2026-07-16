@@ -30,4 +30,11 @@ public interface BGReader extends AutoCloseable {
      * instances whose underlying storage has been closed.
      */
     public default boolean isOpen() { return true; }
+
+    /**
+     * Exact triple count of {@code graph} computed from index structure alone,
+     * or -1 when not directly computable (union graph, missing index) - callers
+     * fall back to counting by scan.
+     */
+    public default long countTriples(Node graph) { return -1; }
 }

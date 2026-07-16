@@ -162,18 +162,22 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         if (size >= 0) {
             return size;
         }
-        // No per-graph count is stored, so count this graph's distinct triples by
-        // scanning it once. Quads are de-duplicated in the index, so each triple is
-        // visited exactly once. Cached because the graph is read-only.
-        long count = 0;
-        ExtendedIterator<Triple> it = graphBaseFind(Triple.create(Node.ANY, Node.ANY, Node.ANY));
-        try {
-            while (it.hasNext()) {
-                it.next();
-                count++;
+        // Answered from index structure when possible (a few select1 calls);
+        // otherwise count this graph's distinct triples by scanning it once.
+        // Quads are de-duplicated in the index, so each triple is visited exactly
+        // once. Cached because the graph is read-only.
+        long count = reader.countTriples(namedgraph);
+        if (count < 0) {
+            count = 0;
+            ExtendedIterator<Triple> it = graphBaseFind(Triple.create(Node.ANY, Node.ANY, Node.ANY));
+            try {
+                while (it.hasNext()) {
+                    it.next();
+                    count++;
+                }
+            } finally {
+                it.close();
             }
-        } finally {
-            it.close();
         }
         size = (count > Integer.MAX_VALUE) ? Integer.MAX_VALUE : (int) count;
         cachedSize = size;

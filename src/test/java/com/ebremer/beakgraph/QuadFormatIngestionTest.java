@@ -51,7 +51,7 @@ class QuadFormatIngestionTest {
         File src = dir.resolve("data.trig").toFile();
         File h5 = dir.resolve("data.trig.h5").toFile();
         Files.write(src.toPath(), trig.getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder().setSource(src).setDestination(h5)
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setSource(src).setDestination(h5)
                 .setSpatial(false).setFeatures(false).build().write();
         try (BeakGraph bg = new BeakGraph(new HDF5Reader(h5))) {
             Dataset ds = bg.getDataset();
@@ -73,7 +73,7 @@ class QuadFormatIngestionTest {
         File src = dir.resolve("data.nq").toFile();
         File h5 = dir.resolve("data.nq.h5").toFile();
         Files.write(src.toPath(), nq.getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder().setSource(src).setDestination(h5)
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setSource(src).setDestination(h5)
                 .setSpatial(false).setFeatures(false).build().write();
         try (BeakGraph bg = new BeakGraph(new HDF5Reader(h5))) {
             Dataset ds = bg.getDataset();
@@ -87,7 +87,7 @@ class QuadFormatIngestionTest {
         File src = dir.resolve("empty.ttl").toFile();
         File h5 = dir.resolve("empty.ttl.h5").toFile();
         Files.write(src.toPath(), "# nothing here\n".getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder().setSource(src).setDestination(h5)
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setSource(src).setDestination(h5)
                 .setSpatial(false).setFeatures(false).build().write();
         try (BeakGraph bg = new BeakGraph(new HDF5Reader(h5))) {
             Dataset ds = bg.getDataset();

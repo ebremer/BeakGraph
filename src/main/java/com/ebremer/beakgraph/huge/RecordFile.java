@@ -62,13 +62,13 @@ final class RecordFile<T> {
     }
 
     /** A fresh sequential stream over all records; close it when done. */
-    ExternalSorter.SortedStream<T> read() throws IOException {
+    RecordSorter.SortedCursor<T> read() throws IOException {
         if (!finished) {
             throw new IllegalStateException("RecordFile not finished: " + path);
         }
         DataInputStream in = new DataInputStream(
                 new BufferedInputStream(Files.newInputStream(path), 1 << 16));
-        return new ExternalSorter.SortedStream<T>() {
+        return new RecordSorter.SortedCursor<T>() {
             private T head = advance();
             private boolean closed = false;
 

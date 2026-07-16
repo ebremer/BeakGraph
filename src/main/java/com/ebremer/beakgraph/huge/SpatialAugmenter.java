@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author Erich Bremer
  */
-final class SpatialAugmenter {
+public final class SpatialAugmenter {
 
     private static final Logger logger = LoggerFactory.getLogger(SpatialAugmenter.class);
 
@@ -51,11 +51,11 @@ final class SpatialAugmenter {
 
     private final boolean features;
 
-    SpatialAugmenter(boolean features) {
+    public SpatialAugmenter(boolean features) {
         this.features = features;
     }
 
-    static boolean isGeoLiteral(Quad quad) {
+    public static boolean isGeoLiteral(Quad quad) {
         Node o = quad.getObject();
         return o.isLiteral() && GEO.wktLiteral.getURI().equals(o.getLiteralDatatypeURI());
     }
@@ -65,7 +65,7 @@ final class SpatialAugmenter {
      * geometry never aborts the build - it is logged and skipped, exactly like
      * the RAM writer.
      */
-    ArrayList<Quad> addSpatial(Quad quad) {
+    public ArrayList<Quad> addSpatial(Quad quad) {
         final ArrayList<Quad> qqq = new ArrayList<>();
         String wkt = ImageTools.stripCrs(quad.getObject().getLiteralLexicalForm());
         if (features) {

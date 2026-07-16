@@ -45,7 +45,7 @@ class ExternalSorterTest {
             expected.sort(Comparator.naturalOrder());
             assertEquals(n, sorter.size());
             List<Long> actual = new ArrayList<>(n);
-            try (ExternalSorter.SortedStream<Long> s = sorter.sorted()) {
+            try (RecordSorter.SortedCursor<Long> s = sorter.sorted()) {
                 while (s.hasNext()) {
                     actual.add(s.next());
                 }
@@ -64,7 +64,7 @@ class ExternalSorterTest {
                 sorter.add(v);
             }
             List<Long> actual = new ArrayList<>();
-            try (ExternalSorter.SortedStream<Long> s = sorter.sorted()) {
+            try (RecordSorter.SortedCursor<Long> s = sorter.sorted()) {
                 s.forEachRemaining(actual::add);
             }
             assertEquals(List.of(1L, 3L, 3L, 5L, 9L), actual);

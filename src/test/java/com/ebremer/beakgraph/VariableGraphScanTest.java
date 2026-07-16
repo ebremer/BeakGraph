@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -49,7 +50,7 @@ class VariableGraphScanTest {
         File t = dir.resolve("vg.ttl").toFile();
         h5 = dir.resolve("vg.ttl.h5").toFile();
         Files.write(t.toPath(), ttl.toString().getBytes(StandardCharsets.UTF_8));
-        HDF5Writer.Builder().setSource(t).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+        HDF5Writer.Builder().setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setSource(t).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
     }
 
     @Test
@@ -65,8 +66,8 @@ class VariableGraphScanTest {
                     reader, dict, new BindingNodeId(), new Quad(g, s, p, o), null, nt);
             while (it.hasNext()) {
                 BindingNodeId b = it.next();
-                NodeId gid = b.get(g);
-                assertNotNull(gid, "the graph variable must be bound in every solution");
+                long gid = b.get(g);
+                assertNotEquals(NodeId.NONE, gid, "the graph variable must be bound in every solution");
                 graphsSeen.add(nt.getNodeForNodeId(gid));
                 count++;
             }
@@ -94,7 +95,7 @@ class VariableGraphScanTest {
             long gid = dict.getGraphs().locate(Quad.defaultGraphIRI);
             assertTrue(gid >= 1, "the default graph must exist in the dictionary");
             BindingNodeId bnid = new BindingNodeId();
-            bnid.put(g, new NodeId(gid, com.ebremer.beakgraph.hdf5.jena.NodeType.GRAPH));
+            bnid.put(g, NodeId.pack(com.ebremer.beakgraph.hdf5.jena.NodeType.GRAPH, gid));
 
             long count = 0;
             Iterator<BindingNodeId> it = new BGIteratorMaster(
