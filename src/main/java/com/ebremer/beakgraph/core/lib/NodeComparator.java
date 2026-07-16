@@ -69,6 +69,27 @@ public class NodeComparator implements Comparator<Node> {
         // 3. Both nodes are the SAME RDF Term Type.
         // If they are both Literals, we must sort by actual Value (e.g. 2 < 10), not String ("10" < "2")
         if (n1.isLiteral() && n2.isLiteral()) {
+            // Composite (cdt:List / cdt:Map) literals never go through compareAlways:
+            // there, same-datatype pairs compare by VALUE while any pair touching an
+            // ill-formed literal fell back to TERM order, and mixing the two orders
+            // is cyclic ("[9]" < "[10]" < "[5" < "[9]") - the same non-transitivity
+            // hazard as the temporal spaces below, i.e. a build-order-dependent
+            // dictionary. CDT has no canonical form, so term identity IS lexical
+            // identity: (datatype IRI, lexical form) is a self-consistent total
+            // order, and it skips a value parse that costs O(list length) inside
+            // every dictionary binary-search probe. The cross-datatype direction
+            // (List before Map) matches compareAlways' value-space rank, and MIXED
+            // pairs (one composite, one not) stay on compareAlways, whose
+            // classification is uniform by datatype - verified: ill-formed and
+            // well-formed composites rank identically against every other value
+            // space, without throwing.
+            if (CdtTerms.isComposite(n1) && CdtTerms.isComposite(n2)) {
+                int byDatatype = n1.getLiteralDatatypeURI().compareTo(n2.getLiteralDatatypeURI());
+                if (byDatatype != 0) {
+                    return byDatatype;
+                }
+                return n1.getLiteralLexicalForm().compareTo(n2.getLiteralLexicalForm());
+            }
             try {
                 NodeValue nv1 = nodeValue(n1);
                 NodeValue nv2 = nodeValue(n2);

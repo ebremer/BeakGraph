@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.huge;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
+import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.Index;
@@ -583,6 +584,22 @@ public final class HugeBuildPipeline implements AutoCloseable {
      * and buffer-allocation gates consume.
      */
     private void collectLiteralStats(Node o) {
+        // Same guard as ProcessQuad: a base-direction literal ("x"@en--ltr,
+        // rdf:dirLangString) has nowhere to store its direction here, and the
+        // spill codec (NodeCodec) would silently collapse it onto the plain
+        // lang-tagged term mid-build. Abort the build loudly instead.
+        if (o.getLiteralBaseDirection() != null) {
+            throw new IllegalStateException(
+                    "Unsupported object literal (rdf:dirLangString base direction cannot be stored): " + o);
+        }
+        // Same guard as ProcessQuad: blank nodes inside a composite (cdt:) literal
+        // would silently stop co-referring after rank relabeling. This pipeline
+        // has no distinct-literal set, so the check runs per occurrence - it
+        // parses composite values only, everything else is one instanceof.
+        if (CdtTerms.containsBlankNode(o)) {
+            throw new IllegalStateException(
+                    "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
+        }
         String dt = o.getLiteralDatatypeURI();
         dataTypes.add(dt);
         String lang = o.getLiteralLanguage();

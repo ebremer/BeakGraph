@@ -218,6 +218,16 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             }
         }
         else if (node.isLiteral()) {
+            // Defence in depth behind the ingest guards: a base-direction literal
+            // ("x"@en--ltr, rdf:dirLangString) has no direction storage here and
+            // would silently encode as its plain lang-tagged counterpart - a
+            // different RDF term. Throw before any buffer write so no partial
+            // entry desynchronizes the parallel arrays.
+            if (node.getLiteralBaseDirection() != null) {
+                throw new IllegalStateException(
+                        "Unsupported literal in dictionary '" + name
+                      + "' (rdf:dirLangString base direction cannot be stored): " + node);
+            }
             String dt = node.getLiteralDatatypeURI();
             long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
             if (literalsPresent) typedLiterals.writeLong(dtId);

@@ -164,6 +164,14 @@ final class StreamingDictionaryWriter implements AutoCloseable {
                 throw new UncheckedIOException("Failed to add IRI to dictionary: " + node, ex);
             }
         } else if (node.isLiteral()) {
+            // Mirror of MultiTypeDictionaryWriter: base-direction literals have no
+            // direction storage - throw before any buffer write (see that class
+            // for the full rationale).
+            if (node.getLiteralBaseDirection() != null) {
+                throw new IllegalStateException(
+                        "Unsupported literal in dictionary '" + name
+                      + "' (rdf:dirLangString base direction cannot be stored): " + node);
+            }
             String dt = node.getLiteralDatatypeURI();
             long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
             if (literalsPresent) typedLiterals.writeLong(dtId);

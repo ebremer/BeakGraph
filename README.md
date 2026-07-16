@@ -87,6 +87,18 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 * Numeric literals typed `xsd:int`, `xsd:long`, `xsd:float` or `xsd:double` are
   stored by value and canonicalized at ingest: `"01"^^xsd:int` is stored - and
   matched - as `"1"^^xsd:int`.
+* RDF 1.2 terms are rejected loudly rather than mis-stored: triple terms
+  (`<<( s p o )>>`, including the reifier/annotation sugar) and base-direction
+  literals (`"x"@en--ltr`) abort the build. Versions ≤ 0.17.0 silently stored
+  base-direction literals as plain `"x"@en` — rebuild affected stores under a
+  guarded version; the loud failure is the detector.
+* SPARQL-CDT composite literals (`cdt:List`/`cdt:Map`) are stored term-exactly
+  and queryable with Jena's `cdt:` functions, `FOLD`, and `UNFOLD`. Caveats:
+  the dictionary orders them lexically, so stores built by ≤ 0.17.0 that
+  contain composite literals must be rebuilt; blank nodes inside composite
+  literals are rejected at ingest (labels regenerate from rank, which would
+  silently sever their co-reference); and composite elements are opaque to the
+  index — filtering or joining inside a list/map parses the whole value in RAM.
 
 ### Author's notes
 The first iteration of BeakGraph was backed by Apache Arrow instead of [HDF5](https://www.hdfgroup.org/solutions/hdf5/).  An Apache Arrow version will return.  Reasons for this are varied with some of these reasons being just experimentation.

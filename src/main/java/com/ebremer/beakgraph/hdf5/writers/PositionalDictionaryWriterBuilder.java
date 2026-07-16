@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdf5.writers;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
+import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.utils.ImageTools;
 import com.ebremer.beakgraph.utils.RdfSources;
@@ -611,7 +612,23 @@ public class PositionalDictionaryWriterBuilder {
             predicates.add(p);
         }
         if (o.isLiteral()) {
+            // An RDF 1.2 base-direction literal ("x"@en--ltr, rdf:dirLangString):
+            // the format has nowhere to store the direction, so the term would be
+            // silently rewritten to "x"@en on read-back - a different RDF term.
+            // Fail the build loudly instead, same stance as the node-kind guards.
+            if (o.getLiteralBaseDirection() != null) {
+                throw new IllegalStateException(
+                        "Unsupported object literal (rdf:dirLangString base direction cannot be stored): " + o);
+            }
             if (!literals.contains(o)) {
+                // Blank nodes inside a composite (cdt:) literal: labels regenerate
+                // from dictionary rank, so the label in the literal's text would
+                // silently stop co-referring with the graph. Reject at ingest
+                // (checked once per distinct literal; parses composite values only).
+                if (CdtTerms.containsBlankNode(o)) {
+                    throw new IllegalStateException(
+                            "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
+                }
                 dataTypes.add(o.getLiteralDatatypeURI());
                 countLiteralStats(o, stats);
                 literals.add(o);
