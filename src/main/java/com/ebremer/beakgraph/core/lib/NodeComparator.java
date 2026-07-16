@@ -7,6 +7,7 @@ import javax.xml.datatype.DatatypeConstants;
 import javax.xml.datatype.Duration;
 import javax.xml.datatype.XMLGregorianCalendar;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.TextDirection;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.expr.NodeValue;
 import org.apache.jena.sparql.util.NodeCmp;
@@ -90,6 +91,31 @@ public class NodeComparator implements Comparator<Node> {
                 }
                 return n1.getLiteralLexicalForm().compareTo(n2.getLiteralLexicalForm());
             }
+
+            // Language-tagged pairs (rdf:langString / rdf:dirLangString) never go
+            // through compareAlways either: Jena 6.1.0's base-direction support
+            // there is incoherent - same-(lex,lang) cross-kind or cross-direction
+            // pairs THROW, different-language dirLangString pairs answer 0 for
+            // DISTINCT terms, and mixed-kind pairs flip between lang-first and
+            // lex-first ordering, which is cyclic against the clean (lang, lex)
+            // order plain langString pairs get. Compare explicitly on
+            // (language tag, lexical form, base direction) instead: for two plain
+            // langString literals that is exactly the (lang, lex) order
+            // compareAlways already produces - this branch only EXTENDS it to base
+            // directions - and every language-kinded literal occupies the same
+            // value-space rank against other spaces (verified), so pairs with only
+            // one language-kinded side stay on compareAlways safely.
+            if (hasLanguage(n1) && hasLanguage(n2)) {
+                int c = n1.getLiteralLanguage().compareTo(n2.getLiteralLanguage());
+                if (c != 0) {
+                    return c;
+                }
+                c = n1.getLiteralLexicalForm().compareTo(n2.getLiteralLexicalForm());
+                if (c != 0) {
+                    return c;
+                }
+                return Integer.compare(directionRank(n1), directionRank(n2));
+            }
             try {
                 NodeValue nv1 = nodeValue(n1);
                 NodeValue nv2 = nodeValue(n2);
@@ -127,15 +153,57 @@ public class NodeComparator implements Comparator<Node> {
                 // Break the tie on the exact RDF term so distinct terms get distinct,
                 // stable dictionary positions instead of collapsing onto one id (which
                 // would make locate() return the wrong term).
-                return NodeCmp.compareRDFTerms(n1, n2);
+                return compareExactLiteralTerms(n1, n2);
             } catch (Exception e) {
                 // Absolute fallback if Jena fails to parse a highly malformed literal
-                return NodeCmp.compareRDFTerms(n1, n2);
+                return compareExactLiteralTerms(n1, n2);
             }
         }
 
         // 4. If they are both URIs or both BNodes, fallback to Jena's standard lexicographical sort
         return NodeCmp.compareRDFTerms(n1, n2);
+    }
+
+    /**
+     * Final tie-break on the exact RDF term for the literal path. Delegates to
+     * Jena's {@code NodeCmp}, then repairs one Jena 6.1.0 gap: {@code
+     * compareRDFTerms} answers 0 for DISTINCT {@code rdf:dirLangString}
+     * literals - {@code Util.isLangString} is false when a base direction is
+     * present, so the comparison falls through to lexical form + datatype URI
+     * and ignores both the language tag and the direction. A comparator
+     * answering "equal" for non-equal terms collapses them onto one dictionary
+     * id (ids ARE comparator ranks), so the remaining tie is broken on
+     * (language tag, base direction). The refinement only splits pairs NodeCmp
+     * already considers equal, so it cannot disturb the order of any other
+     * pair. Simplify when NodeCmp orders dirLangString correctly upstream -
+     * NodeComparatorDirLangTest#jenaNodeCmpGapStillPresent is the canary.
+     */
+    private static int compareExactLiteralTerms(Node n1, Node n2) {
+        int c = NodeCmp.compareRDFTerms(n1, n2);
+        if (c != 0 || n1.equals(n2)) {
+            return c;
+        }
+        String lang1 = n1.getLiteralLanguage();
+        String lang2 = n2.getLiteralLanguage();
+        c = ((lang1 == null) ? "" : lang1).compareTo((lang2 == null) ? "" : lang2);
+        if (c != 0) {
+            return c;
+        }
+        return Integer.compare(directionRank(n1), directionRank(n2));
+    }
+
+    /** absent < ltr < rtl - any fixed order works; it only needs to be total and stable. */
+    private static int directionRank(Node n) {
+        TextDirection d = n.getLiteralBaseDirection();
+        if (d == null) {
+            return 0;
+        }
+        return (d == TextDirection.LTR) ? 1 : 2;
+    }
+
+    private static boolean hasLanguage(Node n) {
+        String lang = n.getLiteralLanguage();
+        return lang != null && !lang.isEmpty();
     }
 
     private static final int GROUP_DURATION = 9;

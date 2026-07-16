@@ -43,6 +43,13 @@ class NodeComparatorCdtTest {
     @TempDir
     static Path dir;
 
+    @org.junit.jupiter.api.BeforeAll
+    static void initJena() {
+        // Comparator tests touch TypeMapper/NodeValue without building a store
+        // first; initialize Jena explicitly so class-init order cannot NPE.
+        org.apache.jena.sys.JenaSystem.init();
+    }
+
     private static Node lit(String lex, String dt) {
         return NodeFactory.createLiteralDT(lex, TypeMapper.getInstance().getSafeTypeByName(dt));
     }
