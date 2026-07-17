@@ -87,18 +87,25 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 * Numeric literals typed `xsd:int`, `xsd:long`, `xsd:float` or `xsd:double` are
   stored by value and canonicalized at ingest: `"01"^^xsd:int` is stored - and
   matched - as `"1"^^xsd:int`.
-* RDF 1.2 terms are rejected loudly rather than mis-stored: triple terms
-  (`<<( s p o )>>`, including the reifier/annotation sugar) and base-direction
-  literals (`"x"@en--ltr`) abort the build. Versions ≤ 0.17.0 silently stored
-  base-direction literals as plain `"x"@en` — rebuild affected stores under a
-  guarded version; the loud failure is the detector.
-* SPARQL-CDT composite literals (`cdt:List`/`cdt:Map`) are stored term-exactly
-  and queryable with Jena's `cdt:` functions, `FOLD`, and `UNFOLD`. Caveats:
-  the dictionary orders them lexically, so stores built by ≤ 0.17.0 that
-  contain composite literals must be rebuilt; blank nodes inside composite
-  literals are rejected at ingest (labels regenerate from rank, which would
-  silently sever their co-reference); and composite elements are opaque to the
-  index — filtering or joining inside a list/map parses the whole value in RAM.
+* RDF 1.2 support is at the spec's **basic conformance** level: base-direction
+  literals (`"x"@en--ltr`, `rdf:dirLangString`) are stored and matched
+  term-exactly (format v4 adds a `langDirs` column beside `langs`/`langTags`),
+  while triple terms (`<<( s p o )>>`, including the reifier/annotation sugar)
+  are still rejected loudly at ingest. Versions ≤ 0.17.0 silently stored
+  base-direction literals as plain `"x"@en` — rebuild affected stores; a
+  version that rejects or correctly stores them is the detector.
+* SPARQL-CDT composite literals (`cdt:List`/`cdt:Map`; the
+  [spec](https://awslabs.github.io/SPARQL-CDTs/spec/latest.html) is an
+  **Unofficial Draft**) are stored term-exactly and queryable with Jena's
+  `cdt:` functions, `FOLD`, and `UNFOLD` — the spec's own 658-test suite runs
+  against BeakGraph stores in CI (`SparqlCdtSuiteTest`). Caveats: the
+  dictionary orders composite literals lexically, so stores built by ≤ 0.17.0
+  that contain them must be rebuilt; blank nodes inside composite literals are
+  rejected at ingest (labels regenerate from rank, which would silently sever
+  their co-reference); and composite elements are **opaque to the index** —
+  filtering or joining inside a list/map parses the whole value in RAM, so
+  model data as triples when you need to query it and as composite literals
+  when you need compact, exact round-tripping.
 
 ### Author's notes
 The first iteration of BeakGraph was backed by Apache Arrow instead of [HDF5](https://www.hdfgroup.org/solutions/hdf5/).  An Apache Arrow version will return.  Reasons for this are varied with some of these reasons being just experimentation.

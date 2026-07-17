@@ -34,12 +34,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  * datatype (canonical spellings only - non-canonical spellings are a
  * documented deviation), the term-exact strings path (unbounded integers,
  * decimals, dates, booleans), value-equal-but-term-distinct pairs, unicode
- * with surrogate pairs, a string past the zstd compression threshold, and
- * composite (cdt:) literals. Named graphs use IRI and blank-node names.
+ * with surrogate pairs, a string past the zstd compression threshold,
+ * composite (cdt:) literals, and base-direction literals (rdf:dirLangString,
+ * format v4 - including the same-lexical-form ltr/rtl/absent trio). Named
+ * graphs use IRI and blank-node names.
  *
- * <p><b>Phases 2 and 3 extend THIS fixture</b> (base-direction literals,
- * triple terms) - one place, six engines covered, instead of touching five
- * parity tests.
+ * <p><b>Phase 3 extends THIS fixture</b> (triple terms) - one place, six
+ * engines covered, instead of touching five parity tests.
  */
 class TermFidelityTest {
 
@@ -58,6 +59,9 @@ class TermFidelityTest {
         :s :lang "hello"@en .
         :s :lang "hello"@en-GB .
         :s :lang "bonjour"@fr .
+        :s :dl "hello"@en--ltr .
+        :s :dl "hello"@en--rtl .
+        :s :dl "shalom"@he--rtl .
         :s :int "42"^^xsd:int .
         :s :int "-7"^^xsd:int .
         :s :long2 "123456789012"^^xsd:long .

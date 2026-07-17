@@ -95,6 +95,12 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
             // because it dispatches on the active graph's type and delegates
             // everything that is not a BeakGraph.
             wireIntoExecution() ;
+            // Pin CDT support on: BeakGraph stores cdt:List/cdt:Map literals and
+            // its comparator/guards assume their datatypes behave as composites.
+            // Jena defaults this to true, but ARQ.setStrictMode() anywhere in the
+            // JVM silently flips it off; BGDatasetGraph re-pins per dataset for
+            // the strictMode-after-init case.
+            org.apache.jena.sparql.SystemARQ.EnableCDTs = true;
             // Publish only after wiring succeeded, so a failure here is retried by
             // the next caller instead of leaving the JVM half-wired forever.
             initialized = true ;

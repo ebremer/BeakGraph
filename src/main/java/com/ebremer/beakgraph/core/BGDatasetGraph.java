@@ -63,6 +63,10 @@ public class BGDatasetGraph extends DatasetGraphBase {
         this.bg = g;
         QC.setFactory(context, OpExecutorBG.opExecFactoryBG);
         PropertyFunctionRegistry.set(context, BGPropertyFunctions.INSTANCE);
+        // Re-pin CDT support for each dataset: a later ARQ.setStrictMode() call
+        // elsewhere in the JVM flips the global off, and BeakGraph's stored
+        // cdt: literals need composite semantics to query correctly.
+        org.apache.jena.sparql.SystemARQ.EnableCDTs = true;
     }
 
     @Override

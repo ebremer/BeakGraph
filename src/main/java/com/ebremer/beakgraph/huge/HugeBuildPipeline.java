@@ -86,6 +86,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private final Stats stats = new Stats();
     private final TreeSet<String> dataTypes = new TreeSet<>();
     private final TreeSet<String> langSet = new TreeSet<>();
+    // True when any literal carries a base direction (rdf:dirLangString) -
+    // gates the langDirs column, exactly as langSet gates langs/langTags.
+    private boolean langDirSeen = false;
     // Predicates are the one population kept in RAM (real-world predicate counts
     // are tiny next to entities/literals); they get temp ids during the parse
     // and final rank ids once the set is complete.
@@ -275,7 +278,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 () -> {
                     if (numEntities > 0) {
                         dicts[0] = track(new StreamingDictionaryWriter(workDir, "entities", numEntities, stats,
-                                Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>()));
+                                Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>(), false));
                         try (var s = entFile.read()) {
                             dicts[0].encode(s);
                         }
@@ -284,7 +287,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 () -> {
                     if (numPredicates > 0) {
                         dicts[1] = track(new StreamingDictionaryWriter(workDir, "predicates", numPredicates, stats,
-                                Set.of(Types.IRI), new TreeSet<>(), new TreeSet<>()));
+                                Set.of(Types.IRI), new TreeSet<>(), new TreeSet<>(), false));
                         dicts[1].encode(Arrays.asList(sortedPreds).iterator());
                     }
                 },
@@ -292,7 +295,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                     if (numLiterals > 0) {
                         dicts[2] = track(new StreamingDictionaryWriter(workDir, "literals", numLiterals, stats,
                                 Set.of(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING),
-                                dataTypes, langSet));
+                                dataTypes, langSet, langDirSeen));
                         try (var s = litFile.read()) {
                             dicts[2].encode(s);
                         }
@@ -584,14 +587,6 @@ public final class HugeBuildPipeline implements AutoCloseable {
      * and buffer-allocation gates consume.
      */
     private void collectLiteralStats(Node o) {
-        // Same guard as ProcessQuad: a base-direction literal ("x"@en--ltr,
-        // rdf:dirLangString) has nowhere to store its direction here, and the
-        // spill codec (NodeCodec) would silently collapse it onto the plain
-        // lang-tagged term mid-build. Abort the build loudly instead.
-        if (o.getLiteralBaseDirection() != null) {
-            throw new IllegalStateException(
-                    "Unsupported object literal (rdf:dirLangString base direction cannot be stored): " + o);
-        }
         // Same guard as ProcessQuad: blank nodes inside a composite (cdt:) literal
         // would silently stop co-referring after rank relabeling. This pipeline
         // has no distinct-literal set, so the check runs per occurrence - it
@@ -605,6 +600,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
         String lang = o.getLiteralLanguage();
         if (lang != null && !lang.isEmpty()) {
             langSet.add(lang);
+            if (o.getLiteralBaseDirection() != null) {
+                langDirSeen = true;
+            }
         }
         if (dt.equals(XSD.xlong.getURI())) {
             if (literalValueOrNull(o) instanceof Number n) {

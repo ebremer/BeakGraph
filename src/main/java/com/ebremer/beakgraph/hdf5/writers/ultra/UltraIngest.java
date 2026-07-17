@@ -360,14 +360,6 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 entities.add(s);
                 predicates.add(p);
                 if (o.isLiteral()) {
-                    // Same guard as the sequential ProcessQuad: a base-direction
-                    // literal ("x"@en--ltr, rdf:dirLangString) has nowhere to
-                    // store its direction and would silently collapse onto the
-                    // plain lang-tagged term. Abort the build loudly instead.
-                    if (o.getLiteralBaseDirection() != null) {
-                        throw new IllegalStateException(
-                                "Unsupported object literal (rdf:dirLangString base direction cannot be stored): " + o);
-                    }
                     // Same guard as the sequential ProcessQuad: blank nodes inside a
                     // composite (cdt:) literal would silently stop co-referring after
                     // rank relabeling. add() gates the parse to once per distinct.

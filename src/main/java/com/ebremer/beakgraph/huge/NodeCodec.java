@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.TextDirection;
 import org.apache.jena.graph.NodeFactory;
 
 /**
@@ -17,8 +18,7 @@ import org.apache.jena.graph.NodeFactory;
  * parsed original.
  *
  * <p>Node kinds the BeakGraph format cannot store (RDF-star triple terms,
- * variables, base-direction literals) fail loudly here, matching the RAM
- * writer's ProcessQuad guards.
+ * variables) fail loudly here, matching the RAM writer's ProcessQuad guards.
  *
  * @author Erich Bremer
  */
@@ -31,6 +31,7 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
     private static final byte T_BNODE = 1;
     private static final byte T_LITERAL_DT = 2;
     private static final byte T_LITERAL_LANG = 3;
+    private static final byte T_LITERAL_DIRLANG = 4;
 
     private NodeCodec() {}
 
@@ -52,16 +53,14 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
             out.writeByte(T_BNODE);
             writeString(out, n.getBlankNodeLabel());
         } else if (n.isLiteral()) {
-            // A base-direction literal ("x"@en--ltr, rdf:dirLangString) would be
-            // serialized as its plain lang-tagged counterpart and deserialize to
-            // a DIFFERENT term - breaking this codec's round-trip contract and
-            // collapsing the two terms mid-build. Fail loudly before the tag byte.
-            if (n.getLiteralBaseDirection() != null) {
-                throw new IllegalStateException(
-                        "Unsupported literal in huge writer spill (rdf:dirLangString base direction cannot be stored): " + n);
-            }
+            TextDirection dir = n.getLiteralBaseDirection();
             String lang = n.getLiteralLanguage();
-            if (lang != null && !lang.isEmpty()) {
+            if (dir != null) {
+                out.writeByte(T_LITERAL_DIRLANG);
+                writeString(out, n.getLiteralLexicalForm());
+                writeString(out, lang);
+                out.writeByte(dir == TextDirection.LTR ? 1 : 2);
+            } else if (lang != null && !lang.isEmpty()) {
                 out.writeByte(T_LITERAL_LANG);
                 writeString(out, n.getLiteralLexicalForm());
                 writeString(out, lang);
@@ -91,6 +90,16 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
                 String lex = readString(in);
                 String lang = readString(in);
                 yield NodeFactory.createLiteralLang(lex, lang);
+            }
+            case T_LITERAL_DIRLANG -> {
+                String lex = readString(in);
+                String lang = readString(in);
+                byte dir = in.readByte();
+                if (dir != 1 && dir != 2) {
+                    throw new IOException("Corrupt spill record: base direction " + dir);
+                }
+                yield NodeFactory.createLiteralDirLang(lex, lang,
+                        dir == 1 ? TextDirection.LTR : TextDirection.RTL);
             }
             default -> throw new IOException("Corrupt spill record: unknown node tag " + tag);
         };

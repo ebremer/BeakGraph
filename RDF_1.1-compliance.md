@@ -54,15 +54,33 @@ The stored dataset is a superset of the source: VoID/SD metadata (`urn:x-beakgra
 composite literals — whether or not the store supports them, so these terms arrive at the writers
 regardless. Policy: anything the format cannot represent fails the build loudly.*
 
+> **Conformance claim: BeakGraph is RDF 1.2-basic conformant** (format v4). RDF 1.2 Concepts §2
+> defines basic conformance as supporting graphs/datasets whose triples contain only basic RDF
+> terms — i.e. everything except triple terms. BeakGraph stores base-direction literals
+> term-exactly, inherits RDF 1.2's case-insensitive language-tag identity from Jena, and rejects
+> triple terms loudly (full conformance is planned; PLAN.md Phase 3).
+>
+> **Evidence:** the vendored W3C RDF 1.2 test suites (rdf-turtle, rdf-n-triples, rdf-n-quads,
+> rdf-trig; `W3CRdf12SuiteTest`, suites at commit `d3e844a`): **301 tests — 213 executed, 0
+> failures**; 82 c14n tests skipped as out of scope (canonical serialization is a serializer
+> property, not storage), 6 skipped as upstream Jena 6.1.0 lenient-parse divergences (listed in
+> `src/test/resources/w3c/rdf12/README.md`). Every eval and positive-syntax test without triple
+> terms round-trips through a real store isomorphically; every triple-term test aborts on a loud
+> term-kind guard.
+
 - **Triple terms** (`<<( s p o )>>`, and the reifier/annotation sugar that expands to them):
   rejected with an exception at ingest, as before. Storage is planned (PLAN.md Phase 3).
-- **Base-direction literals** (`"x"@en--ltr`, `rdf:dirLangString`): rejected with an exception at
-  ingest in every writer engine, in both dictionary encoders, and in the disk writers' spill codec
-  (`RDF12ContainmentTest`, `DirLangSpillGuardTest`). **Versions ≤ 0.17.0 silently stored these as
-  plain lang-tagged terms** — `"x"@en`, a different RDF term, with nothing recording the change.
-  `-verify` cannot detect it retroactively (the file is internally consistent; it is just not what
-  the source said). Rebuilding an affected source under the guarded version fails loudly — that
-  failure is the detection mechanism. Storage is planned (PLAN.md Phase 2).
+- **Base-direction literals** (`"x"@en--ltr`, `rdf:dirLangString`): **stored and matched
+  term-exactly** as of format v4 — a `langDirs` column (0=none, 1=ltr, 2=rtl) beside the existing
+  `langs`/`langTags` datasets, mirrored across all six writer engines, the disk writers' spill
+  codec, the HLL statistics hash, and the export fastpath (`DirLangRoundTripTest`,
+  `DirLangSpillCodecTest`, `TermFidelityTest`, `ExportTest`). v3 files read unchanged (no
+  directions); v4 files are rejected by older builds via the format-version gate.
+  **History: versions ≤ 0.17.0 silently stored these as plain lang-tagged terms** — `"x"@en`, a
+  different RDF term, with nothing recording the change. `-verify` cannot detect it retroactively
+  (the file is internally consistent; it is just not what the source said). Rebuilding an affected
+  source under a guarded or v4 build produces the correct terms — a diff against the old store is
+  the detection mechanism.
 - **Language tag case**: Jena 6 normalizes language tags case-insensitively per RDF 1.2
   (`"chat"@FR` ≡ `"chat"@fr`); BeakGraph inherits this on both the write and query paths.
 - **Composite (cdt:) literals** (`cdt:List` / `cdt:Map`; SPARQL-CDT is an Unofficial Draft spec):
@@ -91,7 +109,8 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
 | Blank node semantics | Compliant (isomorphism) |
 | Datasets / named graphs | Compliant |
 | Generalized RDF / RDF-star | Rejected loudly (correct for 1.1) |
-| RDF 1.2 base-direction literals | Rejected loudly at ingest (storage planned); ≤ 0.17.0 stored them silently corrupted |
+| RDF 1.2 base-direction literals | Stored term-exactly (format v4, `langDirs`); ≤ 0.17.0 stored them silently corrupted — rebuild |
+| RDF 1.2 conformance level | **Basic** (W3C suites: 213 executed, 0 failures); full pending triple terms |
 | SPARQL-CDT composite literals | Stored term-exact; lexical dictionary order (≤ 0.17.0 stores need rebuild); embedded blank nodes rejected |
 | Numeric literal term identity | **Deviation** — canonicalized at ingest |
 | Absolute-IRI requirement | **Deviation** — relative IRIs stored, resolved at serving time |
