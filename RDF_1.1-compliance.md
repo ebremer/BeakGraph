@@ -58,7 +58,8 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
 > defines basic conformance as supporting graphs/datasets whose triples contain only basic RDF
 > terms — i.e. everything except triple terms. BeakGraph stores base-direction literals
 > term-exactly, inherits RDF 1.2's case-insensitive language-tag identity from Jena, and rejects
-> triple terms loudly (full conformance is planned; PLAN.md Phase 3).
+> triple terms loudly. Full conformance is a designed-but-deferred future phase (PLAN.md Phase 3,
+> decided 2026-07-16: stand on basic).
 >
 > **Evidence:** the vendored W3C RDF 1.2 test suites (rdf-turtle, rdf-n-triples, rdf-n-quads,
 > rdf-trig; `W3CRdf12SuiteTest`, suites at commit `d3e844a`): **301 tests — 213 executed, 0
