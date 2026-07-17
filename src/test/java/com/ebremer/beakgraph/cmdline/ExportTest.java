@@ -124,6 +124,43 @@ class ExportTest {
     }
 
     @Test
+    void ntExportRoundTripsCompositeLiteralsOnBothPaths() throws Exception {
+        // Composite (cdt:) literals stress the term formatter: the map's lexical
+        // form embeds quotes that must be escaped in N-Triples. Fastpath and
+        // generic writer must agree byte-for-byte and round-trip term-exactly.
+        String cdtTriples =
+                "<http://ex.org/a> <http://ex.org/list> \"[1, 2, 3]\"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .\n"
+              + "<http://ex.org/a> <http://ex.org/map> \"{\\\"k\\\": 5}\"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map> .\n"
+              + "<http://ex.org/a> <http://ex.org/nested> \"[[1, 2], [3]]\"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .\n";
+        File h5 = buildStore("cdt", cdtTriples);
+        Path out = dir.resolve("cdt.nt");
+
+        runExport(h5, "NT", false);
+        byte[] fastpath = Files.readAllBytes(out);
+        String text = new String(fastpath, StandardCharsets.UTF_8);
+        assertTrue(text.contains("{\\\"k\\\": 5}"),
+                "map literal quotes must be NT-escaped:\n" + text);
+
+        Files.delete(out);
+        System.setProperty("beakgraph.export.fastpath", "false");
+        try {
+            runExport(h5, "NT", false);
+        } finally {
+            System.clearProperty("beakgraph.export.fastpath");
+        }
+        byte[] generic = Files.readAllBytes(out);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, generic,
+                "fastpath must stay byte-identical to the generic writer");
+
+        Dataset ds = parse(out, Lang.NTRIPLES, false);
+        Model expected = ModelFactory.createDefaultModel();
+        RDFDataMgr.read(expected, new java.io.ByteArrayInputStream(
+                cdtTriples.getBytes(StandardCharsets.UTF_8)), Lang.NTRIPLES);
+        assertTrue(ds.getDefaultModel().isIsomorphicWith(expected),
+                "exported composite literals must round-trip term-exactly");
+    }
+
+    @Test
     void ntUpgradesToNqWhenNamedGraphsExist() throws Exception {
         File h5 = buildStore("upg", QUADS);
         runExport(h5, "NT", false);

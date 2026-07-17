@@ -59,9 +59,14 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // race builds identical content over immutable data.
     private volatile TieredIndex tiered;
 
+    // Weight mirrors SimpleNodeTable.weightOf: probe keys are caller-supplied
+    // nodes, and a composite (cdt:) literal key retains its parsed value, so a
+    // count-based bound could pin far more heap than the entry count implies.
     private final com.github.benmanes.caffeine.cache.Cache<Node, Long> searchCache =
             com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
-                    .maximumSize(SEARCH_CACHE_SIZE)
+                    .maximumWeight(SEARCH_CACHE_SIZE)
+                    .weigher((Node n, Long pos) ->
+                            n.isLiteral() ? 1 + (n.getLiteralLexicalForm().length() >>> 8) : 1)
                     .build();
 
     private record TieredIndex(long[] ids, Node[] nodes) {}
