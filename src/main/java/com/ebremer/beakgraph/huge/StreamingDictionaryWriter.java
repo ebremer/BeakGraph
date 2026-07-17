@@ -14,6 +14,7 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.SortedSet;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.TextDirection;
 import org.apache.jena.vocabulary.XSD;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,6 +54,10 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     private final SpillFCDWriter typedLiteralsDictionary;
     private final SpillFCDWriter langs;
     private final SpillBitPackedBuffer langTags;
+    // rdf:dirLangString (format v4): per-node base direction, 0=none 1=ltr 2=rtl.
+    // Mirror of MultiTypeDictionaryWriter.langDirs; null when no directional
+    // literal exists, so v3-shaped files stay byte-identical.
+    private final SpillBitPackedBuffer langDirs;
     private final HashMap<String, Long> dataTypesLookUp = new HashMap<>();
     private final HashMap<String, Long> langLookUp = new HashMap<>();
     private final boolean literalsPresent;
@@ -65,9 +70,12 @@ final class StreamingDictionaryWriter implements AutoCloseable {
      * @param dataTypes  distinct literal datatype IRIs (natural String order),
      *                   empty for dictionaries without literals
      * @param langSet    distinct language tags among the literals, natural order
+     * @param anyLangDir true when at least one literal carries a base direction
+     *                   (rdf:dirLangString); allocates the langDirs column
      */
     StreamingDictionaryWriter(Path workDir, String name, long nodeCount, Stats stats,
-                              Set<Types> et, SortedSet<String> dataTypes, SortedSet<String> langSet)
+                              Set<Types> et, SortedSet<String> dataTypes, SortedSet<String> langSet,
+                              boolean anyLangDir)
             throws IOException {
         this.name = name;
         this.nodeCount = nodeCount;
@@ -131,6 +139,9 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             this.langs = null;
             this.langTags = null;
         }
+        this.langDirs = (literalsPresent && anyLangDir)
+                ? new SpillBitPackedBuffer(dictDir.resolve("langDirs"), 1 + MinBits(2))
+                : null;
     }
 
     /** Encodes the sorted distinct node stream; must deliver exactly {@code nodeCount} nodes. */
@@ -152,6 +163,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             offsets.writeLong(0);
             if (literalsPresent) typedLiterals.writeLong(0);
             if (langTags != null) langTags.writeLong(0);
+            if (langDirs != null) langDirs.writeLong(0);
         } else if (node.isURI()) {
             try {
                 boolean relative = isRelativeIRI(node.getURI());
@@ -160,24 +172,21 @@ final class StreamingDictionaryWriter implements AutoCloseable {
                 iri.add(node.getURI());
                 if (literalsPresent) typedLiterals.writeLong(0);
                 if (langTags != null) langTags.writeLong(0);
+                if (langDirs != null) langDirs.writeLong(0);
             } catch (IOException ex) {
                 throw new UncheckedIOException("Failed to add IRI to dictionary: " + node, ex);
             }
         } else if (node.isLiteral()) {
-            // Mirror of MultiTypeDictionaryWriter: base-direction literals have no
-            // direction storage - throw before any buffer write (see that class
-            // for the full rationale).
-            if (node.getLiteralBaseDirection() != null) {
-                throw new IllegalStateException(
-                        "Unsupported literal in dictionary '" + name
-                      + "' (rdf:dirLangString base direction cannot be stored): " + node);
-            }
             String dt = node.getLiteralDatatypeURI();
             long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
             if (literalsPresent) typedLiterals.writeLong(dtId);
             if (langTags != null) {
                 String lang = node.getLiteralLanguage();
                 langTags.writeLong((lang == null || lang.isEmpty()) ? 0L : langLookUp.getOrDefault(lang, 0L));
+            }
+            if (langDirs != null) {
+                TextDirection dir = node.getLiteralBaseDirection();
+                langDirs.writeLong((dir == null) ? 0L : (dir == TextDirection.LTR ? 1L : 2L));
             }
             Object val;
             try {
@@ -241,6 +250,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         if (floats != null) floats.complete();
         if (doubles != null) doubles.complete();
         if (langTags != null) langTags.complete();
+        if (langDirs != null) langDirs.complete();
     }
 
     long getNumberOfNodes() {
@@ -261,6 +271,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         if (strings != null) strings.transferTo(subGroup);
         if (langs != null && langs.getNumEntries() > 0) langs.transferTo(subGroup);
         if (langTags != null) langTags.transferTo(subGroup, "langTags");
+        if (langDirs != null) langDirs.transferTo(subGroup, "langDirs");
         if (nativedatatypes.getNumEntries() > 0) nativedatatypes.transferTo(subGroup, "datatypes");
     }
 
@@ -278,5 +289,6 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         if (typedLiteralsDictionary != null) typedLiteralsDictionary.close();
         if (langs != null) langs.close();
         if (langTags != null) langTags.close();
+        if (langDirs != null) langDirs.close();
     }
 }

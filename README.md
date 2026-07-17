@@ -87,11 +87,13 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 * Numeric literals typed `xsd:int`, `xsd:long`, `xsd:float` or `xsd:double` are
   stored by value and canonicalized at ingest: `"01"^^xsd:int` is stored - and
   matched - as `"1"^^xsd:int`.
-* RDF 1.2 terms are rejected loudly rather than mis-stored: triple terms
-  (`<<( s p o )>>`, including the reifier/annotation sugar) and base-direction
-  literals (`"x"@en--ltr`) abort the build. Versions ≤ 0.17.0 silently stored
-  base-direction literals as plain `"x"@en` — rebuild affected stores under a
-  guarded version; the loud failure is the detector.
+* RDF 1.2 support is at the spec's **basic conformance** level: base-direction
+  literals (`"x"@en--ltr`, `rdf:dirLangString`) are stored and matched
+  term-exactly (format v4 adds a `langDirs` column beside `langs`/`langTags`),
+  while triple terms (`<<( s p o )>>`, including the reifier/annotation sugar)
+  are still rejected loudly at ingest. Versions ≤ 0.17.0 silently stored
+  base-direction literals as plain `"x"@en` — rebuild affected stores; a
+  version that rejects or correctly stores them is the detector.
 * SPARQL-CDT composite literals (`cdt:List`/`cdt:Map`) are stored term-exactly
   and queryable with Jena's `cdt:` functions, `FOLD`, and `UNFOLD`. Caveats:
   the dictionary orders them lexically, so stores built by ≤ 0.17.0 that

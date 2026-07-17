@@ -36,13 +36,13 @@ import org.junit.jupiter.api.io.TempDir;
  * Manifest-driven runner for the vendored W3C RDF 1.2 test suites
  * (src/test/resources/w3c/rdf12 - see its README for provenance).
  *
- * <p>BeakGraph currently rejects RDF 1.2 terms it cannot store (triple terms,
- * base-direction literals), so the runner asserts CONTAINMENT semantics: a
- * test input containing unsupported terms must abort the build loudly; inputs
- * without them must build and round-trip isomorphically. When Phases 2/3 land
- * real storage, {@link #containsUnsupportedTerms} shrinks and the same
- * manifests become the conformance oracle - no test code changes needed for
- * new manifest entries.
+ * <p>BeakGraph rejects the RDF 1.2 terms it cannot yet store (triple terms -
+ * base-direction literals are storable as of format v4), so the runner asserts
+ * CONTAINMENT semantics for those: a test input containing unsupported terms
+ * must abort the build loudly; everything else must build and round-trip
+ * isomorphically. When Phase 3 lands triple-term storage,
+ * {@link #containsUnsupportedTerms} empties and the same manifests become the
+ * conformance oracle - no test code changes needed for new manifest entries.
  *
  * <p>Per test type:
  * <ul>
@@ -193,17 +193,14 @@ class W3CRdf12SuiteTest {
     }
 
     private static boolean containsUnsupportedTerms(DatasetGraph dsg) {
+        // Base-direction literals became storable in format v4 (Phase 2), so
+        // only triple terms remain unsupported; Phase 3 empties this method and
+        // the whole suite becomes a pure conformance oracle.
         Iterator<Quad> it = dsg.find(Node.ANY, Node.ANY, Node.ANY, Node.ANY);
         while (it.hasNext()) {
             Quad q = it.next();
             for (Node n : new Node[]{q.getGraph(), q.getSubject(), q.getPredicate(), q.getObject()}) {
-                if (n == null) {
-                    continue;
-                }
-                if (n.isTripleTerm()) {
-                    return true;
-                }
-                if (n.isLiteral() && n.getLiteralBaseDirection() != null) {
+                if (n != null && n.isTripleTerm()) {
                     return true;
                 }
             }

@@ -226,7 +226,10 @@ them to validate any tuning against your own store shape.
 
 ## 9. Output guarantees
 
-* One HDF5 format, one reader stack, for every method (format version 3).
+* One HDF5 format, one reader stack, for every method (format version 4).
+  v4 adds the optional `langDirs` dataset for RDF 1.2 base-direction literals
+  (`"x"@en--ltr`); v3 files remain fully readable, while v4 files are rejected
+  by older builds with an "Upgrade BeakGraph" error.
 * Methods 0/2/3 produce **structurally identical** stores for the same single source
   (same datasets, sizes, attributes); methods 1/4 produce **isomorphic** stores
   (blank-node labels are rank-derived rather than relabelled).

@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.core.lib.HyperLogLog;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.TextDirection;
 
 /**
  * Distinct-node counter with a bounded footprint: EXACT (a concurrent set of
@@ -82,6 +83,13 @@ final class DistinctNodeCounter {
             String lang = n.getLiteralLanguage();
             if (lang != null && !lang.isEmpty()) {
                 h = h * 31 + poly(23, lang);
+            }
+            // Base direction is part of term identity (rdf:dirLangString):
+            // without this, "x"@en--ltr and "x"@en--rtl hash together and the
+            // HLL undercounts distinct objects.
+            TextDirection dir = n.getLiteralBaseDirection();
+            if (dir != null) {
+                h = h * 31 + (dir == TextDirection.LTR ? 37 : 41);
             }
         } else {
             h = poly(29, n.toString());
