@@ -87,6 +87,80 @@ class ExportTest {
     }
 
     @Test
+    void ntExportPreservesBaseDirectionOnBothPaths() throws Exception {
+        // rdf:dirLangString (format v4): the fastpath's NodeFormatterNT and the
+        // generic StreamRDF writer must both emit the @lang--dir form, and stay
+        // byte-identical to each other (the fastpath's documented contract).
+        String dirTriples =
+                "<http://ex.org/a> <http://ex.org/name> \"hello\"@en--ltr .\n"
+              + "<http://ex.org/a> <http://ex.org/name> \"shalom\"@he--rtl .\n"
+              + "<http://ex.org/a> <http://ex.org/name> \"hello\"@en .\n";
+        File h5 = buildStore("dirs", dirTriples);
+        Path out = dir.resolve("dirs.nt");
+
+        runExport(h5, "NT", false);
+        byte[] fastpath = Files.readAllBytes(out);
+        String text = new String(fastpath, StandardCharsets.UTF_8);
+        assertTrue(text.contains("\"hello\"@en--ltr") && text.contains("\"shalom\"@he--rtl"),
+                "fastpath export must emit base directions:\n" + text);
+
+        Files.delete(out);
+        System.setProperty("beakgraph.export.fastpath", "false");
+        try {
+            runExport(h5, "NT", false);
+        } finally {
+            System.clearProperty("beakgraph.export.fastpath");
+        }
+        byte[] generic = Files.readAllBytes(out);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, generic,
+                "fastpath must stay byte-identical to the generic writer");
+
+        Dataset ds = parse(out, Lang.NTRIPLES, false);
+        Model expected = ModelFactory.createDefaultModel();
+        RDFDataMgr.read(expected, new java.io.ByteArrayInputStream(
+                dirTriples.getBytes(StandardCharsets.UTF_8)), Lang.NTRIPLES);
+        assertTrue(ds.getDefaultModel().isIsomorphicWith(expected),
+                "exported base-direction literals must round-trip term-exactly");
+    }
+
+    @Test
+    void ntExportRoundTripsCompositeLiteralsOnBothPaths() throws Exception {
+        // Composite (cdt:) literals stress the term formatter: the map's lexical
+        // form embeds quotes that must be escaped in N-Triples. Fastpath and
+        // generic writer must agree byte-for-byte and round-trip term-exactly.
+        String cdtTriples =
+                "<http://ex.org/a> <http://ex.org/list> \"[1, 2, 3]\"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .\n"
+              + "<http://ex.org/a> <http://ex.org/map> \"{\\\"k\\\": 5}\"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map> .\n"
+              + "<http://ex.org/a> <http://ex.org/nested> \"[[1, 2], [3]]\"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .\n";
+        File h5 = buildStore("cdt", cdtTriples);
+        Path out = dir.resolve("cdt.nt");
+
+        runExport(h5, "NT", false);
+        byte[] fastpath = Files.readAllBytes(out);
+        String text = new String(fastpath, StandardCharsets.UTF_8);
+        assertTrue(text.contains("{\\\"k\\\": 5}"),
+                "map literal quotes must be NT-escaped:\n" + text);
+
+        Files.delete(out);
+        System.setProperty("beakgraph.export.fastpath", "false");
+        try {
+            runExport(h5, "NT", false);
+        } finally {
+            System.clearProperty("beakgraph.export.fastpath");
+        }
+        byte[] generic = Files.readAllBytes(out);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, generic,
+                "fastpath must stay byte-identical to the generic writer");
+
+        Dataset ds = parse(out, Lang.NTRIPLES, false);
+        Model expected = ModelFactory.createDefaultModel();
+        RDFDataMgr.read(expected, new java.io.ByteArrayInputStream(
+                cdtTriples.getBytes(StandardCharsets.UTF_8)), Lang.NTRIPLES);
+        assertTrue(ds.getDefaultModel().isIsomorphicWith(expected),
+                "exported composite literals must round-trip term-exactly");
+    }
+
+    @Test
     void ntUpgradesToNqWhenNamedGraphsExist() throws Exception {
         File h5 = buildStore("upg", QUADS);
         runExport(h5, "NT", false);

@@ -13,17 +13,34 @@ public class SimpleNodeTable implements NodeTable {
 
     private final PositionalDictionaryReader dict;
 
-    /** Entries per direction; override with -Dbeakgraph.nodetable.cache.size. */
+    /** Entry-equivalents per direction; override with -Dbeakgraph.nodetable.cache.size. */
     private static final long CACHE_SIZE = Long.getLong("beakgraph.nodetable.cache.size", 1_000_000L);
+
+    /**
+     * Cache weight of a node. The cache bound was sized assuming small terms
+     * (IRIs, ordinary literals ~ weight 1), but a cached composite (cdt:)
+     * literal retains its parsed value - measured ~4.5x its lexical form - so
+     * a count-based bound could silently pin gigabytes. Oversized literals
+     * count as one entry-equivalent per 256 chars of lexical form instead;
+     * typical terms keep the historical one-entry cost.
+     */
+    static int weightOf(Node n) {
+        if (n.isLiteral()) {
+            return 1 + (n.getLiteralLexicalForm().length() >>> 8);
+        }
+        return 1;
+    }
 
     // Caffeine LRU Caches for extreme high-performance concurrent caching.
     // Keys/values are packed NodeId longs (boxed at the cache boundary only).
     private final Cache<Long, Node> nodeId2nodemap = Caffeine.newBuilder()
-            .maximumSize(CACHE_SIZE)
+            .maximumWeight(CACHE_SIZE)
+            .weigher((Long id, Node n) -> weightOf(n))
             .build();
 
     private final Cache<Node, Long> node2nodeIdmap = Caffeine.newBuilder()
-            .maximumSize(CACHE_SIZE)
+            .maximumWeight(CACHE_SIZE)
+            .weigher((Node n, Long id) -> weightOf(n))
             .build();
 
     public SimpleNodeTable(PositionalDictionaryReader dict) {

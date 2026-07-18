@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
+import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import com.ebremer.beakgraph.sniff.SD;
@@ -359,7 +360,13 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 entities.add(s);
                 predicates.add(p);
                 if (o.isLiteral()) {
-                    literals.add(o);
+                    // Same guard as the sequential ProcessQuad: blank nodes inside a
+                    // composite (cdt:) literal would silently stop co-referring after
+                    // rank relabeling. add() gates the parse to once per distinct.
+                    if (literals.add(o) && CdtTerms.containsBlankNode(o)) {
+                        throw new IllegalStateException(
+                                "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
+                    }
                     dataTypes.add(o.getLiteralDatatypeURI());
                 } else {
                     if (!o.isBlank() && !o.isURI()) {

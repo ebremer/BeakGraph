@@ -28,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static com.ebremer.beakgraph.utils.UTIL.isRelativeIRI;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.TextDirection;
 import org.apache.jena.vocabulary.XSD;
 
 /**
@@ -54,6 +55,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     // Both are null when the source has no language-tagged literals.
     private final FCDWriter langs;
     private final BitPackedUnSignedLongBuffer langTags;
+    // rdf:dirLangString support (format v4): a per-node base-direction buffer
+    // (0 = none, 1 = ltr, 2 = rtl). The domain is closed, so no dictionary is
+    // needed. Null when the source has no base-direction literals - absence
+    // means "no directions", which is what keeps v3 files readable unchanged.
+    private final BitPackedUnSignedLongBuffer langDirs;
     private final HashMap<String, Long> langLookUp = new HashMap<>();
     private String name;
     private final ArrayList<Node> sorted;
@@ -109,6 +115,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         FCDWriter tempStrings = null;
         FCDWriter tempLangs = null;
         BitPackedUnSignedLongBuffer tempLangTags = null;
+        BitPackedUnSignedLongBuffer tempLangDirs = null;
         try {
             this.doubles = (!et.contains(Types.DOUBLE) || (stats.numDouble == 0)) ? null : new DataOutputBuffer(Path.of("doubles"));
             this.floats  = (!et.contains(Types.FLOAT)  || (stats.numFloat  == 0)) ? null : new DataOutputBuffer(Path.of("floats"));
@@ -141,10 +148,12 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             // without language-tagged strings carry no langs/langTags datasets.
             if (tempLiteralsPresent) {
                 java.util.TreeSet<String> langSet = new java.util.TreeSet<>();
+                boolean anyDirection = false;
                 for (Node n : sorted) {
                     if (n.isLiteral()) {
                         String lang = n.getLiteralLanguage();
                         if (lang != null && !lang.isEmpty()) langSet.add(lang);
+                        if (n.getLiteralBaseDirection() != null) anyDirection = true;
                     }
                 }
                 if (!langSet.isEmpty()) {
@@ -154,6 +163,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                         langLookUp.put(lang, tempLangs.getNumEntries()); // 1-based id
                     }
                     tempLangTags = new BitPackedUnSignedLongBuffer(Path.of("langTags"), null, 0, 1 + MinBits(langSet.size()));
+                }
+                if (anyDirection) {
+                    tempLangDirs = new BitPackedUnSignedLongBuffer(Path.of("langDirs"), null, 0, 1 + MinBits(2));
                 }
             }
 
@@ -175,6 +187,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         this.strings                 = tempStrings;
         this.langs                   = tempLangs;
         this.langTags                = tempLangTags;
+        this.langDirs                = tempLangDirs;
 
         // --- STEP 3: Encode Data ---
         this.sorted.forEach(this::addNodeInternal);
@@ -201,6 +214,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             offsets.writeLong(0);
             if (literalsPresent) typedLiterals.writeLong(0);
             if (langTags != null) langTags.writeLong(0);
+            if (langDirs != null) langDirs.writeLong(0);
         }
         else if (node.isURI()) {
             try {
@@ -210,6 +224,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 iri.add(node.getURI());
                 if (literalsPresent) typedLiterals.writeLong(0);
                 if (langTags != null) langTags.writeLong(0);
+                if (langDirs != null) langDirs.writeLong(0);
             } catch (IOException ex) {
                 // Continuing after a failed iri.add() would leave the offsets and
                 // datatypes buffers one entry ahead of the IRI dictionary, silently
@@ -224,6 +239,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             if (langTags != null) {
                 String lang = node.getLiteralLanguage();
                 langTags.writeLong((lang == null || lang.isEmpty()) ? 0L : langLookUp.getOrDefault(lang, 0L));
+            }
+            if (langDirs != null) {
+                TextDirection dir = node.getLiteralBaseDirection();
+                langDirs.writeLong((dir == null) ? 0L : (dir == TextDirection.LTR ? 1L : 2L));
             }
             // An ill-typed literal ("abc"^^xsd:int) has no parseable value but is a
             // valid RDF term: route it to the strings branch below (term-exact, with
@@ -318,6 +337,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (strings != null) strings.close();
         if (langs != null) langs.close();
         if (langTags != null) langTags.prepareForReading();
+        if (langDirs != null) langDirs.prepareForReading();
     }
     
     @Override public long getNumberOfNodes() { return sorted.size(); }
@@ -342,6 +362,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (strings != null) strings.add(subGroup);
         if (langs != null && langs.getNumEntries() > 0) langs.add(subGroup);
         if (langTags != null) langTags.add(subGroup);
+        if (langDirs != null) langDirs.add(subGroup);
         if (nativedatatypes.getNumEntries() > 0) nativedatatypes.add(subGroup);
     }
 

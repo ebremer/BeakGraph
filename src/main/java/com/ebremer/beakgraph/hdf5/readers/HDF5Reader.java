@@ -173,6 +173,15 @@ public class HDF5Reader implements BGReader {
     
     @Override
     public Iterator<BindingNodeId> read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        // An EMPTY store (built from an empty source - legal) has no dictionary
+        // or index datasets at all; every pattern answers no solutions rather
+        // than each downstream layer having to tolerate absent structures.
+        // Deliberately keyed on dictionary absence, NOT numQuads: that attribute
+        // counts SOURCE quads only, and a -void build of an empty source has
+        // zero source quads but real stored metadata quads.
+        if (dict.isEmpty()) {
+            return Collections.emptyIterator();
+        }
         // A pattern variable already bound to a node that does not exist in this store
         // (e.g. a VALUES/BIND term not present here) cannot match anything, so the pattern
         // yields no solutions - rather than failing to resolve the missing id.

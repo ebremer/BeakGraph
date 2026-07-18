@@ -14,6 +14,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.TextDirection;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.sparql.expr.NodeValue;
 
@@ -44,6 +45,10 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // language-tag support, so those reconstruct exactly as before.
     private final FCDReader langs;
     private final BitPackedUnSignedLongBuffer langTags;
+    // rdf:dirLangString (format v4): per-node base direction, 0=none 1=ltr 2=rtl.
+    // Null for files written before direction support - those reconstruct
+    // exactly as before.
+    private final BitPackedUnSignedLongBuffer langDirs;
     private final long numEntries;
     private final String name;
 
@@ -54,9 +59,14 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // race builds identical content over immutable data.
     private volatile TieredIndex tiered;
 
+    // Weight mirrors SimpleNodeTable.weightOf: probe keys are caller-supplied
+    // nodes, and a composite (cdt:) literal key retains its parsed value, so a
+    // count-based bound could pin far more heap than the entry count implies.
     private final com.github.benmanes.caffeine.cache.Cache<Node, Long> searchCache =
             com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
-                    .maximumSize(SEARCH_CACHE_SIZE)
+                    .maximumWeight(SEARCH_CACHE_SIZE)
+                    .weigher((Node n, Long pos) ->
+                            n.isLiteral() ? 1 + (n.getLiteralLexicalForm().length() >>> 8) : 1)
                     .build();
 
     private record TieredIndex(long[] ids, Node[] nodes) {}
@@ -96,6 +106,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.langs = (langsG != null) ? new FCDReader(langsG) : null;
         ContiguousDataset langTagsDS = (ContiguousDataset) d.getChild("langTags");
         this.langTags = (langTagsDS != null) ? BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(langTagsDS), (Long) langTagsDS.getAttribute("numEntries").getData(), (Integer) langTagsDS.getAttribute("width").getData()) : null;
+        ContiguousDataset langDirsDS = (ContiguousDataset) d.getChild("langDirs");
+        this.langDirs = (langDirsDS != null) ? BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(langDirsDS), (Long) langDirsDS.getAttribute("numEntries").getData(), (Integer) langDirsDS.getAttribute("width").getData()) : null;
     }
 
     private TieredIndex tieredIndex() {
@@ -151,7 +163,18 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
                 // as a lang-tagged literal (term-exact per RDF semantics).
                 long langId = (langTags != null) ? langTags.get(idx) : 0;
                 if (langId > 0 && langs != null) {
-                    yield NodeFactory.createLiteralLang(strings.get(off), langs.get(langId - 1));
+                    String lex = strings.get(off);
+                    String lang = langs.get(langId - 1);
+                    // Base direction (format v4): one extra bit-packed read, only
+                    // when the store has directional literals at all. A direction
+                    // implies a language tag, so this stays inside the lang branch
+                    // and the short-circuit past the datatype id is preserved.
+                    long dirId = (langDirs != null) ? langDirs.get(idx) : 0;
+                    if (dirId > 0) {
+                        yield NodeFactory.createLiteralDirLang(lex, lang,
+                                dirId == 1 ? TextDirection.LTR : TextDirection.RTL);
+                    }
+                    yield NodeFactory.createLiteralLang(lex, lang);
                 }
                 long dtId = typedLiterals.get(idx);
                 if (dtId < 1) throw new RuntimeException("Corrupt HDF5: missing typed-literal datatype id at ID " + id);

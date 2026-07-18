@@ -48,6 +48,57 @@ RDF 1.1 abstract syntax requires absolute IRIs. BeakGraph deliberately stores do
 ### 3. Injected metadata graphs
 The stored dataset is a superset of the source: VoID/SD metadata (`urn:x-beakgraph:void`) always, spatial index graphs (`urn:x-beakgraph:Spatial`, grid-tile URN graphs) when spatial indexing is enabled. Valid RDF, but `GRAPH ?g` enumerates graphs the source never contained — a faithfulness caveat rather than a spec violation. Relatedly, the `numQuads` attribute counts source quads only, excluding injected metadata.
 
+## RDF 1.2 and SPARQL-CDT inputs
+
+*Added 2026-07-16. Jena 6.x parses RDF 1.2 — and, with CDTs enabled (the default), SPARQL-CDT
+composite literals — whether or not the store supports them, so these terms arrive at the writers
+regardless. Policy: anything the format cannot represent fails the build loudly.*
+
+> **Conformance claim: BeakGraph is RDF 1.2-basic conformant** (format v4). RDF 1.2 Concepts §2
+> defines basic conformance as supporting graphs/datasets whose triples contain only basic RDF
+> terms — i.e. everything except triple terms. BeakGraph stores base-direction literals
+> term-exactly, inherits RDF 1.2's case-insensitive language-tag identity from Jena, and rejects
+> triple terms loudly. Full conformance is a designed-but-deferred future phase (PLAN.md Phase 3,
+> decided 2026-07-16: stand on basic).
+>
+> **Evidence:** the vendored W3C RDF 1.2 test suites (rdf-turtle, rdf-n-triples, rdf-n-quads,
+> rdf-trig; `W3CRdf12SuiteTest`, suites at commit `d3e844a`): **301 tests — 213 executed, 0
+> failures**; 82 c14n tests skipped as out of scope (canonical serialization is a serializer
+> property, not storage), 6 skipped as upstream Jena 6.1.0 lenient-parse divergences (listed in
+> `src/test/resources/w3c/rdf12/README.md`). Every eval and positive-syntax test without triple
+> terms round-trips through a real store isomorphically; every triple-term test aborts on a loud
+> term-kind guard.
+
+- **Triple terms** (`<<( s p o )>>`, and the reifier/annotation sugar that expands to them):
+  rejected with an exception at ingest, as before. Storage is planned (PLAN.md Phase 3).
+- **Base-direction literals** (`"x"@en--ltr`, `rdf:dirLangString`): **stored and matched
+  term-exactly** as of format v4 — a `langDirs` column (0=none, 1=ltr, 2=rtl) beside the existing
+  `langs`/`langTags` datasets, mirrored across all six writer engines, the disk writers' spill
+  codec, the HLL statistics hash, and the export fastpath (`DirLangRoundTripTest`,
+  `DirLangSpillCodecTest`, `TermFidelityTest`, `ExportTest`). v3 files read unchanged (no
+  directions); v4 files are rejected by older builds via the format-version gate.
+  **History: versions ≤ 0.17.0 silently stored these as plain lang-tagged terms** — `"x"@en`, a
+  different RDF term, with nothing recording the change. `-verify` cannot detect it retroactively
+  (the file is internally consistent; it is just not what the source said). Rebuilding an affected
+  source under a guarded or v4 build produces the correct terms — a diff against the old store is
+  the detection mechanism.
+- **Language tag case**: Jena 6 normalizes language tags case-insensitively per RDF 1.2
+  (`"chat"@FR` ≡ `"chat"@fr`); BeakGraph inherits this on both the write and query paths.
+- **Composite (cdt:) literals** (`cdt:List` / `cdt:Map`; SPARQL-CDT is an Unofficial Draft spec):
+  stored term-exactly via the strings path and queryable with Jena's 16 `cdt:` functions, the
+  `FOLD` aggregate, and the `UNFOLD` operator (locked in by `CdtLockInTest`). Three policies:
+  - The dictionary orders composite literals by **(datatype IRI, lexical form)**, never by value:
+    CDT has no canonical form, so term identity is lexical identity, and the value comparison mixed
+    with its error fallback was not a total order (a verified comparator cycle;
+    `NodeComparatorCdtTest`). **Stores built by ≤ 0.17.0 that contain composite literals used value
+    order and must be rebuilt** — dictionary ids are comparator ranks, and the readers cannot
+    version-gate a rank change.
+  - **Blank nodes inside composite literals are rejected at ingest** (`CdtBlankNodeGuardTest`):
+    BeakGraph regenerates blank-node labels from dictionary rank, so a label inside a literal's
+    lexical form would silently stop co-referring with the graph, which SPARQL-CDT §5.2 requires.
+  - Ill-formed composite lexical forms never reach BeakGraph from documents: RIOT's CDT-aware
+    default profile rejects them at parse.
+
 ## Summary table
 
 | Aspect | Status |
@@ -59,6 +110,9 @@ The stored dataset is a superset of the source: VoID/SD metadata (`urn:x-beakgra
 | Blank node semantics | Compliant (isomorphism) |
 | Datasets / named graphs | Compliant |
 | Generalized RDF / RDF-star | Rejected loudly (correct for 1.1) |
+| RDF 1.2 base-direction literals | Stored term-exactly (format v4, `langDirs`); ≤ 0.17.0 stored them silently corrupted — rebuild |
+| RDF 1.2 conformance level | **Basic** (W3C suites: 213 executed, 0 failures); full pending triple terms |
+| SPARQL-CDT composite literals | Stored term-exact; lexical dictionary order (≤ 0.17.0 stores need rebuild); embedded blank nodes rejected |
 | Numeric literal term identity | **Deviation** — canonicalized at ingest |
 | Absolute-IRI requirement | **Deviation** — relative IRIs stored, resolved at serving time |
 | Dataset faithfulness | **Caveat** — metadata graphs injected |

@@ -72,7 +72,7 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-status` | off | Progress bar (per-file mode) and end-of-run counters. |
 | `-endpoint <file.h5>` | — | Serve the store as a SPARQL endpoint instead of converting. |
 | `-port <n>` | `8888` | HTTP port for `-endpoint`. |
-| `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for `-endpoint`; a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. |
+| `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for `-endpoint`; a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. Note: queries that expand large composite (`cdt:`) literals with `UNFOLD`, or compare them by value, parse the whole literal in RAM (~1 µs per element) and can hit this limit — raise it for CDT-heavy workloads. |
 | `-version` / `-v` | — | Print version and exit. |
 | `-help` | — | Usage text. |
 
@@ -213,8 +213,8 @@ workloads, and each knob trades heap for repeated-lookup speed:
 
 | Property | Default | What it bounds |
 |---|---|---|
-| `beakgraph.nodetable.cache.size` | `1000000` | Node ⇄ NodeId entries per direction, per open reader (query bind/materialize path). |
-| `beakgraph.dict.search.cache.size` | `65536` | Term → dictionary-position entries per dictionary section (locate/search results, hits and misses). |
+| `beakgraph.nodetable.cache.size` | `1000000` | Node ⇄ NodeId **entry-equivalents** per direction, per open reader (query bind/materialize path). Ordinary terms cost 1; an oversized literal costs 1 per 256 chars of lexical form, so composite (`cdt:`) literals — whose cached nodes retain their parsed values (~4.5× the text) — cannot silently pin unbounded heap. |
+| `beakgraph.dict.search.cache.size` | `65536` | Term → dictionary-position **entry-equivalents** per dictionary section (locate/search results, hits and misses; same oversized-literal weighting as above). |
 | `beakgraph.fcd.cache.blocks` | `4096` | Decoded front-coded string blocks per FCD section (each block holds `blockSize`, typically 16, strings). |
 | `beakgraph.ffm.threshold` | `2147483647` | Dataset size in bytes above which BeakGraph FFM-maps the region itself instead of using jHDF's ByteBuffer. |
 | `beakgraph.scan.parallel.threshold` | `65536` | Minimum index position range for a scan-shaped first pattern (`?s ?p ?o`, or `?s <p> ?o`) to run as a chunked PARALLEL scan on the shared worker pool. `0` (or negative) disables parallel scanning. Chunks stop on query timeout/cancel and on early close (LIMIT). |
@@ -226,7 +226,10 @@ them to validate any tuning against your own store shape.
 
 ## 9. Output guarantees
 
-* One HDF5 format, one reader stack, for every method (format version 3).
+* One HDF5 format, one reader stack, for every method (format version 4).
+  v4 adds the optional `langDirs` dataset for RDF 1.2 base-direction literals
+  (`"x"@en--ltr`); v3 files remain fully readable, while v4 files are rejected
+  by older builds with an "Upgrade BeakGraph" error.
 * Methods 0/2/3 produce **structurally identical** stores for the same single source
   (same datasets, sizes, attributes); methods 1/4 produce **isomorphic** stores
   (blank-node labels are rank-derived rather than relabelled).

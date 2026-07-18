@@ -51,19 +51,47 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return (g.getChild(name) != null) ? Optional.of((ContiguousDataset) g.getChild(name)) : Optional.empty();
     }
 
+    /**
+     * Stand-in for an ABSENT dictionary section (a store built from an empty
+     * source has no entities/predicates groups at all - legal per the format's
+     * presence-sniffing evolution). Every lookup answers "not here" instead of
+     * the callers NPE-ing: before this, ANY scan-shaped query over an empty
+     * store died in ScanChunks/SimpleNodeTable on a null dictionary (found by
+     * the vendored SPARQL-CDTs suite's constructDataFile tests).
+     */
+    private static final Dictionary EMPTY = new Dictionary() {
+        @Override public long locate(Node element) { return -1; }
+        @Override public long search(Node element) { return -1; } // insertion point 0, nothing stored
+        @Override public Node extract(long id) {
+            throw new IllegalArgumentException("empty dictionary holds no id " + id);
+        }
+        @Override public long getNumberOfNodes() { return 0; }
+        @Override public java.util.stream.Stream<Node> streamNodes() { return java.util.stream.Stream.empty(); }
+    };
+
+    /**
+     * True when NO dictionary section exists - a store built from an empty
+     * source with no injected metadata. Note this is not "numQuads == 0": the
+     * numQuads attribute counts SOURCE quads only, and a -void build of an
+     * empty source has zero source quads but real stored metadata quads.
+     */
+    public boolean isEmpty() {
+        return entities == null && predicates == null && literals == null;
+    }
+
     @Override
     public Dictionary getGraphs() {
-        return entities; // Graphs share the universal Entity ID space
+        return (entities != null) ? entities : EMPTY; // Graphs share the universal Entity ID space
     }
 
     @Override
     public Dictionary getSubjects() {
-        return entities; // Subjects share the universal Entity ID space
+        return (entities != null) ? entities : EMPTY; // Subjects share the universal Entity ID space
     }
 
     @Override
     public Dictionary getPredicates() {
-        return predicates; // Predicates are isolated to save bit-width
+        return (predicates != null) ? predicates : EMPTY; // Predicates are isolated to save bit-width
     }
     
     @Override

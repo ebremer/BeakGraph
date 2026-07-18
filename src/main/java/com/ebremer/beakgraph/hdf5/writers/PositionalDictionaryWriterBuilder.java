@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdf5.writers;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
+import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.utils.ImageTools;
 import com.ebremer.beakgraph.utils.RdfSources;
@@ -612,6 +613,14 @@ public class PositionalDictionaryWriterBuilder {
         }
         if (o.isLiteral()) {
             if (!literals.contains(o)) {
+                // Blank nodes inside a composite (cdt:) literal: labels regenerate
+                // from dictionary rank, so the label in the literal's text would
+                // silently stop co-referring with the graph. Reject at ingest
+                // (checked once per distinct literal; parses composite values only).
+                if (CdtTerms.containsBlankNode(o)) {
+                    throw new IllegalStateException(
+                            "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
+                }
                 dataTypes.add(o.getLiteralDatatypeURI());
                 countLiteralStats(o, stats);
                 literals.add(o);

@@ -22,7 +22,13 @@ public class Params {
     // ones-before-block-k) and widened the superblock entries to the bitmap length.
     // The query path now uses that directory for O(log n) select1, so files written
     // at v1/v2 (whose directory is incompatible) fall back to a linear select1 scan.
-    public static final int FORMAT_VERSION = 3;
+    //
+    // v4: added the optional langDirs dataset beside langs/langTags (per-node
+    // base direction for rdf:dirLangString literals; 0=none 1=ltr 2=rtl).
+    // Absence means "no directions", so v3 files read unchanged; v4 files are
+    // rejected by older builds via the gate above - without that, an old build
+    // would silently reconstruct "x"@en--ltr as "x"@en (a different RDF term).
+    public static final int FORMAT_VERSION = 4;
     // First format version whose rank/select directory is correct enough to drive
     // query navigation. Older files fall back to a linear select1 scan (slower but correct).
     public static final int RANK_DIRECTORY_MIN_VERSION = 3;
