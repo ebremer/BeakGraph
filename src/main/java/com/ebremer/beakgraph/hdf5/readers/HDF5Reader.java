@@ -218,11 +218,17 @@ public class HDF5Reader implements BGReader {
     private Iterator<BindingNodeId> readUnion(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
         List<Var> varList = new ArrayList<>(3);
         for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
-            if (n.isVariable()) varList.add(Var.alloc(n));
+            if (n.isVariable()) {
+                Var v = Var.alloc(n);
+                if (!varList.contains(v)) varList.add(v);
+            } else if (n.isTripleTerm() && !n.isConcrete()) {
+                // Variables embedded in a triple-term pattern identify a row as
+                // fully as top-level ones (given the pattern's concrete parts,
+                // the matched stored term determines them 1:1) - they must key
+                // the union dedup or distinct rows would collapse.
+                collectTripleTermVars(n, varList);
+            }
         }
-        Var v0 = varList.size() > 0 ? varList.get(0) : null;
-        Var v1 = varList.size() > 1 ? varList.get(1) : null;
-        Var v2 = varList.size() > 2 ? varList.get(2) : null;
         // Lazy per-graph chaining: constructing every graph's iterator up front
         // paid each one's index binary searches before the first row came back
         // (spatial stores hold thousands of tile graphs).
@@ -231,17 +237,104 @@ public class HDF5Reader implements BGReader {
             .iterator();
         Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gn -> read(gn, bnid, triple, filter, nodeTable));
         // The dedup set is inherent to union set-semantics (rows arrive per
-        // graph, not globally sorted); an open-addressing set of three raw longs
-        // keeps a large union scan free of per-row key/box allocations.
-        LongTripleSet seen = new LongTripleSet();
+        // graph, not globally sorted). Up to three variables - every pattern
+        // shape before triple-term patterns existed - keeps the historical
+        // open-addressing three-long set, free of per-row key/box allocations;
+        // more variables (only reachable with embedded triple-term vars) use
+        // the array-keyed generalization.
+        if (varList.size() <= 3) {
+            Var v0 = varList.size() > 0 ? varList.get(0) : null;
+            Var v1 = varList.size() > 1 ? varList.get(1) : null;
+            Var v2 = varList.size() > 2 ? varList.get(2) : null;
+            LongTripleSet seen = new LongTripleSet();
+            return Iter.filter(chain, b -> {
+                // Packed ids (type bits included) key the dedup: identical variable
+                // values across graphs carry identical packed ids by construction.
+                long k0 = (v0 != null) ? b.get(v0) : NodeId.NONE;
+                long k1 = (v1 != null) ? b.get(v1) : NodeId.NONE;
+                long k2 = (v2 != null) ? b.get(v2) : NodeId.NONE;
+                return seen.add(k0, k1, k2);
+            });
+        }
+        Var[] vars = varList.toArray(Var[]::new);
+        LongTupleSet seen = new LongTupleSet(vars.length);
+        long[] probe = new long[vars.length]; // reused per row; copied only on insert
         return Iter.filter(chain, b -> {
-            // Packed ids (type bits included) key the dedup: identical variable
-            // values across graphs carry identical packed ids by construction.
-            long k0 = (v0 != null) ? b.get(v0) : NodeId.NONE;
-            long k1 = (v1 != null) ? b.get(v1) : NodeId.NONE;
-            long k2 = (v2 != null) ? b.get(v2) : NodeId.NONE;
-            return seen.add(k0, k1, k2);
+            for (int i = 0; i < vars.length; i++) {
+                probe[i] = b.get(vars[i]);
+            }
+            return seen.add(probe);
         });
+    }
+
+    /** Adds every variable inside a triple-term pattern (all depths) to {@code out}, without duplicates. */
+    private static void collectTripleTermVars(Node tripleTerm, List<Var> out) {
+        Triple t = tripleTerm.getTriple();
+        for (Node n : new Node[]{t.getSubject(), t.getPredicate(), t.getObject()}) {
+            if (n.isVariable()) {
+                Var v = Var.alloc(n);
+                if (!out.contains(v)) out.add(v);
+            } else if (n.isTripleTerm() && !n.isConcrete()) {
+                collectTripleTermVars(n, out);
+            }
+        }
+    }
+
+    /**
+     * Open-addressing hash set of fixed-width long tuples - the union dedup
+     * structure for patterns carrying more than three variables (embedded
+     * triple-term vars). Linear probing at &le; 50% load; grows by doubling.
+     * add() copies the caller's (reused) probe buffer only on insert.
+     * Not thread-safe (one per union iterator).
+     */
+    private static final class LongTupleSet {
+        private final int width;
+        private long[][] keys;
+        private int size;
+
+        LongTupleSet(int width) {
+            this.width = width;
+            this.keys = new long[1 << 10][];
+        }
+
+        boolean add(long[] key) {
+            if ((size << 1) >= keys.length) {
+                grow();
+            }
+            int mask = keys.length - 1;
+            long h = 0;
+            for (long k : key) {
+                h = mix(h ^ k);
+            }
+            int i = (int) (h & mask);
+            while (keys[i] != null) {
+                if (java.util.Arrays.equals(keys[i], key)) {
+                    return false;
+                }
+                i = (i + 1) & mask;
+            }
+            keys[i] = java.util.Arrays.copyOf(key, width);
+            size++;
+            return true;
+        }
+
+        private void grow() {
+            long[][] old = keys;
+            keys = new long[old.length << 1][];
+            size = 0;
+            for (long[] k : old) {
+                if (k != null) {
+                    add(k);
+                }
+            }
+        }
+
+        /** splitmix64 finalizer - full-avalanche mix (same as LongTripleSet). */
+        private static long mix(long z) {
+            z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+            z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+            return z ^ (z >>> 31);
+        }
     }
 
     /**

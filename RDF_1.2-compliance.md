@@ -1,16 +1,16 @@
-# BeakGraph RDF 1.1 Compliance Assessment
+# BeakGraph RDF 1.1 / RDF 1.2 Compliance Assessment
 
-*Assessed 2026-07-02 against [RDF 1.1 Concepts and Abstract Syntax](https://www.w3.org/TR/rdf11-concepts/) (W3C Recommendation, 25 February 2014).
- 
+*Assessed 2026-07-02 against [RDF 1.1 Concepts and Abstract Syntax](https://www.w3.org/TR/rdf11-concepts/) (W3C Recommendation, 25 February 2014); RDF 1.2 / SPARQL 1.2 sections updated 2026-07-18 against the Candidate Recommendation snapshots.*
+
 ## Verdict
 
-Substantially compliant for the core data model as an RDF 1.1 dataset store queried through SPARQL. Three deliberate, documented deviations exist, of which one (numeric literal canonicalization) affects term identity.
+**RDF 1.2 fully conformant** as a dataset store queried through SPARQL (see the RDF 1.2 section below for the claim and its test-suite evidence), and substantially compliant with RDF 1.1 for the core data model. Three deliberate, documented deviations exist, of which one (numeric literal canonicalization) affects term identity.
 
 ## Compliant areas
 
 ### Term model and positions
-- Subjects are IRI/blank node, predicates IRI, objects IRI/blank node/literal, graph names IRI/blank node — enforced with loud failures rather than silent acceptance of generalized RDF (`PositionalDictionaryWriterBuilder.ProcessQuad`, mirrored in `HugeBuildPipeline.countEntityKind`).
-- RDF-star quoted triples are rejected with an exception. Correct behavior for an RDF **1.1** store; quoted triples are RDF 1.2 territory.
+- Subjects are IRI/blank node, predicates IRI, objects IRI/blank node/literal/triple term, graph names IRI/blank node — enforced with loud failures rather than silent acceptance of generalized RDF (`PositionalDictionaryWriterBuilder.ProcessQuad`, mirrored in `HugeBuildPipeline` and `UltraIngest`). Triple-term components carry the same guards (subject IRI/blank, predicate IRI).
+- RDF 1.2 triple terms are stored term-exactly as of format v5 (see the RDF 1.2 section); other non-1.1 node kinds are still rejected with an exception.
 
 ### Literals
 - Every literal carries its datatype IRI, per RDF 1.1 (simple literals are `xsd:string`; identification inherited from Jena 5).
@@ -54,23 +54,36 @@ The stored dataset is a superset of the source: VoID/SD metadata (`urn:x-beakgra
 composite literals — whether or not the store supports them, so these terms arrive at the writers
 regardless. Policy: anything the format cannot represent fails the build loudly.*
 
-> **Conformance claim: BeakGraph is RDF 1.2-basic conformant** (format v4). RDF 1.2 Concepts §2
-> defines basic conformance as supporting graphs/datasets whose triples contain only basic RDF
-> terms — i.e. everything except triple terms. BeakGraph stores base-direction literals
-> term-exactly, inherits RDF 1.2's case-insensitive language-tag identity from Jena, and rejects
-> triple terms loudly. Full conformance is a designed-but-deferred future phase (PLAN.md Phase 3,
-> decided 2026-07-16: stand on basic).
+> **Conformance claim: BeakGraph is fully RDF 1.2 conformant** (format v5, 2026-07-18). RDF 1.2
+> Concepts §2's full conformance requires triple terms on top of basic conformance; BeakGraph
+> stores every RDF 1.2 term kind term-exactly — base-direction literals since format v4, triple
+> terms (including nesting) since format v5 — inherits RDF 1.2's case-insensitive language-tag
+> identity from Jena, and answers the SPARQL 1.2 query surface over them (triple-term patterns
+> with embedded variables included).
 >
-> **Evidence:** the vendored W3C RDF 1.2 test suites (rdf-turtle, rdf-n-triples, rdf-n-quads,
-> rdf-trig; `W3CRdf12SuiteTest`, suites at commit `d3e844a`): **301 tests — 213 executed, 0
-> failures**; 82 c14n tests skipped as out of scope (canonical serialization is a serializer
-> property, not storage), 6 skipped as upstream Jena 6.1.0 lenient-parse divergences (listed in
-> `src/test/resources/w3c/rdf12/README.md`). Every eval and positive-syntax test without triple
-> terms round-trips through a real store isomorphically; every triple-term test aborts on a loud
-> term-kind guard.
+> **Evidence:**
+> - The vendored W3C RDF 1.2 test suites (rdf-turtle, rdf-n-triples, rdf-n-quads, rdf-trig;
+>   `W3CRdf12SuiteTest`, suites at commit `d3e844a`) run as a pure conformance oracle: **301
+>   tests — 213 executed, 0 failures** (every eval and positive-syntax input, triple terms
+>   included, round-trips through a real store isomorphically); 82 c14n tests skipped as out of
+>   scope (canonical serialization is a serializer property, not storage), 6 skipped as upstream
+>   Jena 6.1.0 lenient-parse divergences (listed in `src/test/resources/w3c/rdf12/README.md`).
+> - The vendored W3C SPARQL 1.2 test suites (`W3CSparql12SuiteTest`, same commit): **269 tests —
+>   259 executed, 0 failures**, query-evaluation entries executed over real BeakGraph stores; 10
+>   skipped-with-reason (3 update-evaluation — the store is read-only; 7 upstream Jena grammar
+>   divergences, listed in `src/test/resources/w3c/sparql12/README.md`).
 
 - **Triple terms** (`<<( s p o )>>`, and the reifier/annotation sugar that expands to them):
-  rejected with an exception at ingest, as before. Storage is planned (PLAN.md Phase 3).
+  **stored and matched term-exactly as of format v5**, across all six writer engines. Storage is
+  structural (a fixed-stride `tripleTerms` component-id store in the literals section, whose
+  contiguous suffix triple terms occupy; nested terms resolve recursively), so blank nodes inside
+  triple terms keep co-referring with the graph through rank relabeling — the property that had to
+  be rejected for CDT literals falls out of the design here. Term-exact round-trip, export
+  (including the fastpath, byte-identical), `-verify -deep`, and the SPARQL 1.2 surface
+  (`TRIPLE`/`SUBJECT`/`PREDICATE`/`OBJECT`/`isTRIPLE`, patterns with embedded variables unified at
+  the id level) are all covered by `RDF12TripleTermTest`, `TermFidelityTest`, `ExportTest`,
+  `VerifyCommandTest`, and the two W3C suites. Stores without triple terms are byte-identical in
+  shape to v4 output; v5 files are rejected by older builds via the format-version gate.
 - **Base-direction literals** (`"x"@en--ltr`, `rdf:dirLangString`): **stored and matched
   term-exactly** as of format v4 — a `langDirs` column (0=none, 1=ltr, 2=rtl) beside the existing
   `langs`/`langTags` datasets, mirrored across all six writer engines, the disk writers' spill
@@ -109,9 +122,10 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
 | Ill-typed literals | Compliant (preserved term-exact) |
 | Blank node semantics | Compliant (isomorphism) |
 | Datasets / named graphs | Compliant |
-| Generalized RDF / RDF-star | Rejected loudly (correct for 1.1) |
+| Generalized RDF | Rejected loudly |
+| RDF 1.2 triple terms | Stored term-exactly (format v5, `tripleTerms` component store), all engines; SPARQL 1.2 patterns answered |
 | RDF 1.2 base-direction literals | Stored term-exactly (format v4, `langDirs`); ≤ 0.17.0 stored them silently corrupted — rebuild |
-| RDF 1.2 conformance level | **Basic** (W3C suites: 213 executed, 0 failures); full pending triple terms |
+| RDF 1.2 conformance level | **Full** (RDF suites: 213 executed, 0 failures; SPARQL 1.2 suites: 259 executed, 0 failures) |
 | SPARQL-CDT composite literals | Stored term-exact; lexical dictionary order (≤ 0.17.0 stores need rebuild); embedded blank nodes rejected |
 | Numeric literal term identity | **Deviation** — canonicalized at ingest |
 | Absolute-IRI requirement | **Deviation** — relative IRIs stored, resolved at serving time |

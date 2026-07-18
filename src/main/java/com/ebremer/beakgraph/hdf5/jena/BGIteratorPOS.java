@@ -35,6 +35,11 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     // so the vars each row binds are computed once. Object and subject vary per row.
     private Var oVar, sVar;
 
+    // Triple-term pattern in the object position: rows whose object id fails
+    // unification are dropped in computeNext (the same skip path repeated-var
+    // conflicts already use). Null for every other pattern shape.
+    private TripleTermMatcher ttMatcher;
+
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
     }
@@ -63,6 +68,17 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         // Analyze filters specifically for the Object variable
         if (filter != null && !filter.isEmpty()) {
             analyzeFilters(filter, dict, quad);
+        }
+
+        // Triple-term pattern in the object position: clamp the object range to
+        // the triple-term suffix of the object space (empties instantly on a
+        // triple-term-free store) and unify per candidate in computeNext.
+        if (TripleTermMatcher.isPattern(quad.getObject())) {
+            ttMatcher = TripleTermMatcher.compile(quad.getObject(), dict);
+            if (ttMatcher == null) {
+                return; // pattern cannot match anything in this store
+            }
+            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
         }
 
         // 1. Resolve Graph
@@ -233,6 +249,18 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             boolean ok = true;
             if (oVar != null) {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, So.get(curOIndex)), nodeTable);
+            }
+            if (ok && ttMatcher != null) {
+                // Unify the candidate object id against the triple-term pattern
+                // BEFORE the subject binds, so a repeated variable spanning the
+                // two (?x inside the term and as pattern subject) is checked by
+                // putCompatible against the embedded binding.
+                BindingNodeId unified = ttMatcher.matchAndBind(So.get(curOIndex), result, nodeTable);
+                if (unified == null) {
+                    ok = false;
+                } else {
+                    result = unified;
+                }
             }
             if (ok && sVar != null) {
                 ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, Ss.get(curSIndex)), nodeTable);

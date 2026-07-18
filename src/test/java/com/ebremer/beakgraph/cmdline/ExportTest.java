@@ -161,6 +161,44 @@ class ExportTest {
     }
 
     @Test
+    void ntExportRoundTripsTripleTermsOnBothPaths() throws Exception {
+        // RDF 1.2 triple terms (format v5): the fastpath's per-id memoized
+        // NodeFormatterNT text and the generic StreamRDF writer must both emit
+        // the <<( s p o )>> form - nested terms included - and stay
+        // byte-identical to each other.
+        String ttTriples =
+                "<http://ex.org/r> <http://ex.org/says> <<( <http://ex.org/a> <http://ex.org/b> <http://ex.org/c> )>> .\n"
+              + "<http://ex.org/r> <http://ex.org/says2> <<( <http://ex.org/a> <http://ex.org/b> <<( <http://ex.org/x> <http://ex.org/y> \"lit\" )>> )>> .\n"
+              + "<http://ex.org/r> <http://ex.org/num> <<( <http://ex.org/a> <http://ex.org/v> \"42\"^^<http://www.w3.org/2001/XMLSchema#int> )>> .\n";
+        File h5 = buildStore("tterms", ttTriples);
+        Path out = dir.resolve("tterms.nt");
+
+        runExport(h5, "NT", false);
+        byte[] fastpath = Files.readAllBytes(out);
+        String text = new String(fastpath, StandardCharsets.UTF_8);
+        assertTrue(text.contains("<<(") && text.contains(")>>"),
+                "fastpath export must emit triple-term syntax:\n" + text);
+
+        Files.delete(out);
+        System.setProperty("beakgraph.export.fastpath", "false");
+        try {
+            runExport(h5, "NT", false);
+        } finally {
+            System.clearProperty("beakgraph.export.fastpath");
+        }
+        byte[] generic = Files.readAllBytes(out);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, generic,
+                "fastpath must stay byte-identical to the generic writer");
+
+        Dataset ds = parse(out, Lang.NTRIPLES, false);
+        Model expected = ModelFactory.createDefaultModel();
+        RDFDataMgr.read(expected, new java.io.ByteArrayInputStream(
+                ttTriples.getBytes(StandardCharsets.UTF_8)), Lang.NTRIPLES);
+        assertTrue(ds.getDefaultModel().isIsomorphicWith(expected),
+                "exported triple terms must round-trip term-exactly");
+    }
+
+    @Test
     void ntUpgradesToNqWhenNamedGraphsExist() throws Exception {
         File h5 = buildStore("upg", QUADS);
         runExport(h5, "NT", false);

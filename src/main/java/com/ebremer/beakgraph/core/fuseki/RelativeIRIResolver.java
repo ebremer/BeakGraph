@@ -80,7 +80,7 @@ public class RelativeIRIResolver {
      * @param storedTerm whether a node exists in the store's dictionary
      */
     public NodeTransform absoluteToStorage(Predicate<Node> storedTerm) {
-        return node -> {
+        return tripleTermRecursive(node -> {
             if (base != null && node != null && node.isURI()
                     && !UTIL.isRelativeIRI(node.getURI())) {
                 try {
@@ -96,7 +96,19 @@ public class RelativeIRIResolver {
                 }
             }
             return node;
-        };
+        });
+    }
+
+    /**
+     * Applies {@code perNode} through RDF 1.2 triple terms too: IRIs INSIDE a
+     * term need the same storage/serving-form rewrite as top-level ones. Both
+     * per-node rewrites here are idempotent, so this stays correct even where
+     * Jena's own transform plumbing also recurses into triple terms.
+     */
+    private static NodeTransform tripleTermRecursive(NodeTransform perNode) {
+        return node -> (node != null && node.isTripleTerm())
+                ? com.ebremer.beakgraph.core.lib.TripleTerms.map(node, perNode::apply)
+                : perNode.apply(node);
     }
 
     /**
@@ -104,7 +116,7 @@ public class RelativeIRIResolver {
      * document base into an absolute IRI. Absolute IRIs pass through unchanged.
      */
     public NodeTransform storageToAbsolute() {
-        return node -> {
+        return tripleTermRecursive(node -> {
             if (base != null && node != null && node.isURI()
                     && UTIL.isRelativeIRI(node.getURI())) {
                 try {
@@ -114,7 +126,7 @@ public class RelativeIRIResolver {
                 }
             }
             return node;
-        };
+        });
     }
 
     /**

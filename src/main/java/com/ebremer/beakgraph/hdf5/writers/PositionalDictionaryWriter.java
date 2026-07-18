@@ -65,17 +65,23 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
             .enable(Types.IRI)
             .build();
             
-        // 3. Build the Isolated Literal Dictionary (O Native Literals)
+        // Cache this for fast offset math in locateObject. Assigned BEFORE the
+        // literals build: the triple-term encoder below resolves object-space
+        // ids, which are literal-section ranks offset by this value.
+        this.maxEntityId = entitiesdict.getNumberOfNodes();
+
+        // 3. Build the Isolated Literal Dictionary (O native literals + RDF 1.2
+        // triple terms, which macro-rank after every literal and so form a
+        // contiguous suffix of this section - PLAN Part IV §IV.2).
         literalsdict = new MultiTypeDictionaryWriter.Builder()
             .setName("literals")
             .setNodes(builder.getLiterals())
             .setDataTypes(builder.getDataTypes())
             .setStats(builder.getStats())
-            .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING)
+            .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING, Types.TRIPLE_TERM)
+            .setTripleTermEncoder(this::encodeTripleTerm)
+            .setTripleTermComponentIdBound(maxEntityId + builder.getLiterals().size())
             .build();
-            
-        // Cache this for fast offset math in locateObject
-        this.maxEntityId = entitiesdict.getNumberOfNodes();
 
         // 4. Initialize Bit-Packed Buffers for columnar ID lists
         // Determine required bit-widths based on the dictionary sizes
@@ -160,9 +166,38 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
     }
    
+    /**
+     * Component-id resolution for the literals section's triple terms (PLAN
+     * Part IV §IV.3). Entities and predicates are fully built by the time the
+     * literals section encodes; literal and nested-triple-term objects resolve
+     * through the section's OWN already-sorted ranks (passed in as
+     * {@code ownSection}, since this runs while literalsdict is still under
+     * construction), offset into the object space.
+     */
+    private long[] encodeTripleTerm(Node tt, Dictionary ownSection) {
+        org.apache.jena.graph.Triple t = tt.getTriple();
+        long s = ((Dictionary) entitiesdict).locate(t.getSubject());
+        long p = ((Dictionary) predicatesdict).locate(t.getPredicate());
+        Node o = t.getObject();
+        long oid;
+        if (o.isLiteral() || o.isTripleTerm()) {
+            long lid = ownSection.locate(o);
+            oid = (lid > 0) ? lid + maxEntityId : -1;
+        } else {
+            oid = ((Dictionary) entitiesdict).locate(o);
+        }
+        if (s < 1 || p < 1 || oid < 1) {
+            // Same stance as the locate* methods: during a write every component
+            // is already in its dictionary, so a miss is a build-invariant violation.
+            throw new IllegalStateException("Cannot resolve triple-term components (not in dictionaries): "
+                    + tt + " (s=" + s + ", p=" + p + ", o=" + oid + ")");
+        }
+        return new long[]{s, p, oid};
+    }
+
     @Override
     public long locateObject(Node element) {
-        if (element.isLiteral()) {
+        if (element.isLiteral() || element.isTripleTerm()) {
             long c = ((Dictionary) literalsdict).locate(element);
             if (c > 0) return c + maxEntityId; // Offset by Entity block size
         } else {

@@ -5,6 +5,7 @@ import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
+import java.util.Collections;
 import java.util.Iterator;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.sparql.core.Quad;
@@ -18,10 +19,27 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
     private final Iterator<BindingNodeId> chain;
 
     public BGIteratorMaster(HDF5Reader reader, PositionalDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        // THE term classifier (PLAN §4.0 Trap 2's fix - one classification, here):
+        // - A CONCRETE triple term is a bound term like any other; locate()
+        //   answers it (a miss is correctly empty), so no special routing.
+        // - A VAR-CONTAINING triple term in the object position is
+        //   unbound-with-unification: routed below as if the object were a
+        //   variable; the chosen iterator compiles a TripleTermMatcher.
+        // - A var-containing triple term anywhere else can never match data
+        //   (RDF 1.2 permits triple terms in object position only), and probing
+        //   a dictionary comparator with embedded variables is undefined -
+        //   answer empty here rather than let an iterator improvise.
+        if (TripleTermMatcher.isPattern(quad.getGraph())
+                || TripleTermMatcher.isPattern(quad.getSubject())
+                || TripleTermMatcher.isPattern(quad.getPredicate())) {
+            chain = Collections.emptyIterator();
+            return;
+        }
         boolean gBound = !quad.getGraph().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getGraph())));
         boolean sBound = !quad.getSubject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getSubject())));
         boolean pBound = !quad.getPredicate().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getPredicate())));
-        boolean oBound = !quad.getObject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getObject())));
+        boolean oBound = !TripleTermMatcher.isPattern(quad.getObject())
+                && (!quad.getObject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getObject()))));
 
         if (gBound) {
             if (pBound) {

@@ -72,6 +72,28 @@ class VerifyCommandTest {
     }
 
     @Test
+    void tripleTermStorePassesDeepVerify() throws Exception {
+        // -deep materializes every triple, which resolves every triple-term row
+        // through the cross-dictionary component store - resolution IS the
+        // traversal, so a component-id fault would surface as a shortfall here.
+        String ttl = """
+            @prefix ex: <http://ex.org/> .
+            ex:r ex:says <<( ex:a ex:b ex:c )>> .
+            ex:r ex:says2 <<( ex:a ex:b <<( ex:x ex:y "lit" )>> )>> .
+            ex:s1 ex:p ex:o1 .
+            """;
+        File src = dir.resolve("ttverify.ttl").toFile();
+        File h5 = dir.resolve("ttverify.ttl.h5").toFile();
+        Files.write(src.toPath(), ttl.getBytes(StandardCharsets.UTF_8));
+        HDF5Writer.Builder().setSource(src).setDestination(h5)
+                .setSpatial(false).setFeatures(false).build().write();
+
+        Result deep = verify(h5, true);
+        assertEquals(0, deep.code(), deep.output());
+        assertTrue(deep.output().contains("1 OK, 0 FAILED"), deep.output());
+    }
+
+    @Test
     void emptyFileFails() throws Exception {
         Path empty = dir.resolve("empty.h5");
         Files.write(empty, new byte[0]);

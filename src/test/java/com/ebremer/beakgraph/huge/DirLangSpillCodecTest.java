@@ -79,7 +79,7 @@ class DirLangSpillCodecTest {
                 dir.resolve("dirs"), "literals", 2, stringStats(),
                 Set.of(Types.STRING, Types.INTEGER, Types.LONG, Types.FLOAT, Types.DOUBLE),
                 new TreeSet<>(Set.of(RDF.dirLangString.getURI(), RDF.langString.getURI())),
-                new TreeSet<>(Set.of("en")), true)) {
+                new TreeSet<>(Set.of("en")), true, null)) {
             w.encode(List.of(plain, ltr).iterator());
         }
     }

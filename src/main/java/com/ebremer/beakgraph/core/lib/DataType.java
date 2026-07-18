@@ -18,8 +18,15 @@ public enum DataType {
     BIG_DECIMAL(BigDecimal.class, -1),
     // A document-relative IRI (no scheme), e.g. <> or <sibling.png>. Stored
     // verbatim and resolved at query time against the file's serving URL.
-    // MUST stay last so existing ordinals in older .h5 files are unaffected.
-    RELATIVE_IRI(String.class, -1);
+    RELATIVE_IRI(String.class, -1),
+    // RDF 1.2 triple term <<( s p o )>> (format v5). The row's offsets entry is
+    // the term's ordinal k in the tripleTerms store: entries [3k, 3k+2] hold the
+    // (s, p, o) component ids - s in the entity space, p in the predicate space,
+    // o in the object space (entities + literals section, so nested triple terms
+    // resolve recursively). Ordinals are the on-disk encoding: append only,
+    // never reorder. This is value 14 of 15 before the datatypes column widens
+    // from 5 to 6 bits.
+    TRIPLE_TERM(org.apache.jena.graph.Triple.class, -1);
 
     private final Class<?> clazz;
     private final int sizeInBytes;

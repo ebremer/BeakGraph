@@ -48,6 +48,12 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private Var gVar, sVar, pVar, oVar;
     private long gId;
 
+    // Triple-term pattern in the object position: this scan-shaped iterator
+    // formerly dropped the constraint entirely (a var-containing triple term is
+    // not isConcrete()) and returned every row - PLAN §4.0 Trap 2. Candidates
+    // now unify per row in computeNext; null for every other shape.
+    private TripleTermMatcher ttMatcher;
+
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
     }
@@ -107,6 +113,15 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             if (oid < 1) return;
             minObjId = Math.max(minObjId, oid);
             maxObjId = Math.min(maxObjId, oid);
+        } else if (TripleTermMatcher.isPattern(quad.getObject())) {
+            // Var-containing triple term: not concrete, but very much a
+            // constraint. Clamp to the triple-term suffix of the object space
+            // and unify each surviving row in computeNext.
+            ttMatcher = TripleTermMatcher.compile(quad.getObject(), dict);
+            if (ttMatcher == null) {
+                return; // pattern cannot match anything in this store
+            }
+            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
         }
 
         // -----------------------------------------------------------------
@@ -371,6 +386,14 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             }
             if (ok && oVar != null) {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, resO), nodeTable);
+            }
+            if (ok && ttMatcher != null) {
+                BindingNodeId unified = ttMatcher.matchAndBind(resO, result, nodeTable);
+                if (unified == null) {
+                    ok = false;
+                } else {
+                    result = unified;
+                }
             }
             advance();
             if (ok) return result;

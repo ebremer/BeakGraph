@@ -87,12 +87,16 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 * Numeric literals typed `xsd:int`, `xsd:long`, `xsd:float` or `xsd:double` are
   stored by value and canonicalized at ingest: `"01"^^xsd:int` is stored - and
   matched - as `"1"^^xsd:int`.
-* RDF 1.2 support is at the spec's **basic conformance** level: base-direction
-  literals (`"x"@en--ltr`, `rdf:dirLangString`) are stored and matched
-  term-exactly (format v4 adds a `langDirs` column beside `langs`/`langTags`),
-  while triple terms (`<<( s p o )>>`, including the reifier/annotation sugar)
-  are still rejected loudly at ingest. Versions ≤ 0.17.0 silently stored
-  base-direction literals as plain `"x"@en` — rebuild affected stores; a
+* RDF 1.2 support is at the spec's **full conformance** level (format v5):
+  base-direction literals (`"x"@en--ltr`, `rdf:dirLangString`; format v4) and
+  triple terms (`<<( s p o )>>`, including the reifier/annotation sugar and
+  nesting; format v5) are stored and matched term-exactly across every writer
+  engine, and SPARQL 1.2 triple-term patterns — embedded variables included —
+  are answered from the index. Evidence: the vendored W3C RDF 1.2 suites (213
+  executed, 0 failures) and SPARQL 1.2 suites (259 executed, 0 failures) run in
+  CI over real stores (`W3CRdf12SuiteTest`, `W3CSparql12SuiteTest`; see
+  [RDF_1.2-compliance.md](RDF_1.2-compliance.md)). Versions ≤ 0.17.0 silently
+  stored base-direction literals as plain `"x"@en` — rebuild affected stores; a
   version that rejects or correctly stores them is the detector.
 * SPARQL-CDT composite literals (`cdt:List`/`cdt:Map`; the
   [spec](https://awslabs.github.io/SPARQL-CDTs/spec/latest.html) is an

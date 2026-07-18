@@ -43,6 +43,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private final BitPackedUnSignedLongBuffer typedLiterals;
     private final BitPackedUnSignedLongBuffer integers;
     private final BitPackedUnSignedLongBuffer longs;
+    // RDF 1.2 triple terms (format v5): fixed-stride component store - entries
+    // [3k, 3k+2] hold the (s, p, o) ids of the triple term whose offsets value
+    // is k. Null unless this section is triple-term-enabled and some exist.
+    private final BitPackedUnSignedLongBuffer tripleTerms;
+    private final TripleTermEncoder tripleTermEncoder;
     private final BitPackedUnSignedLongBuffer nativedatatypes;
     private DataOutputBuffer floats;
     private DataOutputBuffer doubles;
@@ -104,6 +109,20 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (longWidth > 57) longWidth = 64;
         this.integers = (!et.contains(Types.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), null, 0, intWidth);
         this.longs = (!et.contains(Types.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), null, 0, longWidth);
+
+        // Triple-term component store: width sized to the largest id any
+        // component can carry (the object space: entities + this section).
+        boolean wantTripleTerms = et.contains(Types.TRIPLE_TERM) && stats.numTripleTerms > 0;
+        if (wantTripleTerms && builder.getTripleTermEncoder() == null) {
+            // Encoding would otherwise fail per-node, deep in the sorted walk.
+            throw new IllegalStateException(
+                    "Dictionary '" + name + "' has " + stats.numTripleTerms
+                  + " triple terms but no TripleTermEncoder was supplied");
+        }
+        int ttWidth = 1 + MinBits(builder.getTripleTermComponentIdBound());
+        if (ttWidth > 57) ttWidth = 64;
+        this.tripleTerms = wantTripleTerms ? new BitPackedUnSignedLongBuffer(Path.of("tripleTerms"), null, 0, ttWidth) : null;
+        this.tripleTermEncoder = builder.getTripleTermEncoder();
 
         // FCDWriter and DataOutputBuffer constructors may throw IOException.
         // Use temp variables so that already-opened handles can be closed on failure,
@@ -308,11 +327,32 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                   + "refusing to write a misaligned dictionary entry.");
             }
         }
+        else if (node.isTripleTerm()) {
+            if (tripleTerms == null) {
+                // Reaching here means the stats pass never counted this term -
+                // a stats/allocation mismatch, same class of bug as the strings
+                // fallback below guards against.
+                throw new IllegalStateException(
+                        "Triple term reached dictionary '" + name + "' without a tripleTerms buffer: " + node);
+            }
+            offsets.writeLong(tripleTerms.getNumEntries() / 3);
+            nativedatatypes.writeInteger(DataType.TRIPLE_TERM.ordinal());
+            if (literalsPresent) typedLiterals.writeLong(0);
+            if (langTags != null) langTags.writeLong(0);
+            if (langDirs != null) langDirs.writeLong(0);
+            // Component ids resolve NOW - the section's sort already fixed every
+            // rank, so nested terms resolve through this (partially encoded)
+            // section's own locate() (the "flat second pass" of PLAN §3.1).
+            long[] c = tripleTermEncoder.encode(node, this);
+            tripleTerms.writeLong(c[0]);
+            tripleTerms.writeLong(c[1]);
+            tripleTerms.writeLong(c[2]);
+        }
         else {
-            // A node that is neither blank, URI nor literal (e.g. an RDF-star triple
-            // term) would write NO buffer entries at all, leaving offsets/datatypes
-            // one entry short of the sorted node list - every id after it silently
-            // shifts. Fail the build loudly instead.
+            // A node that is neither blank, URI, literal nor triple term (e.g. a
+            // variable) would write NO buffer entries at all, leaving
+            // offsets/datatypes one entry short of the sorted node list - every
+            // id after it silently shifts. Fail the build loudly instead.
             throw new IllegalStateException("Unsupported node kind in dictionary '" + name + "': " + node);
         }
         long c = cc.incrementAndGet();
@@ -330,6 +370,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (iri != null) iri.close();
         if (integers != null) integers.prepareForReading();
         if (longs != null) longs.prepareForReading();
+        if (tripleTerms != null) tripleTerms.prepareForReading();
         nativedatatypes.prepareForReading();
         if (floats != null) floats.close();
         if (doubles != null) doubles.close();
@@ -352,10 +393,14 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     public void add(WritableGroup group) {
         WritableGroup subGroup = group.putGroup(name);
         if (typedLiterals != null) typedLiterals.add(subGroup);
-        if (offsets != null) offsets.add(subGroup);        
-        if (typedLiteralsDictionary != null) typedLiteralsDictionary.add(subGroup);
+        if (offsets != null) offsets.add(subGroup);
+        // Entry-count gate (like iri/langs below): a literals section whose only
+        // rows are triple terms has NO datatype IRIs, and jHDF cannot write an
+        // empty dataset - absence already means "none" to the reader.
+        if (typedLiteralsDictionary != null && typedLiteralsDictionary.getNumEntries() > 0) typedLiteralsDictionary.add(subGroup);
         if (integers != null) integers.add(subGroup);
         if (longs != null) longs.add(subGroup);
+        if (tripleTerms != null) tripleTerms.add(subGroup);
         if (floats != null) floats.add(subGroup);
         if (doubles != null) doubles.add(subGroup);
         if (iri != null && iri.getNumEntries() > 0) iri.add(subGroup);
@@ -373,6 +418,19 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     @Override public Node extract(long id) { throw new UnsupportedOperationException(); }
     @Override public long search(Node element) { throw new UnsupportedOperationException(); }
 
+    /**
+     * Resolves a triple term's component ids at encode time: s in the entity
+     * space, p in the predicate space, o in the OBJECT space (entity id, or
+     * maxEntityId + section id for literals and nested triple terms).
+     * {@code ownSection} is the section being encoded - its sort already fixed
+     * every rank, so literal and nested-triple-term objects resolve through it.
+     * Implementations MUST throw on an unresolvable component (a build
+     * invariant violation), never return an id < 1.
+     */
+    public interface TripleTermEncoder {
+        long[] encode(Node tripleTerm, Dictionary ownSection);
+    }
+
     public static class Builder {
         private Set<Node> nodes = new HashSet<>();
         private ArrayList<Node> sortedNodes;
@@ -380,7 +438,14 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         private Stats stats;
         private Set<Types> et = new HashSet<>();
         private Set<String> typedLiterals = new HashSet<>();
+        private TripleTermEncoder tripleTermEncoder;
+        private long tripleTermComponentIdBound = 0;
         public Builder enable(Types... types) { et.addAll(Arrays.asList(types)); return this; }
+        public Builder setTripleTermEncoder(TripleTermEncoder e) { this.tripleTermEncoder = e; return this; }
+        /** Upper bound on any component id (the object-space size); sizes the tripleTerms store's bit width. */
+        public Builder setTripleTermComponentIdBound(long bound) { this.tripleTermComponentIdBound = bound; return this; }
+        public TripleTermEncoder getTripleTermEncoder() { return tripleTermEncoder; }
+        public long getTripleTermComponentIdBound() { return tripleTermComponentIdBound; }
         public Builder setStats(Stats stats) { this.stats = stats; return this; }
         public Builder setNodes(Set<Node> nodes) { this.nodes = nodes; return this; }
         /**

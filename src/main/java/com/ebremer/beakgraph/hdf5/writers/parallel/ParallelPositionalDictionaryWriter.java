@@ -79,16 +79,35 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
                 .setStats(stats)
                 .enable(Types.IRI)
                 .build());
-        ForkJoinTask<DictionaryWriter> literalsTask = pool.submit(() -> new MultiTypeDictionaryWriter.Builder()
+        MultiTypeDictionaryWriter.Builder literalsBuilder = new MultiTypeDictionaryWriter.Builder()
                 .setName("literals")
                 .setNodes(builder.getLiterals())
                 .setDataTypes(builder.getDataTypes())
                 .setStats(stats)
-                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING)
-                .build());
-        entitiesdict = joinDictionary(entitiesTask, "entities");
-        predicatesdict = joinDictionary(predicatesTask, "predicates");
-        literalsdict = joinDictionary(literalsTask, "literals");
+                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING, Types.TRIPLE_TERM);
+
+        if (stats.numTripleTerms > 0) {
+            // Triple-term component ids resolve against COMPLETED entities and
+            // predicates dictionaries (PLAN Part IV §IV.3's parallel-writer
+            // sequencing constraint): join those two first, then build the
+            // literals section. Triple-term-free datasets - the case that
+            // matters for throughput - keep the historical full concurrency in
+            // the else branch.
+            entitiesdict = joinDictionary(entitiesTask, "entities");
+            predicatesdict = joinDictionary(predicatesTask, "predicates");
+            final DictionaryWriter ents = entitiesdict;
+            final DictionaryWriter preds = predicatesdict;
+            final long maxEnt = entitiesdict.getNumberOfNodes();
+            literalsBuilder
+                    .setTripleTermEncoder((tt, own) -> encodeTripleTerm(tt, ents, preds, own, maxEnt))
+                    .setTripleTermComponentIdBound(maxEnt + builder.getLiterals().size());
+            literalsdict = joinDictionary(pool.submit(literalsBuilder::build), "literals");
+        } else {
+            ForkJoinTask<DictionaryWriter> literalsTask = pool.submit(literalsBuilder::build);
+            entitiesdict = joinDictionary(entitiesTask, "entities");
+            predicatesdict = joinDictionary(predicatesTask, "predicates");
+            literalsdict = joinDictionary(literalsTask, "literals");
+        }
 
         // Cache this for fast offset math in locateObject
         this.maxEntityId = entitiesdict.getNumberOfNodes();
@@ -130,6 +149,32 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
             target.writeLong(id);
         }
         target.prepareForReading();
+    }
+
+    /**
+     * Triple-term component resolution (PLAN Part IV §IV.3): entities and
+     * predicates are complete when this runs (the sequencing branch above);
+     * literal and nested-triple-term objects resolve through the literals
+     * section's own already-sorted ranks, offset into the object space.
+     */
+    private static long[] encodeTripleTerm(Node tt, DictionaryWriter ents, DictionaryWriter preds,
+                                           Dictionary ownSection, long maxEntityId) {
+        org.apache.jena.graph.Triple t = tt.getTriple();
+        long s = ((Dictionary) ents).locate(t.getSubject());
+        long p = ((Dictionary) preds).locate(t.getPredicate());
+        Node o = t.getObject();
+        long oid;
+        if (o.isLiteral() || o.isTripleTerm()) {
+            long lid = ownSection.locate(o);
+            oid = (lid > 0) ? lid + maxEntityId : -1;
+        } else {
+            oid = ((Dictionary) ents).locate(o);
+        }
+        if (s < 1 || p < 1 || oid < 1) {
+            throw new IllegalStateException("Cannot resolve triple-term components (not in dictionaries): "
+                    + tt + " (s=" + s + ", p=" + p + ", o=" + oid + ")");
+        }
+        return new long[]{s, p, oid};
     }
 
     private static DictionaryWriter joinDictionary(ForkJoinTask<DictionaryWriter> task, String which) throws IOException {
@@ -219,7 +264,7 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
 
     @Override
     public long locateObject(Node element) {
-        if (element.isLiteral()) {
+        if (element.isLiteral() || element.isTripleTerm()) {
             long c = ((Dictionary) literalsdict).locate(element);
             if (c > 0) return c + maxEntityId; // Offset by Entity block size
         } else {

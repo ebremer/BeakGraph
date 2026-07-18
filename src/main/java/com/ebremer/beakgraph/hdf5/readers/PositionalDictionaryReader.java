@@ -21,6 +21,12 @@ public class PositionalDictionaryReader implements GSPODictionary {
     private final MultiTypeDictionaryReader predicates;
     private final MultiTypeDictionaryReader literals;
     private final long maxEntityId;
+    // RDF 1.2 triple terms occupy a CONTIGUOUS SUFFIX of the object id space
+    // (they macro-rank after every literal in the literals section). Sentinel
+    // MAX_VALUE/MIN_VALUE when the store holds none, so the range test below
+    // is branch-free and always false.
+    private final long firstTripleTermObjectId;
+    private final long lastTripleTermObjectId;
     private final BitPackedUnSignedLongBuffer graphs;
     private final BitPackedUnSignedLongBuffer subjects;
     private final BitPackedUnSignedLongBuffer objects;
@@ -45,6 +51,41 @@ public class PositionalDictionaryReader implements GSPODictionary {
         this.objects = getDataSet(dictionary, "objects").map(ds ->
             BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objectsDict = makeObjectsDictionary();
+
+        // Wire the cross-dictionary triple-term resolver (PLAN Part IV §IV.4):
+        // a term's s/p ids live in the entities/predicates sections, and its o
+        // id resolves through the object space - which recurses right back
+        // through this resolver for nested triple terms.
+        long ttRows = (literals != null) ? literals.tripleTermRowCount() : 0;
+        if (ttRows > 0) {
+            literals.setTripleTermResolver((s, p, o) ->
+                org.apache.jena.graph.NodeFactory.createTripleTerm(
+                    entities.extract(s), predicates.extract(p), objectsDict.extract(o)));
+            this.firstTripleTermObjectId = maxEntityId + literals.getNumberOfNodes() - ttRows + 1;
+            this.lastTripleTermObjectId = maxEntityId + literals.getNumberOfNodes();
+        } else {
+            this.firstTripleTermObjectId = Long.MAX_VALUE;
+            this.lastTripleTermObjectId = Long.MIN_VALUE;
+        }
+    }
+
+    /** True when {@code objectId} denotes a stored RDF 1.2 triple term (the contiguous suffix of the object space). */
+    public boolean isTripleTermObjectId(long objectId) {
+        return objectId >= firstTripleTermObjectId && objectId <= lastTripleTermObjectId;
+    }
+
+    /** First object-space id of the triple-term suffix; {@code Long.MAX_VALUE} when the store holds none. */
+    public long firstTripleTermObjectId() {
+        return firstTripleTermObjectId;
+    }
+
+    /**
+     * Component ids (s, p, o) of the stored triple term with object id
+     * {@code objectId}: s in the entity space, p in the predicate space, o in
+     * the object space. The caller guarantees {@link #isTripleTermObjectId}.
+     */
+    public long[] tripleTermComponents(long objectId) {
+        return literals.tripleTermComponents(objectId - maxEntityId);
     }
     
     private Optional<ContiguousDataset> getDataSet(Group g, String name) {
@@ -109,7 +150,9 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
             @Override
             public long search(Node element) {
-                if (element.isLiteral()) {
+                // Triple terms live in the literals section too (its contiguous
+                // suffix), so they share the literal routing here.
+                if (element.isLiteral() || element.isTripleTerm()) {
                     if (literals == null) return -1;
                     long id = literals.search(element);
                     if (id >= 1) {

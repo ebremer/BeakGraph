@@ -34,6 +34,10 @@ public class Stats {
     public long numStrings = 0;
     public int longestStringLength = Integer.MIN_VALUE;
     public int shortestStringLength = Integer.MAX_VALUE;
+
+    // RDF 1.2 triple terms (distinct, all nesting depths). Drives allocation of
+    // the literals section's tripleTerms component store.
+    public long numTripleTerms = 0;
     
     @Override
     public String toString() {

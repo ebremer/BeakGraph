@@ -226,11 +226,16 @@ them to validate any tuning against your own store shape.
 
 ## 9. Output guarantees
 
-* One HDF5 format, one reader stack, for every method (format version 4).
-  v4 adds the optional `langDirs` dataset for RDF 1.2 base-direction literals
-  (`"x"@en--ltr`); v3 files remain fully readable, while v4 files are rejected
-  by older builds with an "Upgrade BeakGraph" error.
+* One HDF5 format, one reader stack, for every method (format version 5).
+  v4 added the optional `langDirs` dataset for RDF 1.2 base-direction literals
+  (`"x"@en--ltr`); v5 adds the optional `tripleTerms` component store for
+  RDF 1.2 triple terms (`<<( s p o )>>`). v3/v4 files remain fully readable,
+  while newer files are rejected by older builds with an "Upgrade BeakGraph"
+  error. A store containing neither feature is byte-identical in shape to v3
+  output.
 * Methods 0/2/3 produce **structurally identical** stores for the same single source
   (same datasets, sizes, attributes); methods 1/4 produce **isomorphic** stores
   (blank-node labels are rank-derived rather than relabelled).
-* See `docs/BeakGraph-HDF5-Architecture.pptx` for the on-disk format design.
+* See `SPECIFICATIONS.md` (repo root) for the precise on-disk format — enough
+  to re-create BeakGraph files without this source tree — and
+  `docs/BeakGraph-HDF5-Architecture.pptx` for the original design slides.

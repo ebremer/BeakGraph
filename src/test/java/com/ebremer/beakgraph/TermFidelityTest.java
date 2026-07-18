@@ -79,11 +79,19 @@ class TermFidelityTest {
         :s :list "[9]"^^cdt:List .
         :s :list "[10]"^^cdt:List .
         :s :map "{\\"k\\": 5}"^^cdt:Map .
+        :s :tt <<( :a2 :b2 :c2 )>> .
+        :s :tt2 <<( :a2 :b2 <<( :nx :ny "nested" )>> )>> .
+        :s :tt3 <<( _:shared :inTerm "bnode co-refers inside and out" )>> .
+        :s :tt4 <<( :a2 :b2 "hello"@en--ltr )>> .
+        :s :tt5 <<( :a2 :b2 "hello"@en--rtl )>> .
+        :s :tt6 <<( :onlyInsideS :onlyInsideP :onlyInsideO )>> .
+        :s :tt7 <<( :a2 :b2 "42"^^xsd:int )>> .
 
         :g1 {
             :a :b :c .
             _:shared :in "g1" .
             :a :val "1"^^xsd:int .
+            :a :ttg <<( :a2 :b2 :c2 )>> .
         }
 
         _:gname {

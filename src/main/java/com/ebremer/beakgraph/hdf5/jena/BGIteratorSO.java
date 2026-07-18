@@ -22,6 +22,7 @@ import org.apache.jena.sparql.expr.ExprList;
 public class BGIteratorSO implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
     private final BitPackedUnSignedLongBuffer So;
+    private final NodeTable nodeTable;
 
     private long i;  // current object index
     private long j;  // end object index (inclusive)
@@ -31,6 +32,13 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
 
+    // Triple-term pattern in the object position (<<( ?a :b ?c )>>): candidates
+    // in the (already triple-term-suffix-clamped) range unify per row; failures
+    // are skipped through the ttPending look-ahead. Null for every other shape,
+    // keeping the ordinary emit path branch-identical.
+    private TripleTermMatcher ttMatcher;
+    private BindingNodeId ttPending;
+
     // Row-emission plan, computed once: which variables each row binds, with the
     // constant G/S/P packed NodeIds pre-built (only the object id varies per row).
     private Var gVar, sVar, pVar, oVar;
@@ -38,6 +46,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
 
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this.parentBinding = bnid;
+        this.nodeTable = nodeTable;
 
         // GSPO Structure mapping
         BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
@@ -98,7 +107,19 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         // yield no match - not a full range scan (which fabricated phantom rows,
         // e.g. ASK with a non-existent object answered true).
         Node oNode = quad.getObject();
-        boolean oUnbound = oNode.isVariable() && (bnid == null || !bnid.containsKey(Var.alloc(oNode)));
+        boolean oTTPattern = TripleTermMatcher.isPattern(oNode);
+        if (oTTPattern) {
+            ttMatcher = TripleTermMatcher.compile(oNode, dict);
+            if (ttMatcher == null) {
+                return; // pattern cannot match anything in this store
+            }
+            // Stored triple terms are the object space's contiguous suffix -
+            // clamp the scan to it (a triple-term-free store empties the range
+            // immediately via the lowerBound below).
+            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
+        }
+        boolean oUnbound = oTTPattern
+                || (oNode.isVariable() && (bnid == null || !bnid.containsKey(Var.alloc(oNode))));
 
         if (oUnbound) {
             // Case: Object is a variable, apply min/max ID range filters
@@ -222,11 +243,22 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
 
     @Override
     public boolean hasNext() {
-        return hasNext;
+        if (ttMatcher == null) {
+            return hasNext;
+        }
+        primeTT();
+        return ttPending != null;
     }
 
     @Override
     public BindingNodeId next() {
+        if (ttMatcher != null) {
+            primeTT();
+            if (ttPending == null) throw new NoSuchElementException();
+            BindingNodeId r = ttPending;
+            ttPending = null;
+            return r;
+        }
         if (!hasNext) throw new NoSuchElementException();
         BindingNodeId result = new BindingNodeId(this.parentBinding);
         if (gVar != null) result.put(gVar, gId);
@@ -236,5 +268,24 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         i++;
         hasNext = (i <= j);
         return result;
+    }
+
+    /**
+     * Look-ahead for triple-term patterns: walks the clamped object range and
+     * keeps the first candidate that unifies (embedded variables bound into
+     * chained layers); non-unifying candidates are skipped so hasNext() only
+     * answers true when next() really has a row.
+     */
+    private void primeTT() {
+        while (ttPending == null && hasNext) {
+            long oid = So.get(i);
+            i++;
+            hasNext = (i <= j);
+            BindingNodeId row = new BindingNodeId(this.parentBinding);
+            if (gVar != null) row.put(gVar, gId);
+            if (sVar != null) row.put(sVar, sId);
+            if (pVar != null) row.put(pVar, pId);
+            ttPending = ttMatcher.matchAndBind(oid, row, nodeTable);
+        }
     }
 }

@@ -91,6 +91,14 @@ final class DistinctNodeCounter {
             if (dir != null) {
                 h = h * 31 + (dir == TextDirection.LTR ? 37 : 41);
             }
+        } else if (n.isTripleTerm()) {
+            // Structural and recursive: stable across Jena toString changes, and
+            // embedded dirLang/CDT term identity flows through the branches above.
+            org.apache.jena.graph.Triple t = n.getTriple();
+            h = 43 * 0x9E3779B97F4A7C15L;
+            h = h * 31 + hash(t.getSubject());
+            h = h * 31 + hash(t.getPredicate());
+            h = h * 31 + hash(t.getObject());
         } else {
             h = poly(29, n.toString());
         }

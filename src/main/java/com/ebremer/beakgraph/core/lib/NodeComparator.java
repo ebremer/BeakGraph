@@ -67,6 +67,30 @@ public class NodeComparator implements Comparator<Node> {
             return Integer.compare(type1, type2);
         }
 
+        // 3a. Both are triple terms (macro type 4): compare STRUCTURALLY through
+        // this comparator, position by position. Delegating the pair to
+        // NodeCmp.compareRDFTerms (as every other same-kind pair does below)
+        // would re-import Finding 2 through the components: NodeCmp answers 0
+        // for distinct rdf:dirLangString literals, so two triple terms
+        // differing only in an embedded base direction would collapse onto one
+        // dictionary id. Recursing through compare() gives components exactly
+        // the orderings the dictionary already uses - the dirLang repair, the
+        // CDT lexical short-circuit, the temporal total orders - and stays a
+        // strict total order by induction (RDF 1.2 forbids cyclic terms).
+        if (n1.isTripleTerm() && n2.isTripleTerm()) {
+            org.apache.jena.graph.Triple t1 = n1.getTriple();
+            org.apache.jena.graph.Triple t2 = n2.getTriple();
+            int c = compare(t1.getSubject(), t2.getSubject());
+            if (c != 0) {
+                return c;
+            }
+            c = compare(t1.getPredicate(), t2.getPredicate());
+            if (c != 0) {
+                return c;
+            }
+            return compare(t1.getObject(), t2.getObject());
+        }
+
         // 3. Both nodes are the SAME RDF Term Type.
         // If they are both Literals, we must sort by actual Value (e.g. 2 < 10), not String ("10" < "2")
         if (n1.isLiteral() && n2.isLiteral()) {

@@ -107,6 +107,26 @@ final class BGReorderTransform implements ReorderTransformation {
     private static void bindVars(Set<Node> bound, Triple t) {
         if (t.getSubject().isVariable())   bound.add(t.getSubject());
         if (t.getPredicate().isVariable()) bound.add(t.getPredicate());
-        if (t.getObject().isVariable())    bound.add(t.getObject());
+        addObjectVars(bound, t.getObject());
+    }
+
+    /**
+     * Records the object position's produced variables: the object itself, or -
+     * for a var-containing triple-term pattern - every variable embedded in it
+     * (all depths). Without this a later triple joining on an embedded variable
+     * was costed as if the join were free-floating (wrong order, not wrong
+     * answers).
+     */
+    private static void addObjectVars(Set<Node> bound, Node o) {
+        if (o.isVariable()) {
+            bound.add(o);
+            return;
+        }
+        if (o.isTripleTerm() && !o.isConcrete()) {
+            Triple t = o.getTriple();
+            addObjectVars(bound, t.getSubject());
+            addObjectVars(bound, t.getPredicate());
+            addObjectVars(bound, t.getObject());
+        }
     }
 }

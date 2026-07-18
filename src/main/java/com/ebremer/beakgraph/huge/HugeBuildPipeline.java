@@ -5,6 +5,8 @@ import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.Stats;
+import com.ebremer.beakgraph.core.lib.TripleTerms;
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.Types;
 import com.ebremer.beakgraph.huge.HugeRecords.IdQuad;
@@ -126,6 +128,14 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private RecordSorter<TermRow> gSorter;
     private RecordSorter<TermRow> sSorter;
     private RecordSorter<TermRow> oSorter;
+    // Interior terms of RDF 1.2 triple terms (PLAN Part IV §IV.7): they need
+    // DICTIONARY entries but never role-list membership, so they spill to
+    // dedicated sorters merged into the dictionary derivation only - never into
+    // the positional columns the id joins and columnar lists are built from.
+    // Lazily created on the first triple term, so triple-term-free builds keep
+    // their exact temp-file footprint.
+    private RecordSorter<TermRow> iEntSorter;
+    private RecordSorter<TermRow> iLitSorter;
     private RecordFile<Long> pTempFile;
     private final SorterProvider provider;
     /** Non-null: independent stage groups run concurrently on it (-method 4). */
@@ -234,13 +244,15 @@ public final class HugeBuildPipeline implements AutoCloseable {
         Arrays.parallelSort(sortedPreds, NodeComparator.INSTANCE);
         long numPredicates = sortedPreds.length;
         long[] tempToFinal = new long[(int) Math.min(Integer.MAX_VALUE, predByTempId.size())];
+        // Kept beyond the remap: triple-term predicate components resolve
+        // through this map during the component-reference join (HugeTripleTerms).
+        HashMap<Node, Long> predFinalIds = new HashMap<>();
         {
-            HashMap<Node, Long> finalIds = new HashMap<>();
             for (int i = 0; i < sortedPreds.length; i++) {
-                finalIds.put(sortedPreds[i], (long) i + 1); // 1-based
+                predFinalIds.put(sortedPreds[i], (long) i + 1); // 1-based
             }
             for (int t = 0; t < predByTempId.size(); t++) {
-                tempToFinal[t] = finalIds.get(predByTempId.get(t));
+                tempToFinal[t] = predFinalIds.get(predByTempId.get(t));
             }
         }
 
@@ -260,25 +272,47 @@ public final class HugeBuildPipeline implements AutoCloseable {
         RecordFile<TermRow> sSorted = cols.get(1);
         RecordFile<TermRow> oSorted = cols.get(2);
 
+        // ---- Interior triple-term components (absent for triple-term-free builds) ----
+        RecordFile<TermRow> iEntSorted = null;
+        RecordFile<TermRow> iLitSorted = null;
+        if (iEntSorter != null) {
+            RecordSorter<TermRow> ie = iEntSorter;
+            RecordSorter<TermRow> il = iLitSorter;
+            iEntSorter = null;
+            iLitSorter = null;
+            iEntSorted = materialize(ie, "icol-ent.sorted");
+            iLitSorted = materialize(il, "icol-lit.sorted");
+        }
+
         // ---- Distinct sorted dictionaries on disk ----
         RecordFile<Node> entFile = new RecordFile<>(workDir.resolve("entities.sorted"), NodeCodec.INSTANCE);
-        mergeDistinctEntities(entFile, gSorted, sSorted, oSorted);
+        mergeDistinctEntities(entFile, gSorted, sSorted, oSorted, iEntSorted);
         long numEntities = entFile.count();
 
         RecordFile<Node> litFile = new RecordFile<>(workDir.resolve("literals.sorted"), NodeCodec.INSTANCE);
-        distinctLiterals(litFile, oSorted);
+        distinctLiterals(litFile, oSorted, iLitSorted);
         long numLiterals = litFile.count();
+        if (iEntSorted != null) {
+            iEntSorted.delete();
+            iLitSorted.delete();
+        }
         long numObjects = numEntities + numLiterals;
         logger.info("Dictionary populations: {} entities, {} predicates, {} literals",
                 numEntities, numPredicates, numLiterals);
 
         // ---- Encode the three dictionary sections (independent; concurrent with a pool) ----
+        // Triple-term component machinery, only when the build saw any: refs
+        // spill during the literals encode, and the join below resolves them
+        // against entFile/litFile (complete by now) + the predicate rank map.
+        final HugeTripleTerms ttSupport = (stats.numTripleTerms > 0)
+                ? track(new HugeTripleTerms(provider, workDir, predFinalIds))
+                : null;
         final StreamingDictionaryWriter[] dicts = new StreamingDictionaryWriter[3];
         runStages("dictionary encode",
                 () -> {
                     if (numEntities > 0) {
                         dicts[0] = track(new StreamingDictionaryWriter(workDir, "entities", numEntities, stats,
-                                Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>(), false));
+                                Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>(), false, null));
                         try (var s = entFile.read()) {
                             dicts[0].encode(s);
                         }
@@ -287,17 +321,24 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 () -> {
                     if (numPredicates > 0) {
                         dicts[1] = track(new StreamingDictionaryWriter(workDir, "predicates", numPredicates, stats,
-                                Set.of(Types.IRI), new TreeSet<>(), new TreeSet<>(), false));
+                                Set.of(Types.IRI), new TreeSet<>(), new TreeSet<>(), false, null));
                         dicts[1].encode(Arrays.asList(sortedPreds).iterator());
                     }
                 },
                 () -> {
                     if (numLiterals > 0) {
                         dicts[2] = track(new StreamingDictionaryWriter(workDir, "literals", numLiterals, stats,
-                                Set.of(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING),
-                                dataTypes, langSet, langDirSeen));
+                                Set.of(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING, Types.TRIPLE_TERM),
+                                dataTypes, langSet, langDirSeen, ttSupport));
                         try (var s = litFile.read()) {
                             dicts[2].encode(s);
+                        }
+                        // Reference join (PLAN Part IV §IV.8): entFile is safe to
+                        // read concurrently with the entities encode stage - the
+                        // id joins already read it from three stages at once.
+                        if (ttSupport != null && ttSupport.count() > 0) {
+                            dicts[2].setTripleTermsBuffer(
+                                    ttSupport.resolve(entFile, litFile, numEntities, numEntities + numLiterals));
                         }
                     }
                 });
@@ -524,6 +565,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     private static Node scopeNode(Node n, String scope) {
+        if (n.isTripleTerm()) {
+            // Blank nodes inside a triple term share the quad's document scope -
+            // the same prefix keeps inside/outside co-reference intact.
+            return TripleTerms.map(n, c -> scopeNode(c, scope));
+        }
         return n.isBlank() ? NodeFactory.createBlankNode(scope + n.getBlankNodeLabel()) : n;
     }
 
@@ -554,6 +600,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
         countEntityKind(s, "subject");
         if (o.isLiteral()) {
             collectLiteralStats(o);
+        } else if (o.isTripleTerm()) {
+            collectTripleTerm(o);
         } else {
             countEntityKind(o, "object");
         }
@@ -577,6 +625,72 @@ public final class HugeBuildPipeline implements AutoCloseable {
         } else {
             // Same guard as ProcessQuad: an unstorable node kind aborts the build.
             throw new IllegalStateException("Unexpected " + position + " node type: " + n);
+        }
+    }
+
+    /**
+     * Triple-term object (mirrors ProcessQuad.registerTripleTerm, per-occurrence
+     * like every stat here): accounts the term - stats.numTripleTerms gates the
+     * component store - and spills every interior term to the interior sorters
+     * so dictionary derivation sees it. Interior predicates join the in-RAM
+     * predicate population for their final rank id WITHOUT appending to the
+     * positional predicate column (they occupy no row). Component kinds are
+     * guarded loudly, matching the top-level position guards.
+     */
+    private void collectTripleTerm(Node tt) throws IOException {
+        if (iEntSorter == null) {
+            iEntSorter = track(provider.termSorter(workDir, "icol-ent"));
+            iLitSorter = track(provider.termSorter(workDir, "icol-lit"));
+        }
+        stats.numTripleTerms++;
+        try {
+            TripleTerms.walk(tt, new TripleTerms.ComponentVisitor() {
+                @Override
+                public void component(TripleTerms.Position position, Node n) {
+                    try {
+                        switch (position) {
+                            case SUBJECT -> {
+                                countEntityKind(n, "triple-term subject");
+                                iEntSorter.add(new TermRow(n, 0));
+                            }
+                            case PREDICATE -> {
+                                if (!n.isURI()) {
+                                    throw new IllegalStateException(
+                                            "Unexpected triple-term predicate (not URI): " + n + " in " + tt);
+                                }
+                                stats.numIRI++;
+                                predTempIds.computeIfAbsent(n, k -> {
+                                    predByTempId.add(k);
+                                    return (long) (predByTempId.size() - 1);
+                                });
+                            }
+                            case OBJECT -> {
+                                if (n.isLiteral()) {
+                                    collectLiteralStats(n);
+                                    iLitSorter.add(new TermRow(n, 0));
+                                } else {
+                                    countEntityKind(n, "triple-term object");
+                                    iEntSorter.add(new TermRow(n, 0));
+                                }
+                            }
+                        }
+                    } catch (IOException ex) {
+                        throw new UncheckedIOException(ex);
+                    }
+                }
+
+                @Override
+                public void nestedTripleTerm(Node nested) {
+                    stats.numTripleTerms++;
+                    try {
+                        iLitSorter.add(new TermRow(nested, 0));
+                    } catch (IOException ex) {
+                        throw new UncheckedIOException(ex);
+                    }
+                }
+            });
+        } catch (UncheckedIOException ex) {
+            throw ex.getCause();
         }
     }
 
@@ -686,6 +800,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     private static Node relativizeNode(Node n) {
+        if (n != null && n.isTripleTerm()) {
+            // A sentinel-based IRI must never survive into stored data no matter
+            // how deeply nested; map() recurses nested triple-term objects itself.
+            return TripleTerms.map(n, HugeBuildPipeline::relativizeNode);
+        }
         if (n == null || !n.isURI() || !n.getURI().startsWith(REL_BASE_PREFIX)) {
             return n;
         }
@@ -702,26 +821,19 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 u.equals(REL_BASE) ? "" : u.substring(REL_BASE_PREFIX.length()));
     }
 
+    /**
+     * Numeric canonicalization, quad level. Delegates the per-node rule to the
+     * RAM builder's single implementation (the former byte-identical copy here
+     * was the mirror-topology hazard PLAN §1.6 warns about), recursing into
+     * triple-term objects exactly as the RAM builder does.
+     */
     public static Quad canonicalizeNumericObject(Quad quad) {
         Node o = quad.getObject();
-        if (!o.isLiteral()) return quad;
-        String dt = o.getLiteralDatatypeURI();
-        try {
-            Node canonical = null;
-            if (XSD.xint.getURI().equals(dt)) {
-                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.intValue());
-            } else if (XSD.xlong.getURI().equals(dt)) {
-                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.longValue());
-            } else if (XSD.xfloat.getURI().equals(dt)) {
-                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.floatValue());
-            } else if (XSD.xdouble.getURI().equals(dt)) {
-                if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.doubleValue());
-            }
-            if (canonical == null || canonical.equals(o)) return quad;
-            return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canonical);
-        } catch (RuntimeException e) {
-            return quad;
-        }
+        Node canon = o.isTripleTerm()
+                ? TripleTerms.map(o, PositionalDictionaryWriterBuilder::canonicalizeNumericNode)
+                : PositionalDictionaryWriterBuilder.canonicalizeNumericNode(o);
+        if (canon == o) return quad;
+        return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canon);
     }
 
     // ------------------------------------------------------------------
@@ -772,16 +884,22 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     /**
-     * Entities = distinct {G union S union non-literal O} in NodeComparator
-     * order: a 3-way merge of the sorted columns with consecutive-dedup. The
-     * object stream stops at its first literal - NodeComparator's macro order
-     * (bnode &lt; URI &lt; literal) makes literals a contiguous suffix.
+     * Entities = distinct {G union S union non-literal O union triple-term
+     * interior entities} in NodeComparator order: an n-way merge of the sorted
+     * streams with consecutive-dedup. The object stream stops at its first
+     * literal - NodeComparator's macro order (bnode &lt; URI &lt; literal &lt;
+     * triple term) makes literals-plus-triple-terms a contiguous suffix, so the
+     * prefix rule is unchanged by triple terms. {@code interior} is null for
+     * triple-term-free builds.
      */
     private void mergeDistinctEntities(RecordFile<Node> out, RecordFile<TermRow> g,
-                                       RecordFile<TermRow> s, RecordFile<TermRow> o) throws IOException {
-        try (var gs = g.read(); var ss = s.read(); var os = o.read()) {
-            List<Iterator<Node>> streams = List.of(
-                    termsOf(gs), termsOf(ss), nonLiteralPrefix(termsOf(os)));
+                                       RecordFile<TermRow> s, RecordFile<TermRow> o,
+                                       RecordFile<TermRow> interior) throws IOException {
+        try (var gs = g.read(); var ss = s.read(); var os = o.read();
+             var is = (interior == null) ? null : interior.read()) {
+            List<Iterator<Node>> streams = (is == null)
+                    ? List.of(termsOf(gs), termsOf(ss), nonLiteralPrefix(termsOf(os)))
+                    : List.of(termsOf(gs), termsOf(ss), nonLiteralPrefix(termsOf(os)), termsOf(is));
             PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(
                     Comparator.comparing(pi -> pi.head, NodeComparator.INSTANCE));
             for (Iterator<Node> it : streams) {
@@ -805,13 +923,52 @@ public final class HugeBuildPipeline implements AutoCloseable {
         out.finish();
     }
 
-    /** Distinct literals = dedup of the literal suffix of the sorted object column. */
-    private void distinctLiterals(RecordFile<Node> out, RecordFile<TermRow> o) throws IOException {
-        try (var os = o.read()) {
+    /**
+     * Distinct literals-section terms = dedup-merge of the literal + triple-term
+     * suffix of the sorted object column with the interior literal/triple-term
+     * stream ({@code interior} null for triple-term-free builds). Triple terms
+     * macro-rank after every literal, so the merged stream stays sorted and the
+     * section keeps them as its contiguous suffix.
+     */
+    private void distinctLiterals(RecordFile<Node> out, RecordFile<TermRow> o,
+                                  RecordFile<TermRow> interior) throws IOException {
+        try (var os = o.read(); var is = (interior == null) ? null : interior.read()) {
+            Iterator<Node> suffix = new Iterator<>() {
+                private Node next = advance();
+
+                private Node advance() {
+                    while (os.hasNext()) {
+                        Node n = os.next().term();
+                        if (n.isLiteral() || n.isTripleTerm()) {
+                            return n;
+                        }
+                    }
+                    return null;
+                }
+
+                @Override public boolean hasNext() { return next != null; }
+
+                @Override public Node next() {
+                    if (next == null) throw new NoSuchElementException();
+                    Node n = next;
+                    next = advance();
+                    return n;
+                }
+            };
+            List<Iterator<Node>> streams = (is == null)
+                    ? List.of(suffix)
+                    : List.of(suffix, termsOf(is));
+            PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(
+                    Comparator.comparing(pi -> pi.head, NodeComparator.INSTANCE));
+            for (Iterator<Node> it : streams) {
+                PeekedIterator pi = new PeekedIterator(it);
+                if (pi.head != null) heap.add(pi);
+            }
             Node last = null;
-            while (os.hasNext()) {
-                Node term = os.next().term();
-                if (!term.isLiteral()) continue; // pre-literal prefix
+            while (!heap.isEmpty()) {
+                PeekedIterator pi = heap.poll();
+                Node term = pi.head;
+                if (pi.advance()) heap.add(pi);
                 if (last == null || !last.equals(term)) {
                     out.append(term);
                     last = term;
@@ -895,7 +1052,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
         });
     }
 
-    private static final class DictCursor implements AutoCloseable {
+    // Package-visible: HugeTripleTerms reuses the same monotone-locate shape for
+    // the component-reference join.
+    static final class DictCursor implements AutoCloseable {
         private final Iterator<Node> stream;
         private final Runnable onClose;
         private Node current = null;

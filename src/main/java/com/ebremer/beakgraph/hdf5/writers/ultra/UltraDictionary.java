@@ -105,7 +105,13 @@ final class UltraDictionary {
                 .setSortedNodes(new ArrayList<>(Arrays.asList(lits)))
                 .setDataTypes(ingest.getDataTypes())
                 .setStats(ingest.getStats())
-                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING)
+                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING, Types.TRIPLE_TERM)
+                // Component ids resolve against the SORTED ARRAYS, not the rank
+                // maps: this task is submitted before those maps are built and
+                // would race them. Binary search over the same arrays yields
+                // identical ids (ids ARE ranks in these arrays).
+                .setTripleTermEncoder((tt, own) -> encodeTripleTerm(tt, ents, preds, lits))
+                .setTripleTermComponentIdBound((long) ents.length + lits.length)
                 .build());
 
         // ---- id maps from sorted rank (the only thing the index stage needs) ----
@@ -131,6 +137,37 @@ final class UltraDictionary {
         Node[] arr = nodes.toArray(Node[]::new);
         Arrays.parallelSort(arr, NodeComparator.INSTANCE);
         return arr;
+    }
+
+    /**
+     * Triple-term component resolution for the literals encoder (PLAN Part IV
+     * §IV.3, ultra flavor): s in the entity space, p in the predicate space,
+     * o in the object space - entity id, or maxEntityId + literals-section
+     * rank for literals and nested triple terms.
+     */
+    private static long[] encodeTripleTerm(Node tt, Node[] ents, Node[] preds, Node[] lits) {
+        org.apache.jena.graph.Triple t = tt.getTriple();
+        long s = rankOf(ents, t.getSubject());
+        long p = rankOf(preds, t.getPredicate());
+        Node o = t.getObject();
+        long oid;
+        if (o.isLiteral() || o.isTripleTerm()) {
+            long lid = rankOf(lits, o);
+            oid = (lid > 0) ? lid + ents.length : -1;
+        } else {
+            oid = rankOf(ents, o);
+        }
+        if (s < 1 || p < 1 || oid < 1) {
+            throw new IllegalStateException("Cannot resolve triple-term components (not in dictionaries): "
+                    + tt + " (s=" + s + ", p=" + p + ", o=" + oid + ")");
+        }
+        return new long[]{s, p, oid};
+    }
+
+    /** 1-based rank of {@code n} in the NodeComparator-sorted array, or -1. */
+    private static long rankOf(Node[] sorted, Node n) {
+        int i = Arrays.binarySearch(sorted, n, NodeComparator.INSTANCE);
+        return (i >= 0) ? i + 1 : -1;
     }
 
     /** id(node) = 1 + rank in NodeComparator order; built with zero locate() calls. */
@@ -183,9 +220,9 @@ final class UltraDictionary {
     }
 
     long locateObject(Node element) {
-        if (element.isLiteral()) {
+        if (element.isLiteral() || element.isTripleTerm()) {
             Long c = literalIds.get(element);
-            if (c != null) return c + maxEntityId; // literals sit above the entity id block
+            if (c != null) return c + maxEntityId; // literals (and triple terms) sit above the entity id block
         } else {
             Long c = entityIds.get(element);
             if (c != null) return c;

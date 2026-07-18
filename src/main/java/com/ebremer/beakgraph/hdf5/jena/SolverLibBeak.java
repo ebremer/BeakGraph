@@ -51,6 +51,12 @@ public class SolverLibBeak {
             // Rely on the node table cache for efficency - we will likely be
             // repeatedly looking up the same node in different bindings.
             long id = bGraph.getReader().getNodeTable().getNodeIdForNode(n);
+            // A layer holds four bindings; an incoming Jena binding can carry
+            // more (VALUES with many columns, joins re-entering a BGP, embedded
+            // triple-term vars) - chain layers rather than overflow.
+            if (b.isFull()) {
+                b = new BindingNodeId(b);
+            }
             // Record even a "does not exist" id: HDF5Reader.Read short-circuits a pattern
             // bound to it to no rows, and BindingBG falls back to the parent term for output.
             b.put(v, id);

@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers.ultra;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
+import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.beakgraph.utils.RdfSources;
@@ -327,13 +328,22 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node o = quad.getObject();
-        if (!(g.isBlank() || s.isBlank() || o.isBlank())) {
+        boolean oTT = o.isTripleTerm();
+        if (!(g.isBlank() || s.isBlank() || o.isBlank() || oTT)) {
             return quad;
         }
-        if (g.isBlank()) g = bmap.computeIfAbsent(g, k -> NodeFactory.createBlankNode(String.format(labelFormat, counter[0]++)));
-        if (s.isBlank()) s = bmap.computeIfAbsent(s, k -> NodeFactory.createBlankNode(String.format(labelFormat, counter[0]++)));
-        if (o.isBlank()) o = bmap.computeIfAbsent(o, k -> NodeFactory.createBlankNode(String.format(labelFormat, counter[0]++)));
-        return new Quad(g, s, quad.getPredicate(), o);
+        java.util.function.UnaryOperator<Node> align = n -> n.isBlank()
+                ? bmap.computeIfAbsent(n, k -> NodeFactory.createBlankNode(String.format(labelFormat, counter[0]++)))
+                : n;
+        Node g2 = align.apply(g);
+        Node s2 = align.apply(s);
+        // Blank nodes INSIDE a triple term share the quad's document scope, so
+        // they go through the same bmap - the co-reference invariant.
+        Node o2 = oTT ? TripleTerms.map(o, align) : align.apply(o);
+        if (g2 == g && s2 == s && o2 == o) {
+            return quad;
+        }
+        return new Quad(g2, s2, quad.getPredicate(), o2);
     }
 
     /** One parallel pass: node-kind validation plus insertion into every dictionary set. */
@@ -360,17 +370,12 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 entities.add(s);
                 predicates.add(p);
                 if (o.isLiteral()) {
-                    // Same guard as the sequential ProcessQuad: blank nodes inside a
-                    // composite (cdt:) literal would silently stop co-referring after
-                    // rank relabeling. add() gates the parse to once per distinct.
-                    if (literals.add(o) && CdtTerms.containsBlankNode(o)) {
-                        throw new IllegalStateException(
-                                "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
-                    }
-                    dataTypes.add(o.getLiteralDatatypeURI());
+                    registerLiteralSet(o);
+                } else if (o.isTripleTerm()) {
+                    registerTripleTermSet(o);
                 } else {
                     if (!o.isBlank() && !o.isURI()) {
-                        throw new IllegalStateException("Unexpected object node type (not URI, blank, or literal): " + o);
+                        throw new IllegalStateException("Unexpected object node type (not URI, blank, literal, or triple term): " + o);
                     }
                     entities.add(o);
                 }
@@ -384,6 +389,70 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
             if (cause instanceof Error err) throw err;
             throw new IOException("Failed to build dictionary sets", cause);
         }
+    }
+
+    /**
+     * Set insertion for one literal object - top-level or inside a triple term.
+     * Parallel-safe (the sets are concurrent); add() gates the composite-parsing
+     * blank-node check to once per distinct term, matching the sequential
+     * builder's first-encounter semantics.
+     */
+    private void registerLiteralSet(Node o) {
+        if (literals.add(o) && CdtTerms.containsBlankNode(o)) {
+            throw new IllegalStateException(
+                    "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
+        }
+        dataTypes.add(o.getLiteralDatatypeURI());
+    }
+
+    /**
+     * Parallel mirror of the sequential builder's registerTripleTerm (PLAN
+     * Part IV §IV.7): the term and every component join the dictionary sets -
+     * interiors get dictionary entries, never role-list membership - with the
+     * same loud component-kind guards. Counting happens later over the deduped
+     * set (buildStats), so concurrent insertion needs no counters here.
+     */
+    private void registerTripleTermSet(Node tt) {
+        if (!literals.add(tt)) {
+            return; // components were registered when the term first appeared
+        }
+        TripleTerms.walk(tt, new TripleTerms.ComponentVisitor() {
+            @Override
+            public void component(TripleTerms.Position position, Node n) {
+                switch (position) {
+                    case SUBJECT -> {
+                        if (!(n.isBlank() || n.isURI())) {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term subject (not URI or blank): " + n + " in " + tt);
+                        }
+                        entities.add(n);
+                    }
+                    case PREDICATE -> {
+                        if (!n.isURI()) {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term predicate (not URI): " + n + " in " + tt);
+                        }
+                        predicates.add(n);
+                    }
+                    case OBJECT -> {
+                        if (n.isLiteral()) {
+                            registerLiteralSet(n);
+                        } else if (n.isBlank() || n.isURI()) {
+                            entities.add(n);
+                        } else {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term object node type: " + n + " in " + tt);
+                        }
+                    }
+                }
+            }
+
+            @Override
+            public void nestedTripleTerm(Node nested) {
+                // The ongoing walk covers its components; just register the term.
+                literals.add(nested);
+            }
+        });
     }
 
     /**
@@ -405,7 +474,14 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                     int from = (int) ((long) lits.length * c / chunks);
                     int to = (int) ((long) lits.length * (c + 1) / chunks);
                     for (int i = from; i < to; i++) {
-                        countLiteralStats(lits[i], st);
+                        if (lits[i].isTripleTerm()) {
+                            // Triple terms share the literals section but have no
+                            // literal value spaces to count - only their tally,
+                            // which sizes the tripleTerms component store.
+                            st.numTripleTerms++;
+                        } else {
+                            countLiteralStats(lits[i], st);
+                        }
                     }
                     int efrom = (int) ((long) ents.length * c / chunks);
                     int eto = (int) ((long) ents.length * (c + 1) / chunks);
@@ -458,6 +534,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         into.maxDouble = Math.max(into.maxDouble, part.maxDouble);
         into.minDouble = Math.min(into.minDouble, part.minDouble);
         into.numDouble += part.numDouble;
+        into.numTripleTerms += part.numTripleTerms;
         into.numStrings += part.numStrings;
         into.longestStringLength = Math.max(into.longestStringLength, part.longestStringLength);
         into.shortestStringLength = Math.min(into.shortestStringLength, part.shortestStringLength);

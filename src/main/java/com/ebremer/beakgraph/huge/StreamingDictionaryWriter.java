@@ -58,6 +58,13 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     // Mirror of MultiTypeDictionaryWriter.langDirs; null when no directional
     // literal exists, so v3-shaped files stay byte-identical.
     private final SpillBitPackedBuffer langDirs;
+    // RDF 1.2 triple terms (format v5): the encode pass writes each row's
+    // ordinal into offsets and spills component references through ttSupport;
+    // the resolved fixed-stride store arrives afterwards via
+    // setTripleTermsBuffer (component ids only exist once the dictionary
+    // files are complete - PLAN Part IV §IV.8).
+    private final HugeTripleTerms ttSupport;
+    private SpillBitPackedBuffer tripleTerms;
     private final HashMap<String, Long> dataTypesLookUp = new HashMap<>();
     private final HashMap<String, Long> langLookUp = new HashMap<>();
     private final boolean literalsPresent;
@@ -72,11 +79,14 @@ final class StreamingDictionaryWriter implements AutoCloseable {
      * @param langSet    distinct language tags among the literals, natural order
      * @param anyLangDir true when at least one literal carries a base direction
      *                   (rdf:dirLangString); allocates the langDirs column
+     * @param ttSupport  triple-term component machinery, non-null only for the
+     *                   literals section of a store containing triple terms
      */
     StreamingDictionaryWriter(Path workDir, String name, long nodeCount, Stats stats,
                               Set<Types> et, SortedSet<String> dataTypes, SortedSet<String> langSet,
-                              boolean anyLangDir)
+                              boolean anyLangDir, HugeTripleTerms ttSupport)
             throws IOException {
+        this.ttSupport = ttSupport;
         this.name = name;
         this.nodeCount = nodeCount;
         logger.info("Building dictionary '{}' ({} nodes, disk-backed)", name, nodeCount);
@@ -232,6 +242,20 @@ final class StreamingDictionaryWriter implements AutoCloseable {
                     "No writer buffer for literal datatype " + dt + " (strings buffer not allocated); "
                   + "refusing to write a misaligned dictionary entry.");
             }
+        } else if (node.isTripleTerm()) {
+            if (ttSupport == null) {
+                throw new IllegalStateException(
+                        "Triple term reached dictionary '" + name + "' without triple-term support: " + node);
+            }
+            try {
+                offsets.writeLong(ttSupport.onTripleTerm(node));
+            } catch (IOException ex) {
+                throw new UncheckedIOException("Failed to spill triple-term components: " + node, ex);
+            }
+            nativedatatypes.writeInteger(DataType.TRIPLE_TERM.ordinal());
+            if (literalsPresent) typedLiterals.writeLong(0);
+            if (langTags != null) langTags.writeLong(0);
+            if (langDirs != null) langDirs.writeLong(0);
         } else {
             throw new IllegalStateException("Unsupported node kind in dictionary '" + name + "': " + node);
         }
@@ -257,14 +281,33 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         return nodeCount;
     }
 
+    /**
+     * Installs the resolved fixed-stride component store (the pipeline runs the
+     * reference join once the dictionary files are complete). Must be called
+     * before {@link #transferTo} for any section that encoded triple terms.
+     */
+    void setTripleTermsBuffer(SpillBitPackedBuffer resolved) {
+        this.tripleTerms = resolved;
+    }
+
     /** Writes this dictionary as a subgroup, mirroring MultiTypeDictionaryWriter.add(). */
     void transferTo(StreamingHdf5Group group) throws IOException {
+        if (ttSupport != null && ttSupport.count() > 0 && tripleTerms == null) {
+            throw new IllegalStateException("Dictionary '" + name + "' encoded " + ttSupport.count()
+                    + " triple terms but the resolved component store was never installed");
+        }
         StreamingHdf5Group subGroup = group.putGroup(name);
         if (typedLiterals != null) typedLiterals.transferTo(subGroup, "typedLiterals");
         offsets.transferTo(subGroup, "offsets");
-        if (typedLiteralsDictionary != null) typedLiteralsDictionary.transferTo(subGroup);
+        // Entry-count gate, mirroring the RAM writer: a literals section whose
+        // only rows are triple terms has NO datatype IRIs, and absence already
+        // means "none" to the reader.
+        if (typedLiteralsDictionary != null && typedLiteralsDictionary.getNumEntries() > 0) {
+            typedLiteralsDictionary.transferTo(subGroup);
+        }
         if (integers != null) integers.transferTo(subGroup, "integers");
         if (longs != null) longs.transferTo(subGroup, "longs");
+        if (tripleTerms != null) tripleTerms.transferTo(subGroup, "tripleTerms");
         if (floats != null) floats.transferTo(subGroup, "floats");
         if (doubles != null) doubles.transferTo(subGroup, "doubles");
         if (iri != null && iri.getNumEntries() > 0) iri.transferTo(subGroup);
@@ -279,6 +322,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     public void close() throws IOException {
         offsets.close();
         nativedatatypes.close();
+        if (tripleTerms != null) tripleTerms.close();
         if (typedLiterals != null) typedLiterals.close();
         if (integers != null) integers.close();
         if (longs != null) longs.close();

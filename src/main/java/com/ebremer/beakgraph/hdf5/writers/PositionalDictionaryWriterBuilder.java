@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
+import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.utils.ImageTools;
 import com.ebremer.beakgraph.utils.RdfSources;
 import com.ebremer.halcyon.hilbert.HilbertSpace;
@@ -376,39 +377,32 @@ public class PositionalDictionaryWriterBuilder {
     // (one consumer thread), like the other per-quad steps; the concurrent addSpatial
     // tasks never touch bmap.
     private Quad AlignBnodes(Quad quad) {
-        Node g = quad.getGraph();
-        Node s = quad.getSubject();
+        Node g = alignNode(quad.getGraph());
+        Node s = alignNode(quad.getSubject());
         Node o = quad.getObject();
-        if (g.isBlank()||s.isBlank()||o.isBlank()) {
-            if (g.isBlank()) {
-                if (!bmap.containsKey(g)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
-                    bmap.put(g, neo);
-                    g = neo;
-                } else {
-                    g = bmap.get(g);
-                }
-            }
-            if (s.isBlank()) {
-                if (!bmap.containsKey(s)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
-                    bmap.put(s, neo);
-                    s = neo;
-                } else {
-                    s = bmap.get(s);
-                }
-            }
-            if (o.isBlank()) {
-                if (!bmap.containsKey(o)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
-                    bmap.put(o, neo);
-                    o = neo;
-                } else {
-                    o = bmap.get(o);
-                }
-            }
+        // Blank nodes INSIDE a triple term share the quad's document scope, so
+        // they go through the same bmap - that shared map is exactly what keeps
+        // a label co-referring inside and outside the term (the property whose
+        // absence forced the CDT blank-node rejection policy).
+        o = o.isTripleTerm() ? TripleTerms.map(o, this::alignNode) : alignNode(o);
+        return new Quad(g, s, quad.getPredicate(), o);
+    }
+
+    /**
+     * Replaces a blank node with its store-scoped {@code b%020d} alias
+     * (first-encounter order, never-reset counter); every other node kind
+     * passes through unchanged.
+     */
+    private Node alignNode(Node n) {
+        if (!n.isBlank()) {
+            return n;
         }
-        return new Quad(g,s,quad.getPredicate(),o);
+        Node neo = bmap.get(n);
+        if (neo == null) {
+            neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
+            bmap.put(n, neo);
+        }
+        return neo;
     }
     
     /**
@@ -436,6 +430,11 @@ public class PositionalDictionaryWriterBuilder {
     }
 
     private Node relativizeNode(Node n) {
+        if (n != null && n.isTripleTerm()) {
+            // A sentinel-based IRI must never survive into stored data no matter
+            // how deeply nested; map() recurses nested triple-term objects itself.
+            return TripleTerms.map(n, this::relativizeNode);
+        }
         if (n == null || !n.isURI() || !n.getURI().startsWith(REL_BASE_PREFIX)) {
             return n;
         }
@@ -469,7 +468,25 @@ public class PositionalDictionaryWriterBuilder {
      */
     protected final Quad canonicalizeNumericObject(Quad quad) {
         Node o = quad.getObject();
-        if (!o.isLiteral()) return quad;
+        // Inside a triple term the same duplicate-"equal"-entries hazard applies
+        // to the term's OBJECT component (subjects/predicates cannot be
+        // literals), so the node-level rule recurses through map().
+        Node canon = o.isTripleTerm()
+                ? TripleTerms.map(o, PositionalDictionaryWriterBuilder::canonicalizeNumericNode)
+                : canonicalizeNumericNode(o);
+        if (canon == o) return quad;
+        return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canon);
+    }
+
+    /**
+     * Node-level canonicalization: the canonical value term for a well-formed
+     * xsd:int / xsd:long / xsd:float / xsd:double literal, the node itself
+     * (same instance) otherwise - including ill-formed numerics, which stay
+     * term-exact on the strings path. Public: the disk pipeline's quad-level
+     * mirror delegates here instead of keeping a byte-identical copy.
+     */
+    public static Node canonicalizeNumericNode(Node o) {
+        if (!o.isLiteral()) return o;
         String dt = o.getLiteralDatatypeURI();
         try {
             Node canonical = null;
@@ -482,11 +499,11 @@ public class PositionalDictionaryWriterBuilder {
             } else if (XSD.xdouble.getURI().equals(dt)) {
                 if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.doubleValue());
             }
-            if (canonical == null || canonical.equals(o)) return quad;
-            return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canonical);
+            if (canonical == null || canonical.equals(o)) return o;
+            return canonical;
         } catch (RuntimeException e) {
             // Malformed numeric literal: leave it untouched; downstream handling decides.
-            return quad;
+            return o;
         }
     }
 
@@ -612,19 +629,9 @@ public class PositionalDictionaryWriterBuilder {
             predicates.add(p);
         }
         if (o.isLiteral()) {
-            if (!literals.contains(o)) {
-                // Blank nodes inside a composite (cdt:) literal: labels regenerate
-                // from dictionary rank, so the label in the literal's text would
-                // silently stop co-referring with the graph. Reject at ingest
-                // (checked once per distinct literal; parses composite values only).
-                if (CdtTerms.containsBlankNode(o)) {
-                    throw new IllegalStateException(
-                            "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
-                }
-                dataTypes.add(o.getLiteralDatatypeURI());
-                countLiteralStats(o, stats);
-                literals.add(o);
-            }
+            registerLiteral(o);
+        } else if (o.isTripleTerm()) {
+            registerTripleTerm(o);
         } else {
             if (!entities.contains(o)) {
                 if (o.isBlank()) {
@@ -632,11 +639,104 @@ public class PositionalDictionaryWriterBuilder {
                 } else if (o.isURI()) {
                     stats.numIRI++;
                 } else {
-                    throw new IllegalStateException("Unexpected object node type (not URI, blank, or literal): " + o);
+                    throw new IllegalStateException("Unexpected object node type (not URI, blank, literal, or triple term): " + o);
                 }
                 entities.add(o);
             }
         }
+    }
+
+    /**
+     * Records one literal OBJECT - top-level or inside a triple term - into the
+     * literals dictionary set with its stats accounting. Idempotent per term.
+     */
+    private void registerLiteral(Node o) {
+        if (literals.contains(o)) {
+            return;
+        }
+        // Blank nodes inside a composite (cdt:) literal: labels regenerate
+        // from dictionary rank, so the label in the literal's text would
+        // silently stop co-referring with the graph. Reject at ingest
+        // (checked once per distinct literal; parses composite values only).
+        if (CdtTerms.containsBlankNode(o)) {
+            throw new IllegalStateException(
+                    "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
+        }
+        dataTypes.add(o.getLiteralDatatypeURI());
+        countLiteralStats(o, stats);
+        literals.add(o);
+    }
+
+    /** Records an IRI or blank node encountered inside a triple term into the entity dictionary set. */
+    private void registerEntity(Node n) {
+        if (!entities.contains(n)) {
+            if (n.isBlank()) {
+                stats.numBlankNodes++;
+            } else {
+                stats.numIRI++;
+            }
+            entities.add(n);
+        }
+    }
+
+    /**
+     * Records a triple term and, recursively, every component into the
+     * dictionary sets. Interiors get DICTIONARY entries, not role-list
+     * membership (PLAN Part IV §IV.7): an IRI appearing only inside a triple
+     * term is an entity, but it is not a subject/object for the
+     * uniqueSubjects/uniqueObjects role lists. The triple term itself joins the
+     * literals section (it is macro-ranked after every literal, so the section
+     * stays sorted with triple terms as a contiguous suffix). Component kinds
+     * are guarded loudly, matching the top-level position guards.
+     */
+    private void registerTripleTerm(Node tt) {
+        if (literals.contains(tt)) {
+            return; // components were registered when the term first appeared
+        }
+        TripleTerms.walk(tt, new TripleTerms.ComponentVisitor() {
+            @Override
+            public void component(TripleTerms.Position position, Node n) {
+                switch (position) {
+                    case SUBJECT -> {
+                        if (!(n.isBlank() || n.isURI())) {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term subject (not URI or blank): " + n + " in " + tt);
+                        }
+                        registerEntity(n);
+                    }
+                    case PREDICATE -> {
+                        if (!n.isURI()) {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term predicate (not URI): " + n + " in " + tt);
+                        }
+                        if (!predicates.contains(n)) {
+                            stats.numIRI++;
+                            predicates.add(n);
+                        }
+                    }
+                    case OBJECT -> {
+                        if (n.isLiteral()) {
+                            registerLiteral(n);
+                        } else if (n.isBlank() || n.isURI()) {
+                            registerEntity(n);
+                        } else {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term object node type: " + n + " in " + tt);
+                        }
+                    }
+                }
+            }
+
+            @Override
+            public void nestedTripleTerm(Node nested) {
+                if (!literals.contains(nested)) {
+                    stats.numTripleTerms++;
+                    literals.add(nested);
+                }
+            }
+        });
+        stats.numTripleTerms++;
+        literals.add(tt);
     }
     
     public PositionalDictionaryWriter build() throws IOException {

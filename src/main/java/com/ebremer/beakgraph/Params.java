@@ -28,7 +28,14 @@ public class Params {
     // Absence means "no directions", so v3 files read unchanged; v4 files are
     // rejected by older builds via the gate above - without that, an old build
     // would silently reconstruct "x"@en--ltr as "x"@en (a different RDF term).
-    public static final int FORMAT_VERSION = 4;
+    //
+    // v5: RDF 1.2 triple terms. Adds DataType.TRIPLE_TERM (ordinal 13) and the
+    // optional tripleTerms component store in the literals section; triple
+    // terms occupy that section's contiguous suffix of the object id space.
+    // Absence means "no triple terms", so v3/v4 files read unchanged; the gate
+    // converts an old build's would-be "Corrupt HDF5: Unknown DataType ordinal
+    // 13" into the intended "Upgrade BeakGraph".
+    public static final int FORMAT_VERSION = 5;
     // First format version whose rank/select directory is correct enough to drive
     // query navigation. Older files fall back to a linear select1 scan (slower but correct).
     public static final int RANK_DIRECTORY_MIN_VERSION = 3;

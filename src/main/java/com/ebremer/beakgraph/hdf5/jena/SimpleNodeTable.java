@@ -69,8 +69,16 @@ public class SimpleNodeTable implements NodeTable {
 
         long id;
 
-        // 1. If it's a Literal, it MUST be in the Object dictionary (Literals dataset)
-        if (n.isLiteral()) {
+        // 1. Literals and RDF 1.2 triple terms live in the Object dictionary
+        // only (triple terms are the literals section's contiguous suffix).
+        if (n.isLiteral() || n.isTripleTerm()) {
+            if (n.isTripleTerm() && !n.isConcrete()) {
+                // A variable-containing triple-term PATTERN is not a term; it can
+                // never be in any store, and probing the dictionary comparator
+                // with embedded variables is undefined. (The iterators route
+                // such patterns to unification, never here.)
+                return NodeId.DOES_NOT_EXIST;
+            }
             if ((id = dict.getObjects().locate(n)) != -1) {
                 return NodeId.pack(NodeType.OBJECT, id);
             }

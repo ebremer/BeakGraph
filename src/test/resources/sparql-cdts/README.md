@@ -10,4 +10,4 @@ Runner: `com.ebremer.beakgraph.cdt.SparqlCdtSuiteTest` — each test's data
 builds a real BeakGraph store (cached per distinct data file) and the query
 runs over it. Tests whose DATA contains blank nodes inside composite literals
 assert BeakGraph's documented rejection instead (the reject-at-ingest policy;
-see RDF_1.1-compliance.md).
+see RDF_1.2-compliance.md).

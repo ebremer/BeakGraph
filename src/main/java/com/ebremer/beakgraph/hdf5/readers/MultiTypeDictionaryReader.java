@@ -49,8 +49,23 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // Null for files written before direction support - those reconstruct
     // exactly as before.
     private final BitPackedUnSignedLongBuffer langDirs;
+    // RDF 1.2 triple terms (format v5): fixed-stride component store - entries
+    // [3k, 3k+2] hold the (s, p, o) component ids of the triple term whose
+    // offsets value is k. Null for files/sections without triple terms.
+    private final BitPackedUnSignedLongBuffer tripleTerms;
+    // Injected by PositionalDictionaryReader after every section exists: a
+    // triple term's components live in DIFFERENT dictionaries (s: entities,
+    // p: predicates, o: object space), which this per-section reader cannot
+    // reach on its own (PLAN Part IV §IV.4). Volatile only for safe publication;
+    // it is wired once, before any query can run.
+    private volatile TripleTermResolver tripleTermResolver;
     private final long numEntries;
     private final String name;
+
+    /** Cross-dictionary materialization of a triple term's component ids. */
+    public interface TripleTermResolver {
+        Node resolve(long subjectId, long predicateId, long objectId);
+    }
 
     // Tiered index, built LAZILY on first search: building it in the
     // constructor performed numEntries/TIER_SPACING full extracts at every
@@ -91,6 +106,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
 
         this.longs = getDataSet(d, "longs").map(ds ->
+            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
+
+        this.tripleTerms = getDataSet(d, "tripleTerms").map(ds ->
             BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
 
         Group stringsG = (Group) d.getChild("strings");
@@ -188,9 +206,37 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             // (RelativeIRIResolver), not here.
             case IRI, RELATIVE_IRI -> NodeFactory.createURI(iri.get(off));
             case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", id));
+            case TRIPLE_TERM -> {
+                TripleTermResolver r = tripleTermResolver;
+                if (r == null || tripleTerms == null) {
+                    throw new IllegalStateException("Triple-term row at ID " + id + " in dictionary '"
+                            + name + "' but no component store/resolver is wired");
+                }
+                long k = off * 3;
+                yield r.resolve(tripleTerms.get(k), tripleTerms.get(k + 1), tripleTerms.get(k + 2));
+            }
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
         return na;
+    }
+
+    public void setTripleTermResolver(TripleTermResolver resolver) {
+        this.tripleTermResolver = resolver;
+    }
+
+    /** Number of triple-term rows in this section (they form a contiguous suffix of the id space). */
+    public long tripleTermRowCount() {
+        return (tripleTerms == null) ? 0 : tripleTerms.getNumEntries() / 3;
+    }
+
+    /**
+     * Component ids (s, p, o) of the triple term at section id {@code id}. The
+     * caller guarantees the id lies in the triple-term suffix (see
+     * {@link #tripleTermRowCount()}); no datatype re-check is performed here.
+     */
+    public long[] tripleTermComponents(long id) {
+        long k = offsets.get(id - 1) * 3;
+        return new long[]{tripleTerms.get(k), tripleTerms.get(k + 1), tripleTerms.get(k + 2)};
     }
 
     @Override

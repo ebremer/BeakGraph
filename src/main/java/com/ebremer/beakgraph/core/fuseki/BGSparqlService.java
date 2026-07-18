@@ -115,6 +115,21 @@ public final class BGSparqlService {
      * NOT a find() over the dataset, which fans out across every named graph).
      * Any other dataset has no relative-stored IRIs, so nothing is rewritten.
      */
+    /**
+     * True when any statement carries an RDF 1.2 triple term (object position
+     * only - the data model permits them nowhere else). Linear over the
+     * materialized CONSTRUCT/DESCRIBE result, which is already fully in RAM.
+     */
+    private static boolean containsTripleTerms(Model m) {
+        var it = m.listStatements();
+        while (it.hasNext()) {
+            if (it.next().getObject().asNode().isTripleTerm()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static Predicate<Node> storedTermProbe(Dataset ds) {
         if (ds.asDatasetGraph() instanceof BGDatasetGraph bgd) {
             NodeTable nodeTable = bgd.getBeakGraph().getReader().getNodeTable();
@@ -139,6 +154,13 @@ public final class BGSparqlService {
                                String acceptHeader, HttpServletResponse resp) throws IOException {
         String accept = (acceptHeader == null) ? "" : acceptHeader.toLowerCase();
         try {
+            // DELIBERATE: no Syntax argument, so Jena's default (syntaxARQ)
+            // applies. Do NOT "upgrade" this to Syntax.syntaxSPARQL_12 - it
+            // looks obviously correct and is a regression: syntaxARQ already
+            // parses SPARQL 1.2 triple terms, reifiers-as-annotations, TRIPLE/
+            // SUBJECT/OBJECT etc., AND the CDT extensions (UNFOLD/FOLD), while
+            // syntaxSPARQL_12 drops UNFOLD from the grammar and silently breaks
+            // the supported CDT surface (PLAN Part I §4.0 Trap 1).
             Query query = QueryFactory.create(queryStr);
             RelativeIRIResolver resolver = new RelativeIRIResolver(baseURI);
             // Relativize document IRIs the query names so they match the
@@ -171,7 +193,13 @@ public final class BGSparqlService {
                 } else if (execQuery.isConstructType() || execQuery.isDescribeType()) {
                     Model m = execQuery.isConstructType() ? qexec.execConstruct() : qexec.execDescribe();
                     m = resolver.resolve(m);
-                    if (accept.contains("json")) {
+                    if (containsTripleTerms(m) && !accept.contains("turtle")) {
+                        // JSON-LD and RDF/XML have no RDF 1.2 triple-term
+                        // syntax; refuse plainly rather than emit a corrupt
+                        // body or an opaque serializer failure.
+                        resp.sendError(400, "Result contains RDF 1.2 triple terms, which this response format "
+                                + "cannot represent; request text/turtle");
+                    } else if (accept.contains("json")) {
                         resp.setContentType("application/ld+json");
                         RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.JSONLD);
                     } else if (accept.contains("turtle")) {
