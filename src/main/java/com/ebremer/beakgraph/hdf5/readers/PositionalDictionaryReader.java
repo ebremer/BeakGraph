@@ -70,6 +70,11 @@ public class PositionalDictionaryReader implements GSPODictionary {
     }
 
     /** True when {@code objectId} denotes a stored RDF 1.2 triple term (the contiguous suffix of the object space). */
+    /** Whether the literals section holds any cdt:List / cdt:Map literal (see {@code Params.CDT_LEXICAL_ORDER_MIN_VERSION}). */
+    public boolean literalsContainCompositeDatatype() {
+        return literals != null && literals.hasCompositeDatatype();
+    }
+
     public boolean isTripleTermObjectId(long objectId) {
         return objectId >= firstTripleTermObjectId && objectId <= lastTripleTermObjectId;
     }

@@ -177,8 +177,7 @@ public final class SpatialAugmenter {
                 if (env.intersects(tileEnv)) {
                     Polygon tilePoly = (Polygon) gf.toGeometry(tileEnv);
                     if (polygon.intersects(tilePoly)) {
-                        intersectingURNs.add(NodeFactory.createURI(
-                                String.format("urn:x-beakgraph:grid:%d:%d:%d", resolutionLevel, x, y)));
+                        intersectingURNs.add(Params.gridGraph(resolutionLevel, x, y));
                     }
                 }
             }

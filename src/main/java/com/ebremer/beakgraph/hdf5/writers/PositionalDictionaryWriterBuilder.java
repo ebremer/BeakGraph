@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.irix.IRIx;
+import com.ebremer.beakgraph.core.lib.RelativeIris;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
@@ -78,12 +78,11 @@ public class PositionalDictionaryWriterBuilder {
     private int MaxY = Integer.MIN_VALUE;
     // Sentinel base: relative references in the source are parsed against this
     // stable, reserved (.invalid) host that survives IRI normalization, then
-    // stripped back to relative form for storage and resolved at query time
-    // against the URL the .h5 file is served from. Protected: the ultra
-    // subclass parses documents itself and must use the identical base.
-    protected static final String REL_BASE = "http://beakgraph.invalid/document";
-    private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
-    private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
+    // stripped back to relative form for storage (RelativeIris) and resolved
+    // at query time against the URL the .h5 file is served from. Protected:
+    // the ultra subclass parses documents itself and must use the identical
+    // base. One constant for every engine, so they cannot drift apart.
+    protected static final String REL_BASE = RelativeIris.SENTINEL_BASE;
     
     private static final Node[] asHilbert = {
         NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
@@ -180,6 +179,20 @@ public class PositionalDictionaryWriterBuilder {
         return this;
     }
 
+    private File sourceRoot;
+
+    /** Merge mode: root the documents' stored relative references are taken from (see {@link RelativeIris#parseBase}). */
+    public PositionalDictionaryWriterBuilder setSourceRoot(File root) {
+        this.sourceRoot = root;
+        return this;
+    }
+
+    /** The base {@code input} is parsed against: the sentinel, or its per-document merge base. */
+    protected String parseBase(File input) {
+        List<File> inputs = sources.isEmpty() ? List.of(src) : sources;
+        return RelativeIris.parseBase(input, inputs, sourceRoot);
+    }
+
     public PositionalDictionaryWriterBuilder setSpatial(boolean flag) {
         this.spatial = flag; return this;
     }
@@ -226,8 +239,7 @@ public class PositionalDictionaryWriterBuilder {
                 if (env.intersects(tileEnv)) {
                     Polygon tilePoly = (Polygon) gf.toGeometry(tileEnv);
                     if (polygon.intersects(tilePoly)) {
-                        intersectingURNs.add(NodeFactory.createURI(
-                            String.format("urn:x-beakgraph:grid:%d:%d:%d", resolutionLevel, x, y)));
+                        intersectingURNs.add(Params.gridGraph(resolutionLevel, x, y));
                     }
                 }
             }
@@ -399,7 +411,7 @@ public class PositionalDictionaryWriterBuilder {
         }
         Node neo = bmap.get(n);
         if (neo == null) {
-            neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
+            neo = NodeFactory.createBlankNode(Params.blankNodeLabel(bnodeCounter++));
             bmap.put(n, neo);
         }
         return neo;
@@ -435,23 +447,17 @@ public class PositionalDictionaryWriterBuilder {
             // how deeply nested; map() recurses nested triple-term objects itself.
             return TripleTerms.map(n, this::relativizeNode);
         }
-        if (n == null || !n.isURI() || !n.getURI().startsWith(REL_BASE_PREFIX)) {
+        if (n == null || !n.isURI()) {
             return n;
         }
-        String u = n.getURI();
-        try {
-            IRIx rel = REL_BASE_IRIX.relativize(IRIx.create(u));
-            if (rel != null && rel.isRelative()) {
-                return NodeFactory.createURI(rel.str());
-            }
-        } catch (RuntimeException ignore) {
-            // fall through to textual stripping
-        }
-        // IRIx relativization failed or was incomplete. Strip the sentinel
-        // textually so it can never leak into stored data. This loses correct
-        // <#fragment> / <../> handling - an acceptable trade for a rare case.
-        return NodeFactory.createURI(
-                u.equals(REL_BASE) ? "" : u.substring(REL_BASE_PREFIX.length()));
+        // Textual relativization against the sentinel: "" / "#f" / "?q" for the
+        // document, "x" for children, "../x" (any number of levels) for parents.
+        // Jena's IRIx.relativize only steps up ONE level and otherwise emits a
+        // path-absolute form, which resolves wrongly against a served URL of a
+        // different depth; the old one-segment sentinel collapsed <../x> and
+        // </x> onto the child form "x" outright.
+        String rel = RelativeIris.toStorageForm(n.getURI());
+        return rel == null ? n : NodeFactory.createURI(rel);
     }
 
     /**
@@ -812,7 +818,7 @@ public class PositionalDictionaryWriterBuilder {
             // directory). The relativize() step below strips the sentinel back
             // off; the relative form is resolved at query time against the URL
             // the .h5 file is served from.
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), REL_BASE);
+            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase(input));
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
@@ -264,10 +265,10 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         // Single document: the sequential builder's exact labels. Merge: the
         // document ordinal keeps labels unique across documents with no
         // cross-document coordination.
-        final String labelFormat = multi ? ("b" + docIndex + "_%020d") : "b%020d";
+        final String labelPrefix = multi ? ("b" + docIndex + "_") : "b";
         final long docStart = System.nanoTime();
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), REL_BASE);
+            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase(input));
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
@@ -277,7 +278,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)
                     .map(this::relativize)
-                    .map(quad -> alignBnodes(quad, bmap, counter, labelFormat))
+                    .map(quad -> alignBnodes(quad, bmap, counter, labelPrefix))
                     .map(this::canonicalizeNumericObject)
                     .forEach(quad -> {
                         main.add(quad);
@@ -324,7 +325,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
     }
 
     /** The base AlignBnodes with per-document map, counter, and label format. */
-    private static Quad alignBnodes(Quad quad, HashMap<Node, Node> bmap, long[] counter, String labelFormat) {
+    private static Quad alignBnodes(Quad quad, HashMap<Node, Node> bmap, long[] counter, String labelPrefix) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node o = quad.getObject();
@@ -333,7 +334,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
             return quad;
         }
         java.util.function.UnaryOperator<Node> align = n -> n.isBlank()
-                ? bmap.computeIfAbsent(n, k -> NodeFactory.createBlankNode(String.format(labelFormat, counter[0]++)))
+                ? bmap.computeIfAbsent(n, k -> NodeFactory.createBlankNode(Params.blankNodeLabel(labelPrefix, counter[0]++)))
                 : n;
         Node g2 = align.apply(g);
         Node s2 = align.apply(s);

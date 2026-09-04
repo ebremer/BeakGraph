@@ -203,7 +203,7 @@ class HugeWriterParityTest {
             ex:s0 ex:longstr "%s" .
             ex:s0 ex:uni "h\\u00e9llo \\u00fcrld" .
             ex:s0 ex:ill "abc"^^xsd:int .
-            <> ex:self <sibling.png> .
+            <> ex:self <sibling.png> ; ex:up <../up.png> ; ex:up2 <../../up2.png> ; ex:root </root.png> ; ex:frag <#frag> ; ex:query <?q=1> .
             _:b1 ex:p0 _:b2 .
             _:b2 ex:knows ex:s0 .
             ex:g1 {

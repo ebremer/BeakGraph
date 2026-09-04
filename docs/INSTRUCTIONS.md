@@ -58,7 +58,7 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-method <0-4>` | `0` | Conversion engine — see §6. |
 | `-cores <n>` | `4` | Threads used **inside** one conversion by `-method 2`, `3`, and `4`. |
 | `-threads <n>` | `1` | Number of conversions run **at once** (per-file mode). Each conversion gets its own `-cores` budget — total CPU ≈ `threads × cores`. |
-| `-merge` | off | Merge **all** sources under `-src` into ONE store at `-dest` (if `-dest` is an existing directory, writes `<dest>/merged.h5`). Blank nodes stay distinct per source document. Works with every `-method`. |
+| `-merge` | off | Merge **all** sources under `-src` into ONE store at `-dest` (if `-dest` is an existing directory, writes `<dest>/merged.h5`). Blank nodes stay distinct per source document, and so do relative references: each document's `<>` and relative links are stored relative to `-src` (`<>` in `a/x.ttl` becomes `a/x.ttl`, its `<img.png>` becomes `a/img.png`), so the merged store serves them below its own URL as the source tree was laid out. Works with every `-method`. |
 | `-void` | off | Generate the VoID/SD statistics graph (`urn:x-beakgraph:void`) with **exact** in-memory counting (RAM grows with distinct terms). Mutually exclusive with `-voidsketch`. |
 | `-voidsketch` | off | Generate the statistics graph with **bounded memory**: exact up to 65,536 distinct nodes per counter, then HyperLogLog estimates (~0.8% error, deterministic). Recommended for `-method 1/4/5`. Mutually exclusive with `-void`. |
 | `-spatial` | off | Build the Hilbert-curve spatial index for `geo:wktLiteral` geometry (adds the `urn:x-beakgraph:Spatial` graph). |

@@ -135,7 +135,7 @@ class HugeUltraWriterParityTest {
             ex:s0 ex:flag true .
             ex:s0 ex:when "2024-05-06T07:08:09Z"^^xsd:dateTime .
             ex:s0 ex:ill "abc"^^xsd:int .
-            <> ex:self <sibling.png> .
+            <> ex:self <sibling.png> ; ex:up <../up.png> ; ex:up2 <../../up2.png> ; ex:root </root.png> ; ex:frag <#frag> ; ex:query <?q=1> .
             _:b1 ex:p0 _:b2 .
             _:b2 ex:knows ex:s0 .
             ex:g1 {

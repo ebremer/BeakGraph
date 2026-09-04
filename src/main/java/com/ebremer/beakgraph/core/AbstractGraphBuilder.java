@@ -39,6 +39,19 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
     }
 
     public List<File> getSources() { return sources; }
+
+    protected File sourceRoot;
+
+    /**
+     * Merge mode: the directory the merged documents' paths are taken relative
+     * to when their relative references are stored (the CLI's {@code -src}).
+     * Defaults to the sources' common ancestor directory.
+     */
+    public T setSourceRoot(File root) {
+        this.sourceRoot = root;
+        return self();
+    }
+    public File getSourceRoot() { return sourceRoot; }
     
     /**
      * Whether/how the VoID+SD statistics graph is generated: {@code NONE}

@@ -141,6 +141,13 @@ class MergeAndFormatsTest {
         // must stay distinct in the merged store.
         write(src.resolve("bn1.ttl"), "_:b0 <http://ex.org/bp> \"v1\" .\n");
         write(src.resolve("bn2.ttl"), "_:b0 <http://ex.org/bp> \"v2\" .\n");
+        // BG-390: the SAME relative references in two documents are distinct
+        // resources; stored relative to -src they must stay apart, while
+        // <../shared.png> from both lands on the one root-level resource.
+        Files.createDirectories(src.resolve("a"));
+        Files.createDirectories(src.resolve("b"));
+        write(src.resolve("a").resolve("x.ttl"), "<> <http://ex.org/label> \"doc a\" ; <http://ex.org/thumb> <img.png> ; <http://ex.org/up> <../shared.png> .\n");
+        write(src.resolve("b").resolve("y.ttl"), "<> <http://ex.org/label> \"doc b\" ; <http://ex.org/thumb> <img.png> ; <http://ex.org/up> <../shared.png> .\n");
         return src;
     }
 
@@ -153,6 +160,16 @@ class MergeAndFormatsTest {
         assertTrue(ask(h5, "ASK { ?b <http://ex.org/bp> \"v2\" }"), "bnode statement from bn2.ttl");
         assertEquals(2, count(h5, "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?o }"),
                 "_:b0 from two documents must remain two distinct blank nodes");
+        // Relative references are stored relative to -src (STR() compares the
+        // stored relative form; a <...> in the query would resolve absolutely).
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/label> \"doc a\" FILTER(STR(?s) = \"a/x.ttl\") }"), "<> of a/x.ttl");
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/label> \"doc b\" FILTER(STR(?s) = \"b/y.ttl\") }"), "<> of b/y.ttl");
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/thumb> ?o FILTER(STR(?s) = \"a/x.ttl\" && STR(?o) = \"a/img.png\") }"), "<img.png> of a/x.ttl");
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/thumb> ?o FILTER(STR(?s) = \"b/y.ttl\" && STR(?o) = \"b/img.png\") }"), "<img.png> of b/y.ttl");
+        assertEquals(2, count(h5, "SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s <http://ex.org/label> ?l }"),
+                "<> from two documents must remain two distinct subjects");
+        assertEquals(1, count(h5, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/up> ?o FILTER(STR(?o) = \"shared.png\") }"),
+                "<../shared.png> from both documents is the one root-level resource");
     }
 
     @Test
@@ -166,7 +183,7 @@ class MergeAndFormatsTest {
         BeakGraphCLI cli = new BeakGraphCLI(p);
         cli.merge();
 
-        assertEquals(5, cli.getFileCounter().getRDFFileCount());
+        assertEquals(7, cli.getFileCounter().getRDFFileCount());
         assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the merge must succeed");
         assertMerged(p.dest);
         assertEquals(1, p.dest.getParentFile().listFiles().length, "exactly one output file, no per-source .h5");

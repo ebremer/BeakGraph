@@ -1,6 +1,8 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import com.ebremer.beakgraph.core.lib.RelativeIris;
 import com.ebremer.beakgraph.utils.UTIL;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.function.Predicate;
@@ -24,7 +26,8 @@ import org.apache.jena.sparql.graph.NodeTransformLib;
  * URL the file is served from, per RFC 3986.
  * <p>
  * BeakGraph stores IRIs that were relative in the source RDF document (the empty
- * reference {@code <>}, or a sibling such as {@code <image.png>}) in their
+ * reference {@code <>}, a sibling such as {@code <image.png>}, a parent such as
+ * {@code <../thumbs/t.png>} or a path-absolute {@code </LICENSE>}) in their
  * relative form. The absolute identity of such a resource depends on where the
  * file is retrieved from, so it is computed here at query time rather than baked
  * in at build time. This class converts between the stored "storage form" and
@@ -68,14 +71,18 @@ public class RelativeIRIResolver {
      * still match a relative-stored term. Every other node (variables,
      * literals, blank nodes, unrelated IRIs) passes through.
      * <p>
-     * The rewrite fires only when {@code storedTerm} says the relative form IS
-     * in the store and the absolute form is NOT. The dictionary holds a term in
-     * exactly one of the two forms (relative only when the source document used
-     * a relative reference), so rewriting unconditionally turned every query
-     * naming an absolute-stored same-host IRI into a guaranteed miss - Jena's
-     * relativize also emits {@code /absolute/path} and {@code ../up} forms the
-     * writer never produces. When both forms are stored, the exact term the
-     * query named (the absolute one) wins.
+     * The rewrite fires only when {@code storedTerm} says a relative form IS
+     * in the store and the absolute form is NOT. The dictionary holds a term
+     * in one form only (relative when the source document used a relative
+     * reference), so rewriting unconditionally turned every query naming an
+     * absolute-stored same-host IRI into a guaranteed miss. When both forms
+     * are stored, the exact term the query named (the absolute one) wins.
+     * <p>
+     * One served IRI can correspond to several stored forms depending on how
+     * the source spelled the reference: {@code ../x} (any number of levels,
+     * {@link RelativeIris#relativize}), Jena's own relativization, and the
+     * path-absolute {@code /a/x} the writer stores for a source's
+     * {@code </a/x>}. Each candidate is tried against the dictionary in turn.
      *
      * @param storedTerm whether a node exists in the store's dictionary
      */
@@ -84,10 +91,12 @@ public class RelativeIRIResolver {
             if (base != null && node != null && node.isURI()
                     && !UTIL.isRelativeIRI(node.getURI())) {
                 try {
-                    IRIx rel = base.relativize(IRIx.create(node.getURI()));
-                    if (rel != null && rel.isRelative()) {
-                        Node relNode = NodeFactory.createURI(rel.str());
-                        if (storedTerm.test(relNode) && !storedTerm.test(node)) {
+                    if (storedTerm.test(node)) {
+                        return node;
+                    }
+                    for (String candidate : storageCandidates(node.getURI())) {
+                        Node relNode = NodeFactory.createURI(candidate);
+                        if (storedTerm.test(relNode)) {
                             return relNode;
                         }
                     }
@@ -97,6 +106,24 @@ public class RelativeIRIResolver {
             }
             return node;
         });
+    }
+
+    /** Distinct relative forms the writer may have stored for {@code absolute}, most likely first. */
+    private List<String> storageCandidates(String absolute) {
+        List<String> out = new ArrayList<>(3);
+        String textual = RelativeIris.relativize(base.str(), absolute);
+        if (textual != null) {
+            out.add(textual);
+        }
+        IRIx rel = base.relativize(IRIx.create(absolute));
+        if (rel != null && rel.isRelative() && !out.contains(rel.str())) {
+            out.add(rel.str());
+        }
+        String pathAbsolute = RelativeIris.pathAbsoluteForm(base.str(), absolute);
+        if (pathAbsolute != null && !out.contains(pathAbsolute)) {
+            out.add(pathAbsolute);
+        }
+        return out;
     }
 
     /**

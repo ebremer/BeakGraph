@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.plaid;
 
+import com.ebremer.beakgraph.core.lib.RelativeIris;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.huge.HugeBuildPipeline;
 import com.ebremer.beakgraph.huge.SpatialAugmenter;
@@ -52,7 +53,7 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
     }
 
     @Override
-    public void run(List<File> sources, boolean spatial, boolean features,
+    public void run(List<File> sources, File sourceRoot, boolean spatial, boolean features,
                     BGVoIDSD voidStats, BatchSink sink) throws IOException {
         int workers = Math.min(parseThreads, sources.size());
         logger.info("Plaid ingest: parsing {} document(s) on {} parse worker(s)", sources.size(), workers);
@@ -64,8 +65,9 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
                 // Same per-document blank-node scoping rule as the sequential
                 // ingest: ordinal prefix only when merging several documents.
                 final String scope = sources.size() > 1 ? (i + "/") : null;
+                final String parseBase = RelativeIris.parseBase(input, sources, sourceRoot);
                 tasks.add(parsePool.submit(() -> {
-                    parseDocument(input, scope, spatial, features, voidStats, sink);
+                    parseDocument(input, scope, parseBase, spatial, features, voidStats, sink);
                     return null;
                 }));
             }
@@ -97,13 +99,12 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
         }
     }
 
-    private void parseDocument(File input, String scope, boolean spatial, boolean features,
+    private void parseDocument(File input, String scope, String parseBase, boolean spatial, boolean features,
                                BGVoIDSD voidStats, BatchSink sink) throws IOException {
         logger.info("Parsing {} (plaid, parallel disk-based build)", input);
         final long start = System.nanoTime();
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(),
-                    HugeBuildPipeline.REL_BASE);
+            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             SpatialAugmenter augmenter = new SpatialAugmenter(features);

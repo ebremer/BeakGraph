@@ -37,7 +37,7 @@ import java.util.concurrent.Future;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.irix.IRIx;
+import com.ebremer.beakgraph.core.lib.RelativeIris;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
@@ -71,12 +71,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(HugeBuildPipeline.class);
 
-    // Same sentinel base as the RAM builder: relative references resolve against
-    // it during parsing and are stripped back to relative form for storage.
-    // Public: parallel-ingest implementations must parse against the same base.
-    public static final String REL_BASE = "http://beakgraph.invalid/document";
-    private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
-    private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
+    // Same sentinel base as the RAM builder (one constant, RelativeIris):
+    // relative references resolve against it during parsing and are stripped
+    // back to relative form for storage. Public: parallel-ingest
+    // implementations must parse against the same base.
+    public static final String REL_BASE = RelativeIris.SENTINEL_BASE;
 
     /** Source documents; more than one means a -merge build into a single store. */
     private final List<File> sources;
@@ -111,7 +110,12 @@ public final class HugeBuildPipeline implements AutoCloseable {
      * parallel parsing here.
      */
     public interface ParallelIngest {
-        void run(List<File> sources, boolean spatial, boolean features,
+        /**
+         * @param sourceRoot root the documents' stored relative references are
+         *                   taken from when merging (may be null: common
+         *                   ancestor); see {@link RelativeIris#parseBase}
+         */
+        void run(List<File> sources, File sourceRoot, boolean spatial, boolean features,
                  BGVoIDSD voidStats, BatchSink sink) throws IOException;
 
         interface BatchSink {
@@ -142,6 +146,13 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private final java.util.concurrent.ExecutorService stagePool;
     /** Non-null: Pass A runs through it instead of the sequential loop (-method 5). */
     private final ParallelIngest parallelIngest;
+    private File sourceRoot;
+
+    /** Merge mode: root the documents' stored relative references are taken from (see {@link RelativeIris#parseBase}). */
+    public HugeBuildPipeline setSourceRoot(File root) {
+        this.sourceRoot = root;
+        return this;
+    }
     private long rows = 0;
     private long parsedQuads = 0;
 
@@ -446,7 +457,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private void ingest() throws IOException {
         this.pTempFile = new RecordFile<>(workDir.resolve("pcol.tmpids"), HugeRecords.VAR_LONG_CODEC);
         if (parallelIngest != null) {
-            parallelIngest.run(sources, spatial, features, xvoid, this::commitBatch);
+            parallelIngest.run(sources, sourceRoot, spatial, features, xvoid, this::commitBatch);
             finishIngest();
             return;
         }
@@ -458,7 +469,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
             // writer's AlignBnodes uses. The prefix never reaches the output:
             // bnodes are stored by dictionary rank and readers regenerate
             // labels from ids. Single-source builds stay untouched.
-            ingestSource(sources.get(i), sources.size() > 1 ? (i + "/") : null);
+            ingestSource(sources.get(i), sources.size() > 1 ? (i + "/") : null,
+                    RelativeIris.parseBase(sources.get(i), sources, sourceRoot));
         }
         finishIngest();
     }
@@ -496,13 +508,13 @@ public final class HugeBuildPipeline implements AutoCloseable {
         }
     }
 
-    private void ingestSource(File input, String bnodeScope) throws IOException {
+    private void ingestSource(File input, String bnodeScope, String parseBase) throws IOException {
         logger.info("Parsing {} (disk-based build)", input);
         // Syntax from the file name (TriG, N-Quads, N-Triples, RDF/XML, JSON-LD,
         // Turtle); .gz and .zip are decompressed transparently - one shared rule
         // with the RAM writer and the CLI filter (RdfSources).
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), REL_BASE);
+            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase);
             parserBuilder.mutateSources(rdfBuilder ->
                     rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
             SpatialAugmenter augmenter = new SpatialAugmenter(features);
@@ -805,20 +817,13 @@ public final class HugeBuildPipeline implements AutoCloseable {
             // how deeply nested; map() recurses nested triple-term objects itself.
             return TripleTerms.map(n, HugeBuildPipeline::relativizeNode);
         }
-        if (n == null || !n.isURI() || !n.getURI().startsWith(REL_BASE_PREFIX)) {
+        if (n == null || !n.isURI()) {
             return n;
         }
-        String u = n.getURI();
-        try {
-            IRIx rel = REL_BASE_IRIX.relativize(IRIx.create(u));
-            if (rel != null && rel.isRelative()) {
-                return NodeFactory.createURI(rel.str());
-            }
-        } catch (RuntimeException ignore) {
-            // fall through to textual stripping
-        }
-        return NodeFactory.createURI(
-                u.equals(REL_BASE) ? "" : u.substring(REL_BASE_PREFIX.length()));
+        // See PositionalDictionaryWriterBuilder.relativizeNode: textual
+        // relativization keeps "../x" (any depth) and "/x" forms intact.
+        String rel = RelativeIris.toStorageForm(n.getURI());
+        return rel == null ? n : NodeFactory.createURI(rel);
     }
 
     /**

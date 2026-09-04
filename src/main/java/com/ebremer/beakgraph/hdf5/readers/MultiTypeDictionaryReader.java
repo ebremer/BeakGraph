@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.readers;
 
+import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractDictionary;
 import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
@@ -12,6 +13,7 @@ import java.util.Arrays;
 import java.util.Optional;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
+import org.apache.jena.cdt.CompositeDatatypeBase;
 import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.TextDirection;
@@ -205,7 +207,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             // relative IRI to an absolute one happens at the serving boundary
             // (RelativeIRIResolver), not here.
             case IRI, RELATIVE_IRI -> NodeFactory.createURI(iri.get(off));
-            case BNODE -> NodeFactory.createBlankNode(String.format("b%020d", id));
+            case BNODE -> NodeFactory.createBlankNode(Params.blankNodeLabel(id));
             case TRIPLE_TERM -> {
                 TripleTermResolver r = tripleTermResolver;
                 if (r == null || tripleTerms == null) {
@@ -218,6 +220,23 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
         return na;
+    }
+
+    /**
+     * Whether any typed literal in this section carries a composite (cdt:List /
+     * cdt:Map) datatype. Reads only the small per-store datatype-IRI table, not
+     * the literals themselves, so it is cheap enough for an open-time check.
+     */
+    public boolean hasCompositeDatatype() {
+        if (typedLiteralsDictionary == null) {
+            return false;
+        }
+        for (long i = 0, n = typedLiteralsDictionary.getNumEntries(); i < n; i++) {
+            if (tm.getSafeTypeByName(typedLiteralsDictionary.get(i)) instanceof CompositeDatatypeBase) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public void setTripleTermResolver(TripleTermResolver resolver) {

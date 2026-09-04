@@ -28,6 +28,13 @@ public class Params {
     // Absence means "no directions", so v3 files read unchanged; v4 files are
     // rejected by older builds via the gate above - without that, an old build
     // would silently reconstruct "x"@en--ltr as "x"@en (a different RDF term).
+    // The same bump changed the dictionary ORDER of composite (cdt:List /
+    // cdt:Map) literals from compareAlways value order to exact lexical order
+    // (NodeComparator). Ids are comparator ranks, so a pre-v4 store holding
+    // composite literals is laid out in an order this build's binary search
+    // does not follow: lookups miss stored terms. HDF5Reader refuses such
+    // files (CDT_LEXICAL_ORDER_MIN_VERSION); pre-v4 stores without composite
+    // literals are unaffected and still open.
     //
     // v5: RDF 1.2 triple terms. Adds DataType.TRIPLE_TERM (ordinal 13) and the
     // optional tripleTerms component store in the literals section; triple
@@ -36,6 +43,10 @@ public class Params {
     // converts an old build's would-be "Corrupt HDF5: Unknown DataType ordinal
     // 13" into the intended "Upgrade BeakGraph".
     public static final int FORMAT_VERSION = 5;
+    // First format version whose dictionary orders composite (cdt) literals the
+    // way the current NodeComparator does. Older files containing them are
+    // refused at open (see the v4 note above).
+    public static final int CDT_LEXICAL_ORDER_MIN_VERSION = 4;
     // First format version whose rank/select directory is correct enough to drive
     // query navigation. Older files fall back to a linear select1 scan (slower but correct).
     public static final int RANK_DIRECTORY_MIN_VERSION = 3;
@@ -50,6 +61,33 @@ public class Params {
     public static final String VOIDSTRING = String.format("urn:%s:void", BGURN);
     public static final Node BGVOID = NodeFactory.createURI(VOIDSTRING);
     public static final short GRIDTILESIZE = 512;
+
+    /**
+     * Grid-tile graph IRI {@code urn:x-beakgraph:grid:{level}:{x}:{y}}. Built by
+     * concatenation, never {@code String.format("%d")}: the Formatter localizes
+     * digits under the JVM's FORMAT locale, and on ar/fa/bn-style installs
+     * minted stored graph names with Arabic-Indic digits - a file that differed
+     * by build machine and no longer matched the documented form.
+     */
+    public static Node gridGraph(int level, long x, long y) {
+        return NodeFactory.createURI("urn:" + BGURN + ":grid:" + level + ':' + x + ':' + y);
+    }
+
+    /** Blank-node label {@code b} + id zero-padded to 20 ASCII digits (the documented {@code b%020d}). */
+    public static String blankNodeLabel(long id) {
+        return blankNodeLabel("b", id);
+    }
+
+    /** {@code prefix} + id zero-padded to 20 ASCII digits; locale-independent (see {@link #gridGraph}). */
+    public static String blankNodeLabel(String prefix, long id) {
+        String digits = Long.toString(id);
+        StringBuilder sb = new StringBuilder(prefix.length() + 20);
+        sb.append(prefix);
+        for (int i = digits.length(); i < 20; i++) {
+            sb.append('0');
+        }
+        return sb.append(digits).toString();
+    }
     public static final int COMPRESSION_THRESHOLD = 64;
     
     private static String loadVersion() {

@@ -40,6 +40,7 @@ public class HDF5Writer implements BeakGraphWriter {
         Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
         try {
             PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
+            db.setSourceRoot(builder.getSourceRoot());
             try (PositionalDictionaryWriter w = db
                     .setSource(builder.getSource())
                     .setSources(builder.getSources())

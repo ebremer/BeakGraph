@@ -67,6 +67,7 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
             try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
                     inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(), workspace,
                     provider, pool, new PlaidIngest(builder.cores))) {
+                pipeline.setSourceRoot(builder.getSourceRoot());
                 pipeline.run(tmp);
             }
             try {

@@ -77,6 +77,7 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
             try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
                     inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
                     workspace, provider, pool)) {
+                pipeline.setSourceRoot(builder.getSourceRoot());
                 pipeline.run(tmp);
             }
             try {

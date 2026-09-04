@@ -492,7 +492,7 @@ public class BeakGraphCLI {
                         .setSpatial(params.spatial)
                         .setFeatures(params.features);
                 if (source != null) builder.setSource(source);
-                if (sources != null) builder.setSources(sources);
+                if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 if (params.workdir != null) {
                     params.workdir.mkdirs();
                     builder.setWorkDirectory(params.workdir.toPath());
@@ -508,7 +508,7 @@ public class BeakGraphCLI {
                         .setFeatures(params.features)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
-                if (sources != null) builder.setSources(sources);
+                if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 return builder.build();
             }
             case 3 -> {
@@ -521,7 +521,7 @@ public class BeakGraphCLI {
                         .setFeatures(params.features)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
-                if (sources != null) builder.setSources(sources);
+                if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 return builder.build();
             }
             case 4 -> {
@@ -535,7 +535,7 @@ public class BeakGraphCLI {
                         .setFeatures(params.features)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
-                if (sources != null) builder.setSources(sources);
+                if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 if (params.workdir != null) {
                     params.workdir.mkdirs();
                     builder.setWorkDirectory(params.workdir.toPath());
@@ -553,7 +553,7 @@ public class BeakGraphCLI {
                         .setFeatures(params.features)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
-                if (sources != null) builder.setSources(sources);
+                if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 if (params.workdir != null) {
                     params.workdir.mkdirs();
                     builder.setWorkDirectory(params.workdir.toPath());
@@ -567,7 +567,7 @@ public class BeakGraphCLI {
                         .setSpatial(params.spatial)
                         .setFeatures(params.features);
                 if (source != null) builder.setSource(source);
-                if (sources != null) builder.setSources(sources);
+                if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 return builder.build();
             }
         }

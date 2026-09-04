@@ -748,11 +748,30 @@ almost always takes entity id 1. Readers translate default-graph requests to thi
 
 BeakGraph stores document-relative references **relatively** and resolves them against the serving
 URL at query time. At parse, relative references are resolved against the fixed sentinel base
-`http://beakgraph.invalid/document`; after parsing, any IRI beginning `http://beakgraph.invalid/`
-is stripped back to its relative form (`<>` → `""`, `<sib.png>` → `"sib.png"`). Stored rows get
-`DataType.RELATIVE_IRI`; an IRI is classified relative iff it has no RFC 3986 scheme (empty string
-included). A non-Java writer can implement this as: parse with any base, then re-relativize against
-that same base.
+`http://beakgraph.invalid/d/d/.../d/%00` (32 `d/` directory levels, leaf `%00`); after parsing, any
+IRI beginning `http://beakgraph.invalid/` is relativized textually against that base
+(`RelativeIris.relativize`) back to its reference form: `<>` → `""`, `<#f>` → `"#f"`, `<?q>` →
+`"?q"`, `<sib.png>` → `"sib.png"`, `<sub/x>` → `"sub/x"`, `<../t.png>` → `"../t.png"`,
+`<../../x>` → `"../../x"`, `</LICENSE>` → `"/LICENSE"`. The base is deep so that parent and
+path-absolute references survive RFC 3986 resolution (which discards `..` above the root); an IRI
+that resolves directly under the sentinel root - a source's `</x>`, or a reference more than 32 levels
+up, which collapses there - is stored path-absolute (`"/x"`).
+The leaf `%00` cannot be authored as a sibling name, so no sibling collapses onto `""`. Stored rows
+get `DataType.RELATIVE_IRI`; an IRI is classified relative iff it has no RFC 3986 scheme (empty
+string included). A non-Java writer can implement this as: parse with the sentinel base, then
+relativize against it with the canonical `../` form for any number of levels (not a single-level
+relativizer). Stores written before this base was adopted (BeakGraph 0.18.0 pre-release and earlier)
+hold `<../x>` and `</x>` collapsed onto the child form `"x"`; the layout is unchanged, only the
+stored reference differs, so such stores open but serve those references below the document's
+directory.
+
+**Merged stores.** When several documents are merged into one store, each document is parsed
+against the sentinel directory plus its path relative to the merge root (the CLI's `-src`):
+`a/x.ttl` parses against `http://beakgraph.invalid/d/.../d/a/x.ttl`, and relativizing against the
+common sentinel base then stores its `<>` as `"a/x.ttl"`, its `<img.png>` as `"a/img.png"` and its
+`<../shared.png>` as `"shared.png"`. Documents' identical relative references therefore remain the
+distinct resources RFC 3986 makes them, and the merged store serves them below its own URL with the
+source tree's layout. A store merged from a single document parses like a single-source build.
 
 ### 9.3 Numeric canonicalization (documented RDF 1.1 deviation)
 
@@ -1024,7 +1043,7 @@ sequence is the one given there.
 | FCD `compression_threshold` | 64 bytes |
 | Bit-packed legal widths | 1–57, 64 |
 | Blank-node label pattern | `b%020d` (id, zero-padded to 20 digits) |
-| Relative-IRI sentinel base | `http://beakgraph.invalid/document` |
+| Relative-IRI sentinel base | `http://beakgraph.invalid/` + `d/`×32 + `%00` (`RelativeIris.SENTINEL_BASE`) |
 | Spatial: Hilbert curve | 2 dims × 31 bits (davidmoten hilbert-curve 0.2.3 semantics) |
 | Spatial: max cells / max scale | 16 / 30 |
 | Spatial: grid tile size | 512 |

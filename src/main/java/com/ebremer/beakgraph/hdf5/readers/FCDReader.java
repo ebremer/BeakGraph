@@ -75,6 +75,11 @@ public class FCDReader {
         return new Fragment(value, p);
     }
 
+    /** Number of strings stored (valid {@link #get} indices are {@code 0..n-1}). */
+    public long getNumEntries() {
+        return numEntries;
+    }
+
     public String get(long n) {
         if (n < 0 || n >= numEntries) throw new IndexOutOfBoundsException();
         long block = n / blockSize;

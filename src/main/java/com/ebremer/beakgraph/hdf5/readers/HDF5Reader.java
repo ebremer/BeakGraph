@@ -122,6 +122,17 @@ public class HDF5Reader implements BGReader {
             }
             Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
             this.dict = new PositionalDictionaryReader(dictionary);
+            // Lower bound: format v4 changed how composite (cdt) literals are
+            // ordered, and ids are comparator ranks. A pre-v4 file holding them
+            // would open fine and then silently miss terms on every lookup.
+            // Files without composite literals are unaffected by that change.
+            if (formatVersion < Params.CDT_LEXICAL_ORDER_MIN_VERSION && dict.literalsContainCompositeDatatype()) {
+                throw new IllegalStateException(
+                        "BeakGraph HDF5 format version " + formatVersion + " in " + uri
+                      + " was built by BeakGraph 0.17.0 or earlier and contains cdt:List/cdt:Map literals,"
+                      + " whose dictionary order changed in format version " + Params.CDT_LEXICAL_ORDER_MIN_VERSION
+                      + "; queries on this file would silently miss terms. Rebuild it from source.");
+            }
             this.defaultGraph = Quad.defaultGraphIRI;
             nodeTable = new SimpleNodeTable(dict);
             this.uri = uri;
