@@ -80,6 +80,35 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
             })));
     }
 
+    /**
+     * Whether this store carries the Hilbert cell index the seeding relies on:
+     * an HDF5 reader with a GPOS index, the {@code urn:x-beakgraph:Spatial}
+     * graph, and at least one {@code hal:hilbertCell{scale}} predicate. Stores
+     * built without {@code setSpatial(true)} (the CLI default) have none of
+     * these; seeding them would replace the input chain with an EMPTY candidate
+     * set and silently answer every sfIntersects query with zero rows. Callers
+     * must leave the chain untouched instead, so the geof:sfIntersects OpFilter
+     * alone answers the query with real JTS geometry - slower, never wrong.
+     */
+    static boolean isAvailable(BeakGraph bGraph) {
+        if (!(bGraph.getReader() instanceof HDF5Reader hdf5)) {
+            return false;
+        }
+        if (hdf5.getIndexReader(Index.GPOS) == null) {
+            return false;
+        }
+        PositionalDictionaryReader dict = (PositionalDictionaryReader) hdf5.getDictionary();
+        if (dict.getGraphs().locate(Params.SPATIAL) < 1) {
+            return false;
+        }
+        for (int s = 0; s <= MAX_INDEX_SCALE; s++) {
+            if (dict.getPredicates().locate(NodeFactory.createURI(HILBERT_CELL_NS + s)) >= 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static Envelope queryEnvelope(String wkt) {
         try {
             Geometry g = new WKTReader().read(ImageTools.stripCrs(wkt));

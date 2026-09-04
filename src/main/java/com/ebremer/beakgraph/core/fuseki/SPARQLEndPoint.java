@@ -110,7 +110,12 @@ public class SPARQLEndPoint {
             // Directory mode: /rdf serves the LWS metadata model (absolute IRIs).
             // Single-file mode registers /rdf below via HDF5SparqlServlet instead,
             // so document-relative IRIs in the HDF5 data get resolved.
-            serverBuilder.add("/rdf", ds);
+            // READ-ONLY (allowUpdate=false): the two-argument add() registers
+            // SPARQL Update and Graph Store PUT/POST/DELETE as well, and `ds` is
+            // the very model LWSStorageServlet uses as its allow-list of servable
+            // files - an unauthenticated client could have rewritten it. This
+            // endpoint provides read access only, by design.
+            serverBuilder.add("/rdf", ds, false);
         }
         server = serverBuilder.build();
 

@@ -40,10 +40,15 @@ public class PatternMatchBG {
         // the verification stage that removes the candidates' false positives with
         // real JTS geometry. The old code removed it, which made the lossy index
         // pre-filter the final answer.
+        // Seeding is only correct when the store actually HAS the spatial index:
+        // on a store built without it (the CLI default) the candidate set would be
+        // empty and the query would silently return nothing. Without the index the
+        // chain is left untouched and the sfIntersects OpFilter answers the query
+        // by itself (a full JTS check per row - slow, but exact).
         SpatialContext spatialCtx = getSpatialContext(filter);
         if (spatialCtx != null) {
             Triple triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
-            if (triggerTriple != null) {
+            if (triggerTriple != null && SpatialIndexIterator.isAvailable(bGraph)) {
                 chain = new SpatialIndexIterator(chain, bGraph, (Var) triggerTriple.getSubject(), spatialCtx);
             }
         }

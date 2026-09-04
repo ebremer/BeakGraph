@@ -10,8 +10,6 @@ import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
-import org.apache.jena.sparql.expr.Expr;
-import org.apache.jena.sparql.expr.ExprFunction2;
 import org.apache.jena.sparql.expr.ExprList;
 
 /**
@@ -195,24 +193,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     }
 
     private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        for (Expr expr : filter.getList()) {
-            if (expr instanceof ExprFunction2 func) {
-                Expr left = func.getArg1();
-                Expr right = func.getArg2();
-                String opcode = func.getOpName();
-                if (left.isVariable() && right.isConstant()) {
-                    applyBound(left.asVar(), opcode, right.getConstant().asNode(), dict, quad);
-                } else if (left.isConstant() && right.isVariable()) {
-                    applyBound(right.asVar(), flipOp(opcode), left.getConstant().asNode(), dict, quad);
-                }
-            }
-        }
-    }
-
-    private String flipOp(String op) {
-        return switch (op) {
-            case ">" -> "<"; case "<" -> ">"; case ">=" -> "<="; case "<=" -> ">="; default -> op;
-        };
+        // Only ordering comparisons become range hints (see FilterBounds); every
+        // other function in the FILTER is evaluated by the enclosing OpFilter.
+        FilterBounds.scan(filter, (var, op, value) -> applyBound(var, op, value, dict, quad));
     }
 
     private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
