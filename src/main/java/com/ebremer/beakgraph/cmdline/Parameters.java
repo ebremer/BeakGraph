@@ -20,6 +20,14 @@ public class Parameters {
     @Parameter(names = "-port", description = "Set HTTP port when endpoint started", required = false)
     public int port = 8888;
 
+    @Parameter(names = "-base",
+            description = "Public base URL clients use to reach -endpoint, e.g. https://data.example.org/. "
+                        + "Only needed behind a reverse proxy that does not send Forwarded/X-Forwarded-* "
+                        + "headers: by default every response derives its links and IRIs from the request "
+                        + "it answers",
+            required = false)
+    public String base = null;
+
     @Parameter(names = "-timeout",
             description = "Per-query wall-clock limit in seconds for -endpoint (0 = unlimited). "
                         + "A query over the limit is cancelled and answered with HTTP 503",

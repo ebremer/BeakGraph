@@ -4,8 +4,12 @@ import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.cmdline.Parameters;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
+import com.ebremer.beakgraph.lws.LWSMetadataRefresher;
 import com.ebremer.beakgraph.turbo.Spatial;
 import org.apache.jena.fuseki.main.FusekiServer;
+import org.apache.jena.graph.Graph;
+import org.apache.jena.sparql.core.DatasetGraphFactory;
+import org.apache.jena.sparql.graph.GraphWrapper;
 import org.apache.jena.query.Dataset;
 import org.apache.jena.query.DatasetFactory;
 import org.apache.jena.rdf.model.Model;
@@ -34,6 +38,8 @@ public class SPARQLEndPoint {
     private static String BASE_URL;
     private Model lwsModel;
     private Path storageRoot = null;
+    /** Directory mode only: keeps the served metadata in step with the files on disk. */
+    private LWSMetadataRefresher refresher;
     private BeakGraph singleFileGraph;
     private final Dataset dataset;
 
@@ -74,7 +80,22 @@ public class SPARQLEndPoint {
                     lwsModel = ModelFactory.createDefaultModel();
                 }
             }
-            ds = DatasetFactory.create(lwsModel);
+            // The tree changes underneath a running server (files copied in,
+            // replaced, deleted) and a cached beakgraph.ttl.gz may predate changes
+            // made while the server was down. The refresher validates the cache
+            // now, re-scans on a fixed interval, and is consulted whenever a request
+            // names a path the snapshot does not know. Fuseki and the servlet both
+            // read the CURRENT snapshot: the graph handed to Fuseki delegates every
+            // operation to whatever model the refresher holds at that moment.
+            refresher = new LWSMetadataRefresher(endpointPath, lwsModel);
+            if (refresher.refreshIfChanged()) {
+                logger.info("Cached LWS metadata was out of date with {}; regenerated", endpointPath);
+            }
+            long refreshSeconds = Long.getLong("beakgraph.lws.refresh.seconds", 30L);
+            refresher.start(refreshSeconds);
+            logger.info("LWS metadata refresh: {} plus on-demand checks for unknown paths",
+                    refreshSeconds > 0 ? "every " + refreshSeconds + "s" : "periodic scan disabled");
+            ds = DatasetFactory.wrap(DatasetGraphFactory.wrap(new CurrentModelGraph(refresher)));
         } else {
             logger.info("Single-file mode (HDF5)");
             // A single-file endpoint serves one graph for the whole server lifetime, so open
@@ -123,14 +144,23 @@ public class SPARQLEndPoint {
         ServletContextHandler context = (ServletContextHandler) jettyServer.getHandler();
 
         BASE_URL = "http://localhost:" + params.port + "/";
-        LWSStorageServlet.setBase(BASE_URL);
+        // Advertised links and IRI resolution use the base each client actually
+        // reaches the server on - derived per request, with a reverse proxy's
+        // Forwarded / X-Forwarded-* headers honoured - unless -base pins a public
+        // URL for a proxy that does not forward the original host. A fixed
+        // localhost base sent every remote client's next/up/linkset links to its
+        // own loopback while the server deliberately listens on all interfaces.
+        String publicBase = publicBase(params.base);
+        LWSStorageServlet.setBase(publicBase);
+        LWSStorageServlet.honourForwardedHeaders(jettyServer);
         LWSStorageServlet.setStorageRoot(storageRoot);
 
         ServletHolder sparqlPageHolder = new ServletHolder("sparql-page", new SparqlWebPageServlet());
         context.addServlet(sparqlPageHolder, "/sparql");
         context.addServlet(sparqlPageHolder, "/sparql/*");
 
-        ServletHolder lwsHolder = new ServletHolder("lws-storage", new LWSStorageServlet(lwsModel));
+        ServletHolder lwsHolder = new ServletHolder("lws-storage",
+                refresher != null ? new LWSStorageServlet(refresher) : new LWSStorageServlet(lwsModel));
         context.addServlet(lwsHolder, "/*");
 
         if (singleFile) {
@@ -140,8 +170,7 @@ public class SPARQLEndPoint {
             // Resolution base is the SERVED URL, never the local file URI: resolving
             // stored-relative IRIs against endpointPath.toUri() sent every client
             // file:///<absolute-server-path>/... IRIs - full filesystem disclosure.
-            ServletHolder rdfHolder = new ServletHolder("hdf5-sparql",
-                    new HDF5SparqlServlet(ds, BASE_URL + "rdf"));
+            ServletHolder rdfHolder = new ServletHolder("hdf5-sparql", new HDF5SparqlServlet(ds));
             context.addServlet(rdfHolder, "/rdf");
             context.addServlet(rdfHolder, "/rdf/*");
         }
@@ -150,6 +179,33 @@ public class SPARQLEndPoint {
         logger.info("Fuseki server started successfully!");
         logger.info("SPARQL: http://localhost:{}/rdf/query", params.port);
         logger.info("LWS: {}", BASE_URL);
+        if (publicBase != null) {
+            logger.info("Public base URL (from -base): {}", publicBase);
+        } else {
+            logger.info("Public base URL: derived from each request (Forwarded/X-Forwarded-* honoured; -base overrides)");
+        }
+    }
+
+    /**
+     * Normalizes a {@code -base} value: null or blank means "derive per request";
+     * anything else must be an absolute http(s) URL and is returned ending with '/'.
+     */
+    static String publicBase(String configured) {
+        if (configured == null || configured.isBlank()) {
+            return null;
+        }
+        String b = configured.strip();
+        java.net.URI u;
+        try {
+            u = new java.net.URI(b);
+        } catch (java.net.URISyntaxException e) {
+            throw new IllegalArgumentException("-base is not a valid URL: " + configured, e);
+        }
+        String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase();
+        if (!(scheme.equals("http") || scheme.equals("https")) || u.getHost() == null) {
+            throw new IllegalArgumentException("-base must be an absolute http(s) URL such as https://data.example.org/ (got " + configured + ")");
+        }
+        return b.endsWith("/") ? b : b + "/";
     }
 
     // synchronized so the lazy init is atomic: two concurrent callers must not each build
@@ -170,9 +226,28 @@ public class SPARQLEndPoint {
 
     public void shutdown() {
         if (server != null) server.stop();
+        if (refresher != null) {
+            refresher.close();
+            refresher = null;
+        }
         if (singleFileGraph != null) {
             singleFileGraph.close();
             singleFileGraph = null;
+        }
+    }
+
+    /** Graph view that delegates every operation to the refresher's current metadata snapshot. */
+    private static final class CurrentModelGraph extends GraphWrapper {
+        private final LWSMetadataRefresher refresher;
+
+        CurrentModelGraph(LWSMetadataRefresher refresher) {
+            super(refresher.current().getGraph());
+            this.refresher = refresher;
+        }
+
+        @Override
+        public Graph get() {
+            return refresher.current().getGraph();
         }
     }
 
@@ -251,11 +326,9 @@ public class SPARQLEndPoint {
     private static class HDF5SparqlServlet extends HttpServlet {
         private static final long serialVersionUID = 1L;
         private final transient Dataset ds;
-        private final String baseURI;
 
-        HDF5SparqlServlet(Dataset ds, String baseURI) {
+        HDF5SparqlServlet(Dataset ds) {
             this.ds = ds;
-            this.baseURI = baseURI;
         }
 
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -278,7 +351,11 @@ public class SPARQLEndPoint {
                 resp.sendError(400, "No SPARQL query provided");
                 return;
             }
-            BGSparqlService.execute(ds, queryStr, baseURI, req.getHeader("Accept"), resp);
+            // The resolution base follows the request (or -base): /rdf and
+            // /rdf/query both resolve against <live base>/rdf, matching the LWS
+            // path, so result IRIs are dereferenceable from wherever the client is.
+            BGSparqlService.execute(ds, queryStr, LWSStorageServlet.liveBase(req) + "rdf",
+                    req.getHeader("Accept"), resp);
         }
     }
 }

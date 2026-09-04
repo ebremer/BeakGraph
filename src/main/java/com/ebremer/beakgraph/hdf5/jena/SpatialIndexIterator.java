@@ -56,6 +56,17 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
     private static final Logger logger = LoggerFactory.getLogger(SpatialIndexIterator.class);
     /** Cap on query-side range fragmentation; merging beyond the cap only widens the superset. */
     private static final int MAX_QUERY_RANGES = 256;
+    /**
+     * Cap on the cell-box perimeter handed to the curve's range query. The
+     * davidmoten query is the perimeter algorithm - it materialises one boxed
+     * index per perimeter cell and sorts them - so a region that clamps to the
+     * whole [0, 2^31) domain would walk ~2^33 cells at scale 0: tens of
+     * gigabytes and hours, inside the iterator constructor, before any
+     * cancel or timeout check. Boxes over the budget are covered on a coarser
+     * block curve instead (see {@link #coverRanges}). 2^14 keeps a scale's
+     * query at a few thousand cells per side and a few milliseconds.
+     */
+    static final long PERIMETER_BUDGET = 1L << 14;
 
     private final Iterator<BindingNodeId> outputIterator;
 
@@ -167,11 +178,30 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
         return new ArrayList<>(out);
     }
 
-    /** Hilbert range cover of the cell box [lo, hi], merged and capped (superset-safe). */
-    private static List<Range> coverRanges(long[] lo, long[] hi) {
+    /**
+     * Hilbert range cover of the cell box [lo, hi], merged and capped
+     * (superset-safe). A box whose perimeter exceeds {@link #PERIMETER_BUDGET}
+     * is covered on the curve over its 2^k-aligned blocks, with k the smallest
+     * shift that brings the block box under budget, and each block range is
+     * scaled back to cell indices. The curve is self-similar, so the block
+     * cover is an exact superset of the cell cover: recall is unchanged, the
+     * extra candidates are removed by the sfIntersects verification, and the
+     * work is bounded by the budget whatever the region's extent.
+     */
+    static List<Range> coverRanges(long[] lo, long[] hi) {
+        int k = 0;
+        long[] l = lo.clone();
+        long[] h = hi.clone();
+        while (2 * ((h[0] - l[0] + 1) + (h[1] - l[1] + 1)) > PERIMETER_BUDGET) {
+            k++;
+            l[0] >>= 1;
+            l[1] >>= 1;
+            h[0] >>= 1;
+            h[1] >>= 1;
+        }
         ArrayList<Range> ranges = new ArrayList<>();
-        for (Range r : HilbertSpace.hc.query(lo, hi)) {
-            ranges.add(r);
+        for (Range r : HilbertSpace.blocks(k).query(l, h)) {
+            ranges.add(k == 0 ? r : new Range(r.low() << (2 * k), ((r.high() + 1) << (2 * k)) - 1));
         }
         ranges.sort((a, b) -> Long.compare(a.low(), b.low()));
         ArrayList<Range> merged = new ArrayList<>();

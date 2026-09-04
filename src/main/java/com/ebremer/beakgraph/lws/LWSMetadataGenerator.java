@@ -10,6 +10,8 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.zip.GZIPOutputStream;
 
 public class LWSMetadataGenerator {
@@ -72,11 +74,12 @@ public class LWSMetadataGenerator {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                // Never index the metadata cache itself: on regeneration the previous
-                // beakgraph.ttl.gz would become a listed DataResource, making the raw
-                // model - including the owl:sameAs file:/// server paths the servlet
-                // exists to withhold - downloadable by any client.
-                if (CACHE_FILE_NAME.equals(file.getFileName().toString())) {
+                // Never index the metadata cache itself (nor the temp file it is
+                // written through): on regeneration the previous beakgraph.ttl.gz
+                // would become a listed DataResource, making the raw model -
+                // including the owl:sameAs file:/// server paths the servlet exists
+                // to withhold - downloadable by any client.
+                if (isCacheArtifact(file)) {
                     return FileVisitResult.CONTINUE;
                 }
                 String httpUri = toHttpUri(rootPath, file);
@@ -99,10 +102,82 @@ public class LWSMetadataGenerator {
         return model;
     }
 
+    /** The cache file, and the temp file it is written through, are never content. */
+    static boolean isCacheArtifact(Path file) {
+        String name = file.getFileName().toString();
+        return CACHE_FILE_NAME.equals(name) || (CACHE_FILE_NAME + ".tmp").equals(name);
+    }
+
+    /** The {@code as:updated} lexical form of a file or directory: its mtime as a UTC ISO instant. */
+    static String updatedLiteral(BasicFileAttributes attrs) {
+        return attrs.lastModifiedTime().toInstant()
+                .atZone(ZoneId.of("UTC"))
+                .format(DateTimeFormatter.ISO_INSTANT);
+    }
+
+    private static String relative(Path rootPath, Path path) {
+        return rootPath.relativize(path).toString().replace('\\', '/');
+    }
+
     private static String toHttpUri(Path rootPath, Path path) {
         if (path.equals(rootPath)) return CANONICAL_BASE;
-        String relative = rootPath.relativize(path).toString().replace('\\', '/');
-        return CANONICAL_BASE + "/" + relative;
+        return CANONICAL_BASE + "/" + relative(rootPath, path);
+    }
+
+    /**
+     * Compact fingerprint of the metadata a storage tree would produce: one entry
+     * per file ({@code relative/path|size|updated}) and per directory
+     * ({@code relative/path|dir}), cache artifacts excluded. It is cheap - no
+     * content probing - so a refresher can compare it against
+     * {@link #modelSignature} on every poll and regenerate only when the tree
+     * really changed. Directory timestamps are deliberately left out: writing
+     * the cache file touches the root directory's mtime, which would otherwise
+     * make every regeneration look like a change and trigger the next one.
+     */
+    public static Set<String> treeSignature(Path rootPath) throws IOException {
+        Set<String> signature = new HashSet<>();
+        Files.walkFileTree(rootPath, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (!isCacheArtifact(file)) {
+                    signature.add(relative(rootPath, file) + "|" + attrs.size() + "|" + updatedLiteral(attrs));
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                if (!dir.equals(rootPath)) {
+                    signature.add(relative(rootPath, dir) + "|dir");
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return signature;
+    }
+
+    /** The same fingerprint as {@link #treeSignature}, read back from a generated or cached model. */
+    public static Set<String> modelSignature(Model model) {
+        Set<String> signature = new HashSet<>();
+        Property size = model.createProperty(SCHEMA_NS, "size");
+        Property modified = model.createProperty(AS_NS, "updated");
+        String prefix = CANONICAL_BASE + "/";
+        model.listSubjectsWithProperty(RDF.type, LWS.DataResource).forEachRemaining(res -> {
+            String uri = res.getURI();
+            if (uri == null || !uri.startsWith(prefix)) return;
+            Statement s = res.getProperty(size);
+            Statement u = res.getProperty(modified);
+            signature.add(uri.substring(prefix.length())
+                    + "|" + (s == null ? "" : s.getLiteral().getLexicalForm())
+                    + "|" + (u == null ? "" : u.getLiteral().getLexicalForm()));
+        });
+        model.listSubjectsWithProperty(RDF.type, LWS.Container).forEachRemaining(res -> {
+            String uri = res.getURI();
+            if (uri != null && uri.startsWith(prefix)) {
+                signature.add(uri.substring(prefix.length()) + "|dir");
+            }
+        });
+        return signature;
     }
 
     private static void processResource(Model model, String uri, Path realPath, BasicFileAttributes attrs,
@@ -114,10 +189,7 @@ public class LWSMetadataGenerator {
         String originalFileUri = "file:///" + realPath.toAbsolutePath().toString().replace("\\", "/");
         res.addProperty(OWL.sameAs, model.createResource(originalFileUri));
 
-        String isoDate = attrs.lastModifiedTime().toInstant()
-                .atZone(ZoneId.of("UTC"))
-                .format(DateTimeFormatter.ISO_INSTANT);
-        res.addProperty(pModified, model.createTypedLiteral(isoDate, XSD.dateTime.getURI()));
+        res.addProperty(pModified, model.createTypedLiteral(updatedLiteral(attrs), XSD.dateTime.getURI()));
 
         if (pSize != null) {
             res.addProperty(pSize, model.createTypedLiteral(attrs.size(), XSD.integer.getURI()));
@@ -149,10 +221,21 @@ public class LWSMetadataGenerator {
         }
     }
 
+    /**
+     * Writes the cache through a sibling temp file and moves it into place, so
+     * a reader (or a crash mid-write) never sees a half-written cache. Both
+     * names are excluded from indexing by {@link #isCacheArtifact}.
+     */
     public static void writeModelToGZ(Model model, Path outputPath) throws IOException {
-        try (OutputStream fos = Files.newOutputStream(outputPath);
+        Path tmp = outputPath.resolveSibling(outputPath.getFileName() + ".tmp");
+        try (OutputStream fos = Files.newOutputStream(tmp);
              GZIPOutputStream gzos = new GZIPOutputStream(fos)) {
             model.write(gzos, "TURTLE");
+        }
+        try {
+            Files.move(tmp, outputPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(tmp, outputPath, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 }

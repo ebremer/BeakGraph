@@ -72,6 +72,7 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 | `-status` | off | Progress bar (per-file mode) and end-of-run counters. |
 | `-endpoint <file.h5>` | — | Serve the store as a SPARQL endpoint instead of converting. |
 | `-port <n>` | `8888` | HTTP port for `-endpoint`. |
+| `-base <url>` | derived per request | Public base URL for the links and IRIs `-endpoint` advertises, e.g. `https://data.example.org/`. By default each response uses the scheme, host and port the client reached the server on (`Forwarded` / `X-Forwarded-*` headers from a reverse proxy are honoured); set this only behind a proxy that does not forward the original host. |
 | `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for `-endpoint`; a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. Note: queries that expand large composite (`cdt:`) literals with `UNFOLD`, or compare them by value, parse the whole literal in RAM (~1 µs per element) and can hit this limit — raise it for CDT-heavy workloads. |
 | `-version` / `-v` | — | Print version and exit. |
 | `-help` | — | Usage text. |
@@ -218,6 +219,7 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.fcd.cache.blocks` | `4096` | Decoded front-coded string blocks per FCD section (each block holds `blockSize`, typically 16, strings). |
 | `beakgraph.ffm.threshold` | `2147483647` | Dataset size in bytes above which BeakGraph FFM-maps the region itself instead of using jHDF's ByteBuffer. |
 | `beakgraph.scan.parallel.threshold` | `65536` | Minimum index position range for a scan-shaped first pattern (`?s ?p ?o`, or `?s <p> ?o`) to run as a chunked PARALLEL scan on the shared worker pool. `0` (or negative) disables parallel scanning. Chunks stop on query timeout/cancel and on early close (LIMIT). |
+| `beakgraph.lws.refresh.seconds` | `30` | Directory mode (`-endpoint <dir>`): how often the served directory is re-scanned for added, removed or replaced files. The cached `beakgraph.ttl.gz` metadata is validated against the directory at start-up and rewritten after every change. `0` disables the periodic scan; a request for a path that exists on disk but is not yet listed still triggers an immediate re-scan (once per new file). |
 | `beakgraph.export.fastpath` | `true` | `-export NT`/`NQ` streams straight off the GSPO index with per-id text memoization (byte-identical output to the generic writer). `false` falls back to the generic StreamRDF writer. |
 | `beakgraph.export.textcache` | `262144` | Object-text memo entries for the index export (cleared wholesale when full). |
 

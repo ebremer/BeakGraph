@@ -32,6 +32,11 @@ public class BindingBG extends BindingBase {
         return idBinding ;
     }
 
+    /** The graph whose dictionary the ids in {@link #getBindingId()} are ranks of. */
+    public BeakGraph getGraph() {
+        return bGraph;
+    }
+
     /**
      * Whether this level of the binding exposes {@code var}. BindingBase's
      * contract is that a child never re-binds a parent var - size() is

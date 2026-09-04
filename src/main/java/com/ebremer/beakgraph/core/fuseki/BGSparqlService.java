@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
@@ -66,10 +67,75 @@ public final class BGSparqlService {
      * propagate so the container closes the connection without completing the
      * response - a client then sees a truncated transfer instead of a
      * complete-looking 200 with silently missing rows.
+     * <p>
+     * {@link #isReaderHealthy()} tells a pooled caller whether the underlying
+     * reader is at fault. A query that timed out mid-stream, or failed on a
+     * query-level error (unregistered function, failed SERVICE call), leaves
+     * the reader perfectly usable; only an unexplained failure marks it
+     * unhealthy, so that it is invalidated rather than re-issued.
      */
     public static final class QueryExecutionFailedException extends IOException {
-        QueryExecutionFailedException(String message, Throwable cause) {
+        private final boolean readerHealthy;
+
+        QueryExecutionFailedException(String message, Throwable cause, boolean readerHealthy) {
             super(message, cause);
+            this.readerHealthy = readerHealthy;
+        }
+
+        /** False only when the failure is attributable to the reader itself. */
+        public boolean isReaderHealthy() {
+            return readerHealthy;
+        }
+    }
+
+    /**
+     * Response body stream with two jobs.
+     * <p>
+     * It records whether a write to the CLIENT failed: a client that closes
+     * the connection while a large result is streaming surfaces as an
+     * IOException (Jetty's EofException, "connection reset") from exactly this
+     * stream - and from nowhere else - so tagging the failure here tells a
+     * transport problem apart from a failure inside the reader, which is what
+     * decides whether a pooled reader gets invalidated.
+     * <p>
+     * It also defers explicit flushes until {@link #COMMIT_THRESHOLD} bytes of
+     * body exist. An explicit flush commits the response however little has
+     * been written, and Jena's writers flush their partial output in a
+     * {@code finally} when execution fails - which turned every error that
+     * surfaces lazily (a failed SERVICE call, a timeout on a slow first row)
+     * into a truncated 200 instead of a 400/503. Below the threshold nothing
+     * is on the wire yet, so {@code sendError} can still answer honestly;
+     * beyond it the result is genuinely streaming and flushes pass through
+     * (the container commits on its own once its buffer fills in any case).
+     */
+    private static final class ResponseOutput extends OutputStream {
+        static final long COMMIT_THRESHOLD = 16 * 1024;
+
+        private final OutputStream out;
+        private long written;
+        boolean responseFailed;
+
+        ResponseOutput(OutputStream out) {
+            this.out = out;
+        }
+
+        @Override public void write(int b) throws IOException {
+            try { out.write(b); written++; } catch (IOException e) { responseFailed = true; throw e; }
+        }
+
+        @Override public void write(byte[] b, int off, int len) throws IOException {
+            try { out.write(b, off, len); written += len; } catch (IOException e) { responseFailed = true; throw e; }
+        }
+
+        @Override public void flush() throws IOException {
+            if (written < COMMIT_THRESHOLD) {
+                return; // keep the response uncommitted while an error can still be reported
+            }
+            try { out.flush(); } catch (IOException e) { responseFailed = true; throw e; }
+        }
+
+        @Override public void close() throws IOException {
+            try { out.close(); } catch (IOException e) { responseFailed = true; throw e; }
         }
     }
 
@@ -153,6 +219,7 @@ public final class BGSparqlService {
     public static boolean execute(Dataset ds, String queryStr, String baseURI,
                                String acceptHeader, HttpServletResponse resp) throws IOException {
         String accept = (acceptHeader == null) ? "" : acceptHeader.toLowerCase();
+        ResponseOutput out = null;
         try {
             // DELIBERATE: no Syntax argument, so Jena's default (syntaxARQ)
             // applies. Do NOT "upgrade" this to Syntax.syntaxSPARQL_12 - it
@@ -178,18 +245,22 @@ public final class BGSparqlService {
                     ResultSet rs = resolver.resolve(qexec.execSelect());
                     if (accept.contains("json")) {
                         resp.setContentType("application/sparql-results+json");
-                        ResultSetFormatter.outputAsJSON(resp.getOutputStream(), rs);
+                        out = new ResponseOutput(resp.getOutputStream());
+                        ResultSetFormatter.outputAsJSON(out, rs);
                     } else if (accept.contains("csv")) {
                         resp.setContentType("text/csv");
-                        ResultSetFormatter.outputAsCSV(resp.getOutputStream(), rs);
+                        out = new ResponseOutput(resp.getOutputStream());
+                        ResultSetFormatter.outputAsCSV(out, rs);
                     } else {
                         resp.setContentType("application/sparql-results+xml");
-                        ResultSetFormatter.outputAsXML(resp.getOutputStream(), rs);
+                        out = new ResponseOutput(resp.getOutputStream());
+                        ResultSetFormatter.outputAsXML(out, rs);
                     }
                 } else if (execQuery.isAskType()) {
                     boolean b = qexec.execAsk();
                     resp.setContentType("application/sparql-results+json");
-                    resp.getWriter().write("{\"boolean\":" + b + "}");
+                    out = new ResponseOutput(resp.getOutputStream());
+                    out.write(("{\"boolean\":" + b + "}").getBytes(StandardCharsets.UTF_8));
                 } else if (execQuery.isConstructType() || execQuery.isDescribeType()) {
                     Model m = execQuery.isConstructType() ? qexec.execConstruct() : qexec.execDescribe();
                     m = resolver.resolve(m);
@@ -201,13 +272,16 @@ public final class BGSparqlService {
                                 + "cannot represent; request text/turtle");
                     } else if (accept.contains("json")) {
                         resp.setContentType("application/ld+json");
-                        RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.JSONLD);
+                        out = new ResponseOutput(resp.getOutputStream());
+                        RDFDataMgr.write(out, m, RDFFormat.JSONLD);
                     } else if (accept.contains("turtle")) {
                         resp.setContentType("text/turtle");
-                        RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.TURTLE);
+                        out = new ResponseOutput(resp.getOutputStream());
+                        RDFDataMgr.write(out, m, RDFFormat.TURTLE);
                     } else {
                         resp.setContentType("application/rdf+xml");
-                        RDFDataMgr.write(resp.getOutputStream(), m, RDFFormat.RDFXML);
+                        out = new ResponseOutput(resp.getOutputStream());
+                        RDFDataMgr.write(out, m, RDFFormat.RDFXML);
                     }
                 } else {
                     resp.sendError(400, "Unsupported SPARQL query type");
@@ -225,12 +299,34 @@ public final class BGSparqlService {
             logger.warn("SPARQL query cancelled by the {}s timeout (raise with -timeout / "
                     + "beakgraph.query.timeout.seconds): {}", limit, oneLine(queryStr));
             if (resp.isCommitted()) {
-                throw new QueryExecutionFailedException("Query timed out after the response was committed", ex);
+                // Slow query, healthy reader: abort the transfer, keep the reader.
+                throw new QueryExecutionFailedException("Query timed out after the response was committed", ex, true);
             }
             resp.sendError(503, "Query timed out after " + limit
                     + "s (server limit; adjustable with -timeout)");
             return true;
         } catch (Exception ex) {
+            if (out != null && out.responseFailed) {
+                // The connection to the client failed while the body was
+                // streaming (the client went away, in practice). Routine, and
+                // no reflection on the reader: nothing more can be written, so
+                // finish quietly and let the container discard the connection.
+                logger.debug("SPARQL client connection failed while the response was streaming: {}",
+                        oneLine(queryStr));
+                return true;
+            }
+            if (ex instanceof org.apache.jena.query.QueryException) {
+                // The QUERY is at fault, not the reader: an unregistered
+                // function (QueryBuildException), an evaluation failure, a
+                // SERVICE call that could not be completed. Such errors surface
+                // lazily, so the response may already be committed.
+                logger.info("SPARQL query rejected: {} [{}]", ex.getMessage(), oneLine(queryStr));
+                if (resp.isCommitted()) {
+                    throw new QueryExecutionFailedException("Query failed after the response was committed", ex, true);
+                }
+                resp.sendError(400, "Query error: " + ex.getMessage());
+                return true;
+            }
             // Internal failure: log the details server-side, but do not echo
             // exception internals (paths, class names, state) back to the client.
             logger.error("SPARQL query execution failed", ex);
@@ -238,7 +334,7 @@ public final class BGSparqlService {
                 // Partial 200 body already flushed: sendError would throw
                 // IllegalStateException. Rethrow so the container aborts the
                 // connection - the honest signal for a truncated result.
-                throw new QueryExecutionFailedException("Query failed after the response was committed", ex);
+                throw new QueryExecutionFailedException("Query failed after the response was committed", ex, false);
             }
             resp.sendError(500, "Query execution failed");
             return false;

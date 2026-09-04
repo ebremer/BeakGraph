@@ -8,7 +8,6 @@ import java.util.NoSuchElementException;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -40,6 +39,15 @@ import org.apache.jena.sparql.engine.iterator.Abortable;
  * and rechecks the stop conditions, so a worker parked against a full queue
  * exits within one tick of shutdown. A worker failure is recorded, stops the
  * scan, and is rethrown to the consumer rather than swallowed.
+ *
+ * <p>Scheduling is deadlock-free by construction. Workers run on virtual
+ * threads, so a producer parked against its full queue holds no carrier
+ * thread; and a scan submits its workers only when the consumer first asks
+ * for a row. The former fixed platform pool, filled eagerly at construction,
+ * let the LEFT operand of MINUS or a hash join - built first, consumed last -
+ * fill its queue and park on every pool thread while the RIGHT operand's
+ * workers never started, hanging the query until its timeout and starving
+ * every other parallel scan in the JVM meanwhile.
  */
 public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abortable {
 
@@ -53,22 +61,27 @@ public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abo
     private static final BindingNodeId[] END = new BindingNodeId[0];
     private static final Cleaner CLEANER = Cleaner.create();
 
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(
-            Math.max(2, Runtime.getRuntime().availableProcessors()),
-            new ThreadFactory() {
-                private final AtomicInteger n = new AtomicInteger();
-                @Override
-                public Thread newThread(Runnable r) {
-                    Thread t = new Thread(r, "beakgraph-scan-" + n.incrementAndGet());
-                    t.setDaemon(true);
-                    return t;
-                }
-            });
+    /**
+     * One virtual thread per chunk worker. CPU-bound chunks still share the
+     * JVM's carrier threads (one per processor), so effective parallelism is
+     * unchanged, but a worker blocked on its queue parks without occupying a
+     * carrier - no fixed pool to exhaust, no cross-scan starvation.
+     */
+    private static final ExecutorService POOL = Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("beakgraph-scan-", 0).factory());
 
+    private final List<Supplier<Iterator<BindingNodeId>>> chunks;
+    private boolean started; // consumer thread only
     private final ArrayBlockingQueue<BindingNodeId[]> queue;
     private final AtomicBoolean stop;
     private final AtomicBoolean cancelSignal; // the engine's; may be null
-    private final AtomicReference<RuntimeException> failure = new AtomicReference<>();
+    /**
+     * First worker failure of any kind. Throwable, not RuntimeException: an
+     * OutOfMemoryError or AssertionError in a chunk used to slip past the catch,
+     * the worker still offered END, and the consumer finished normally with
+     * that chunk's rows silently missing.
+     */
+    private final AtomicReference<Throwable> failure = new AtomicReference<>();
     private int workersRemaining;
 
     private BindingNodeId[] batch;
@@ -88,6 +101,20 @@ public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abo
             stopRef.set(true);
             queueRef.clear();
         });
+        this.chunks = List.copyOf(chunks);
+    }
+
+    /**
+     * Submits the chunk workers. Deferred to the first {@link #hasNext()} so a
+     * scan that has been built but not yet consumed holds no threads and does
+     * no work; a scan closed or aborted before use never starts at all.
+     */
+    private void start() {
+        started = true;
+        if (stopped()) {
+            workersRemaining = 0;
+            return;
+        }
         for (Supplier<Iterator<BindingNodeId>> chunk : chunks) {
             POOL.execute(() -> runChunk(chunk));
         }
@@ -116,13 +143,21 @@ public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abo
                 System.arraycopy(buf, 0, tail, 0, n);
                 offer(tail);
             }
-        } catch (RuntimeException e) {
-            failure.compareAndSet(null, e);
+        } catch (Throwable t) {
+            // failure is written BEFORE stop; the consumer relies on that order.
+            failure.compareAndSet(null, t);
             stop.set(true);
         } finally {
             offerEnd();
             ACTIVE_WORKERS.decrementAndGet();
         }
+    }
+
+    /** Rethrows a recorded worker failure on the consumer thread, as its own type. */
+    private static RuntimeException rethrow(Throwable t) {
+        if (t instanceof RuntimeException r) return r;
+        if (t instanceof Error e) throw e;
+        return new RuntimeException(t);
     }
 
     /** Enqueues, rechecking stop each tick. Returns false when shut down. */
@@ -161,14 +196,25 @@ public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abo
         if (batch != null && batchPos < batch.length) {
             return true;
         }
+        if (!started) {
+            start();
+        }
         batch = null;
         while (workersRemaining > 0) {
-            RuntimeException e = failure.get();
-            if (e != null) {
+            Throwable t = failure.get();
+            if (t != null) {
                 shutdown();
-                throw e;
+                throw rethrow(t);
             }
             if (stop.get()) {
+                // A failing worker sets failure and THEN stop. Observing stop
+                // between those two writes must not end the scan as if it had
+                // been closed under us: re-read the failure before concluding.
+                t = failure.get();
+                if (t != null) {
+                    shutdown();
+                    throw rethrow(t);
+                }
                 return false; // closed under us
             }
             if (cancelSignal != null && cancelSignal.get()) {
@@ -194,9 +240,9 @@ public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abo
             batchPos = 0;
             return true;
         }
-        RuntimeException e = failure.get();
-        if (e != null) {
-            throw e;
+        Throwable t = failure.get();
+        if (t != null) {
+            throw rethrow(t);
         }
         return false;
     }

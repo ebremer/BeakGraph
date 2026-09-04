@@ -22,6 +22,12 @@ import org.apache.jena.sparql.expr.NodeValue;
  * For a constant with no value-equal entries (including all non-literals) the
  * cluster is empty ({@code hi == lo - 1}, both at the insertion point) and the
  * formulas reduce exactly to the plain insertion-point bounds.
+ * <p>
+ * Growing over ADJACENT ids presumes value-equal entries are adjacent, which
+ * holds for the value-ordered spaces but not for composite (cdt) or
+ * language-tagged literals, whose dictionary order is lexical / exact-tag.
+ * {@link FilterBounds#orderAgreesWithArq} keeps such constants from reaching
+ * the pushdown at all.
  */
 final class ValueCluster {
 

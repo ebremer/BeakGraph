@@ -58,6 +58,32 @@ public final class HilbertSpace {
         return Math.max(0, Math.min(MAX_COORD, v));
     }
 
+    private static final SmallHilbertCurve[] BLOCK_CURVES = new SmallHilbertCurve[32];
+
+    /**
+     * The curve over the 2^k-aligned blocks of {@link #hc}. The Hilbert curve
+     * is self-similar: block (x &gt;&gt; k, y &gt;&gt; k) on this (31-k)-bit curve
+     * has index {@code hc.index(x, y) >> 2k}, so a block with coarse index
+     * {@code i} covers exactly the {@link #hc} indices
+     * {@code [i << 2k, ((i + 1) << 2k) - 1]}. Covering a large box on the
+     * block curve therefore yields an exact superset of its cell cover at a
+     * cost bounded by the block grid rather than the cell grid.
+     */
+    public static SmallHilbertCurve blocks(int k) {
+        if (k < 0 || k > 30) {
+            throw new IllegalArgumentException("block shift out of range: " + k);
+        }
+        if (k == 0) {
+            return hc;
+        }
+        SmallHilbertCurve c = BLOCK_CURVES[k];
+        if (c == null) {
+            c = HilbertCurve.small().bits(31 - k).dimensions(2);
+            BLOCK_CURVES[k] = c; // idempotent; a racing double build is harmless
+        }
+        return c;
+    }
+
     public static boolean inRange(ArrayList<Range> rr, Point p, Byte neighbor) {
         // Return the membership result - the old switch *statement* computed
         // contains(...) and discarded it, so this always answered false and the

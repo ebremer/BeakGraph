@@ -35,13 +35,14 @@ class SPARQLEndPointReadOnlyTest {
 
     @TempDir
     static Path dir;
+    private static Path root;
     private static SPARQLEndPoint endpoint;
     private static String base;
     private static final HttpClient http = HttpClient.newHttpClient();
 
     @BeforeAll
     static void startEndpoint() throws Exception {
-        Path root = Files.createDirectories(dir.resolve("storage"));
+        root = Files.createDirectories(dir.resolve("storage"));
         Files.write(root.resolve("hello.txt"), "hello".getBytes(StandardCharsets.UTF_8));
         int port;
         try (ServerSocket s = new ServerSocket(0)) {
@@ -73,6 +74,17 @@ class SPARQLEndPointReadOnlyTest {
 
     private static void assertRefused(HttpResponse<String> r, String what) {
         assertTrue(r.statusCode() >= 400, what + " must be refused, got " + r.statusCode());
+    }
+
+    @Test
+    void fileAddedAfterStartupIsServedThroughTheEndpoint() throws Exception {
+        // BG-403: the endpoint wires the metadata refresher, so a file copied into
+        // the served directory after start-up is servable on its first request.
+        Files.write(root.resolve("later.txt"), "later".getBytes(StandardCharsets.UTF_8));
+        HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(base + "later.txt"))
+                .header("Accept", "*/*").GET().build());
+        assertEquals(200, r.statusCode(), r.body());
+        assertEquals("later", r.body());
     }
 
     @Test

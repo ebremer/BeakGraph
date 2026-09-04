@@ -96,19 +96,42 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         }
         if (gi < 1) return;
 
-        // Honour concrete subject / object terms named directly in the triple
-        // pattern. This iterator otherwise scans every S and O in the graph, so
-        // a concrete "<subject> ?p ?o" would wrongly return every triple.
+        // Honour a subject / object fixed by the pattern - a concrete term named
+        // in the triple, or a VARIABLE the parent binding already holds (a join's
+        // second pattern, VALUES, a DESCRIBE star). HDF5Reader.read leaves a
+        // same-space bound variable as a Var and expects the iterator to consult
+        // the binding, as the SO/OS/POS iterators do; this one only looked at
+        // isConcrete(), so "?y ?p ?o" after "?x :knows ?y" walked the graph's
+        // ENTIRE subject range per input row and rejected every non-matching
+        // row in computeNext. A bound id is in the position's own id-space
+        // (cross-space bindings were materialized upstream), so it clamps the
+        // range exactly like a located concrete term; the per-row putCompatible
+        // check stays as the final word.
         long concreteSubId = -1;
-        if (quad.getSubject().isConcrete()) {
-            concreteSubId = dict.getSubjects().locate(quad.getSubject());
+        Node sNode = quad.getSubject();
+        if (sNode.isConcrete()) {
+            concreteSubId = dict.getSubjects().locate(sNode);
             if (concreteSubId < 1) return;
+        } else if (sNode.isVariable() && bnid != null) {
+            long bound = bnid.get(Var.alloc(sNode));
+            if (bound != NodeId.NONE) {
+                concreteSubId = NodeId.id(bound);
+                if (concreteSubId < 1) return; // DOES_NOT_EXIST: nothing can match
+            }
+        }
+        if (concreteSubId > 0) {
             minSubId = Math.max(minSubId, concreteSubId);
             maxSubId = Math.min(maxSubId, concreteSubId);
         }
-        if (quad.getObject().isConcrete()) {
-            long oid = dict.getObjects().locate(quad.getObject());
+        Node oNode = quad.getObject();
+        if (oNode.isConcrete()) {
+            long oid = dict.getObjects().locate(oNode);
             if (oid < 1) return;
+            minObjId = Math.max(minObjId, oid);
+            maxObjId = Math.min(maxObjId, oid);
+        } else if (oNode.isVariable() && bnid != null && bnid.get(Var.alloc(oNode)) != NodeId.NONE) {
+            long oid = NodeId.id(bnid.get(Var.alloc(oNode)));
+            if (oid < 1) return; // DOES_NOT_EXIST: nothing can match
             minObjId = Math.max(minObjId, oid);
             maxObjId = Math.min(maxObjId, oid);
         } else if (TripleTermMatcher.isPattern(quad.getObject())) {
@@ -205,9 +228,17 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         return -1;
     }
 
+    /** Candidate rows examined so far; lets tests prove an index path was taken. */
+    private long visited;
+
+    long rowsVisited() {
+        return visited;
+    }
+
     private void advance() {
         hasNext = false;
         while (idxS <= endS) {
+            visited++;
             boolean isMatch = true;
             if (curSID < minSubId) {
                 skipSubjectBlock();
@@ -229,8 +260,23 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 continue;
             }
             this.curOID = So.get(idxO);
-            if (curOID < minObjId || curOID > maxObjId) {
-                isMatch = false;
+            // Objects ascend within an (S,P) block, so an object range is
+            // navigated, not filtered row by row: below the range, seek to the
+            // first candidate; above it, nothing later in the block can match.
+            if (curOID < minObjId) {
+                long nextBlock = select1Safe(dirO, Bo, idxP + 2);
+                long blockEnd = (nextBlock == -1 ? soNum : nextBlock) - 1;
+                long pos = So.lowerBound(idxO, blockEnd, minObjId);
+                if (pos == -1) {
+                    skipPredicateBlock();
+                    continue;
+                }
+                idxO = pos;
+                this.curOID = So.get(idxO);
+            }
+            if (curOID > maxObjId) {
+                skipPredicateBlock();
+                continue;
             }
             if (isMatch) {
                 this.resS = curSID;

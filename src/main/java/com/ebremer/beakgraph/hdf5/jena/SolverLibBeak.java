@@ -35,7 +35,14 @@ public class SolverLibBeak {
     }
 
     public static BindingNodeId convert(Binding binding, BeakGraph bGraph) {
-        if ( binding instanceof BindingBG bindingRaptor ) {
+        // Reuse the id layer only when it was produced against THIS store's
+        // dictionary. Ids are dictionary ranks, so a row from another store
+        // (GRAPH <a> joined with GRAPH <b> in one dataset - the stage generator
+        // is global) would feed rank 4711 of A's terms straight into B's
+        // iterators as an unrelated term. Compare readers, not graphs:
+        // BGDatasetGraph.getGraph mints a fresh view per call over one reader.
+        if ( binding instanceof BindingBG bindingRaptor
+                && bindingRaptor.getGraph().getReader() == bGraph.getReader() ) {
             return bindingRaptor.getBindingId();
         }
         BindingNodeId b = new BindingNodeId(binding);
