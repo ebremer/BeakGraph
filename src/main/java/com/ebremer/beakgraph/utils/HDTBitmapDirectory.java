@@ -5,8 +5,10 @@ import static com.ebremer.beakgraph.Params.BLOCKSIZE;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 
 /**
- * Rank/select directory over a bitmap: superblock and block counters plus the
- * packed id sequence the bitmap delimits (SPECIFICATIONS.md §8).
+ * Rank/select directory over a bitmap: the superblock and block counters that
+ * accelerate {@link #select1} (SPECIFICATIONS.md §8). The id sequence the
+ * bitmap delimits is the caller's (IndexReader keeps it beside the directory;
+ * the former {@code getIds()} pass-through had no reader, BG-310).
  *
  * @author Erich Bremer
  */
@@ -15,7 +17,6 @@ public class HDTBitmapDirectory {
     private final BitPackedUnSignedLongBuffer superblock;   // SBx
     private final BitPackedUnSignedLongBuffer block;        // BBx
     private final BitPackedUnSignedLongBuffer bitmap;       // Bx
-    private final BitPackedUnSignedLongBuffer ids;          // Sx
 
     private final long superblockSize;
     private final long blockSize;
@@ -27,21 +28,18 @@ public class HDTBitmapDirectory {
 
     public HDTBitmapDirectory(BitPackedUnSignedLongBuffer superblock,
                               BitPackedUnSignedLongBuffer block,
-                              BitPackedUnSignedLongBuffer bitmap,
-                              BitPackedUnSignedLongBuffer ids) {
-        this(superblock, block, bitmap, ids, SUPERBLOCKSIZE, BLOCKSIZE);
+                              BitPackedUnSignedLongBuffer bitmap) {
+        this(superblock, block, bitmap, SUPERBLOCKSIZE, BLOCKSIZE);
     }
 
     public HDTBitmapDirectory(BitPackedUnSignedLongBuffer superblock,
                               BitPackedUnSignedLongBuffer block,
                               BitPackedUnSignedLongBuffer bitmap,
-                              BitPackedUnSignedLongBuffer ids,
                               long superblockSize,
                               long blockSize) {
         this.superblock = superblock;
         this.block = block;
         this.bitmap = bitmap;
-        this.ids = ids;
         this.superblockSize = superblockSize;
         this.blockSize = blockSize;
         this.blocksPerSuperblock = superblockSize / blockSize;
@@ -49,8 +47,6 @@ public class HDTBitmapDirectory {
         this.numSuperblockEntries = superblock.getNumEntries();
         this.numBlockEntries = block.getNumEntries();
     }
-
-    public long getNumBitmapEntries() { return numBitmapEntries; }
 
     public long select1(long rank) {
         if (rank <= 0) return -1L;
@@ -174,6 +170,4 @@ public class HDTBitmapDirectory {
         // select1 and the buffer's linear select1 can never disagree.
         return UTIL.selectInWord(word, n);
     }
-
-    public BitPackedUnSignedLongBuffer getIds() { return ids; }
 }

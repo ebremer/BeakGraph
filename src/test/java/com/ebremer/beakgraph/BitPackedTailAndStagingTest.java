@@ -32,7 +32,7 @@ class BitPackedTailAndStagingTest {
     Path dir;
 
     private static BitPackedUnSignedLongBuffer bitmap(boolean[] bits) {
-        BitPackedUnSignedLongBuffer b = new BitPackedUnSignedLongBuffer(Path.of("bits"), null, 0, 1);
+        BitPackedUnSignedLongBuffer b = new BitPackedUnSignedLongBuffer(Path.of("bits"), 1);
         for (boolean bit : bits) b.writeLong(bit ? 1 : 0);
         b.prepareForReading();
         return b;
@@ -100,7 +100,7 @@ class BitPackedTailAndStagingTest {
         for (int width : new int[]{1, 3, 7, 13, 32, 57, 64}) {
             int n = (width < 8) ? 700_000 : 150_000; // several 64 KiB stages at every width
             long[] values = new long[n];
-            BitPackedUnSignedLongBuffer b = new BitPackedUnSignedLongBuffer(Path.of("v" + width), null, 0, width);
+            BitPackedUnSignedLongBuffer b = new BitPackedUnSignedLongBuffer(Path.of("v" + width), width);
             for (int i = 0; i < n; i++) {
                 values[i] = (width == 64) ? rnd.nextLong() : (rnd.nextLong() & ((1L << width) - 1));
                 b.writeLong(values[i]);

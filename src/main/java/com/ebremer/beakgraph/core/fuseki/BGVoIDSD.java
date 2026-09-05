@@ -19,7 +19,6 @@ import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.sparql.core.Quad;
-import org.apache.jena.vocabulary.DCTerms;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.VOID;
 
@@ -256,13 +255,6 @@ public class BGVoIDSD {
                 Literal regexLit = m.createTypedLiteral(regex, XSDDatatype.XSDstring);
                 graphRes.addLiteral(VOID.uriRegexPattern, regexLit);
             }
-            // Copy existing dcterms: properties
-            graphRes.listProperties().toList().stream()
-                .filter(st -> st.getPredicate().getNameSpace().equals(DCTerms.NS))
-                .forEach(st -> {
-                    Property pred = ResourceFactory.createProperty(st.getPredicate().getURI());
-                    graphRes.addProperty(pred, st.getObject());
-                });
         }
 
         /** Same trailing cut the retained-set version applied: back to the last '/' or '#'. */

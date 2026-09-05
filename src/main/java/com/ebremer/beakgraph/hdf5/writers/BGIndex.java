@@ -85,21 +85,21 @@ public class BGIndex {
         String n2 = IndexLevelEmitter.levelName(comps[2]);
         String n3 = IndexLevelEmitter.levelName(comps[3]);
 
-        B1 = new BitPackedUnSignedLongBuffer(Path.of("B" + n1), null, 0, 1);
-        B2 = new BitPackedUnSignedLongBuffer(Path.of("B" + n2), null, 0, 1);
-        B3 = new BitPackedUnSignedLongBuffer(Path.of("B" + n3), null, 0, 1);
+        B1 = new BitPackedUnSignedLongBuffer(Path.of("B" + n1), 1);
+        B2 = new BitPackedUnSignedLongBuffer(Path.of("B" + n2), 1);
+        B3 = new BitPackedUnSignedLongBuffer(Path.of("B" + n3), 1);
 
-        S1 = new BitPackedUnSignedLongBuffer(Path.of("S" + n1), null, 0, getBitSize(dictWriter, comps[1]));
-        S2 = new BitPackedUnSignedLongBuffer(Path.of("S" + n2), null, 0, getBitSize(dictWriter, comps[2]));
-        S3 = new BitPackedUnSignedLongBuffer(Path.of("S" + n3), null, 0, getBitSize(dictWriter, comps[3]));
+        S1 = new BitPackedUnSignedLongBuffer(Path.of("S" + n1), getBitSize(dictWriter, comps[1]));
+        S2 = new BitPackedUnSignedLongBuffer(Path.of("S" + n2), getBitSize(dictWriter, comps[2]));
+        S3 = new BitPackedUnSignedLongBuffer(Path.of("S" + n3), getBitSize(dictWriter, comps[3]));
 
-        SB1 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n1), null, 0, sbBits);
-        SB2 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n2), null, 0, sbBits);
-        SB3 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n3), null, 0, sbBits);
+        SB1 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n1), sbBits);
+        SB2 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n2), sbBits);
+        SB3 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n3), sbBits);
 
-        BB1 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n1), null, 0, bbBits);
-        BB2 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n2), null, 0, bbBits);
-        BB3 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n3), null, 0, bbBits);
+        BB1 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n1), bbBits);
+        BB2 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n2), bbBits);
+        BB3 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n3), bbBits);
 
         processTuples(dictWriter, tuples);
         prepareForReading();

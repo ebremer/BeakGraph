@@ -153,7 +153,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
 
     private NativeHdf5File(long fileId) {
         this.fileId = fileId;
-        this.root = new NativeGroup(fileId, "/", false);
+        this.root = new NativeGroup(fileId, "/");
     }
 
     /**
@@ -335,11 +335,16 @@ public final class NativeHdf5File implements StreamingHdf5File {
 
     private final class NativeGroup implements StreamingHdf5Group {
         private final long groupId;
-        private final boolean ownsHandle;
+        /** Absolute HDF5 path, for error messages only: handle release is the openHandles deque's job alone (BG-132). */
+        private final String path;
 
-        NativeGroup(long groupId, String name, boolean ownsHandle) {
+        NativeGroup(long groupId, String path) {
             this.groupId = groupId;
-            this.ownsHandle = ownsHandle;
+            this.path = path;
+        }
+
+        private String childPath(String name) {
+            return path.endsWith("/") ? path + name : path + "/" + name;
         }
 
         @Override
@@ -347,13 +352,13 @@ public final class NativeHdf5File implements StreamingHdf5File {
             try {
                 long gid = H5.H5Gcreate(groupId, name, HDF5Constants.H5P_DEFAULT,
                         HDF5Constants.H5P_DEFAULT, HDF5Constants.H5P_DEFAULT);
-                NativeGroup g = new NativeGroup(gid, name, true);
+                NativeGroup g = new NativeGroup(gid, childPath(name));
                 openHandles.push(() -> quietly(() -> {
                     try { H5.H5Gclose(gid); } catch (Exception e) { throw new RuntimeException(e); }
                 }));
                 return g;
             } catch (Exception e) {
-                throw new IOException("H5Gcreate failed for group '" + name + "'", e);
+                throw new IOException("H5Gcreate failed for group '" + childPath(name) + "'", e);
             }
         }
 
@@ -372,17 +377,17 @@ public final class NativeHdf5File implements StreamingHdf5File {
             if (length <= 0) {
                 // The RAM writer never emits empty datasets (BitPacked/DataOutput
                 // buffers skip them), and jHDF's getBuffer() cannot map one.
-                throw new IOException("Refusing to create empty dataset '" + name + "'");
+                throw new IOException("Refusing to create empty dataset '" + childPath(name) + "'");
             }
             try {
                 long space = H5.H5Screate_simple(1, new long[]{length}, null);
                 long dset = H5.H5Dcreate(groupId, name, HDF5Constants.H5T_STD_I8LE, space,
                         HDF5Constants.H5P_DEFAULT, HDF5Constants.H5P_DEFAULT, HDF5Constants.H5P_DEFAULT);
-                NativeDataset d = new NativeDataset(dset, space, name, length);
+                NativeDataset d = new NativeDataset(dset, space, childPath(name), length);
                 openHandles.push(() -> quietly(d::releaseHandles));
                 return d;
             } catch (Exception e) {
-                throw new IOException("H5Dcreate failed for dataset '" + name + "'", e);
+                throw new IOException("H5Dcreate failed for dataset '" + childPath(name) + "'", e);
             }
         }
     }

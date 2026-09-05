@@ -8,7 +8,6 @@ import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
 import io.jhdf.api.WritableGroup;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -37,7 +36,7 @@ public class PositionalDictionaryWriter implements AutoCloseable {
     private final BitPackedUnSignedLongBuffer subjects;
     private final BitPackedUnSignedLongBuffer objects;
 
-    public PositionalDictionaryWriter(PositionalDictionaryWriterBuilder builder) throws FileNotFoundException, IOException {
+    public PositionalDictionaryWriter(PositionalDictionaryWriterBuilder builder) throws IOException {
         this.name = builder.getName();
         this.numQuads = builder.getNumberOfQuads();
         this.quads = builder.getQuads();
@@ -85,9 +84,9 @@ public class PositionalDictionaryWriter implements AutoCloseable {
         int sBits = byteRoundedWidth(getNumberOfSubjects() + 1);
         int oBits = byteRoundedWidth(getNumberOfObjects() + 1);
 
-        this.graphs = new BitPackedUnSignedLongBuffer(Path.of("graphs"), null, 0, gBits);
-        this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), null, 0, sBits);
-        this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), null, 0, oBits);
+        this.graphs = new BitPackedUnSignedLongBuffer(Path.of("graphs"), gBits);
+        this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), sBits);
+        this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), oBits);
 
         // 5. Populate ID lists from the unique sets collected by the Builder
         logger.info("Populating columnar ID lists...");

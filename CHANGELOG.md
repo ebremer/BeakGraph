@@ -7,6 +7,17 @@ brought and what a reader must rebuild.
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
 * Jena 6.2.0, jHDF 0.13.0.
+* Housekeeping: the bit-packed buffer's word fetch dispatches on the sealed
+  `RandomAccessBytes` implementation (a JVM that had opened small, FFM-mapped
+  and remote datasets paid a megamorphic call on every id lookup: +57% on a
+  random get, +42% on a binary search in the benchmark); the buffer's
+  write-side constructor is `(Path, int bitWidth)` and its cursor reads,
+  `HDTBitmapDirectory.getIds()`, `DataOutputBuffer.writeInt`,
+  `NodeSorter.sort2` and UTIL's binary-dump helpers are gone; the in-memory
+  buffers declare no checked exceptions on construction or close; `Stats`
+  reports "-" and the allocated width instead of its seed sentinels; the
+  native HDF5 backend names the full path in a failed create; dead code and
+  stale javadoc removed (BGVoIDSD, OpExecutorBG).
 * Alternative writer engines: one publish discipline (AtomicPublish.build)
   for all six engines, one spill/merge scaffolding for the two -method 4
   sorters, one index level-emission rule for methods 0/1/2 and one id-space

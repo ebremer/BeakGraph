@@ -115,9 +115,9 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
         int sBits = byteRoundedWidth(getNumberOfSubjects() + 1);
         int oBits = byteRoundedWidth(getNumberOfObjects() + 1);
 
-        this.graphs = new BitPackedUnSignedLongBuffer(Path.of("graphs"), null, 0, gBits);
-        this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), null, 0, sBits);
-        this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), null, 0, oBits);
+        this.graphs = new BitPackedUnSignedLongBuffer(Path.of("graphs"), gBits);
+        this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), sBits);
+        this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), oBits);
 
         // 5. Populate ID lists from the unique sets collected by the Builder.
         // The three lists are independent (the dictionaries are read-only from

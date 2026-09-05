@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.core.lib;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-
 import com.ebremer.beakgraph.hdf5.Index;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,7 +58,6 @@ class NodeSorterTest {
         List<Node> expectedSet = new ArrayList<>(set);
         expectedSet.sort(NodeComparator.INSTANCE);
         assertEquals(expectedSet, NodeSorter.parallelSort(set), "Set overload");
-        assertEquals(expectedSet, NodeSorter.sort2(set), "sort2");
     }
 
     @Test

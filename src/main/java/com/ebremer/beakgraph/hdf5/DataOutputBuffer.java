@@ -1,12 +1,10 @@
 package com.ebremer.beakgraph.hdf5;
 
 import com.ebremer.beakgraph.Params;
-
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
 
@@ -21,17 +19,12 @@ public class DataOutputBuffer implements HDF5Buffer, AutoCloseable, DictionarySi
     private final Path path;
     private long numEntries = 0;
     
-    public DataOutputBuffer(Path file) throws FileNotFoundException {
+    public DataOutputBuffer(Path file) {
         this.path = file;
         baos = new ByteArrayOutputStream();        
         dos = new DataOutputStream(baos);        
     }
     
-    public void writeInt(int v) throws IOException {
-        numEntries++;
-        dos.writeInt(v);
-    }
-
     public void writeLong(long v) throws IOException {
         numEntries++;
         dos.writeLong(v);
@@ -47,10 +40,13 @@ public class DataOutputBuffer implements HDF5Buffer, AutoCloseable, DictionarySi
         dos.writeDouble(v);
     }    
 
+    /**
+     * Nothing to release: the bytes stay in memory until {@link #add}. Kept so
+     * the writers' uniform close-on-failure handling applies (BG-89: the former
+     * {@code throws Exception} came from flushes that cannot fail).
+     */
     @Override
-    public void close() throws Exception {
-        dos.flush();
-        baos.flush();
+    public void close() {
     }
 
     @Override

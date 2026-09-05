@@ -13,7 +13,6 @@ import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
 import com.ebremer.beakgraph.huge.HugeHDF5Writer;
 import com.ebremer.beakgraph.utils.RdfSources;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.FileVisitResult;

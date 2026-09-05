@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.io.ByteBufferBytes;
 import java.nio.file.Files;
 import java.nio.ByteBuffer;
 import com.ebremer.beakgraph.utils.UTIL;
@@ -91,14 +92,14 @@ class DirLangSpillCodecTest {
             // the bytes are on disk (BG-185).
             Path dictDir = workDir.resolve("dict.literals");
             int dirWidth = 1 + UTIL.MinBits(2);      // StreamingDictionaryWriter's langDirs width
-            BitPackedUnSignedLongBuffer dirs = new BitPackedUnSignedLongBuffer(null,
-                    ByteBuffer.wrap(Files.readAllBytes(dictDir.resolve("langDirs"))), 3, dirWidth);
+            BitPackedUnSignedLongBuffer dirs = BitPackedUnSignedLongBuffer.readView(
+                    new ByteBufferBytes(ByteBuffer.wrap(Files.readAllBytes(dictDir.resolve("langDirs")))), 3, dirWidth);
             assertEquals(0L, dirs.get(0), "plain @en has no direction");
             assertEquals(1L, dirs.get(1), "@en--ltr encodes as 1");
             assertEquals(2L, dirs.get(2), "@en--rtl encodes as 2");
             int tagWidth = 1 + UTIL.MinBits(1);      // one language tag
-            BitPackedUnSignedLongBuffer tags = new BitPackedUnSignedLongBuffer(null,
-                    ByteBuffer.wrap(Files.readAllBytes(dictDir.resolve("langTags"))), 3, tagWidth);
+            BitPackedUnSignedLongBuffer tags = BitPackedUnSignedLongBuffer.readView(
+                    new ByteBufferBytes(ByteBuffer.wrap(Files.readAllBytes(dictDir.resolve("langTags")))), 3, tagWidth);
             assertEquals(1L, tags.get(0));
             assertEquals(1L, tags.get(1));
             assertEquals(1L, tags.get(2));

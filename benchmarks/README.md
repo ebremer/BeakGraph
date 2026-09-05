@@ -63,7 +63,7 @@ or more for anything you plan to quote.
 
 | Class | Level | Targets |
 |---|---|---|
-| `BitPackedBufferBench` | primitive | `BitPackedUnSignedLongBuffer.get()` (random + sequential), `binarySearch`, the streaming decoder — the innermost decode loop everything else sits on |
+| `BitPackedBufferBench` | primitive | `BitPackedUnSignedLongBuffer.get()` (random + sequential), `binarySearch`, the streaming decoder — the innermost decode loop everything else sits on; `profile=mixed` first drives the `get()` call site through all three `RandomAccessBytes` implementations, as a JVM that opened small, FFM-mapped and remote datasets has (BG-260) |
 | `SelectBench` | primitive | `select1` via the rank/select directory vs the linear fallback, plus the adjacent-pair pattern the iterators actually issue |
 | `DictionaryBench` | dictionary | `locate` (entity/object/predicate hits, misses), `extract`, and the Caffeine-cached node-table path |
 | `QueryBench` | end-to-end | SPARQL shapes: point lookup, star join, predicate scan, FILTER range pushdown, chain join (per-binding iterator reconstruction), `GRAPH ?g` scan, and a Graph-API full scan |

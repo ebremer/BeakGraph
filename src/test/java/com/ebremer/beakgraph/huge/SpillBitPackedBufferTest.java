@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.io.ByteBufferBytes;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -50,7 +51,7 @@ class SpillBitPackedBufferTest {
                 byte[] bytes = Files.readAllBytes(f);
                 assertEquals((n * (long) w + 7) / 8, bytes.length, "width " + w + ": packed length");
                 BitPackedUnSignedLongBuffer reader =
-                        new BitPackedUnSignedLongBuffer(null, ByteBuffer.wrap(bytes), n, w);
+                        BitPackedUnSignedLongBuffer.readView(new ByteBufferBytes(ByteBuffer.wrap(bytes)), n, w);
                 for (int i = 0; i < n; i++) {
                     assertEquals(values[i], reader.get(i), "width " + w + " index " + i);
                 }

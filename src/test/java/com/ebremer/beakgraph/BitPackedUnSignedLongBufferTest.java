@@ -1,5 +1,13 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.channels.FileChannel;
+import com.ebremer.beakgraph.io.MemorySegmentBytes;
+import com.ebremer.beakgraph.io.ChannelBytes;
+import com.ebremer.beakgraph.io.ByteBufferBytes;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -9,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for the bit-packed buffer, using the in-memory (null-buffer) write path.
+ * Unit tests for the bit-packed buffer, using the in-memory write path.
  * Covers the supported width range, the rejection of the unsafe 58..63 widths (which would
  * silently drop high bits in the pack/unpack accumulators), and the 1-based contract of select1.
  */
@@ -19,7 +27,7 @@ class BitPackedUnSignedLongBufferTest {
     void roundTripsAcrossSupportedWidths() {
         int[] widths = {1, 2, 7, 8, 13, 31, 32, 40, 56, 57, 64};
         for (int w : widths) {
-            BitPackedUnSignedLongBuffer buf = new BitPackedUnSignedLongBuffer(null, null, 0, w);
+            BitPackedUnSignedLongBuffer buf = new BitPackedUnSignedLongBuffer(null, w);
             long mask = (w == 64) ? -1L : (1L << w) - 1;
             int n = 100;
             long[] vals = new long[n];
@@ -37,20 +45,88 @@ class BitPackedUnSignedLongBufferTest {
     }
 
     @Test
-    void streamFailsLoudlyOnTruncatedBuffer() {
-        // A buffer shorter than its declared entry count is corrupt. The stream
-        // used to emit silent garbage (negative-shift artifacts) where the
-        // sequential reader threw; both must now fail loudly.
+    void aTruncatedReadViewIsRefusedUpFront() {
+        // A buffer shorter than its declared entry count is corrupt: the read
+        // view (the one way to read foreign bytes since BG-310) refuses it at
+        // construction (BG-345), before the stream could emit silent garbage.
         java.nio.ByteBuffer twoBytes = java.nio.ByteBuffer.allocate(2);
-        BitPackedUnSignedLongBuffer truncated = new BitPackedUnSignedLongBuffer(null, twoBytes, 10, 16);
-        assertThrows(java.nio.BufferUnderflowException.class, () -> truncated.stream().toArray());
+        assertThrows(IllegalStateException.class,
+                () -> BitPackedUnSignedLongBuffer.readView(new ByteBufferBytes(twoBytes), 10, 16));
+    }
+
+    @Test
+    void everyBackingImplementationDecodesTheSameBytesAlike(@TempDir Path tmp) throws Exception {
+        // get()/getWord64()/select1 dispatch on the concrete RandomAccessBytes
+        // (BG-260): the three implementations must stay observably identical
+        // through the buffer, not just through the RandomAccessBytes tests.
+        int n = 5_000;
+        for (int w : new int[]{1, 13, 41}) {
+            BitPackedUnSignedLongBuffer writer = new BitPackedUnSignedLongBuffer(null, w);
+            long mask = (1L << w) - 1;
+            long[] vals = new long[n];
+            for (int i = 0; i < n; i++) {
+                vals[i] = (0x9E3779B97F4A7C15L * (i + 7)) & mask;
+                writer.writeLong(vals[i]);
+            }
+            writer.prepareForReading();
+            byte[] packed = new byte[(int) ((n * (long) w + 7) / 8)];
+            // Re-pack from the values (the buffer exposes no bytes): the reference layout.
+            long acc = 0; int have = 0; int p = 0;
+            for (long v : vals) {
+                acc = (acc << w) | v; have += w;
+                while (have >= 8) { packed[p++] = (byte) (acc >>> (have - 8)); have -= 8; acc &= (1L << have) - 1; }
+            }
+            if (have > 0) packed[p] = (byte) (acc << (8 - have));
+            Path file = tmp.resolve("packed-" + w + ".bin");
+            Files.write(file, packed);
+            try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
+                BitPackedUnSignedLongBuffer[] views = {
+                    writer,
+                    BitPackedUnSignedLongBuffer.readView(new ByteBufferBytes(java.nio.ByteBuffer.wrap(packed)), n, w),
+                    BitPackedUnSignedLongBuffer.readView(MemorySegmentBytes.map(file, 0, packed.length), n, w),
+                    BitPackedUnSignedLongBuffer.readView(new ChannelBytes(ch, 0, packed.length), n, w),
+                };
+                for (BitPackedUnSignedLongBuffer view : views) {
+                    for (int i = 0; i < n; i++) {
+                        assertEquals(vals[i], view.get(i), "width " + w + " index " + i + " via " + view.isRemote());
+                    }
+                    assertArrayEquals(vals, view.stream().toArray(), "stream width " + w);
+                    for (long bit = 0; bit < n; bit += 61) {
+                        assertEquals(views[0].getWord64(bit), view.getWord64(bit), "getWord64 at " + bit + " width " + w);
+                    }
+                    if (w == 1) {
+                        for (long rank = 1; rank <= 40; rank++) {
+                            assertEquals(views[0].select1(rank), view.select1(rank), "select1 rank " + rank);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void theWriteSideWritesAndAReadViewReads() {
+        // The two construction paths: writers pack through the constructor,
+        // readers view already-packed bytes through readView; a read view
+        // refuses the write API.
+        BitPackedUnSignedLongBuffer writer = new BitPackedUnSignedLongBuffer(null, 5);
+        for (int i = 0; i < 20; i++) writer.writeLong(i);
+        writer.prepareForReading();
+        long[] packed = writer.stream().toArray();
+        assertEquals(20, packed.length);
+        BitPackedUnSignedLongBuffer view = BitPackedUnSignedLongBuffer.readView(
+                new ByteBufferBytes(java.nio.ByteBuffer.wrap(new byte[]{(byte) 0b00001000, (byte) 0b10000110, (byte) 0b01000000})), 4, 5);
+        assertArrayEquals(new long[]{1, 2, 3, 4}, view.stream().toArray());
+        assertEquals(3, view.get(2));
+        assertThrows(IllegalStateException.class, () -> view.writeLong(1));
+        view.prepareForReading();   // a no-op there, not a failure
     }
 
     @Test
     void rejectsValuesThatWouldBeTruncated() {
         // A value wider than the buffer's bit width used to be silently masked,
         // corrupting the dictionary far from the cause. It must be rejected.
-        BitPackedUnSignedLongBuffer narrow = new BitPackedUnSignedLongBuffer(null, null, 0, 8);
+        BitPackedUnSignedLongBuffer narrow = new BitPackedUnSignedLongBuffer(null, 8);
         assertDoesNotThrow(() -> narrow.writeLong(255));
         assertThrows(IllegalArgumentException.class, () -> narrow.writeLong(256));
         assertThrows(IllegalArgumentException.class, () -> narrow.writeLong(-1));
@@ -58,9 +134,9 @@ class BitPackedUnSignedLongBufferTest {
 
         // Widths 32 and 64 legitimately carry full two's-complement patterns
         // (the int/long literal buffers): negatives must stay writable there.
-        BitPackedUnSignedLongBuffer w32 = new BitPackedUnSignedLongBuffer(null, null, 0, 32);
+        BitPackedUnSignedLongBuffer w32 = new BitPackedUnSignedLongBuffer(null, 32);
         assertDoesNotThrow(() -> w32.writeInteger(-5));
-        BitPackedUnSignedLongBuffer w64 = new BitPackedUnSignedLongBuffer(null, null, 0, 64);
+        BitPackedUnSignedLongBuffer w64 = new BitPackedUnSignedLongBuffer(null, 64);
         assertDoesNotThrow(() -> w64.writeLong(Long.MIN_VALUE));
     }
 
@@ -71,22 +147,22 @@ class BitPackedUnSignedLongBufferTest {
         for (int w = 58; w <= 63; w++) {
             final int width = w;
             assertThrows(IllegalArgumentException.class,
-                () -> new BitPackedUnSignedLongBuffer(null, null, 0, width),
+                () -> new BitPackedUnSignedLongBuffer(null, width),
                 "width " + w + " must be rejected");
         }
         for (int w : new int[]{0, -1, 65, 1000}) {
             final int width = w;
             assertThrows(IllegalArgumentException.class,
-                () -> new BitPackedUnSignedLongBuffer(null, null, 0, width));
+                () -> new BitPackedUnSignedLongBuffer(null, width));
         }
         // The boundary supported widths must still construct.
-        assertDoesNotThrow(() -> new BitPackedUnSignedLongBuffer(null, null, 0, 57));
-        assertDoesNotThrow(() -> new BitPackedUnSignedLongBuffer(null, null, 0, 64));
+        assertDoesNotThrow(() -> new BitPackedUnSignedLongBuffer(null, 57));
+        assertDoesNotThrow(() -> new BitPackedUnSignedLongBuffer(null, 64));
     }
 
     @Test
     void select1RejectsRankBelowOne() {
-        BitPackedUnSignedLongBuffer bm = new BitPackedUnSignedLongBuffer(null, null, 0, 1);
+        BitPackedUnSignedLongBuffer bm = new BitPackedUnSignedLongBuffer(null, 1);
         int[] bits = {0, 1, 0, 1, 1}; // set bits at indices 1, 3, 4
         for (int b : bits) bm.writeInteger(b);
         bm.prepareForReading();
@@ -102,7 +178,7 @@ class BitPackedUnSignedLongBufferTest {
 
     /** A 1-bit bitmap from a boolean oracle, through the in-memory write path. */
     private static BitPackedUnSignedLongBuffer bitmap(boolean[] bits) {
-        BitPackedUnSignedLongBuffer bm = new BitPackedUnSignedLongBuffer(null, null, 0, 1);
+        BitPackedUnSignedLongBuffer bm = new BitPackedUnSignedLongBuffer(null, 1);
         for (boolean b : bits) bm.writeInteger(b ? 1 : 0);
         bm.prepareForReading();
         return bm;
@@ -171,7 +247,7 @@ class BitPackedUnSignedLongBufferTest {
 
     @Test
     void nextSetBitOnlyExistsForBitmaps() {
-        BitPackedUnSignedLongBuffer wide = new BitPackedUnSignedLongBuffer(null, null, 0, 8);
+        BitPackedUnSignedLongBuffer wide = new BitPackedUnSignedLongBuffer(null, 8);
         wide.writeInteger(1);
         wide.prepareForReading();
         assertThrows(UnsupportedOperationException.class, () -> wide.nextSetBit(0, 1));
@@ -200,7 +276,7 @@ class BitPackedUnSignedLongBufferTest {
     }
 
     private static BitPackedUnSignedLongBuffer packed(int width, long[] values) {
-        BitPackedUnSignedLongBuffer buf = new BitPackedUnSignedLongBuffer(null, null, 0, width);
+        BitPackedUnSignedLongBuffer buf = new BitPackedUnSignedLongBuffer(null, width);
         for (long v : values) buf.writeLong(v);
         buf.prepareForReading();
         return buf;

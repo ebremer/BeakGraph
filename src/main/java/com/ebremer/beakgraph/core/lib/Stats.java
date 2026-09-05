@@ -38,7 +38,35 @@ public class Stats {
     // RDF 1.2 triple terms (distinct, all nesting depths). Drives allocation of
     // the literals section's tripleTerms component store.
     public long numTripleTerms = 0;
-    
+
+    /**
+     * The bit width the dictionary writer allocates for the integers section:
+     * 0 when there are none, 32 when a negative value forces the full
+     * two's-complement pattern, otherwise a sign bit plus the bits of the
+     * maximum (the ONE rule; MultiTypeDictionaryWriter allocates through it).
+     */
+    public int integerWidth() {
+        if (numInteger == 0) return 0;
+        return (minInteger < 0) ? 32 : 1 + MinBits(maxInteger);
+    }
+
+    /**
+     * The bit width the dictionary writer allocates for the longs section: 0
+     * when there are none, 64 for negatives, otherwise a sign bit plus the bits
+     * of the maximum - rounded up to 64 past 57, the packed buffer's widest
+     * unaligned width.
+     */
+    public int longWidth() {
+        if (numLong == 0) return 0;
+        int w = (minLong < 0) ? 64 : 1 + MinBits(maxLong);
+        return (w > 57) ? 64 : w;
+    }
+
+    /** {@code value} when the section has entries, else "-": the seeds (MIN/MAX sentinels) are not data (BG-29). */
+    private static String present(long count, Object value) {
+        return (count > 0) ? String.valueOf(value) : "-";
+    }
+
     @Override
     public String toString() {
         return String.format(java.util.Locale.ROOT,
@@ -56,23 +84,23 @@ public class Stats {
             Number of Integers    : %d
             Number of Longs       : %d
             Number of Floats      : %d
-            Number of Doubles     : %d                                    
-            
-            MaxInteger            : %d
-            MaxLong               : %d
-            
-            MinInteger            : %d
-            MinLong               : %d
-            
-            MaxBitsInteger        : %d
-            MaxBitsLong           : %d
-            
+            Number of Doubles     : %d
+            Number of Triple terms: %d
+
+            MaxInteger            : %s
+            MaxLong               : %s
+
+            MinInteger            : %s
+            MinLong               : %s
+
+            IntegerWidth (bits)   : %d
+            LongWidth (bits)      : %d
+
             numStrings            : %d
-            longestStringLength   : %d
-            shortestStringLength  : %d
+            longestStringLength   : %s
+            shortestStringLength  : %s
             ==================================================================
-            """,
-            numGraphs,
+            """,            numGraphs,
             numSubjects,
             numPredicates,
             numObjects,
@@ -83,15 +111,16 @@ public class Stats {
             numLong,
             numFloat,
             numDouble,
-            maxInteger,
-            maxLong,
-            minInteger,
-            minLong,
-            MinBits( maxInteger ),
-            MinBits( maxLong ),
+            numTripleTerms,
+            present(numInteger, maxInteger),
+            present(numLong, maxLong),
+            present(numInteger, minInteger),
+            present(numLong, minLong),
+            integerWidth(),
+            longWidth(),
             numStrings,
-            longestStringLength,
-            shortestStringLength
+            present(numStrings, longestStringLength),
+            present(numStrings, shortestStringLength)
         );
     }
 }

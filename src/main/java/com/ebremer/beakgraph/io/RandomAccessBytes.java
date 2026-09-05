@@ -13,15 +13,22 @@ package com.ebremer.beakgraph.io;
  *
  * <p>Implementations: {@link ByteBufferBytes} (wraps the jHDF-mapped buffer,
  * the default for datasets under 2 GiB), {@link MemorySegmentBytes} (an FFM
- * mapped segment for datasets beyond ByteBuffer's reach). A future chunked
- * implementation (e.g. Zarr with a decompressed-chunk cache) plugs in here
- * without touching the readers.
+ * mapped segment for datasets beyond ByteBuffer's reach) and
+ * {@link ChannelBytes} (positional reads through a remote-backed channel).
+ * The interface is sealed so the hottest call site in the read path -
+ * {@code BitPackedUnSignedLongBuffer}'s word fetch, which every id lookup,
+ * bitmap probe and binary-search step lands on - can dispatch with a klass
+ * compare and a direct call instead of a megamorphic interface call once a
+ * JVM has opened all three kinds of dataset (BG-260). A future chunked
+ * implementation (e.g. Zarr with a decompressed-chunk cache) joins the
+ * {@code permits} list and that buffer's {@code readLong}/{@code readByte}
+ * chain; the readers themselves stay untouched.
  *
  * <p>Out-of-range offsets throw {@link IndexOutOfBoundsException}.
  *
  * @author Erich Bremer
  */
-public interface RandomAccessBytes {
+public sealed interface RandomAccessBytes permits ByteBufferBytes, MemorySegmentBytes, ChannelBytes {
 
     /** Total number of readable bytes. */
     long size();

@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.core.lib;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.apache.jena.graph.Node;
@@ -25,12 +24,6 @@ public class NodeSorter {
     /** A fresh memoizing comparator sized for a sort of {@code distinctNodes} nodes. */
     public static NodeComparator sortComparator(long distinctNodes) {
         return new CachingNodeComparator((int) Math.max(1 << 16, Math.min(distinctNodes, MAX_MEMO)));
-    }
-
-    public static ArrayList<Node> sort2(HashSet<Node> nodes) {
-        ArrayList<Node> list = new ArrayList<>(nodes);
-        list.sort(sortComparator(list.size()));
-        return list;
     }
 
     public static ArrayList<Node> parallelSort(Set<Node> nodeSet) {

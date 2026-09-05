@@ -58,7 +58,7 @@ public class IndexReader {
             }
 
             if (directoryUsable && bitmap != null && idBuffer != null && sb != null && bb != null) {
-                componentDirectories.put(component, new HDTBitmapDirectory(sb, bb, bitmap, idBuffer));
+                componentDirectories.put(component, new HDTBitmapDirectory(sb, bb, bitmap));
             }
         }
     }

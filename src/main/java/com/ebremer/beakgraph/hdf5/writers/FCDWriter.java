@@ -10,7 +10,6 @@ import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import com.ebremer.beakgraph.utils.StringUtils;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -25,10 +24,10 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable, DictionarySinks.Str
     private long numEntries = 0;
     private long position = 0;
     private final DataOutputBuffer offsets;
-    private final BitPackedUnSignedLongBuffer compressed = new BitPackedUnSignedLongBuffer(Path.of("compressed"), null, 0, 1);
+    private final BitPackedUnSignedLongBuffer compressed = new BitPackedUnSignedLongBuffer(Path.of("compressed"), 1);
     private final StringUtils su = new StringUtils();
 
-    public FCDWriter(Path path, int blockSize) throws FileNotFoundException {
+    public FCDWriter(Path path, int blockSize) {
         if (blockSize < 2) {
             // With blockSize 1 the add() block-head branch never closes a block:
             // the offsets dataset would hold one entry total and FCDReader.get()
@@ -105,10 +104,10 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable, DictionarySinks.Str
     @Override public long getNumEntries() { return numEntries; }
     @Override public Path getName() { return path; }
 
+    /** In-memory throughout; closing cannot fail (BG-89). */
     @Override
-    public void close() throws Exception {
+    public void close() {
         offsets.close();
-        baos.close();       
     }
 
     @Override

@@ -1,50 +1,14 @@
 package com.ebremer.beakgraph.utils;
 
-import io.jhdf.api.WritableDataset;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
 
 /**
+ * Bit-width and IRI helpers shared by the writers and readers. Debug-only
+ * dumps (binary strings, attribute maps) that nothing called were removed
+ * (BG-284); add such helpers next to the test that needs them.
  *
  * @author Erich Bremer
  */
-
 public class UTIL {
-
-    public static String byteArrayToBinaryString(byte[] array, int length) {
-        StringBuilder sb = new StringBuilder(length * 8 + (length - 1));
-        for (int i = 0; i < length; i++) {
-            sb.append(String.format("%8s", Integer.toBinaryString(array[i] & 0xFF))
-                        .replace(' ', '0'));
-            if (i < length - 1) sb.append(' ');
-        }
-        return sb.toString();
-    }
-
-    public static String toBinaryString(ByteBuffer buffer, int offset) {
-        // Use duplicate so we don't modify the original buffer's position
-        ByteBuffer dup = buffer.duplicate();
-        StringBuilder sb = new StringBuilder((dup.limit() - dup.position()) * 9);
-        while (dup.hasRemaining()) {
-            int b = dup.get() & 0xFF;
-            // format to 8-bit binary, pad with leading zeros
-            byte[] ha = new byte[1];
-            ha[0] = (byte) b;
-            String s = new String(ha, StandardCharsets.UTF_8);
-            int ye = offset+dup.position();
-            sb.append(String.format(java.util.Locale.ROOT, "%d : %8s -- %s ==> [%s]", ye, Integer.toBinaryString(b), Integer.toHexString(b), s));
-            if (dup.hasRemaining()) sb.append('\n');
-        }
-        return sb.toString();
-    }
-
-    public static WritableDataset putAttributes( WritableDataset ds, Map<String, Object> attributes ) {
-        attributes.forEach((k,v)->{
-            ds.putAttribute(k, v);
-        });
-        return ds;
-    }
 
     public static int MinBits(long x) {
         if (x == 0) return 1;
@@ -104,19 +68,5 @@ public class UTIL {
             if (!schemeChar) return true;
         }
         return true;
-    }
-
-    public static String byteArrayToBinaryString(byte[] bytes) {
-        if (bytes == null || bytes.length == 0) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder(bytes.length * 8);
-        for (byte b : bytes) {
-            for (int i = 7; i >= 0; i--) {
-                int bit = (b >> i) & 1;
-                sb.append(bit);
-            }
-        }
-        return sb.toString();
     }
 }

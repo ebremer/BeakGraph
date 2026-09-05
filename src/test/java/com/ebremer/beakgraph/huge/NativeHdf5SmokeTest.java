@@ -24,6 +24,26 @@ class NativeHdf5SmokeTest {
     Path dir;
 
     @Test
+    void aFailedCreateNamesTheFullPath() throws Exception {
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
+        // A group's path is the only thing NativeGroup keeps besides its handle
+        // (BG-132); a duplicate name is the one create failure a test can force.
+        try (StreamingHdf5File f = NativeHdf5File.create(dir.resolve("dup.h5"))) {
+            StreamingHdf5Group a = f.rootGroup().putGroup("a");
+            a.putGroup("b");
+            java.io.IOException root = org.junit.jupiter.api.Assertions.assertThrows(
+                    java.io.IOException.class, () -> f.rootGroup().putGroup("a"));
+            assertEquals("H5Gcreate failed for group '/a'", root.getMessage());
+            java.io.IOException nested = org.junit.jupiter.api.Assertions.assertThrows(
+                    java.io.IOException.class, () -> a.putGroup("b"));
+            assertEquals("H5Gcreate failed for group '/a/b'", nested.getMessage());
+            java.io.IOException empty = org.junit.jupiter.api.Assertions.assertThrows(
+                    java.io.IOException.class, () -> a.createByteDataset("c", 0));
+            assertEquals("Refusing to create empty dataset '/a/c'", empty.getMessage());
+        }
+    }
+
+    @Test
     void nativeWrittenFileReadsBackThroughJhdf() throws Exception {
         com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path h5 = dir.resolve("smoke.h5");

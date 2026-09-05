@@ -14,7 +14,6 @@ import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
@@ -73,7 +72,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private final boolean literalsPresent;
     private boolean closed = false;
     
-    protected MultiTypeDictionaryWriter(Builder builder) throws FileNotFoundException, IOException {
+    protected MultiTypeDictionaryWriter(Builder builder) throws IOException {
         this.name = builder.getName();
         logger.info("Building dictionary '{}' ({} nodes)", name, builder.getNodeCount());
 
@@ -98,17 +97,14 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
 
         // --- STEP 2: Initialize Buffers ---
         // BitPackedUnSignedLongBuffer constructors do not throw; assign finals directly.
-        this.offsets = new BitPackedUnSignedLongBuffer(Path.of("offsets"), null, 0, 1 + MinBits(builder.getNodeCount()));
-        this.nativedatatypes = new BitPackedUnSignedLongBuffer(Path.of("datatypes"), null, 0, 1 + MinBits(DataType.values().length));
-        // Signed-safe widths: when min is negative, use a fixed width (32 or 64) so the two's-complement
-        // bit pattern survives the unsigned mask round-trip in BitPackedUnSignedLongBuffer.
-        int intWidth = (stats.minInteger < 0) ? 32 : (1 + MinBits(stats.maxInteger));
-        int longWidth = (stats.minLong < 0) ? 64 : (1 + MinBits(stats.maxLong));
-        // The bit-packed buffer supports widths 1..57 and 64 only, and this width is
-        // value-derived: a legal xsd:long in [2^56, 2^62) lands in 58..63. Round up.
-        if (longWidth > 57) longWidth = 64;
-        this.integers = (!et.contains(DataType.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), null, 0, intWidth);
-        this.longs = (!et.contains(DataType.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), null, 0, longWidth);
+        this.offsets = new BitPackedUnSignedLongBuffer(Path.of("offsets"), 1 + MinBits(builder.getNodeCount()));
+        this.nativedatatypes = new BitPackedUnSignedLongBuffer(Path.of("datatypes"), 1 + MinBits(DataType.values().length));
+        // Signed-safe widths (Stats.integerWidth / longWidth): when min is negative, a fixed
+        // width (32 or 64) so the two's-complement bit pattern survives the unsigned mask
+        // round-trip in BitPackedUnSignedLongBuffer; a legal xsd:long in [2^56, 2^62) would
+        // land in 58..63, which the buffer does not support, so that rounds up to 64.
+        this.integers = (!et.contains(DataType.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), stats.integerWidth());
+        this.longs = (!et.contains(DataType.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), stats.longWidth());
 
         // Triple-term component store: width sized to the largest id any
         // component can carry (the object space: entities + this section).
@@ -121,12 +117,12 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         }
         int ttWidth = 1 + MinBits(builder.getTripleTermComponentIdBound());
         if (ttWidth > 57) ttWidth = 64;
-        this.tripleTerms = wantTripleTerms ? new BitPackedUnSignedLongBuffer(Path.of("tripleTerms"), null, 0, ttWidth) : null;
+        this.tripleTerms = wantTripleTerms ? new BitPackedUnSignedLongBuffer(Path.of("tripleTerms"), ttWidth) : null;
         this.tripleTermEncoder = builder.getTripleTermEncoder();
 
-        // FCDWriter and DataOutputBuffer constructors may throw IOException.
-        // Use temp variables so that already-opened handles can be closed on failure,
-        // preventing file handle leaks if initialization fails partway through.
+        // Only FCDWriter.add(String) can fail in this block (it declares IOException;
+        // the in-memory buffer constructors cannot, BG-89). Temp variables so a
+        // writer built earlier in the block is closed if a later step fails.
         FCDWriter tempTypedLiteralsDictionary = null;
         BitPackedUnSignedLongBuffer tempTypedLiterals = null;
         boolean tempLiteralsPresent = false;
@@ -143,7 +139,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 et.contains(DataType.LONG) || et.contains(DataType.STRING)) {
                 tempLiteralsPresent = true;
                 tempTypedLiteralsDictionary = new FCDWriter(Path.of("typedLiteralsDictionary"), fcdBlockSize);
-                tempTypedLiterals = new BitPackedUnSignedLongBuffer(Path.of("typedLiterals"), null, 0, 1 + MinBits(builder.getTypedLiterals().size()));
+                tempTypedLiterals = new BitPackedUnSignedLongBuffer(Path.of("typedLiterals"), 1 + MinBits(builder.getTypedLiterals().size()));
                 final FCDWriter fcdTLD = tempTypedLiteralsDictionary;
                 builder.getTypedLiterals().stream()
                     .sorted()
@@ -181,10 +177,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                         tempLangs.add(lang);
                         langLookUp.put(lang, tempLangs.getNumEntries()); // 1-based id
                     }
-                    tempLangTags = new BitPackedUnSignedLongBuffer(Path.of("langTags"), null, 0, 1 + MinBits(langSet.size()));
+                    tempLangTags = new BitPackedUnSignedLongBuffer(Path.of("langTags"), 1 + MinBits(langSet.size()));
                 }
                 if (anyDirection) {
-                    tempLangDirs = new BitPackedUnSignedLongBuffer(Path.of("langDirs"), null, 0, 1 + MinBits(2));
+                    tempLangDirs = new BitPackedUnSignedLongBuffer(Path.of("langDirs"), 1 + MinBits(2));
                 }
             }
 
@@ -211,13 +207,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         // --- STEP 3: Encode Data ---
         this.sorted.forEach(this::addNodeInternal);
 
-        try {
-            close();
-        } catch (Exception ex) {
-            // A failed finalization means incomplete buffers; writing them out
-            // would produce a corrupt dictionary. Abort the build instead.
-            throw new IllegalStateException("Dictionary buffer finalization failed for '" + name + "'", ex);
-        }
+        close();   // finalizes the in-memory buffers; nothing here can fail
     }
 
     private static void closeQuietly(AutoCloseable resource) {
@@ -252,7 +242,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         if (closed) return;
         closed = true;
         offsets.prepareForReading();

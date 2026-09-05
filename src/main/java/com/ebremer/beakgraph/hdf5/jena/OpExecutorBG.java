@@ -21,8 +21,34 @@ import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 
 /**
- * Custom OpExecutor for BeakGraph.
- * Optimized for Big Data Triple patterns and Dictionary Streaming (SELECT DISTINCT ?p, ?g, etc.).
+ * BeakGraph's {@link OpExecutor}. When the active graph is a {@link BeakGraph}
+ * it intercepts three algebra shapes; everything else runs through Jena's
+ * default executor unchanged:
+ * <ol>
+ * <li>{@code OpDistinct} over the top-level root input: {@link DistinctTermFastPath}
+ *     answers {@code SELECT DISTINCT ?p} / {@code ?s} / {@code ?g}-style queries
+ *     from the per-graph index levels when the shape allows it.</li>
+ * <li>{@code OpGroup} over the root input: {@link AggregateCountFastPath}
+ *     answers whole-graph {@code COUNT} aggregates over {@code { ?s ?p ?o }}
+ *     from index structure.</li>
+ * <li>{@code OpBGP}, bare or under an {@code OpFilter}: the statistics-based
+ *     reorder ({@link BeakGraph#getReorderTransform()}) against the peeked
+ *     first binding, then filter placement, with each placed filter's
+ *     expressions handed to {@link PatternMatchBG} as pushdown hints by the
+ *     plain executor below.</li>
+ * </ol>
+ *
+ * <p>History: an earlier version intercepted OpDistinct ("SELECT DISTINCT ?p
+ * { ?s ?p ?o }") and streamed the dictionary's per-position id lists instead
+ * of executing the query. That was removed as unsound: the columnar lists are
+ * file-global (they span every named graph, including the VoID metadata
+ * graph, so default-graph queries over-reported terms), any FILTER wrapped
+ * around the pattern was silently dropped, DISTINCT ?g included the default
+ * graph, and the incoming iterator (join semantics) was discarded. The
+ * DistinctTermFastPath route reads the PER-GRAPH index levels (GPOS
+ * predicates / GSPO subjects) and fires only on the exact algebra shape it
+ * can answer.
+ *
  * @author erich
  */
 public class OpExecutorBG extends OpExecutor {
@@ -43,17 +69,6 @@ public class OpExecutorBG extends OpExecutor {
         super(execCtx);
         isForBeakGraph = execCtx.getActiveGraph() instanceof BeakGraph;
     }
-
-    // NOTE: an earlier version intercepted OpDistinct ("SELECT DISTINCT ?p { ?s ?p ?o }")
-    // and streamed the dictionary's per-position id lists instead of executing the
-    // query. That was removed as unsound: the columnar lists are file-global (they
-    // span every named graph, including the always-present VoID metadata graph, so
-    // default-graph queries over-reported terms), any FILTER wrapped around the
-    // pattern was silently dropped, DISTINCT ?g included the default graph, and the
-    // incoming iterator (join semantics) was discarded. The replacement below fixes
-    // all of that by reading the PER-GRAPH index levels (GPOS predicates / GSPO
-    // subjects) and firing only on the exact algebra shape it can answer - see
-    // DistinctTermFastPath.
 
     @Override
     protected QueryIterator execute(OpDistinct opDistinct, QueryIterator input) {
