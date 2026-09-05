@@ -12,4 +12,7 @@ public interface DictionaryWriter {
     public long getNumberOfNodes();
     public List<Node> getNodes();
     public void add( WritableGroup group );
+
+    /** The id of {@code element} in this (complete) section, or -1 when absent - what the index writers resolve through. */
+    public long locate(Node element);
 }

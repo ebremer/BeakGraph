@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * The keyed pool of readers: keys are store URIs, {@code file:} or
+ * {@code http(s):} (see {@link BeakGraphPoolFactory}).
  *
  * @author erich
  */

@@ -36,10 +36,12 @@ import org.slf4j.LoggerFactory;
  * <p>Reads are served from an LRU cache of block-aligned ranges (default
  * 128 KiB blocks, 256 blocks = 32 MiB), so the binary searches the readers
  * issue against dictionaries and indexes touch the network once per block,
- * not once per read. Transient failures (I/O errors, HTTP 429/5xx) are
- * retried with backoff; a server that answers a range request with 200 (no
- * range support) fails loudly rather than silently downloading the whole
- * resource.
+ * not once per read. Transient failures (I/O errors, HTTP 429/5xx, truncated
+ * bodies) are retried with exponential backoff and jitter, honouring a
+ * {@code Retry-After} delay when the server sends one (BG-11); a server that
+ * answers a range request with 200 (no range support) fails loudly rather
+ * than silently downloading the whole resource, and a 206 must carry a
+ * Content-Range naming exactly the requested bytes (BG-10).
  *
  * <p>The size is resolved at construction with a HEAD request, falling back
  * to a 1-byte range probe for deployments that reject HEAD (e.g.
@@ -57,6 +59,12 @@ import org.slf4j.LoggerFactory;
  * read-ahead, fetching {@code beakgraph.http.readahead} blocks (default 8,
  * 1 MiB) in ONE range request. Scattered reads (binary searches) keep
  * fetching single blocks (BG-246).
+ *
+ * <p>Redirects are followed once, at open: the size probe's final URL is
+ * the one every block request is sent to, so a redirecting front (a bucket
+ * website endpoint, a short link, a re-signing edge) costs one extra round
+ * trip per channel instead of one per block; a 403/404 from that URL re-resolves
+ * the original once, for redirect targets that expire (BG-387).
  *
  * <p>Messages and log lines name the resource without its query string
  * (presigned URLs carry their signature there); {@link #getURI()} returns
@@ -76,8 +84,13 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
 
     private static final int DEFAULT_BLOCK_SIZE = 128 * 1024;
     private static final int DEFAULT_MAX_CACHE_BLOCKS = 256; // 32 MiB with default blocks
-    private static final int MAX_ATTEMPTS = 3;
-    private static final Pattern CONTENT_RANGE = Pattern.compile("\\s*bytes\\s+(\\d+)-(\\d+)/.*");
+    private static final int MAX_ATTEMPTS = 5;
+    /** First backoff step (doubled per attempt, capped at {@link #MAX_BACKOFF_MS}); -Dbeakgraph.http.retry.base.ms. */
+    private static final long RETRY_BASE_MS = Long.getLong("beakgraph.http.retry.base.ms", 250L);
+    private static final long MAX_BACKOFF_MS = 5_000L;
+    /** A server's Retry-After is honoured up to this long. */
+    private static final long MAX_RETRY_AFTER_MS = 30_000L;
+    private static final Pattern CONTENT_RANGE = Pattern.compile("\\s*bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)\\s*");
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
 
@@ -87,6 +100,8 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
     private final URI uri;
     private final String display;
     private final HttpClient client;
+    /** Where the size probe ended up after redirects: the URL the block requests go to. */
+    private volatile URI effectiveUri;
     private final int blockSize;
     private final int readAheadBlocks;
     private final LruCache cache;
@@ -140,6 +155,10 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
             Probe probe = probeSize();
             this.size = probe.size();
             this.validator = probe.validator();
+            this.effectiveUri = (probe.resolved() != null) ? probe.resolved() : uri;
+            if (!effectiveUri.equals(uri)) {
+                logger.info("{} redirects to {}; block requests go there", display, redact(effectiveUri));
+            }
         } catch (IOException | RuntimeException | Error e) {
             client.close();
             throw e;
@@ -182,8 +201,8 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
         return sb.toString();
     }
 
-    /** The size and validator the server reported at open. */
-    private record Probe(long size, String validator) {}
+    /** The size and validator the server reported at open, and the URL the probe was finally answered from. */
+    private record Probe(long size, String validator, URI resolved) {}
 
     /** A usable If-Range validator from a response: a strong ETag, else Last-Modified, else null. */
     private static String validatorOf(HttpResponse<?> response) {
@@ -300,7 +319,7 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
         }
     }
 
-    /** Range requests issued so far (excludes the size probe). */
+    /** Range requests issued so far - every attempt that received a response, retried ones included; excludes the size probe. */
     public long getRangeRequestCount() {
         lock.lock();
         try {
@@ -366,28 +385,37 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
     /**
      * Fetches bytes {@code start..end} with a range request, retrying transient
      * failures (connect/read errors, HTTP 429/5xx, truncated bodies) with
-     * linear backoff. Permanent conditions - a 200 answer to a ranged request
-     * (no range support), a changed resource, or any other status - fail
-     * immediately.
+     * exponential backoff, or the server's Retry-After when it sends one.
+     * Permanent conditions - a 200 answer to a ranged request (no range
+     * support), a 206 without or with a mismatched Content-Range, a changed
+     * resource, or any other status - fail immediately.
      */
     private byte[] fetchBytes(long start, long end) throws IOException {
         int expected = (int) (end - start + 1);
-        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
-                .GET()
-                .header("Range", "bytes=" + start + "-" + end)
-                .timeout(REQUEST_TIMEOUT);
-        if (validator != null) {
-            builder.header("If-Range", validator);
-        }
-        HttpRequest request = builder.build();
+        URI target = effectiveUri;
         IOException last = null;
+        long retryAfterMs = 0;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (attempt > 1) {
-                backoff(attempt);
+                backoff(attempt, retryAfterMs);
+                retryAfterMs = 0;
             }
             HttpResponse<InputStream> response;
             try {
-                response = send(request, HttpResponse.BodyHandlers.ofInputStream());
+                response = send(rangeRequest(target, start, end), HttpResponse.BodyHandlers.ofInputStream());
+                rangeRequests++;
+                if ((response.statusCode() == 403 || response.statusCode() == 404) && !target.equals(uri)) {
+                    // The redirect target captured at open may have expired (a
+                    // presigned URL): re-resolve through the original once.
+                    response.body().close();
+                    logger.info("{} answered HTTP {} at its redirect target; re-resolving through the original URL",
+                            display, response.statusCode());
+                    target = uri;
+                    response = send(rangeRequest(target, start, end), HttpResponse.BodyHandlers.ofInputStream());
+                    rangeRequests++;
+                    effectiveUri = (response.uri() != null) ? response.uri() : uri;
+                    target = effectiveUri;
+                }
             } catch (IOException e) {
                 last = e;
                 continue;
@@ -399,12 +427,22 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                 // on would download the entire resource.
                 if (status == 206 || (status == 200 && start == 0 && size <= expected && validator == null)) {
                     if (status == 206) {
-                        // A 206 for a DIFFERENT range than asked would silently
-                        // corrupt reads - verify the offset before trusting the body.
+                        // RFC 9110 requires Content-Range on a single-range 206; without
+                        // it nothing says the body starts at `start`, and a server that
+                        // answered 206 with the whole resource was read as the block (BG-10).
                         String contentRange = response.headers().firstValue("Content-Range").orElse(null);
-                        if (contentRange != null && !startsAt(contentRange, start)) {
+                        if (contentRange == null) {
+                            throw new IOException("Range bytes=" + start + "-" + end + " of " + display
+                                    + " answered with 206 but no Content-Range header");
+                        }
+                        if (!matchesRange(contentRange, start, end)) {
                             throw new IOException("Range bytes=" + start + "-" + end + " of " + display
                                     + " answered with mismatched Content-Range '" + contentRange + "'");
+                        }
+                        long declared = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                        if (declared >= 0 && declared != expected) {
+                            throw new IOException("Range bytes=" + start + "-" + end + " of " + display
+                                    + " answered with a " + declared + "-byte body (Content-Length) instead of " + expected);
                         }
                         // The representation must still be the one the size and
                         // offsets were taken from: same total, same strong ETag.
@@ -424,7 +462,6 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                             throw new IOException("Truncated body for bytes " + start + "-" + end
                                     + " of " + display + ": expected " + expected + ", got " + block.length);
                         }
-                        rangeRequests++;
                         bytesFetched += expected;
                         return block;
                     } catch (IOException e) {
@@ -449,6 +486,7 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                     throw changed("range bytes=" + start + "-" + end + " no longer satisfiable");
                 }
                 if (status == 429 || status / 100 == 5) {
+                    retryAfterMs = retryAfterMillis(response);
                     last = new IOException("HTTP " + status + " fetching bytes "
                             + start + "-" + end + " of " + display);
                     continue;
@@ -459,6 +497,31 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
         }
         throw new IOException("Failed to fetch bytes " + start + "-" + end + " of " + display
                 + " after " + MAX_ATTEMPTS + " attempts", last);
+    }
+
+    private HttpRequest rangeRequest(URI target, long start, long end) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(target)
+                .GET()
+                .header("Range", "bytes=" + start + "-" + end)
+                .timeout(REQUEST_TIMEOUT);
+        if (validator != null) {
+            builder.header("If-Range", validator);
+        }
+        return builder.build();
+    }
+
+    /** The server's Retry-After as milliseconds (delay-seconds form only, capped), or 0. */
+    private static long retryAfterMillis(HttpResponse<?> response) {
+        String value = response.headers().firstValue("Retry-After").orElse(null);
+        if (value == null) {
+            return 0;
+        }
+        try {
+            long seconds = Long.parseLong(value.trim());
+            return Math.max(0, Math.min(seconds, MAX_RETRY_AFTER_MS / 1000)) * 1000;
+        } catch (NumberFormatException httpDateOrGarbage) {
+            return 0; // an HTTP-date is not worth parsing here: the backoff schedule applies
+        }
     }
 
     /** The total after the '/' of a Content-Range ("bytes 0-1/300000"), or -1 when absent or "*". */
@@ -492,8 +555,12 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
             HttpResponse<Void> response = send(head, HttpResponse.BodyHandlers.discarding());
             if (response.statusCode() / 100 == 2) {
                 long length = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
-                if (length >= 0) {
-                    return new Probe(length, validatorOf(response));
+                // A zero Content-Length on HEAD is what a proxy or handler that
+                // short-circuits HEAD answers; trusting it made an empty channel
+                // and a misleading jHDF error, while the range probe would have
+                // returned the real size (BG-9).
+                if (length > 0) {
+                    return new Probe(length, validatorOf(response), response.uri());
                 }
             }
         } catch (IOException fallThrough) {
@@ -516,7 +583,7 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                     String total = contentRange.substring(slash + 1).trim();
                     if (!total.equals("*")) {
                         try {
-                            return new Probe(Long.parseLong(total), validatorOf(response));
+                            return new Probe(Long.parseLong(total), validatorOf(response), response.uri());
                         } catch (NumberFormatException unparseable) {
                             // handled below
                         }
@@ -529,16 +596,19 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                 throw new IOException(display + " does not support HTTP range requests"
                         + " (Range bytes=0-0 answered with 200)");
             }
+            if (status == 416) {
+                throw new IOException(display + " is empty (0 bytes): not a BeakGraph store");
+            }
             throw new IOException("Cannot determine size of " + display
                     + ": HEAD and range probe both failed (HTTP " + status + ")");
         }
     }
 
-    /** Whether a Content-Range header ("bytes 0-131071/300000") starts at {@code start}. */
-    private static boolean startsAt(String contentRange, long start) {
+    /** Whether a Content-Range header ("bytes 0-131071/300000") names exactly {@code start..end}. */
+    private static boolean matchesRange(String contentRange, long start, long end) {
         Matcher m = CONTENT_RANGE.matcher(contentRange);
         try {
-            return m.matches() && Long.parseLong(m.group(1)) == start;
+            return m.matches() && Long.parseLong(m.group(1)) == start && Long.parseLong(m.group(2)) == end;
         } catch (NumberFormatException overflows) {
             return false;
         }
@@ -554,9 +624,18 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
         }
     }
 
-    private void backoff(int attempt) throws IOException {
+    /**
+     * Sleeps before retry {@code attempt} (2..MAX_ATTEMPTS): the server's
+     * Retry-After when it sent one, else an exponential step with jitter
+     * (base, 2x, 4x ... capped) - the former 100/200 ms gave a throttling
+     * object store three hits within 300 ms and then a hard failure (BG-11).
+     */
+    private void backoff(int attempt, long retryAfterMs) throws IOException {
+        long base = Math.min(MAX_BACKOFF_MS, RETRY_BASE_MS << Math.min(attempt - 2, 20));
+        long jittered = base / 2 + java.util.concurrent.ThreadLocalRandom.current().nextLong(Math.max(1, base / 2));
+        long sleep = Math.max(retryAfterMs, jittered);
         try {
-            Thread.sleep(100L * (attempt - 1));
+            Thread.sleep(sleep);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while fetching " + display, e);

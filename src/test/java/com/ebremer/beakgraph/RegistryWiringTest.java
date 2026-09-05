@@ -3,7 +3,6 @@ package com.ebremer.beakgraph;
 import com.ebremer.beakgraph.core.QueryEngineBG;
 import com.ebremer.beakgraph.hdf5.jena.AggregateCountFastPath;
 import org.apache.jena.sparql.core.DatasetGraphFactory;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -11,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
@@ -92,6 +90,31 @@ class RegistryWiringTest {
     }
 
     // --- global registries stay intact -------------------------------------
+
+    @Test
+    void aReplacedGlobalStageGeneratorIsReWrappedOnTheNextOpen() throws Exception {
+        org.apache.jena.sparql.engine.main.StageGenerator before =
+                org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(ARQ.getContext());
+        assertTrue(before instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG, "control: BeakGraph is wired");
+        try {
+            // Another component replaces (does not wrap) the global generator.
+            org.apache.jena.sparql.engine.main.StageBuilder.setGenerator(ARQ.getContext(),
+                    org.apache.jena.sparql.engine.main.StageBuilder.standardGenerator());
+            assertFalse(org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(ARQ.getContext())
+                    instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG);
+            try (BeakGraph again = new BeakGraph(new HDF5Reader(dir.resolve("wiring.ttl.h5").toFile()))) {
+                assertTrue(org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(ARQ.getContext())
+                        instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG,
+                        "opening a BeakGraph re-installs the director (BG-63)");
+                assertTrue(org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(
+                        again.getDataset().asDatasetGraph().getContext())
+                        instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG,
+                        "the dataset's own context carries the director regardless of the global slot");
+            }
+        } finally {
+            org.apache.jena.sparql.engine.main.StageBuilder.setGenerator(ARQ.getContext(), before);
+        }
+    }
 
     @Test
     void rdfsMemberStaysRegisteredGlobally() {

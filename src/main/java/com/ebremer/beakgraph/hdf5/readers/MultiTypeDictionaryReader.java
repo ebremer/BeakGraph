@@ -287,7 +287,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             // Node_URI (a relative reference for RELATIVE_IRI). The distinct
             // type is kept as an honest record of the source form; resolving a
             // relative IRI to an absolute one happens at the serving boundary
-            // (RelativeIRIResolver), not here.
+            // (core.RelativeIRIResolver), not here.
             case IRI, RELATIVE_IRI -> NodeFactory.createURI(iri.get(off));
             case BNODE -> NodeFactory.createBlankNode(Params.blankNodeLabel(id));
             case TRIPLE_TERM -> {

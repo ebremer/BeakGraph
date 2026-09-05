@@ -2,15 +2,16 @@ package com.ebremer.beakgraph.core;
 
 import java.io.File;
 import java.util.List;
-import org.apache.jena.query.Dataset;
 
 // T refers to the concrete class (e.g., HDF5Writer.Builder)
+// Inputs are FILES (setSource / setSources): an in-memory Dataset must be
+// written to TriG / N-Quads first. The former setDataset(Dataset) was a
+// silent no-op no engine consumed (BG-264).
 public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
 
     protected File src;
     protected File dest;
     protected List<File> sources = List.of();
-    protected Dataset ds;
     protected boolean spatial;
     protected boolean features;
     protected VoidMode voidMode = VoidMode.NONE;
@@ -85,14 +86,8 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
         return features;
     }
 
-    public T setDataset(Dataset ds) {
-        this.ds = ds;
-        return self();
-    }
-
     public File getSource() { return src; }
     public File getDestination() { return dest; }
-    public Dataset getDataset() { return ds; }
     
     /**
      * The check every engine's {@code build()} runs first: without it the

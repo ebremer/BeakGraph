@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.readers;
 
+import org.apache.jena.shared.ClosedException;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.hdf5.jena.BGIteratorMaster;
@@ -229,6 +230,7 @@ public class HDF5Reader implements BGReader {
     }
     
     public IndexReader getIndexReader(Index indexType) {
+        checkOpen(); // the lazy load reads through the (closed) HdfFile otherwise
         return indexCache.computeIfAbsent(indexType, type -> {
             Group indexGroup = HdfProfile.group(hdt, type.name());
             if (indexGroup == null) {
@@ -244,8 +246,21 @@ public class HDF5Reader implements BGReader {
         });
     }
     
+    /**
+     * The storage layer is reached directly by the executor and the stage
+     * generator, which GraphBase's closed flag cannot protect: a closed reader
+     * used to keep answering from cached buffers and fail deep inside jHDF
+     * for anything uncached (BG-5).
+     */
+    private void checkOpen() {
+        if (!open) {
+            throw new ClosedException("BeakGraph reader already closed: " + uri, null);
+        }
+    }
+
     @Override
     public Iterator<BindingNodeId> read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        checkOpen();
         // An EMPTY store (built from an empty source - legal) has no dictionary
         // sections, and its index groups hold only their seeded directories
         // (SPECIFICATIONS §7.9); every pattern answers no solutions rather
@@ -275,6 +290,7 @@ public class HDF5Reader implements BGReader {
 
     @Override
     public Iterator<BindingNodeId> read(long graphId, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        checkOpen();
         if (dict.isEmpty() || graphId < 1) {
             return Collections.emptyIterator();
         }
@@ -341,6 +357,7 @@ public class HDF5Reader implements BGReader {
 
     @Override
     public Iterator<BindingNodeId> readGraphs(java.util.Collection<Node> graphs, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        checkOpen();
         if (dict.isEmpty()) {
             return Collections.emptyIterator();
         }
@@ -580,6 +597,7 @@ public class HDF5Reader implements BGReader {
 
     @Override
     public ExtendedIterator<Triple> graphBaseFind(Node graph, Triple tp) {
+        checkOpen();
         // Map Node.ANY (wildcards) to specific Variables
         Var sVar = Var.alloc("s");
         Var pVar = Var.alloc("p");
@@ -661,11 +679,13 @@ public class HDF5Reader implements BGReader {
 
     @Override
     public Iterator<Node> listGraphNodes() {
+        checkOpen();
         return dict.streamGraphs().iterator();
     }
     
     @Override
     public long countTriples(Node graph) {
+        checkOpen();
         // Quads are de-duplicated per graph in the index, so the graph's quad
         // count is its triple count.
         return IndexCounts.quads(this, graph);
@@ -673,6 +693,7 @@ public class HDF5Reader implements BGReader {
 
     @Override
     public boolean containsGraph(Node graphNode) {
+        checkOpen();
         // Graphs share the universal entity dictionary, so locate() alone matches
         // every subject/object entity too; membership in the columnar graphs list
         // is what makes an entity an actual graph.

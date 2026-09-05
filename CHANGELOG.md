@@ -132,6 +132,31 @@ brought and what a reader must rebuild.
   parent directory's metadata cache; an unreadable cache is regenerated; an
   unreadable entry no longer aborts the metadata scan; `void:vocabulary` is
   derived from predicate and class namespaces (object paths were unbounded).
+* Core API: a closed BeakGraph reports `isClosed()` and refuses reads, and a
+  closed reader fails every storage call with `ClosedException` instead of
+  serving stale buffers or a jHDF error; writes are denied with Jena's
+  `AddDeniedException` / `DeleteDeniedException` in both call forms; a
+  named-graph view's dataset answers the view's graph as its default graph
+  in `find`, `findNG` and `listGraphNodes`; a row whose ids cannot be
+  resolved is dropped by the dataset graph as it is by the graph; the
+  constructor's document base is honoured - the query engine rewrites
+  absolute IRIs under it to the stored relative form and resolves every
+  result row, and the dataset graph and `find()` do the same - with a
+  remote (http) store resolving against its own URL by default;
+  `RelativeIRIResolver` moved to `core` (the `core.fuseki` class is a
+  deprecated alias); the stage-generator director is re-installed when
+  another component replaces the global slot and rides in every BeakGraph
+  dataset context; `setDataset(Dataset)` is gone from the writer builders
+  (inputs are files); the writers no longer implement the read-side
+  dictionary interfaces (the `extract*` methods are gone, `DictionaryWriter`
+  gained `locate`); VoID reorder statistics use the distinct-subject and
+  distinct-object role lists; the reader pool accepts http(s) keys and
+  names the schemes it accepts; the HTTP channel follows redirects once at
+  open and re-resolves an expired target, requires and fully checks the
+  Content-Range (and the Content-Length) of a 206, treats a zero
+  Content-Length on HEAD as unknown, retries with exponential backoff and
+  the server's Retry-After (up to five attempts), and counts every range
+  request it issues.
 * Readers: one profile helper opens every dataset and attribute, so a
   chunked dataset or a 32-bit `numEntries` is reported by name instead of a
   cast error, and integer attributes of any width are accepted; a file with

@@ -1,5 +1,9 @@
 package com.ebremer.beakgraph.core;
 
+import org.apache.jena.sparql.graph.NodeTransformLib;
+import org.apache.jena.sparql.engine.iterator.QueryIterConvert;
+import org.apache.jena.sparql.engine.QueryIterator;
+import org.apache.jena.sparql.engine.ExecutionContext;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -104,14 +108,63 @@ public final class QueryEngineBG extends QueryEngineMain {
         return g instanceof BeakGraph;
     }
 
+    // The store's document base, when the BeakGraph has one: absolute IRIs
+    // the query names under it are rewritten to the stored relative form
+    // before planning, and every result binding is resolved on the way out -
+    // the servlets' behaviour, now for any ARQ execution over the graph (BG-396).
+    private final RelativeIRIResolver resolver;
+    private final java.util.function.Predicate<Node> storedTerm;
+
     private QueryEngineBG(Query query, DatasetGraph dsg, Binding input, Context context) {
         super(query, dsg, input, context);
         BGDatasetGraph.wire(this.context);
+        BeakGraph bg = beakGraphOf(dsg);
+        this.resolver = (bg == null) ? null : bg.resolver();
+        this.storedTerm = (bg == null) ? null : bg.storedTerm();
     }
 
     private QueryEngineBG(Op op, DatasetGraph dsg, Binding input, Context context) {
         super(op, dsg, input, context);
         BGDatasetGraph.wire(this.context);
+        BeakGraph bg = beakGraphOf(dsg);
+        this.resolver = (bg == null) ? null : bg.resolver();
+        this.storedTerm = (bg == null) ? null : bg.storedTerm();
+    }
+
+    /** The BeakGraph a dataset is built on: a BGDatasetGraph's own, else its (unwrapped) default graph. */
+    public static BeakGraph beakGraphOf(DatasetGraph dsg) {
+        if (dsg instanceof BGDatasetGraph b) {
+            return b.getBeakGraph();
+        }
+        Graph g;
+        try {
+            g = dsg.getDefaultGraph();
+        } catch (RuntimeException unsupported) {
+            return null;
+        }
+        while (g instanceof GraphWrapper w) {
+            g = w.get();
+        }
+        return (g instanceof BeakGraph bg) ? bg : null;
+    }
+
+    @Override
+    protected Op modifyOp(Op op) {
+        Op out = super.modifyOp(op);
+        if (resolver != null) {
+            out = NodeTransformLib.transform(resolver.absoluteToStorage(storedTerm), out);
+        }
+        return out;
+    }
+
+    @Override
+    public QueryIterator eval(Op op, DatasetGraph dsg, Binding input, Context context) {
+        QueryIterator it = super.eval(op, dsg, input, context);
+        if (resolver == null) {
+            return it;
+        }
+        ExecutionContext execCxt = ExecutionContext.create(dsg, dsg.getDefaultGraph(), context);
+        return new QueryIterConvert(it, resolver::resolve, execCxt);
     }
 
     @Override

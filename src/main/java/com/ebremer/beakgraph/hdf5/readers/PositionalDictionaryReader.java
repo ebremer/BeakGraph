@@ -229,6 +229,16 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return n > 0 && graphs.binarySearch(0, n - 1, entityId) >= 0;
     }
 
+    @Override
+    public long subjectCount() {
+        return (subjects == null) ? 0 : subjects.getNumEntries();
+    }
+
+    @Override
+    public long objectCount() {
+        return (objects == null) ? 0 : objects.getNumEntries();
+    }
+
     /** Raw ids of the actual graphs (the columnar list), in stored order. */
     public java.util.stream.LongStream streamGraphIds() {
         return (graphs == null) ? java.util.stream.LongStream.empty() : graphs.stream();
@@ -275,38 +285,22 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return getGraphs().locate(element);
     }
 
-    @Override
-    public Node extractGraph(long id) {
-        return getGraphs().extract(id);
-    }
 
     @Override
     public long locateSubject(Node element) {
         return getSubjects().locate(element);
     }
 
-    @Override
-    public Node extractSubject(long id) {
-        return getSubjects().extract(id);
-    }
 
     @Override
     public long locatePredicate(Node element) {
         return getPredicates().locate(element);
     }
 
-    @Override
-    public Node extractPredicate(long id) {
-        return getPredicates().extract(id);
-    }
 
     @Override
     public long locateObject(Node element) {
         return getObjects().locate(element);
     }
 
-    @Override
-    public Node extractObject(long id) {
-        return getObjects().extract(id);
-    }
 }

@@ -507,8 +507,8 @@ public class BeakGraphCLI {
      */
     private java.util.function.UnaryOperator<org.apache.jena.graph.Node> exportTermMap(String fmt, File h5) {
         if (params.base != null) {
-            com.ebremer.beakgraph.core.fuseki.RelativeIRIResolver resolver =
-                    new com.ebremer.beakgraph.core.fuseki.RelativeIRIResolver(params.base);
+            com.ebremer.beakgraph.core.RelativeIRIResolver resolver =
+                    new com.ebremer.beakgraph.core.RelativeIRIResolver(params.base);
             if (!resolver.isActive()) {
                 throw new IllegalArgumentException("-base is not a usable IRI: " + params.base);
             }

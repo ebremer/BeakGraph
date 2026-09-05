@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.pool;
 
+import java.util.Locale;
+import com.ebremer.beakgraph.core.HTTPSeekableByteChannel;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import java.io.IOException;
@@ -17,7 +19,15 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Creates and validates the pooled {@link BeakGraph} readers, keyed by the
- * store's file URI.
+ * store's URI: a {@code file:} URI (any form {@code Path.of(URI)} accepts)
+ * opens the local file, an {@code http:} / {@code https:} URI opens the
+ * store in place over range requests through {@link HTTPSeekableByteChannel}
+ * - the same remote read path {@code BG.getBeakGraph(SeekableByteChannel)}
+ * offers; every other scheme is rejected up front with a message naming the
+ * accepted ones (the pool's URI key type used to promise more than
+ * {@code new File(uri)} delivered, BG-277). Replacement detection (file
+ * signature) applies to local files only; remote stores rely on the
+ * channel's own validator checks.
  *
  * @author erich
  */
@@ -65,12 +75,28 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
         }
     }
 
+    /** Whether a pool key names a local file (the default when the URI carries no scheme). */
+    static boolean isLocal(URI uri) {
+        return uri.getScheme() == null || uri.getScheme().equalsIgnoreCase("file");
+    }
+
+    private static HDF5Reader open(URI uri) throws IOException {
+        if (isLocal(uri)) {
+            return new HDF5Reader(toPath(uri));
+        }
+        String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
+        if (scheme.equals("http") || scheme.equals("https")) {
+            return new HDF5Reader(new HTTPSeekableByteChannel(uri), uri); // the reader owns (and on failure closes) the channel
+        }
+        throw new IllegalArgumentException("BeakGraphPool supports file: and http(s): store URIs, got: " + uri);
+    }
+
     @Override
     public BeakGraph create(URI uri) throws Exception {
         logger.trace("Creating BeakGraph {}", uri);
-        HDF5Reader reader = new HDF5Reader(toPath(uri));
+        HDF5Reader reader = open(uri);
         try {
-            return new BeakGraph(reader, uri, null);
+            return new BeakGraph(reader, uri);
         } catch (RuntimeException | Error e) {
             // Release the mapped file if wrapping fails - a leaked reader pins it.
             try { reader.close(); } catch (Exception ignore) {}
@@ -82,7 +108,9 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
     public PooledObject<BeakGraph> wrap(BeakGraph value) {
         FileSignature opened = null;
         try {
-            opened = FileSignature.of(toPath(value.getURI()));
+            if (isLocal(value.getURI())) {
+                opened = FileSignature.of(toPath(value.getURI()));
+            }
         } catch (IOException | RuntimeException e) {
             // A signature is a replacement detector, not a requirement: without
             // one the instance is still validated by the data probe below.

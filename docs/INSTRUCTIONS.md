@@ -309,6 +309,9 @@ Classes: `hdf5.writers.HDF5Writer` (0) · `huge.HugeHDF5Writer` (1) ·
 `hdf5.writers.parallel.ParallelHDF5Writer` (2) · `hdf5.writers.ultra.UltraHDF5Writer` (3) ·
 `hdf5.writers.hugeUltra.HugeUltraHDF5Writer` (4) · `hdf5.writers.plaid.PlaidHDF5Writer` (5).
 
+Inputs are files (`setSource` / `setSources`); write an in-memory `Dataset` to TriG or
+N-Quads first.
+
 Reading:
 
 ```java
@@ -316,6 +319,21 @@ try (BeakGraph bg = new BeakGraph(new HDF5Reader(new File("data.h5")))) {
     Dataset ds = bg.getDataset();   // query with Jena/ARQ as usual
 }
 ```
+
+Document-relative IRIs (`<>`, `<image.png>`) are stored as written. Give the graph the
+URL the store is served from and they resolve against it in query results, patterns and
+`find()`, exactly as the SPARQL endpoint resolves them:
+
+```java
+URI base = URI.create("https://data.example.org/doc.ttl.h5");
+try (BeakGraph bg = new BeakGraph(new HDF5Reader(new File("doc.ttl.h5")), base, base)) {
+    ...   // SELECT * { <https://data.example.org/doc.ttl.h5> ?p ?o } finds the document
+}
+```
+
+A store opened over HTTP (`BG.getBeakGraph(new HTTPSeekableByteChannel(url))`) uses its own
+URL as the base by default; a local file has no base unless one is given, so its relative
+IRIs come back as stored.
 
 ### Reader tuning (system properties)
 

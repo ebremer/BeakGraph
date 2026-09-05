@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.hdf5.writers;
 
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.Dictionary;
-import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
@@ -25,7 +24,7 @@ import org.slf4j.LoggerFactory;
  * Monolithic Entity Dictionary with Columnar ID lists for Graphs, Subjects, and Objects.
  * @author Erich Bremer
  */
-public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable, DictionaryWriter {
+public class PositionalDictionaryWriter implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriter.class);
     private final DictionaryWriter entitiesdict;
     private final DictionaryWriter predicatesdict;
@@ -142,23 +141,20 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         return maxEntityId + literalsdict.getNumberOfNodes();
     }
    
-    @Override
     public long locateGraph(Node element) {
-        long c = ((Dictionary) entitiesdict).locate(element);
+        long c = entitiesdict.locate(element);
         if (c > 0) return c;
         throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
     }
    
-    @Override
     public long locateSubject(Node element) {
-        long c = ((Dictionary) entitiesdict).locate(element);
+        long c = entitiesdict.locate(element);
         if (c > 0) return c;
         throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
     }
    
-    @Override
     public long locatePredicate(Node element) {
-        long c = ((Dictionary) predicatesdict).locate(element);
+        long c = predicatesdict.locate(element);
         if (c > 0) return c;
         throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
     }
@@ -173,15 +169,15 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
      */
     private long[] encodeTripleTerm(Node tt, Dictionary ownSection) {
         org.apache.jena.graph.Triple t = tt.getTriple();
-        long s = ((Dictionary) entitiesdict).locate(t.getSubject());
-        long p = ((Dictionary) predicatesdict).locate(t.getPredicate());
+        long s = entitiesdict.locate(t.getSubject());
+        long p = predicatesdict.locate(t.getPredicate());
         Node o = t.getObject();
         long oid;
         if (o.isLiteral() || o.isTripleTerm()) {
             long lid = ownSection.locate(o);
             oid = (lid > 0) ? lid + maxEntityId : -1;
         } else {
-            oid = ((Dictionary) entitiesdict).locate(o);
+            oid = entitiesdict.locate(o);
         }
         if (s < 1 || p < 1 || oid < 1) {
             // Same stance as the locate* methods: during a write every component
@@ -192,13 +188,12 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         return new long[]{s, p, oid};
     }
 
-    @Override
     public long locateObject(Node element) {
         if (element.isLiteral() || element.isTripleTerm()) {
-            long c = ((Dictionary) literalsdict).locate(element);
+            long c = literalsdict.locate(element);
             if (c > 0) return c + maxEntityId; // Offset by Entity block size
         } else {
-            long c = ((Dictionary) entitiesdict).locate(element);
+            long c = entitiesdict.locate(element);
             if (c > 0) return c;
         }
         // Consistent with the other locate* methods: during a write every quad's nodes
@@ -206,7 +201,6 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
     }
    
-    @Override
     public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);
         
@@ -232,20 +226,4 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         // Implementation for AutoCloseable if needed
     }
 
-    // --- Interface Boilerplate / Unsupported Methods ---
-
-    @Override public Node extractGraph(long id) { throw new UnsupportedOperationException(); }
-    @Override public Node extractSubject(long id) { throw new UnsupportedOperationException(); }
-    @Override public Node extractPredicate(long id) { throw new UnsupportedOperationException(); }
-    @Override public Node extractObject(long id) { throw new UnsupportedOperationException(); }
-    @Override public long getNumberOfNodes() { throw new UnsupportedOperationException(); }
-    @Override public List<Node> getNodes() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamSubjects() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamPredicates() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamObjects() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamGraphs() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getGraphs() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getSubjects() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getPredicates() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getObjects() { throw new UnsupportedOperationException(); }
 }

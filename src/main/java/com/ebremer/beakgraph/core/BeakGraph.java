@@ -23,6 +23,12 @@ import org.apache.jena.sparql.engine.main.StageGenerator;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderLib;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.apache.jena.sparql.expr.ExprList;
+import org.apache.jena.sparql.graph.NodeTransform;
+import org.apache.jena.sparql.graph.NodeTransformLib;
+import org.apache.jena.sparql.graph.NodeTransform;
+import org.apache.jena.sparql.graph.NodeTransformLib;
+import org.apache.jena.sparql.graph.NodeTransform;
+import org.apache.jena.sparql.graph.NodeTransformLib;
 import org.apache.jena.sparql.util.Context;
 import org.apache.jena.sys.JenaSystem;
 import org.apache.jena.util.iterator.ExtendedIterator;
@@ -50,6 +56,13 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     private final boolean ownsReader;
     private static final Logger logger = LoggerFactory.getLogger(BeakGraph.class);
     private final URI uri;
+    // The document base document-relative IRIs (<>, <image.png>) stored in the
+    // file resolve against - the URL the store is served from. Null when the
+    // API user gave none and the source is not remote: terms are then handed
+    // out in their stored (relative) form. The constructor used to accept and
+    // ignore it (BG-275); the query engine and the dataset graph now honour it
+    // (BG-396).
+    private final URI base;
     // Lazily-computed triple count for this graph. -1 = not yet computed; the graph
     // is read-only so the value is stable once counted.
     private int cachedSize = -1;
@@ -67,19 +80,65 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         com.ebremer.halcyon.hilbert.WKTDatatype.register();
     }
 
+    /** As {@link #BeakGraph(BGReader, URI, URI)} with the base {@link #defaultBase} derives from {@code uri}. */
     public BeakGraph(BGReader reader, URI uri) {
-        this(reader, uri, uri);
+        this(reader, uri, defaultBase(uri));
     }
 
+    /**
+     * The dataset-owning graph over {@code reader}: closing it closes the reader.
+     *
+     * @param uri  the store's identity ({@link #getURI()})
+     * @param base the URL the store is served from, against which its
+     *             document-relative IRIs resolve in query results, patterns
+     *             and {@code find()} - or null to hand them out as stored
+     */
     public BeakGraph(BGReader reader, URI uri, URI base) {
         logger.trace("BeakGraph -> {}", uri.toString());
         init();
         this.uri = uri;
+        this.base = base;
         this.reader = reader;
         this.namedgraph = Quad.defaultGraphIRI;
         this.memberGraphs = null;
         this.ownsReader = true;
         this.root = null;
+    }
+
+    /**
+     * The base a store identified by {@code uri} resolves against unless told
+     * otherwise: the URL itself for a remote (http/https) store - what a
+     * client fetching it would resolve its relative references against - and
+     * none for a local file, whose location says nothing about where the
+     * data is published.
+     */
+    public static URI defaultBase(URI uri) {
+        if (uri == null || uri.getScheme() == null) {
+            return null;
+        }
+        String scheme = uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        return (scheme.equals("http") || scheme.equals("https")) ? uri : null;
+    }
+
+    /** The document base relative IRIs resolve against, or null (terms are served as stored). */
+    public URI getBase() {
+        return (root != null) ? root.getBase() : base;
+    }
+
+    /** The resolver for {@link #getBase()}, or null when there is no base. */
+    public RelativeIRIResolver resolver() {
+        URI b = getBase();
+        if (b == null) {
+            return null;
+        }
+        RelativeIRIResolver r = new RelativeIRIResolver(b.toString());
+        return r.isActive() ? r : null;
+    }
+
+    /** Whether {@code n} is a term of this store - the probe the resolver's input rewrite needs. */
+    public java.util.function.Predicate<Node> storedTerm() {
+        NodeTable nodeTable = reader.getNodeTable();
+        return n -> !com.ebremer.beakgraph.hdf5.jena.NodeId.isDoesNotExist(nodeTable.getNodeIdForNode(n));
     }
 
     /** The synthetic name a graph-set view reports from {@link #getNamedGraph()}; never a stored graph. */
@@ -102,6 +161,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         logger.trace("Create a graph-set view -> {}", members);
         init();
         this.uri = reader.getURI();
+        this.base = (root == null) ? defaultBase(uri) : null; // a rooted view answers getBase() from its root
         this.reader = reader;
         this.namedgraph = GRAPH_SET;
         this.memberGraphs = List.copyOf(members);
@@ -109,8 +169,9 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         this.root = (root == null) ? null : root.rootGraph();
     }
     
+    /** The dataset-owning graph, identified by the reader's URI and resolving against {@link #defaultBase}. */
     public BeakGraph(BGReader reader) {
-        this( reader, reader.getURI(), null);
+        this(reader, reader.getURI(), defaultBase(reader.getURI()));
     }
     
     public URI getURI() {
@@ -129,6 +190,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         logger.trace("Create a SubBeakGraph -> {}", namedgraph);
         init();
         this.uri = reader.getURI();
+        this.base = (root == null) ? defaultBase(uri) : null; // a rooted view answers getBase() from its root
         this.reader = reader;
         this.namedgraph = namedgraph;
         this.memberGraphs = null;
@@ -143,6 +205,21 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     private static void init() {
         if ( initialized ) {
+            // The global stage generator is a slot any component may overwrite
+            // (StageBuilder.setGenerator with something that does not delegate):
+            // a BeakGraph queried through the plain Model path then lost the
+            // id-level solver without a word. Re-wrap whenever the director is
+            // no longer in place - it delegates every other graph, so this is
+            // idempotent and bounded by the foreign replacements (BG-63).
+            if (!(StageBuilder.chooseStageGenerator(ARQ.getContext()) instanceof StageGeneratorDirectorBG)) {
+                synchronized (initLock) {
+                    if (!(StageBuilder.chooseStageGenerator(ARQ.getContext()) instanceof StageGeneratorDirectorBG)) {
+                        logger.warn("ARQ's global stage generator was replaced after BeakGraph was wired; re-installing"
+                                + " the BeakGraph director around the current generator");
+                        wireIntoExecution();
+                    }
+                }
+            }
             return ;
         }
         synchronized(initLock) {
@@ -174,6 +251,11 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     @Override
     public void close() {
+        // GraphBase's own closed flag: isClosed() answers true and every
+        // find() through GraphBase fails with ClosedException instead of
+        // running on a closed reader's leftover buffers (BG-5). A view marks
+        // only itself closed.
+        super.close();
         if (!ownsReader) {
             return; // closing a named-graph view must not close the shared reader
         }
@@ -210,6 +292,33 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         return reader.readGraphs(memberGraphs, bnid, triple, filter, nodeTable);
     }
     
+    /**
+     * A dataset whose default graph is THIS graph and whose named graphs are
+     * the store's. On the dataset-owning graph that is the whole store; on a
+     * named-graph view (from {@code BGDatasetGraph.getGraph}) the default
+     * graph is the view's graph in every API - {@code getDefaultGraph()},
+     * {@code find(defaultGraph, ..)}, SPARQL - while the stored default graph
+     * is not reachable through it (BG-14). Closing a view's dataset closes
+     * only the view, never the shared reader.
+     */
+    /**
+     * A dataset whose default graph is THIS graph and whose named graphs are
+     * the store's. On the dataset-owning graph that is the whole store; on a
+     * named-graph view (from {@code BGDatasetGraph.getGraph}) the default
+     * graph is the view's graph in every API - {@code getDefaultGraph()},
+     * {@code find(defaultGraph, ..)}, SPARQL - while the stored default graph
+     * is not reachable through it (BG-14). Closing a view's dataset closes
+     * only the view, never the shared reader.
+     */
+    /**
+     * A dataset whose default graph is THIS graph and whose named graphs are
+     * the store's. On the dataset-owning graph that is the whole store; on a
+     * named-graph view (from {@code BGDatasetGraph.getGraph}) the default
+     * graph is the view's graph in every API - {@code getDefaultGraph()},
+     * {@code find(defaultGraph, ..)}, SPARQL - while the stored default graph
+     * is not reachable through it (BG-14). Closing a view's dataset closes
+     * only the view, never the shared reader.
+     */
     public Dataset getDataset() {
         BGDatasetGraph dsg = new BGDatasetGraph(this);
         return DatasetFactory.wrap(dsg);
@@ -217,9 +326,23 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     
     @Override
     protected ExtendedIterator<Triple> graphBaseFind(Triple tp) {
-        if (memberGraphs == null) {
-            return reader.graphBaseFind(namedgraph, tp);
+        RelativeIRIResolver resolver = resolver();
+        Triple probe = tp;
+        if (resolver != null) {
+            // A pattern naming the document by its served URL must reach the
+            // stored relative term; results come back resolved (BG-396).
+            probe = NodeTransformLib.transform(resolver.absoluteToStorage(storedTerm()), tp);
         }
+        ExtendedIterator<Triple> found = (memberGraphs == null)
+                ? reader.graphBaseFind(namedgraph, probe) : findInMembers(probe);
+        if (resolver == null) {
+            return found;
+        }
+        NodeTransform out = resolver.storageToAbsolute();
+        return found.mapWith(t -> NodeTransformLib.transform(out, t));
+    }
+
+    private ExtendedIterator<Triple> findInMembers(Triple tp) {
         Var sVar = Var.alloc("s");
         Var pVar = Var.alloc("p");
         Var oVar = Var.alloc("o");
@@ -228,25 +351,34 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         Node o = tp.getObject().isConcrete() ? tp.getObject() : oVar;
         NodeTable nodeTable = reader.getNodeTable();
         Iterator<BindingNodeId> it = reader.readGraphs(memberGraphs, new BindingNodeId(), Triple.create(s, p, o), null, nodeTable);
-        return WrappedIterator.create(it).mapWith(b -> Triple.create(
-                s.isConcrete() ? s : nodeTable.getNodeForNodeId(b.get(sVar)),
-                p.isConcrete() ? p : nodeTable.getNodeForNodeId(b.get(pVar)),
-                o.isConcrete() ? o : nodeTable.getNodeForNodeId(b.get(oVar))));
+        return WrappedIterator.create(it).mapWith(b -> {
+            Node sRes = s.isConcrete() ? s : nodeTable.getNodeForNodeId(b.get(sVar));
+            Node pRes = p.isConcrete() ? p : nodeTable.getNodeForNodeId(b.get(pVar));
+            Node oRes = o.isConcrete() ? o : nodeTable.getNodeForNodeId(b.get(oVar));
+            // An unresolvable id is dropped, as the reader's own graphBaseFind
+            // does, instead of a Triple.create that throws mid-iteration (BG-235).
+            return (sRes == null || pRes == null || oRes == null) ? null : Triple.create(sRes, pRes, oRes);
+        }).filterDrop(t -> t == null);
     }
-    
+
     @Override
     public ExtendedIterator<Triple> find() {
-        return graphBaseFind(Triple.create(Node.ANY, Node.ANY, Node.ANY));
+        return find(Triple.ANY); // through GraphBase.find, which checks the closed flag (BG-5)
+    }
+
+    // Read-only: both the Triple and the (s, p, o) forms of add/delete reach
+    // these through GraphBase and fail with Jena's denied exceptions - the
+    // signal Jena callers (Model.add, GraphUtil, update paths) catch. The
+    // former (s, p, o) overrides threw an unrelated UnsupportedOperationException
+    // reading as a TODO (BG-15).
+    @Override
+    public void performAdd(Triple t) {
+        throw new AddDeniedException("BeakGraph is read-only.", t);
     }
 
     @Override
-    public void add(Node s, Node p, Node o) throws AddDeniedException {
-        throw new UnsupportedOperationException("Not supported yet add."); 
-    }
-
-    @Override
-    public void delete(Node s, Node p, Node o) throws DeleteDeniedException {
-        throw new UnsupportedOperationException("Not supported yet. delete"); 
+    public void performDelete(Triple t) {
+        throw new DeleteDeniedException("BeakGraph is read-only.", t);
     }
 
     // Graph.stream(s, p, o) / stream() keep Jena's find-based defaults: they

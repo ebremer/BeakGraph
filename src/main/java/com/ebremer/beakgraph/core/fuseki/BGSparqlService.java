@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import com.ebremer.beakgraph.core.RelativeIRIResolver;
 import com.ebremer.beakgraph.core.BGDatasetGraph;
 import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.jena.NodeId;

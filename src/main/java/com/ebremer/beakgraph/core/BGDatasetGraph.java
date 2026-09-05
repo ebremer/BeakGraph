@@ -1,7 +1,14 @@
 package com.ebremer.beakgraph.core;
 
+import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
+import org.apache.jena.sparql.graph.NodeTransformLib;
+import org.apache.jena.sparql.graph.NodeTransform;
+import com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG;
+import org.apache.jena.query.ARQ;
+import org.apache.jena.sparql.engine.main.StageGenerator;
+import org.apache.jena.sparql.engine.main.StageBuilder;
 import com.ebremer.beakgraph.hdf5.jena.BGReader;
-
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import java.util.ArrayList;
@@ -31,6 +38,7 @@ import org.apache.jena.vocabulary.RDFS;
  * @author erich
  */
 public class BGDatasetGraph extends DatasetGraphBase {
+    private static final Logger logger = LoggerFactory.getLogger(BGDatasetGraph.class);
     private final BeakGraph bg;
     // Per-dataset execution wiring (the TDB pattern): the engine merges this context
     // over the global ARQ context when a query runs against this dataset, so BG's
@@ -128,6 +136,15 @@ public class BGDatasetGraph extends DatasetGraphBase {
      * is rewritten into container membership and answers nothing.
      */
     public static void wire(Context context) {
+        // The stage generator rides in the dataset's own context too, so an
+        // execution over this dataset never depends on the global slot that
+        // another component may have overwritten (BG-63).
+        StageGenerator current = StageBuilder.chooseStageGenerator(ARQ.getContext());
+        StageBuilder.setGenerator(context, (current instanceof StageGeneratorDirectorBG)
+                ? current : new StageGeneratorDirectorBG(current));
+        // The stage generator rides in the dataset's own context too, so an
+        // execution over this dataset never depends on the global slot that
+        // another component may have overwritten (BG-63).
         QC.setFactory(context, OpExecutorBG.opExecFactoryBG);
         PropertyFunctionRegistry.set(context, BGPropertyFunctions.INSTANCE);
         org.apache.jena.sparql.function.FunctionRegistry.set(context, BGFunctions.INSTANCE);
@@ -175,8 +192,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public Iterator<Node> listGraphNodes() {
+        Node own = bg.getNamedGraph();
         return bg.getReader().getDictionary().streamGraphs()
-                .filter(n -> !Quad.isDefaultGraph(n) && !Quad.isUnionGraph(n))
+                .filter(n -> !Quad.isDefaultGraph(n) && !Quad.isUnionGraph(n) && !n.equals(own))
                 .iterator();
     }
     
@@ -194,16 +212,18 @@ public class BGDatasetGraph extends DatasetGraphBase {
     @Override
     public Iterator<Quad> find(Node g, Node s, Node p, Node o) {
         // If the graph is ANY (Wildcard), we must iterate over all known graphs
-        // because the underlying indices (GSPO) require a concrete Graph ID 
+        // because the underlying indices (GSPO) require a concrete Graph ID
         // to jump to the correct segment.
         if (g == null || Node.ANY.equals(g)) {
             return findInAnyGraph(s, p, o);
         }
-        
+        if (Quad.isDefaultGraph(g)) {
+            return findInDefaultGraph(g, s, p, o);
+        }
         // Concrete Graph Search
         return findInSpecificGraph(g, s, p, o);
     }
-    
+
     @Override
     public Iterator<Quad> findNG(Node g, Node s, Node p, Node o) {
         // findNG matches NAMED graphs only - unlike find(ANY,...), the default
@@ -219,9 +239,20 @@ public class BGDatasetGraph extends DatasetGraphBase {
             // named explicitly (only the wildcard excludes it); match that so a
             // dynamic-dataset or Model view built over this dataset agrees with
             // an in-memory one (BG-183).
-            return findInSpecificGraph(Quad.defaultGraphIRI, s, p, o);
+            return findInDefaultGraph(Quad.defaultGraphIRI, s, p, o);
         }
         return findInSpecificGraph(g, s, p, o);
+    }
+
+    /**
+     * The dataset's default graph is {@code bg} itself - on a named-graph view
+     * that is the view's graph, not the stored default graph, so the quad API
+     * agrees with {@code getDefaultGraph()} and with SPARQL (BG-14).
+     */
+    private Iterator<Quad> findInDefaultGraph(Node sentinel, Node s, Node p, Node o) {
+        Triple triplePattern = pattern(s, p, o);
+        Iterator<BindingNodeId> it = bg.read(new BindingNodeId(), triplePattern, null);
+        return toQuads(it, sentinel, triplePattern, bg.getReader().getNodeTable());
     }
 
     // Map Node.ANY to Variables for the binding system
@@ -229,11 +260,15 @@ public class BGDatasetGraph extends DatasetGraphBase {
     private static final Var P_VAR = Var.alloc("p");
     private static final Var O_VAR = Var.alloc("o");
 
-    private static Triple pattern(Node s, Node p, Node o) {
+    private Triple pattern(Node s, Node p, Node o) {
         Node sPattern = (s == null || Node.ANY.equals(s)) ? S_VAR : s;
         Node pPattern = (p == null || Node.ANY.equals(p)) ? P_VAR : p;
         Node oPattern = (o == null || Node.ANY.equals(o)) ? O_VAR : o;
-        return Triple.create(sPattern, pPattern, oPattern);
+        Triple t = Triple.create(sPattern, pPattern, oPattern);
+        RelativeIRIResolver resolver = bg.resolver();
+        // A caller naming the document by its served URL reaches the stored
+        // relative term (BG-396).
+        return (resolver == null) ? t : NodeTransformLib.transform(resolver.absoluteToStorage(bg.storedTerm()), t);
     }
 
     private Iterator<Quad> findInSpecificGraph(Node g, Node s, Node p, Node o) {
@@ -244,17 +279,31 @@ public class BGDatasetGraph extends DatasetGraphBase {
         return toQuads(it, g, triplePattern, nodeTable);
     }
 
-    /** Convert Bindings to Quads of graph {@code g}. */
-    private static Iterator<Quad> toQuads(Iterator<BindingNodeId> it, Node g, Triple triplePattern, NodeTable nodeTable) {
+    /**
+     * Convert Bindings to Quads of graph {@code g}. A row with an id the node
+     * table cannot resolve is dropped, as {@code HDF5Reader.graphBaseFind}
+     * drops it, instead of reaching a {@code Quad.create} that throws out of
+     * {@code next()} (BG-235); relative terms are resolved against the
+     * graph's base when it has one (BG-396).
+     */
+    private Iterator<Quad> toQuads(Iterator<BindingNodeId> it, Node g, Triple triplePattern, NodeTable nodeTable) {
         Node s = triplePattern.getSubject();
         Node p = triplePattern.getPredicate();
         Node o = triplePattern.getObject();
+        RelativeIRIResolver resolver = bg.resolver();
+        NodeTransform out = (resolver == null) ? null : resolver.storageToAbsolute();
         return WrappedIterator.create(it).mapWith(bnid -> {
             Node sRes = s.isConcrete() ? s : nodeTable.getNodeForNodeId(bnid.get(S_VAR));
             Node pRes = p.isConcrete() ? p : nodeTable.getNodeForNodeId(bnid.get(P_VAR));
             Node oRes = o.isConcrete() ? o : nodeTable.getNodeForNodeId(bnid.get(O_VAR));
-            return Quad.create(g, sRes, pRes, oRes);
-        });
+            if (sRes == null || pRes == null || oRes == null) {
+                logger.warn("Dropping a row of graph {} whose term ids cannot be resolved (s {}, p {}, o {})", g,
+                        bnid.get(S_VAR), bnid.get(P_VAR), bnid.get(O_VAR));
+                return null;
+            }
+            Quad q = Quad.create(g, sRes, pRes, oRes);
+            return (out == null) ? q : NodeTransformLib.transform(out, q);
+        }).filterDrop(q -> q == null);
     }
 
     private Iterator<Quad> findInAnyGraph(Node s, Node p, Node o) {
@@ -263,7 +312,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
         // first quad came back, and spatial stores hold thousands of tile
         // graphs.
         return org.apache.jena.atlas.iterator.Iter.concat(
-                findInSpecificGraph(Quad.defaultGraphIRI, s, p, o), findInNamedGraphs(s, p, o));
+                findInDefaultGraph(Quad.defaultGraphIRI, s, p, o), findInNamedGraphs(s, p, o));
     }
 
     /**
@@ -278,9 +327,10 @@ public class BGDatasetGraph extends DatasetGraphBase {
         Triple triplePattern = pattern(s, p, o);
         NodeTable nodeTable = reader.getNodeTable();
         Iterator<Long> ids = reader.graphIds().boxed().iterator();
+        Node own = bg.getNamedGraph(); // a view's own graph is the dataset's DEFAULT graph, not a named one
         return org.apache.jena.atlas.iterator.Iter.flatMap(ids, gid -> {
             Node gn = graphs.extract(gid);
-            if (Quad.isDefaultGraph(gn) || Quad.isUnionGraph(gn)) {
+            if (Quad.isDefaultGraph(gn) || Quad.isUnionGraph(gn) || gn.equals(own)) {
                 return org.apache.jena.atlas.iterator.Iter.nullIterator();
             }
             return toQuads(reader.read(gid, new BindingNodeId(), triplePattern, null, nodeTable), gn, triplePattern, nodeTable);
