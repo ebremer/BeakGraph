@@ -13,7 +13,7 @@ immutable store.
 |---|---|
 | Java 25+ | The build targets current JDKs. |
 | Maven 3.9+ | Standard build. |
-| Native HDF5 library | **Only** for the disk-based writers (`-method 1` and `-method 4`). Bundled through the `hdf5-backend-*` Maven profiles / JavaCPP artifacts; the in-memory writers (`-method 0/2/3`) use pure-Java jHDF and need nothing native. |
+| Native HDF5 library | **Only** for the disk-based writers (`-method 1`, `4` and `5`). On Linux and macOS the JavaCPP artifacts bundle it and it loads automatically. On Windows the JavaCPP artifact's JNI glue needs a `hdf5.dll` it does not ship: install HDF5 1.14 and put its `bin` directory (`hdf5.dll`, `hdf5_java.dll`) on `PATH`, or set `-Dhdf.hdf5lib.H5.hdf5lib=<path to hdf5_java.dll>`. A system install on the library path is preferred over the bundled natives wherever one exists. The in-memory writers (`-method 0/2/3`) use pure-Java jHDF and need nothing native. |
 | Disk workspace | For `-method 1/4`: free space on the order of a few times the uncompressed source (see §7). |
 
 ## 2. Building

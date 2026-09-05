@@ -18,7 +18,19 @@ import java.util.Deque;
  * is binding-agnostic: which jar supplies that API is a build-time choice (the
  * {@code hdf5-backend-*} profiles in the POM). The default is the JavaCPP
  * preset ({@code org.bytedeco:hdf5-platform}), which bundles the classes AND
- * the native library for the common platforms - nothing to install. Building
+ * the native library for the common platforms. Those bundled natives only
+ * load when JavaCPP's {@code Loader} extracts them: the stock
+ * {@code H5.loadH5Lib()} knows nothing of JavaCPP and resolves
+ * {@code hdf5_java} from {@code java.library.path} alone, so without
+ * {@link #loadNatives()} the ~40 MB of packaged natives were dead weight and
+ * the disk-based writers silently required a system HDF5 install.
+ * {@link #loadNatives()} prefers a system install on the library path (or an
+ * explicit {@code hdf.hdf5lib.H5.hdf5lib} / {@code hdf.hdf5lib.H5.loadLibraryName}
+ * property), then bootstraps the bundled natives, then lets the stock loader
+ * report the failure. Caveat: the preset's Windows jar ships a JNI glue that
+ * imports {@code hdf5.dll} without shipping it, so on Windows the bundled
+ * natives are only usable next to a system {@code hdf5.dll}; Linux and macOS
+ * jars are self-contained. Building
  * with {@code -Dhdf5.ffm} swaps in the HDF Group's own
  * {@code org.hdfgroup:hdf5-java-ffm} bindings (HDF5 2.1.x, Java 25 FFM, no
  * JNI), which come from GitHub Packages (authenticated) and require a system
@@ -40,6 +52,88 @@ import java.util.Deque;
 public final class NativeHdf5File implements StreamingHdf5File {
 
     private static volatile Throwable unavailableCause;
+    private static final String PROP_LIBRARY_NAME = "hdf.hdf5lib.H5.loadLibraryName";
+    private static final String PROP_LIBRARY_PATH = "hdf.hdf5lib.H5.hdf5lib";
+    private static final String GLUE = "hdf5_java";
+    private static boolean loaded;                    // guarded by the class lock
+    private static volatile String nativeSource;      // how the natives were found, once loaded
+    private static volatile Throwable bundledFailure; // why the bundled natives were not used, if so
+
+    /**
+     * Loads the HDF5 JNI bindings exactly once, choosing in order: an explicit
+     * {@code hdf.hdf5lib.H5.loadLibraryName} / {@code hdf.hdf5lib.H5.hdf5lib}
+     * property; a system install whose {@code hdf5_java} library sits on
+     * {@code java.library.path}; the natives bundled in the JavaCPP preset
+     * (extracted through {@code org.bytedeco.javacpp.Loader}, reached
+     * reflectively so the {@code -Dhdf5.ffm} profile compiles without it);
+     * and finally the stock loader's own error. The bundled glue is
+     * test-loaded before it is trusted: on Windows the preset's glue imports
+     * a {@code hdf5.dll} the jar does not carry.
+     */
+    static synchronized void loadNatives() {
+        if (loaded) {
+            return;
+        }
+        String source;
+        if (System.getProperty(PROP_LIBRARY_NAME) != null || System.getProperty(PROP_LIBRARY_PATH) != null) {
+            source = "configured by system property";
+        } else if (onLibraryPath()) {
+            source = "system install on java.library.path";
+        } else {
+            String glue = bundledGlue();
+            if (glue != null) {
+                System.setProperty(PROP_LIBRARY_PATH, glue);
+                source = "bundled JavaCPP natives (" + glue + ")";
+            } else {
+                source = "java.library.path (bundled natives not usable here"
+                       + (bundledFailure != null ? ": " + bundledFailure : "") + ")";
+            }
+        }
+        nativeSource = source;   // recorded before loading so a failure still says what was tried
+        H5.loadH5Lib();
+        loaded = true;
+    }
+
+    /** How the natives were found, or were last sought ({@code null} before any attempt); for logs, errors and tests. */
+    public static String nativeSource() {
+        return nativeSource;
+    }
+
+    private static boolean onLibraryPath() {
+        String path = System.getProperty("java.library.path", "");
+        String file = System.mapLibraryName(GLUE);
+        for (String dir : path.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
+            if (!dir.isEmpty() && new java.io.File(dir, file).isFile()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Path of the bundled, proven-loadable {@code hdf5_java} glue, or null. */
+    private static String bundledGlue() {
+        try {
+            Class<?> loader = Class.forName("org.bytedeco.javacpp.Loader");
+            Class<?> glueClass = Class.forName("org.bytedeco.hdf5." + GLUE);
+            // Extracts the preset's natives for this platform into JavaCPP's
+            // cache and returns the path of the class's own JNI library; the
+            // HDF Group glue sits beside it.
+            String jni = (String) loader.getMethod("load", Class.class).invoke(null, glueClass);
+            if (jni == null) {
+                return null;
+            }
+            java.io.File glue = new java.io.File(new java.io.File(jni).getParentFile(), System.mapLibraryName(GLUE));
+            if (!glue.isFile()) {
+                return null;
+            }
+            System.load(glue.getPath());   // proves its dependencies resolve; the stock loader re-loads it as a no-op
+            return glue.getPath();
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+            bundledFailure = e instanceof java.lang.reflect.InvocationTargetException ite && ite.getCause() != null
+                    ? ite.getCause() : e;
+            return null;
+        }
+    }
 
     private final long fileId;
     private final NativeGroup root;
@@ -59,7 +153,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
      */
     public static boolean isAvailable() {
         try {
-            H5.loadH5Lib();
+            loadNatives();
             H5.H5open();
             return true;
         } catch (Throwable t) {
@@ -76,11 +170,14 @@ public final class NativeHdf5File implements StreamingHdf5File {
     /** Creates a new HDF5 file at {@code path}, truncating any existing file. */
     public static NativeHdf5File create(Path path) throws IOException {
         try {
-            H5.loadH5Lib();
+            loadNatives();
         } catch (Throwable t) {
             throw new IOException(
-                "Native HDF5 library unavailable (needed by the huge writer backend). "
-              + "Ensure org.bytedeco:hdf5-platform natives are on the classpath for this platform.", t);
+                "Native HDF5 library unavailable (needed by the disk-based writers, -method 1/4/5). "
+              + "Bundled natives load on Linux and macOS; on Windows put an HDF5 1.14 install's bin directory "
+              + "(hdf5.dll and hdf5_java.dll) on PATH, or set -D" + PROP_LIBRARY_PATH + "=<path to "
+              + System.mapLibraryName(GLUE) + ">."
+              + (bundledFailure != null ? " Bundled natives: " + bundledFailure : ""), t);
         }
         try {
             long fid = H5.H5Fcreate(path.toString(), HDF5Constants.H5F_ACC_TRUNC,

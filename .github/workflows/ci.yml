@@ -24,4 +24,8 @@ jobs:
           java-version: 25
           cache: maven
       - name: Build and test
-        run: mvn -B -Plib clean test
+        # Linux must load the bundled JavaCPP HDF5 natives (no system install
+        # on the runner): requireNative turns a silent skip of -method 1/4/5
+        # coverage into a failure. Windows cannot: the preset's Windows jar
+        # ships a JNI glue that imports hdf5.dll without shipping it.
+        run: mvn -B -Plib clean test ${{ matrix.os == 'ubuntu-latest' && '-Dbeakgraph.test.requireNative=true' || '' }}

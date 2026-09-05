@@ -47,9 +47,7 @@ class BeakGraphCLIConversionTest {
 
     @Test
     void hugeFlagConvertsThroughDiskBasedWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = Files.createDirectories(dir.resolve("srchuge"));
         Files.write(src.resolve("data.ttl"),
                 "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n".getBytes(StandardCharsets.UTF_8));
@@ -133,17 +131,13 @@ class BeakGraphCLIConversionTest {
 
     @Test
     void methodFiveConvertsThroughPlaidWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         convertsWithMethod(5, "plaid");
     }
 
     @Test
     void methodFourConvertsThroughHugeUltraWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         convertsWithMethod(4, "hugeultra");
     }
 

@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,8 +25,7 @@ class NativeHdf5SmokeTest {
 
     @Test
     void nativeWrittenFileReadsBackThroughJhdf() throws Exception {
-        assumeTrue(NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable: " + NativeHdf5File.getUnavailableCause());
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path h5 = dir.resolve("smoke.h5");
 
         int len = 300_000;

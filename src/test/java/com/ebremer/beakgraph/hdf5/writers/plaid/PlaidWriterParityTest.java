@@ -3,7 +3,6 @@ package com.ebremer.beakgraph.hdf5.writers.plaid;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
-import com.ebremer.beakgraph.huge.NativeHdf5File;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -17,7 +16,6 @@ import org.apache.jena.query.QueryFactory;
 import org.apache.jena.rdf.model.Model;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,7 +36,7 @@ class PlaidWriterParityTest {
 
     @BeforeAll
     static void requireNativeHdf5() {
-        Assumptions.assumeTrue(NativeHdf5File.isAvailable(), "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
     }
 
     private static Set<String> graphNames(org.apache.jena.query.Dataset ds) {

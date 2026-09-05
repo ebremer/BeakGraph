@@ -8,12 +8,10 @@ import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
 import com.ebremer.beakgraph.huge.HugeHDF5Writer;
-import com.ebremer.beakgraph.huge.NativeHdf5File;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.apache.jena.graph.Node;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -80,7 +78,7 @@ class CdtBlankNodeGuardTest {
 
     @Test
     void method1RejectsBlankNodeInsideList() throws Exception {
-        Assumptions.assumeTrue(NativeHdf5File.isAvailable(), "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = ttl("m1-bad.ttl", BAD_TTL);
         File dest = dir.resolve("m1-bad.h5").toFile();
         assertGuardFires(() -> {

@@ -7,10 +7,8 @@ import com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.plaid.PlaidHDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
 import com.ebremer.beakgraph.huge.HugeHDF5Writer;
-import com.ebremer.beakgraph.huge.NativeHdf5File;
 import java.io.File;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.Assumptions;
 
 /**
  * Test-support enumeration of all six writer engines, so cross-engine suites
@@ -28,8 +26,9 @@ public final class WriterEngines {
 
     public record Engine(String name, boolean needsNative, Factory factory) {
         public void assumeAvailable() {
-            Assumptions.assumeTrue(!needsNative || NativeHdf5File.isAvailable(),
-                    "native HDF5 library unavailable");
+            if (needsNative) {
+                NativeTestSupport.assumeNative();
+            }
         }
 
         public void buildStore(File src, File dest) throws Exception {

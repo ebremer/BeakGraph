@@ -225,9 +225,7 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithHugeWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergehuge");
         Parameters p = new Parameters();
         p.src = src.toFile();
@@ -245,9 +243,7 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithHugeUltraWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergehugeultra");
         Parameters p = new Parameters();
         p.src = src.toFile();
@@ -266,9 +262,7 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithPlaidWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergeplaid");
         Parameters p = new Parameters();
         p.src = src.toFile();

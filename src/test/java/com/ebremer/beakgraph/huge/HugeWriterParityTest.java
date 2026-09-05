@@ -23,7 +23,6 @@ import org.apache.jena.query.ResultSet;
 import org.apache.jena.rdf.model.Model;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -43,8 +42,7 @@ class HugeWriterParityTest {
 
     @BeforeAll
     static void requireNative() {
-        assumeTrue(NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable: " + NativeHdf5File.getUnavailableCause());
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
     }
 
     // ------------------------------------------------------------------
