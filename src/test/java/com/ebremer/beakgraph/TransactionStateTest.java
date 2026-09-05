@@ -79,4 +79,29 @@ class TransactionStateTest {
         assertThrows(UnsupportedOperationException.class, () -> dsg.begin(ReadWrite.WRITE));
         assertFalse(dsg.isInTransaction(), "a rejected begin must not leave txn state behind");
     }
+
+    @Test
+    void promotableReadsAreReads() {
+        // BG-3: the standard promotable-read entry points used to throw from
+        // TransactionalLock before any read ran; promote() already said false.
+        for (org.apache.jena.query.TxnType t : new org.apache.jena.query.TxnType[]{
+                org.apache.jena.query.TxnType.READ_PROMOTE, org.apache.jena.query.TxnType.READ_COMMITTED_PROMOTE,
+                org.apache.jena.query.TxnType.READ}) {
+            dsg.begin(t);
+            assertTrue(dsg.isInTransaction(), t.toString());
+            assertFalse(dsg.promote(), "an immutable store never promotes");
+            assertEquals(org.apache.jena.query.TxnType.READ, dsg.transactionType(), "a promotable read runs as a read");
+            assertEquals(ReadWrite.READ, dsg.transactionMode());
+            dsg.end();
+            assertFalse(dsg.isInTransaction());
+        }
+        dsg.begin();   // the no-arg default is READ_PROMOTE
+        assertTrue(dsg.isInTransaction());
+        dsg.end();
+        long n = Txn.calculate(dsg, () -> dsg.stream().count());   // Txn defaults to READ_PROMOTE
+        assertTrue(n > 0);
+        Txn.execute(dsg, () -> assertTrue(dsg.isInTransaction()));
+        assertFalse(dsg.isInTransaction());
+        assertThrows(UnsupportedOperationException.class, () -> dsg.begin(org.apache.jena.query.TxnType.WRITE));
+    }
 }

@@ -62,7 +62,11 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
      * own subject range) are walked. Each subject's whole P/O sub-tree belongs
      * to the chunk owning its position, so chunks neither split nor duplicate rows.
      */
+    /** Number of scans constructed (chunks included) - tests pin what does NOT route here. */
+    public static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
+
     BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long sPosLo, long sPosHi) {
+        HITS.incrementAndGet();
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
         BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');

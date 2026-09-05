@@ -28,6 +28,13 @@ final class PackedQuadSorter implements RecordSorter<IdQuad> {
     PackedQuadSorter(Path workDir, String tag, Index order,
                      long numEntities, long numPredicates, long numObjects,
                      int batch, int fanIn, ForkJoinPool pool, ExecutorService exec) {
+        this(workDir, tag, order, numEntities, numPredicates, numObjects, batch, fanIn, pool, exec,
+                UltraSorterProvider.defaultMergeConcurrency(fanIn, pool.getParallelism()));
+    }
+
+    PackedQuadSorter(Path workDir, String tag, Index order,
+                     long numEntities, long numPredicates, long numObjects,
+                     int batch, int fanIn, ForkJoinPool pool, ExecutorService exec, int maxConcurrentMerges) {
         this.gspo = order == Index.GSPO;
         int bG = MinBits(Math.max(1, numEntities));
         int bS = bG;
@@ -38,7 +45,7 @@ final class PackedQuadSorter implements RecordSorter<IdQuad> {
         this.b2 = gspo ? bP : bO;
         this.b3 = gspo ? bO : bS;
         int totalBits = b0 + b1 + b2 + b3;
-        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec);
+        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec, maxConcurrentMerges);
     }
 
     @Override

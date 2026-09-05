@@ -71,9 +71,15 @@ final class ValueCluster {
             // URIs/bnodes are ordered by term, never by value: no cluster to grow.
             return new long[]{lo, hi};
         }
+        // The ids are provably valid (1..n), so extract() can only fail for a
+        // real reason - an HTTP range read, a corrupt block, a decompression
+        // error. Such a failure must surface: swallowing it (the old
+        // extractOrNull) stopped the walk early and snapped the bound INSIDE
+        // the value-equal cluster, silently dropping rows at the boundary -
+        // the very loss this class exists to prevent (BG-68).
         long n = dict.getNumberOfNodes();
-        while (hi + 1 <= n && valueEqual(extractOrNull(dict, hi + 1), value)) hi++;
-        while (lo - 1 >= 1 && valueEqual(extractOrNull(dict, lo - 1), value)) lo--;
+        while (hi + 1 <= n && valueEqual(dict.extract(hi + 1), value)) hi++;
+        while (lo - 1 >= 1 && valueEqual(dict.extract(lo - 1), value)) lo--;
         return new long[]{lo, hi};
     }
 
@@ -110,7 +116,7 @@ final class ValueCluster {
     }
 
     private static boolean sameValue(Dictionary dict, long id, BigDecimal v) {
-        Node n = extractOrNull(dict, id);
+        Node n = dict.extract(id); // valid id; a failure is real and must surface (BG-68)
         if (n == null || !n.isLiteral()) return false;
         NodeValue nv = nodeValueOrNull(n);
         return nv != null && nv.isNumber() && NumericOrder.isFinite(nv) && NumericOrder.exact(nv).compareTo(v) == 0;

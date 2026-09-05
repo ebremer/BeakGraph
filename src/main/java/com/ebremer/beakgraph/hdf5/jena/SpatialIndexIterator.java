@@ -16,7 +16,9 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.jena.atlas.iterator.Iter;
+import org.apache.jena.query.QueryCancelledException;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.sparql.core.Quad;
@@ -51,6 +53,14 @@ import org.slf4j.LoggerFactory;
  * filter stays in the plan and removes the false positives with real JTS
  * geometry. Candidates are deduplicated across scales and ranges, so one
  * geometry yields one row.
+ * <p>
+ * The candidate collection - up to 31 scales x 256 ranges of GPOS scans - runs
+ * at the FIRST {@link #hasNext()}, not in the constructor, and checks the
+ * execution's cancel signal between ranges and every {@value #CANCEL_CHECK_ROWS}
+ * rows, throwing {@link QueryCancelledException}. Constructing the iterator
+ * is free, so the abortable wrappers the solver installs around the chain
+ * are in place before any work starts and a timeout or abort stops the
+ * collection instead of waiting for it (BG-71).
  */
 public class SpatialIndexIterator implements Iterator<BindingNodeId> {
     private static final Logger logger = LoggerFactory.getLogger(SpatialIndexIterator.class);
@@ -67,28 +77,63 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
      * query at a few thousand cells per side and a few milliseconds.
      */
     static final long PERIMETER_BUDGET = 1L << 14;
+    /** Rows drained between cancel checks inside one range scan. */
+    static final int CANCEL_CHECK_ROWS = 4096;
 
-    private final Iterator<BindingNodeId> outputIterator;
+    private final Iterator<BindingNodeId> input;
+    private final BeakGraph bGraph;
+    private final Var targetVar;
+    private final PatternMatchBG.SpatialContext context;
+    private final AtomicBoolean cancelSignal; // the execution's; may be null
+    private Iterator<BindingNodeId> outputIterator; // built at the first hasNext()
 
-    public SpatialIndexIterator(Iterator<BindingNodeId> input, BeakGraph bGraph, Var targetVar, PatternMatchBG.SpatialContext context) {
-        NodeTable nodeTable = bGraph.getReader().getNodeTable();
-        // The candidate set depends only on the (constant) query region, so it is
-        // computed once and reused for every incoming row - the previous version
-        // re-ran every range sub-query per parent binding.
-        final List<Long> candidates;
-        Envelope env = queryEnvelope(context.searchRegionWKT);
-        if (env != null && bGraph.getReader() instanceof HDF5Reader hdf5) {
-            candidates = collectCandidates(hdf5, env);
-        } else {
-            candidates = List.of();
+    /** Number of seeded chains built - tests pin that the index is used, not just the JTS filter. */
+    public static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * @param cancelSignal the execution's cancel signal ({@code ExecutionContext.getCancelSignal()}),
+     *                     or null when there is none; consulted while collecting candidates
+     */
+    public SpatialIndexIterator(Iterator<BindingNodeId> input, BeakGraph bGraph, Var targetVar,
+                                PatternMatchBG.SpatialContext context, AtomicBoolean cancelSignal) {
+        HITS.incrementAndGet();
+        this.input = input;
+        this.bGraph = bGraph;
+        this.targetVar = targetVar;
+        this.context = context;
+        this.cancelSignal = cancelSignal;
+    }
+
+    private Iterator<BindingNodeId> output() {
+        Iterator<BindingNodeId> out = outputIterator;
+        if (out == null) {
+            NodeTable nodeTable = bGraph.getReader().getNodeTable();
+            // The candidate set depends only on the (constant) query region, so it is
+            // computed once and reused for every incoming row - the previous version
+            // re-ran every range sub-query per parent binding.
+            final List<Long> candidates;
+            Envelope env = queryEnvelope(context.searchRegionWKT);
+            if (env != null && bGraph.getReader() instanceof HDF5Reader hdf5) {
+                candidates = collectCandidates(hdf5, env, cancelSignal);
+            } else {
+                candidates = List.of();
+            }
+            logger.trace("sfIntersects region {} -> {} candidate geometries", context.searchRegionWKT, candidates.size());
+            out = Iter.flatMap(input, parent ->
+                Iter.removeNulls(Iter.map(candidates.iterator(), id -> {
+                    BindingNodeId child = new BindingNodeId(parent);
+                    // A conflicting pre-existing binding for the target var drops the row.
+                    return child.putCompatible(targetVar, NodeId.pack(NodeType.SUBJECT, id), nodeTable) ? child : null;
+                })));
+            outputIterator = out;
         }
-        logger.trace("sfIntersects region {} -> {} candidate geometries", context.searchRegionWKT, candidates.size());
-        this.outputIterator = Iter.flatMap(input, parent ->
-            Iter.removeNulls(Iter.map(candidates.iterator(), id -> {
-                BindingNodeId child = new BindingNodeId(parent);
-                // A conflicting pre-existing binding for the target var drops the row.
-                return child.putCompatible(targetVar, NodeId.pack(NodeType.SUBJECT, id), nodeTable) ? child : null;
-            })));
+        return out;
+    }
+
+    private static void checkCancelled(AtomicBoolean cancelSignal) {
+        if (cancelSignal != null && cancelSignal.get()) {
+            throw new QueryCancelledException();
+        }
     }
 
     /**
@@ -131,7 +176,7 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
     }
 
     /** Distinct entity ids of subjects whose stored bbox cells overlap the region's cover. */
-    private static List<Long> collectCandidates(HDF5Reader reader, Envelope env) {
+    private static List<Long> collectCandidates(HDF5Reader reader, Envelope env, AtomicBoolean cancelSignal) {
         LinkedHashSet<Long> out = new LinkedHashSet<>();
         PositionalDictionaryReader dict = (PositionalDictionaryReader) reader.getDictionary();
         IndexReader gpos = reader.getIndexReader(Index.GPOS);
@@ -160,6 +205,7 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
             long[] lo = {Math.floorDiv(minX, cell), Math.floorDiv(minY, cell)};
             long[] hi = {Math.floorDiv(maxX, cell), Math.floorDiv(maxY, cell)};
             for (Range r : coverRanges(lo, hi)) {
+                checkCancelled(cancelSignal);
                 ExprList bounds = new ExprList();
                 bounds.add(new E_GreaterThanOrEqual(new ExprVar(oVar),
                         NodeValue.makeNode(NodeFactory.createLiteralByValue(r.low()))));
@@ -167,10 +213,15 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
                         NodeValue.makeNode(NodeFactory.createLiteralByValue(r.high()))));
                 Quad pattern = new Quad(Params.SPATIAL, sVar, pred, oVar);
                 BGIteratorPOS it = new BGIteratorPOS(dict, gpos, new BindingNodeId(), pattern, bounds, nodeTable);
+                int rows = 0;
                 while (it.hasNext()) {
                     long sid = it.next().get(sVar);
                     if (sid != NodeId.NONE) {
                         out.add(NodeId.id(sid));
+                    }
+                    if (++rows == CANCEL_CHECK_ROWS) {
+                        rows = 0;
+                        checkCancelled(cancelSignal);
                     }
                 }
             }
@@ -230,11 +281,11 @@ public class SpatialIndexIterator implements Iterator<BindingNodeId> {
 
     @Override
     public boolean hasNext() {
-        return outputIterator.hasNext();
+        return output().hasNext();
     }
 
     @Override
     public BindingNodeId next() {
-        return outputIterator.next();
+        return output().next();
     }
 }

@@ -53,7 +53,7 @@ class LWSStorageServletTest {
             doc.getJsonArray("service").getJsonObject(0).getString("type"));
         assertEquals("https://base.example/description",
             doc.getJsonArray("service").getJsonObject(0).getString("serviceEndpoint"));
-        assertEquals("https://base.example/sparql",
+        assertEquals("https://base.example/rdf",
             doc.getJsonArray("service").getJsonObject(1).getString("serviceEndpoint"));
     }
 
@@ -181,5 +181,18 @@ class LWSStorageServletTest {
         }
         // The link is lexically inside the root but really points outside, so it must be rejected.
         assertNull(LWSStorageServlet.resolveWithin(root, "escape"));
+    }
+
+    @Test
+    void toLiveUriPercentEncodesRawNames() {
+        // BG-40: the canonical model holds raw file names; every advertised
+        // id, Link target and RDF subject must be a valid IRI.
+        String canonicalRoot = com.ebremer.beakgraph.lws.LWSMetadataGenerator.CANONICAL_BASE;
+        assertEquals("http://example:9999/big%20sub/a%20b.h5",
+                LWSStorageServlet.toLiveUri(canonicalRoot + "/big sub/a b.h5", "http://example:9999/"));
+        assertEquals("http://example:9999/100%25%20sure%23tag",
+                LWSStorageServlet.toLiveUri(canonicalRoot + "/100% sure#tag", "http://example:9999/"));
+        assertEquals("http://example:9999/plain/file.h5",
+                LWSStorageServlet.toLiveUri(canonicalRoot + "/plain/file.h5", "http://example:9999/"), "nothing to encode: unchanged");
     }
 }

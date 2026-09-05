@@ -1,6 +1,5 @@
-package com.ebremer.beakgraph.hdf5.writers.hugeUltra;
+package com.ebremer.beakgraph.core.lib;
 
-import com.ebremer.beakgraph.core.lib.NodeComparator;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.jena.datatypes.xsd.XSDDatatype;

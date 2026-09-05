@@ -3,6 +3,8 @@ package com.ebremer.beakgraph.core.lib;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Comparator;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.xml.datatype.DatatypeConstants;
 import javax.xml.datatype.Duration;
 import javax.xml.datatype.XMLGregorianCalendar;
@@ -10,7 +12,10 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.graph.TextDirection;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.expr.NodeValue;
+import org.apache.jena.sparql.expr.nodevalue.NodeValueNode;
 import org.apache.jena.sparql.util.NodeCmp;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Enforces a strict Total Ordering of RDF Nodes.
@@ -25,6 +30,10 @@ public class NodeComparator implements Comparator<Node> {
 
     public static final NodeComparator INSTANCE = new NodeComparator();
 
+    private static final Logger logger = LoggerFactory.getLogger(NodeComparator.class);
+    /** Datatype IRIs whose value construction has failed - warned once each. */
+    private static final Set<String> WARNED_DATATYPES = ConcurrentHashMap.newKeySet();
+
     protected NodeComparator() {}
 
     /**
@@ -36,6 +45,32 @@ public class NodeComparator implements Comparator<Node> {
      */
     protected NodeValue nodeValue(Node n) {
         return NodeValue.makeNode(n);
+    }
+
+    /**
+     * The value of one literal, classified consistently against EVERY partner.
+     * {@code NodeValue.makeNode} never throws for an ill-formed lexical form
+     * (it yields a plain node value that compareAlways files in the last,
+     * term-ordered cluster), so an exception here is abnormal - and it used to
+     * be caught around the whole comparison, ordering that ONE pair by term
+     * while every other pair involving the same literal compared by value:
+     * exactly the pairwise value/term mix the CDT and language branches above
+     * exist to avoid, cyclic, silent, and input-order dependent. The fallback
+     * is now per literal: the literal becomes a plain node value - the same
+     * classification an unparseable literal gets - for every comparison it
+     * takes part in, and the datatype is logged once (BG-19).
+     */
+    private NodeValue valueOf(Node n) {
+        try {
+            return nodeValue(n);
+        } catch (RuntimeException e) {
+            String dt = n.getLiteralDatatypeURI();
+            if (WARNED_DATATYPES.add(dt == null ? "" : dt)) {
+                logger.warn("Cannot build a value for literal {} (datatype {}); literals of this datatype whose value "
+                        + "fails to build are ordered as unparseable literals", n, dt, e);
+            }
+            return new NodeValueNode(n);
+        }
     }
 
     @Override
@@ -140,10 +175,9 @@ public class NodeComparator implements Comparator<Node> {
                 }
                 return Integer.compare(directionRank(n1), directionRank(n2));
             }
+            NodeValue nv1 = valueOf(n1);
+            NodeValue nv2 = valueOf(n2);
             try {
-                NodeValue nv1 = nodeValue(n1);
-                NodeValue nv2 = nodeValue(n2);
-
                 // Timezone-sensitive value spaces cannot go through compareAlways:
                 // it answers value order for XSD-determinate pairs but silently falls
                 // back to TERM order for indeterminate ones (a timezone-less dateTime
@@ -201,9 +235,11 @@ public class NodeComparator implements Comparator<Node> {
                 // stable dictionary positions instead of collapsing onto one id (which
                 // would make locate() return the wrong term).
                 return compareExactLiteralTerms(n1, n2);
-            } catch (Exception e) {
-                // Absolute fallback if Jena fails to parse a highly malformed literal
-                return compareExactLiteralTerms(n1, n2);
+            } catch (RuntimeException e) {
+                // No silent per-pair fallback (see valueOf): a comparison that
+                // fails is an error, and a failed build beats an input-order
+                // dependent dictionary whose lookups miss stored terms.
+                throw new IllegalStateException("Cannot order literals " + n1 + " and " + n2 + ": " + e, e);
             }
         }
 
@@ -314,11 +350,19 @@ public class NodeComparator implements Comparator<Node> {
      * Total order for durations: by total months, then by total seconds, then
      * by exact term. XSD duration equality is exactly (months, seconds)
      * equality, so value-equal durations ("P1D" vs "PT24H") stay adjacent for
-     * ValueCluster; and within each XSD-comparable kind (month-based with
-     * month-based, day/time-based with day/time-based) the order equals XSD
-     * value order. Cross-kind pairs - which SPARQL comparison rejects and
-     * compareAlways used to term-order pairwise-inconsistently - get the fixed
-     * months-first rank.
+     * ValueCluster; and within each pure kind (year/month-only with
+     * year/month-only, day/time-only with day/time-only) the order equals XSD
+     * value order. ARQ answers cross-kind pairs "not comparable" (so
+     * {@code P400D > P1Y} is false, never an exception) - compareAlways
+     * used to term-order them pairwise-inconsistently; here they get the
+     * fixed months-first rank. MIXED durations (a year/month part AND a
+     * day/time part, e.g. "P1M35D") are one XSD class of their own, which
+     * XSD orders by its four-reference-point rule: that order is
+     * determinate for pairs this (months, seconds) order disagrees with
+     * ("P1M35D" is XSD-greater than "P2M1D" yet ranks before it). The
+     * dictionary order is still a strict total order; it just is not ARQ's
+     * there, so the range pushdown must not narrow around a mixed-duration
+     * constant - see FilterBounds.orderAgreesWithArq (BG-326).
      */
     private static int compareDurationTotal(NodeValue nv1, NodeValue nv2, Node n1, Node n2) {
         Duration d1 = nv1.getDuration();

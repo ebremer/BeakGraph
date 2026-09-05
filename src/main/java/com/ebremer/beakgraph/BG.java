@@ -44,8 +44,10 @@ public class BG {
      * opening fails.
      */
     public static BeakGraph getBeakGraph(SeekableByteChannel sbc) throws IOException {
+        // The redacted form: a presigned URL's signature must not become the
+        // graph's identity nor appear in the reader's messages (BG-225).
         URI source = (sbc instanceof HTTPSeekableByteChannel http)
-                ? http.getURI()
+                ? http.getDisplayURI()
                 : URI.create("bg:/channel");
         return getBeakGraph(sbc, source);
     }

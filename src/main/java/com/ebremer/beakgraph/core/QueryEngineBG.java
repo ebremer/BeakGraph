@@ -1,16 +1,29 @@
 package com.ebremer.beakgraph.core;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import org.apache.jena.graph.Graph;
+import org.apache.jena.graph.Node;
 import org.apache.jena.query.Query;
+import org.apache.jena.sparql.ARQConstants;
 import org.apache.jena.sparql.algebra.Op;
+import org.apache.jena.sparql.core.DatasetDescription;
 import org.apache.jena.sparql.core.DatasetGraph;
+import org.apache.jena.sparql.core.DatasetGraphMapLink;
+import org.apache.jena.sparql.core.DynamicDatasets;
+import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.engine.Plan;
 import org.apache.jena.sparql.engine.QueryEngineFactory;
 import org.apache.jena.sparql.engine.QueryEngineRegistry;
 import org.apache.jena.sparql.engine.binding.Binding;
 import org.apache.jena.sparql.engine.main.QueryEngineMain;
+import org.apache.jena.sparql.graph.GraphOps;
 import org.apache.jena.sparql.graph.GraphWrapper;
+import org.apache.jena.sparql.graph.GraphZero;
 import org.apache.jena.sparql.util.Context;
+import org.apache.jena.sparql.util.NodeUtils;
+import com.ebremer.beakgraph.hdf5.jena.BGReader;
 
 /**
  * The query engine for any dataset whose default graph is a {@link BeakGraph},
@@ -24,6 +37,18 @@ import org.apache.jena.sparql.util.Context;
  * the DISTINCT/COUNT fast paths were bypassed. This engine (the TDB pattern:
  * a {@link QueryEngineFactory} registered ahead of the default) accepts those
  * datasets and installs the wiring into each execution's own context.
+ * <p>
+ * It also builds the dataset a {@code FROM} / {@code FROM NAMED} clause (or
+ * the SPARQL protocol's {@code default-graph-uri}) asks for. Jena's generic
+ * {@code DynamicDatasets} makes the default graph a {@code GraphUnionRead}
+ * even for a single {@code FROM <g>}, so the active graph was no longer a
+ * BeakGraph: every BGP went to Jena's executor over {@code Graph.find} with
+ * a HashSet of materialised triples for de-duplication, and the id-level
+ * joins, range and spatial pushdown, reordering, parallel scans and the
+ * DISTINCT/COUNT fast paths were all lost (BG-336). Here the default graph
+ * is the BeakGraph view itself (one graph) or a graph-set view (several,
+ * see {@link BeakGraph#BeakGraph(List, BGReader)}), with the same dataset
+ * semantics as Jena's construction.
  */
 public final class QueryEngineBG extends QueryEngineMain {
 
@@ -87,5 +112,82 @@ public final class QueryEngineBG extends QueryEngineMain {
     private QueryEngineBG(Op op, DatasetGraph dsg, Binding input, Context context) {
         super(op, dsg, input, context);
         BGDatasetGraph.wire(this.context);
+    }
+
+    @Override
+    protected DatasetGraph dynamicDataset(DatasetDescription dsDesc, DatasetGraph dsg, boolean defaultUnionGraph) {
+        if (!(dsg instanceof BGDatasetGraph bg) || dsDesc == null || dsDesc.isEmpty()) {
+            return super.dynamicDataset(dsDesc, dsg, defaultUnionGraph);
+        }
+        return dynamicDataset(bg, dsDesc, defaultUnionGraph);
+    }
+
+    /**
+     * The BeakGraph-backed equivalent of {@code DynamicDatasets.dynamicDataset}:
+     * same graph selection rules, same context handling and marker symbols,
+     * but every graph is a BeakGraph view.
+     */
+    public static DatasetGraph dynamicDataset(BGDatasetGraph bg, DatasetDescription dsDesc, boolean defaultUnionGraph) {
+        Set<Node> defaults = NodeUtils.convertToSetNodes(dsDesc.getDefaultGraphURIs());
+        Set<Node> named = NodeUtils.convertToSetNodes(dsDesc.getNamedGraphURIs());
+        DatasetGraph dsg2 = new DatasetGraphMapLink(defaultGraphFor(bg, defaults, defaultUnionGraph));
+        for (Node gn : named) {
+            if (Quad.isUnionGraph(gn)) {
+                continue;
+            }
+            Graph g = GraphOps.getGraph(bg, gn);
+            if (g != null) {
+                dsg2.addGraph(gn, g);
+            }
+        }
+        dsg2.getContext().putAll(bg.getContext());
+        DatasetGraph dyn = new BGDynamicDatasetGraph(dsg2, bg);
+        dyn.getContext().set(ARQConstants.symDatasetDefaultGraphs, defaults);
+        dyn.getContext().set(ARQConstants.symDatasetNamedGraphs, named);
+        return dyn;
+    }
+
+    /**
+     * Jena's dynamic-dataset marker type (what the engine and Fuseki inspect),
+     * minus its read-only graph wrapping: {@code DatasetGraphReadOnly} hands
+     * out {@code GraphReadOnly} views, which would hide the BeakGraph type
+     * from the executor. The views are read-only by construction anyway.
+     */
+    private static final class BGDynamicDatasetGraph extends DynamicDatasets.DynamicDatasetGraph {
+        BGDynamicDatasetGraph(DatasetGraph viewDsg, DatasetGraph original) {
+            super(viewDsg, original);
+        }
+
+        @Override
+        public Graph getDefaultGraph() {
+            return getR().getDefaultGraph();
+        }
+
+        @Override
+        public Graph getGraph(Node graphNode) {
+            return getR().getGraph(graphNode);
+        }
+    }
+
+    private static Graph defaultGraphFor(BGDatasetGraph bg, Set<Node> defaults, boolean defaultUnionGraph) {
+        BGReader reader = bg.getBeakGraph().getReader();
+        if (defaultUnionGraph || defaults.contains(Quad.unionGraph)) {
+            if (!defaults.contains(Quad.defaultGraphIRI)) {
+                return bg.getGraph(Quad.unionGraph);
+            }
+            // Union of all named graphs plus the default graph.
+            List<Node> members = new ArrayList<>();
+            members.add(Quad.defaultGraphIRI);
+            bg.listGraphNodes().forEachRemaining(members::add);
+            return new BeakGraph(members, reader, bg.getBeakGraph());
+        }
+        if (defaults.isEmpty()) {
+            return GraphZero.instance(); // FROM NAMED only: the default graph is empty
+        }
+        if (defaults.size() == 1) {
+            Node g = defaults.iterator().next();
+            return Quad.isDefaultGraph(g) ? bg.getDefaultGraph() : bg.getGraph(g);
+        }
+        return new BeakGraph(new ArrayList<>(defaults), reader, bg.getBeakGraph());
     }
 }

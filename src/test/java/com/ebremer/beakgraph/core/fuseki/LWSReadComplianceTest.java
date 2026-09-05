@@ -338,4 +338,47 @@ class LWSReadComplianceTest {
         assertTrue(ld.headers().firstValue("Content-Type").orElse("").startsWith("application/ld+json"));
         assertEquals(resp.body(), ld.body(), "negotiated flavors share one payload");
     }
+
+    @Test
+    void advertisedIdentifiersAreValidIris() throws Exception {
+        // BG-40: "big sub" must be advertised as big%20sub everywhere - JSON-LD
+        // ids, Link targets and Turtle IRIs - not with a raw space.
+        HttpResponse<String> root = get("", "Accept", "application/lws+json");
+        assertEquals(200, root.statusCode());
+        boolean sawBigSub = false;
+        for (jakarta.json.JsonValue v : parse(root.body()).getJsonArray("items")) {
+            String id = v.asJsonObject().getString("id");
+            assertEquals(id, java.net.URI.create(id).toString(), "item id must be a valid IRI");
+            assertFalse(id.contains(" "), id);
+            if (id.endsWith("big%20sub")) sawBigSub = true;
+        }
+        assertTrue(sawBigSub, "the encoded 'big sub' container is listed on page 1");
+
+        HttpResponse<String> p1 = get("big%20sub", "Accept", "application/lws+json");
+        assertEquals(200, p1.statusCode());
+        assertEquals(base + "big%20sub", parse(p1.body()).getString("id"));
+        String linkset = linkTarget(p1, "rel=\"linkset\"");
+        assertNotNull(linkset);
+        assertTrue(linkset.contains("big%20sub.meta"), linkset);
+        assertFalse(linkset.contains(" "), linkset);
+        HttpResponse<String> child = get("big%20sub/g00.txt?format=turtle", "Accept", "text/turtle");
+        assertEquals(200, child.statusCode(), child.body());
+        String up = linkTarget(child, "rel=\"up\"");
+        assertEquals(base + "big%20sub", up);
+        org.apache.jena.rdf.model.Model desc = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        org.apache.jena.riot.RDFDataMgr.read(desc, new java.io.ByteArrayInputStream(child.body().getBytes(StandardCharsets.UTF_8)),
+                org.apache.jena.riot.Lang.TURTLE);
+        assertTrue(desc.containsResource(desc.createResource(base + "big%20sub/g00.txt")), child.body());
+
+        HttpResponse<String> ttl = get("big%20sub", "Accept", "text/turtle");
+        assertEquals(200, ttl.statusCode(), ttl.body());
+        org.apache.jena.rdf.model.Model container = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        org.apache.jena.riot.RDFDataMgr.read(container, new java.io.ByteArrayInputStream(ttl.body().getBytes(StandardCharsets.UTF_8)),
+                org.apache.jena.riot.Lang.TURTLE);
+        assertTrue(container.containsResource(container.createResource(base + "big%20sub")), ttl.body());
+        assertTrue(container.containsResource(container.createResource(base + "big%20sub/g00.txt")), ttl.body());
+        HttpResponse<String> html = get("big%20sub", "Accept", "text/html");
+        assertEquals(200, html.statusCode());
+        assertTrue(html.body().contains("href=\"" + base + "\""), "the parent link of a top-level subcontainer is the root");
+    }
 }

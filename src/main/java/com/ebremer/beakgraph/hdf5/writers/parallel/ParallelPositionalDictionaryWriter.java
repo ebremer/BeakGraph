@@ -3,7 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers.parallel;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.GSPODictionary;
-import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Types;
@@ -12,7 +12,6 @@ import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -142,7 +141,7 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
      */
     private static void populate(Set<Node> nodes, ToLongFunction<Node> locator, BitPackedUnSignedLongBuffer target) {
         Node[] sorted = nodes.toArray(Node[]::new);
-        Arrays.parallelSort(sorted, NodeComparator.INSTANCE);
+        NodeSorter.parallelSort(sorted);   // per-sort memoizing comparator (BG-249)
         long[] ids = new long[sorted.length];
         IntStream.range(0, sorted.length).parallel().forEach(i -> ids[i] = locator.applyAsLong(sorted[i]));
         for (long id : ids) {

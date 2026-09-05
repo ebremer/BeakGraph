@@ -94,6 +94,23 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
     public File getDestination() { return dest; }
     public Dataset getDataset() { return ds; }
     
+    /**
+     * The check every engine's {@code build()} runs first: without it the
+     * six {@code write()} methods died on a bare NullPointerException from
+     * {@code getDestination().toPath()} or {@code List.of(null)}, and the
+     * disk engines had already created their workspace (BG-279).
+     *
+     * @throws IllegalStateException naming the missing setter
+     */
+    protected final void requireSourceAndDestination() {
+        if (dest == null) {
+            throw new IllegalStateException("No destination set: call setDestination()");
+        }
+        if (sources.isEmpty() && src == null) {
+            throw new IllegalStateException("No source set: call setSource() or setSources()");
+        }
+    }
+
     // All writers usually need a root group name
     public abstract String getName(); 
     

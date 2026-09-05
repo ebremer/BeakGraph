@@ -5,6 +5,7 @@ import com.ebremer.beakgraph.hdf5.DataOutputBuffer;
 import com.ebremer.beakgraph.hdf5.HDF5Buffer;
 import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
+import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import com.ebremer.beakgraph.utils.StringUtils;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
@@ -13,7 +14,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
-public class FCDWriter implements HDF5Buffer, AutoCloseable {
+public class FCDWriter implements HDF5Buffer, AutoCloseable, DictionarySinks.StringSink {
     private final int blockSize;
     private int stringsInCurrentBlock = 0;
     private String prevString = null;

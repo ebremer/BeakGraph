@@ -325,6 +325,23 @@ class UltraWriterParityTest {
      * including two documents that both say {@code _:b0} and must stay two
      * distinct nodes.
      */
+    /** BG-112: the ultra engine's own VoID path (concurrent per-document accumulation) matches the sequential writer's. */
+    @Test
+    void voidStatisticsParityInBothModes() throws Exception {
+        File src = dir.resolve("voidparity.trig").toFile();
+        Files.write(src.toPath(), com.ebremer.beakgraph.hdf5.writers.parallel.ParallelWriterParityTest.VOID_FIXTURE.getBytes(StandardCharsets.UTF_8));
+        for (com.ebremer.beakgraph.core.VoidMode mode : new com.ebremer.beakgraph.core.VoidMode[]{
+                com.ebremer.beakgraph.core.VoidMode.EXACT, com.ebremer.beakgraph.core.VoidMode.SKETCH}) {
+            File seq = dir.resolve("voidparity-" + mode + ".seq.h5").toFile();
+            File ult = dir.resolve("voidparity-" + mode + ".ultra.h5").toFile();
+            HDF5Writer.Builder().setSource(src).setDestination(seq).setVoidMode(mode).build().write();
+            UltraHDF5Writer.Builder().setSource(src).setDestination(ult).setVoidMode(mode).setCores(3).build().write();
+            assertStoresEquivalent(seq.toPath(), ult.toPath(),
+                    "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g");
+            com.ebremer.beakgraph.hdf5.writers.parallel.ParallelWriterParityTest.assertVoidParity(seq.toPath(), ult.toPath(), "ultra " + mode);
+        }
+    }
+
     @Test
     void mergeParityWithSequentialMerge() throws Exception {
         Path src = Files.createDirectories(dir.resolve("mergesrc"));
@@ -347,5 +364,13 @@ class UltraWriterParityTest {
                 "SELECT ?o WHERE { <http://ex.org/s> <http://ex.org/p> ?o }",
                 "SELECT ?o WHERE { GRAPH <http://ex.org/gm> { <http://ex.org/s> ?p ?o } }",
                 "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?v }");
+        // BG-112: the merge path with statistics too.
+        File seqV = dir.resolve("merge.void.seq.h5").toFile();
+        File ultV = dir.resolve("merge.void.ultra.h5").toFile();
+        HDF5Writer.Builder().setSources(inputs).setDestination(seqV).setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).build().write();
+        UltraHDF5Writer.Builder().setSources(inputs).setDestination(ultV).setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setCores(3).build().write();
+        assertStoresEquivalent(seqV.toPath(), ultV.toPath(),
+                "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?v }");
+        com.ebremer.beakgraph.hdf5.writers.parallel.ParallelWriterParityTest.assertVoidParity(seqV.toPath(), ultV.toPath(), "ultra merge EXACT");
     }
 }

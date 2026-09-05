@@ -16,16 +16,21 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import me.tongfei.progressbar.ProgressBar;
 import me.tongfei.progressbar.ProgressBarBuilder;
 import me.tongfei.progressbar.ProgressBarStyle;
@@ -61,8 +66,7 @@ public class BeakGraphCLI {
         }
         this.params = params;
         this.fc = new FileCounter();
-        String os = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT);
-        ProgressBarStyle style = os.contains("win") ? ProgressBarStyle.ASCII : ProgressBarStyle.COLORFUL_UNICODE_BLOCK;
+        ProgressBarStyle style = styleFor(System.getProperty("os.name"));
         // -merge is one big conversion (and -export its own flow), not a stream
         // of per-file tasks; the per-file progress bar would only render empty.
         if (params.status && !params.merge && params.export == null) {
@@ -74,124 +78,212 @@ public class BeakGraphCLI {
         }
     }
 
-    public static void main(String[] args) throws FileNotFoundException, IOException, Exception {
+    public static void main(String[] args) throws Exception {
+        System.exit(run(args));
+    }
+
+    /** ASCII progress bars on Windows consoles; the fold must not depend on the default locale (BG-361). */
+    static ProgressBarStyle styleFor(String osName) {
+        return osName != null && osName.toLowerCase(java.util.Locale.ROOT).contains("win")
+                ? ProgressBarStyle.ASCII : ProgressBarStyle.COLORFUL_UNICODE_BLOCK;
+    }
+
+    /**
+     * The command line without the process exit: returns the exit code
+     * (0 success, 1 bad arguments / missing paths / nothing to do, 2 at least
+     * one conversion or verification failed). A bare invocation, and a
+     * parseable but mode-less one such as {@code -threads 4} alone, used to
+     * exit 0 having printed nothing (BG-278, BG-155).
+     */
+    static int run(String[] args) throws Exception {
         logger.info(String.format("%s %s", "beakgraph ", Arrays.toString(args)));
         Parameters params = new Parameters();
         JCommander jc = JCommander.newBuilder().addObject(params).build();
         jc.setProgramName("beakgraph");
-        if (args.length != 0) {
-            try {
-                jc.parse(args);
-                if (params.voidExact && params.voidSketch) {
-                    System.err.println("Error: -void and -voidsketch are mutually exclusive. "
-                            + "Use -void for exact in-memory statistics or -voidsketch for the "
-                            + "bounded-memory HyperLogLog version.");
-                    System.exit(1);
-                }
-                if (params.version) {
-                    // Must be handled on the SUCCESS path: version was previously
-                    // printed only inside the ParameterException catch, so a plain
-                    // "-v" parsed fine, matched no branch, and printed nothing.
-                    System.out.println("beakgraph - Version : " + Params.VERSION);
-                    System.exit(0);
-                }
-                if (params.help) {
-                    jc.usage();
-                    System.exit(0);
-                } else {
-                    if (params.sparqlendpoint != null) {
-                        if (!params.sparqlendpoint.exists()) {
-                            System.err.println("Error: -endpoint does not exist: " + params.sparqlendpoint);
-                            System.exit(1);
-                        }
-                        // BGSparqlService reads the limit per query from this property.
-                        System.setProperty("beakgraph.query.timeout.seconds", Long.toString(params.timeout));
-                        SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);
-                        Runtime.getRuntime().addShutdownHook(new Thread(() -> endpoint.shutdown()));
-                        System.out.println("Press Ctrl+C to stop the server...");
-                        try {
-                            Thread.currentThread().join();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                    } else if (params.verify != null) {
-                        if (!params.verify.exists()) {
-                            System.err.println("Error: -verify path does not exist: " + params.verify);
-                            System.exit(1);
-                        }
-                        System.exit(new VerifyCommand(params.verify, params.deep).run());
-                    } else if (params.src != null && params.src.exists() && params.export != null) {
-                        // Export mode: dump BeakGraph(s) back to RDF; no -dest
-                        // involved (output lands beside each source .h5).
-                        BeakGraphCLI bg = new BeakGraphCLI(params);
-                        bg.export();
-                        if (bg.fc.getFailedConversionFileCount() > 0) {
-                            System.exit(2);
-                        }
-                    } else if (params.src != null && params.src.exists()) {
-                        if (params.dest == null) {
-                            // Without this guard every FileProcessor NPEs inside a
-                            // discarded Future: nothing converts, nothing is logged,
-                            // and the run exits 0 reporting success.
-                            System.err.println("Error: -dest is required with -src");
-                            jc.usage();
-                            System.exit(1);
-                        }
-                        JenaSystem.init();
-                        BeakGraphCLI bg = new BeakGraphCLI(params);
-                        if (params.merge) {
-                            bg.merge();
-                        } else {
-                            bg.traverse();
-                        }
-                        if (bg.fc.getFailedConversionFileCount() > 0) {
-                            System.exit(2);
-                        }
-                    } else if (params.src != null) {
-                        System.err.println("Error: -src does not exist: " + params.src);
-                        System.exit(1);
-                    }
-                }
-            } catch (ParameterException ex) {
-                if (params.version) {
-                    System.out.println("beakgraph - Version : " + Params.VERSION);
-                } else {
-                    // Bad arguments are an error: say so on stderr and exit non-zero
-                    // (scripts used to see a successful exit 0 for a failed run).
-                    System.err.println(ex.getMessage());
-                    jc.usage();
-                    System.exit(1);
-                }
-            }
+        if (args.length == 0) {
+            System.err.println("Error: no arguments given. Use -src with -dest (convert), -src with -export, "
+                    + "-verify, -endpoint, -help or -version.");
+            jc.usage();
+            return 1;
         }
+        try {
+            jc.parse(args);
+        } catch (ParameterException ex) {
+            if (params.version) {
+                System.out.println("beakgraph - Version : " + Params.VERSION);
+                return 0;
+            }
+            // Bad arguments are an error: say so on stderr and exit non-zero
+            // (scripts used to see a successful exit 0 for a failed run).
+            System.err.println(ex.getMessage());
+            jc.usage();
+            return 1;
+        }
+        if (params.voidExact && params.voidSketch) {
+            System.err.println("Error: -void and -voidsketch are mutually exclusive. "
+                    + "Use -void for exact in-memory statistics or -voidsketch for the "
+                    + "bounded-memory HyperLogLog version.");
+            return 1;
+        }
+        if (params.version) {
+            // Must be handled on the SUCCESS path: version was previously
+            // printed only inside the ParameterException catch, so a plain
+            // "-v" parsed fine, matched no branch, and printed nothing.
+            System.out.println("beakgraph - Version : " + Params.VERSION);
+            return 0;
+        }
+        if (params.help) {
+            jc.usage();
+            return 0;
+        }
+        if (params.jsonLdRemote) {
+            // Read per parse by RdfSources through JsonLdContexts.
+            System.setProperty(com.ebremer.beakgraph.utils.JsonLdContexts.REMOTE_PROPERTY, "true");
+        }
+        if (params.sparqlendpoint != null) {
+            if (!params.sparqlendpoint.exists()) {
+                System.err.println("Error: -endpoint does not exist: " + params.sparqlendpoint);
+                return 1;
+            }
+            // BGSparqlService reads the limit per query from this property.
+            System.setProperty("beakgraph.query.timeout.seconds", Long.toString(params.timeout));
+            SPARQLEndPoint endpoint = SPARQLEndPoint.getSPARQLEndPoint(params);
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> endpoint.shutdown()));
+            System.out.println("Press Ctrl+C to stop the server...");
+            try {
+                Thread.currentThread().join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return 0;
+        }
+        if (params.verify != null) {
+            if (!params.verify.exists()) {
+                System.err.println("Error: -verify path does not exist: " + params.verify);
+                return 1;
+            }
+            return new VerifyCommand(params.verify, params.deep).run();
+        }
+        if (params.src != null && params.src.exists() && params.export != null) {
+            // Export mode: dump BeakGraph(s) back to RDF; no -dest
+            // involved (output lands beside each source .h5).
+            BeakGraphCLI bg = new BeakGraphCLI(params);
+            bg.export();
+            return (bg.fc.getFailedConversionFileCount() > 0) ? 2 : 0;
+        }
+        if (params.src != null && params.src.exists()) {
+            if (params.dest == null) {
+                // Without this guard every FileProcessor NPEs inside a
+                // discarded Future: nothing converts, nothing is logged,
+                // and the run exits 0 reporting success.
+                System.err.println("Error: -dest is required with -src");
+                jc.usage();
+                return 1;
+            }
+            JenaSystem.init();
+            BeakGraphCLI bg = new BeakGraphCLI(params);
+            if (params.merge) {
+                bg.merge();
+            } else {
+                bg.traverse();
+            }
+            return (bg.fc.getFailedConversionFileCount() > 0) ? 2 : 0;
+        }
+        if (params.src != null) {
+            System.err.println("Error: -src does not exist: " + params.src);
+            return 1;
+        }
+        if (params.export != null || params.dest != null || params.merge) {
+            System.err.println("Error: -src is required with -dest, -merge and -export");
+            jc.usage();
+            return 1;
+        }
+        System.err.println("Error: no operation given. Use -src with -dest (convert), -src with -export, "
+                + "-verify, -endpoint, -help or -version.");
+        jc.usage();
+        return 1;
+    }
+
+    /**
+     * Walks the {@code -src} tree and returns the supported, non-empty RDF
+     * sources in path order, counting directories, zero-length and other
+     * files on {@code fc}. A subtree that cannot be listed (an ACL-denied
+     * folder, a Windows profile's "Application Data" junction, $RECYCLE.BIN,
+     * another user's 0700 directory) or a file whose attributes cannot be
+     * read is logged, counted as unreadable and SKIPPED: {@code Files.walk}
+     * surfaced such errors as an UncheckedIOException from the middle of the
+     * stream, which the callers' catch (IOException) missed, so the run died
+     * with the rest of the tree unconverted, no summary and exit code 1
+     * (BG-418). A directory whose real path is one of its own ancestors (a
+     * junction or symlink cycle) is skipped too instead of recursing until
+     * the path length fails.
+     */
+    static List<Path> scanSources(Path root, FileCounter fc) {
+        final List<Path> accepted = new ArrayList<>();
+        final Deque<Path> realAncestors = new ArrayDeque<>();
+        try {
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    Path real;
+                    try {
+                        real = dir.toRealPath();
+                    } catch (IOException e) {
+                        real = dir.toAbsolutePath().normalize();
+                    }
+                    if (realAncestors.contains(real)) {
+                        logger.warn("Skipping {}: it links back to its ancestor {} (junction/symlink cycle)", dir, real);
+                        fc.incrementUnreadableCount();
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    realAncestors.push(real);
+                    fc.incrementDirectoryCount();
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (attrs.size() == 0) {
+                        fc.incrementZeroLengthFileCount();
+                    } else if (RdfSources.isSupported(file.getFileName().toString())) {
+                        fc.incrementRDFFileCount();
+                        accepted.add(file);
+                    } else {
+                        fc.incrementOtherFileCount();
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    logger.warn("Skipping unreadable {}: {}", file, exc.toString());
+                    fc.incrementUnreadableCount();
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+                    realAncestors.pop();
+                    if (exc != null) {
+                        logger.warn("Directory {} could not be fully read, its remaining entries are skipped: {}", dir, exc.toString());
+                        fc.incrementUnreadableCount();
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException ex) {
+            // walkFileTree reports every I/O failure to the visitor; only a
+            // visitor throwing lands here, and this one never does.
+            logger.error("Failed to scan source tree {}", root, ex);
+        }
+        Collections.sort(accepted);
+        return accepted;
     }
 
     public void traverse() {
-        final List<Path> accepted = new ArrayList<>();
+        final List<Path> accepted = scanSources(params.src.toPath(), fc);
         try (ThreadPoolExecutor engine = new ThreadPoolExecutor(params.threads, params.threads, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>())) {
             engine.prestartAllCoreThreads();
-            Files.walk(params.src.toPath())
-                .parallel()
-                .filter(p -> {
-                    if (p.toFile().isDirectory()) {
-                        fc.incrementDirectoryCount();
-                        return false;
-                    }
-                    if (p.toFile().length() == 0) {
-                        fc.incrementZeroLengthFileCount();
-                        return false;
-                    }
-                    if (RdfSources.isSupported(p.getFileName().toString())) {
-                        return true;
-                    }
-                    fc.incrementOtherFileCount();
-                    return false;
-                })
-                .forEach(p -> {
-                    fc.incrementRDFFileCount();
-                    synchronized (accepted) { accepted.add(p); }
-                });
-            java.util.Collections.sort(accepted);
             if (params.dest == null) {
                 // No -dest: every accepted file is a loud failure (it used to be
                 // an NPE swallowed inside the never-inspected Future).
@@ -230,8 +322,6 @@ public class BeakGraphCLI {
                     break;
                 }
             }
-        } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(BeakGraphCLI.class.getName()).log(Level.SEVERE, null, ex);
         }
         if (params.status) {
             System.out.println(fc);
@@ -248,37 +338,26 @@ public class BeakGraphCLI {
      */
     public void merge() {
         final List<File> inputs = new ArrayList<>();
-        try (var walk = Files.walk(params.src.toPath())) {
-            walk.filter(p -> {
-                    File f = p.toFile();
-                    if (f.isDirectory()) {
-                        fc.incrementDirectoryCount();
-                        return false;
-                    }
-                    if (f.length() == 0) {
-                        fc.incrementZeroLengthFileCount();
-                        return false;
-                    }
-                    if (RdfSources.isSupported(p.getFileName().toString())) {
-                        return true;
-                    }
-                    fc.incrementOtherFileCount();
-                    return false;
-                })
-                .sorted()
-                .forEach(p -> {
-                    fc.incrementRDFFileCount();
-                    inputs.add(p.toFile());
-                });
-        } catch (IOException ex) {
-            logger.error("Failed to scan source tree {}", params.src, ex);
+        for (Path p : scanSources(params.src.toPath(), fc)) {
+            inputs.add(p.toFile());
         }
         if (inputs.isEmpty()) {
             System.err.println("No supported RDF sources found under " + params.src);
             return;
         }
         File dest = params.dest;
-        if (dest.isDirectory()) {
+        // A directory by INTENT, existing or not: an existing directory, a
+        // trailing separator, or a name without a store suffix. java.io.File
+        // strips the separator, so "-dest D:\\out\\" for a directory that did
+        // not exist yet used to write a store named "out" with no .h5, which
+        // -verify, -export and the LWS servlet then all ignored (BG-422).
+        boolean trailingSeparator = dest instanceof Parameters.DestinationFile d && d.trailingSeparator();
+        if (dest.isDirectory() || trailingSeparator
+                || !com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(dest.getName())) {
+            if (!dest.isDirectory()) {
+                logger.info("-dest {} names a directory (no .h5/.hdf5 suffix): the merged store is {}/merged.h5", dest, dest);
+            }
+            dest.mkdirs();
             dest = new File(dest, "merged.h5");
         }
         if (dest.getParentFile() != null) {
@@ -289,9 +368,12 @@ public class BeakGraphCLI {
             // All sources feed the ONE store being written; blank nodes stay
             // distinct per document in every engine.
             newWriter(null, inputs, dest).write();
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
+            // Throwable: an OutOfMemoryError from an in-RAM engine used to escape
+            // main() with a stack trace and no summary (BG-226).
             fc.incrementFailedConversionFileCount();
             logger.error("Failed to merge {} sources into {}", inputs.size(), dest, ex);
+            hintOnHeapExhaustion(ex, dest.toString());
         }
         if (params.status) {
             System.out.println(fc);
@@ -313,7 +395,7 @@ public class BeakGraphCLI {
         if (params.src.isDirectory()) {
             try (var walk = Files.walk(params.src.toPath())) {
                 walk.filter(p -> p.toFile().isFile()
-                                && p.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".h5")
+                                && com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(p.getFileName().toString())
                                 && p.toFile().length() > 0)
                     .sorted()
                     .forEach(p -> inputs.add(p.toFile()));
@@ -324,7 +406,7 @@ public class BeakGraphCLI {
             inputs.add(params.src);
         }
         if (inputs.isEmpty()) {
-            System.err.println("No BeakGraph (.h5) files found under " + params.src);
+            System.err.println("No BeakGraph (.h5/.hdf5) files found under " + params.src);
             return;
         }
         for (File h5 : inputs) {
@@ -361,10 +443,7 @@ public class BeakGraphCLI {
                 case "TRIG" -> "trig";
                 default -> "jsonld";
             };
-            String base = h5.getName();
-            if (base.toLowerCase(java.util.Locale.ROOT).endsWith(".h5")) {
-                base = base.substring(0, base.length() - 3);
-            }
+            String base = com.ebremer.beakgraph.core.BeakGraphFiles.stripExtension(h5.getName());
             Path out = h5.toPath().resolveSibling(base + "." + ext + (params.compress ? ".gz" : ""));
             Path tmp = out.resolveSibling(out.getFileName() + ".tmp");
             logger.info("Exporting {} -> {} ({})", h5.getName(), out.getFileName(), fmt);
@@ -439,19 +518,37 @@ public class BeakGraphCLI {
         boolean lineFormat = "NT".equals(fmt) || "NQ".equals(fmt);
         java.util.concurrent.atomic.AtomicBoolean warned = new java.util.concurrent.atomic.AtomicBoolean();
         return n -> {
-            if (n != null && n.isURI() && com.ebremer.beakgraph.utils.UTIL.isRelativeIRI(n.getURI())) {
+            String rel = relativeReference(n);
+            if (rel != null) {
                 if (lineFormat) {
                     throw new IllegalStateException("Store " + h5.getName() + " holds document-relative IRIs (e.g. <"
-                            + n.getURI() + ">), which " + fmt + " cannot carry: pass -base <the URL the store is served from>"
+                            + rel + ">), which " + fmt + " cannot carry: pass -base <the URL the store is served from>"
                             + " so they are resolved, or export as TTL/TRIG/JSON-LD");
                 }
                 if (warned.compareAndSet(false, true)) {
                     logger.warn("{} holds document-relative IRIs (e.g. <{}>); without -base they are written as stored and "
-                            + "will resolve against the exported file's own location", h5.getName(), n.getURI());
+                            + "will resolve against the exported file's own location", h5.getName(), rel);
                 }
             }
             return n;
         };
+    }
+
+    /** The document-relative IRI a node carries - as a term or as a literal's datatype - or null. */
+    private static String relativeReference(org.apache.jena.graph.Node n) {
+        if (n == null) {
+            return null;
+        }
+        if (n.isURI() && com.ebremer.beakgraph.utils.UTIL.isRelativeIRI(n.getURI())) {
+            return n.getURI();
+        }
+        if (n.isLiteral()) {
+            String dt = n.getLiteralDatatypeURI();
+            if (dt != null && com.ebremer.beakgraph.utils.UTIL.isRelativeIRI(dt)) {
+                return dt;
+            }
+        }
+        return null;
     }
 
     private void writeExport(OutputStream os, org.apache.jena.sparql.core.DatasetGraph dsg, String fmt, File h5)
@@ -502,9 +599,17 @@ public class BeakGraphCLI {
                 var it = dsg.find();
                 while (it.hasNext()) {
                     var q = it.next();
-                    if (isUserGraph(q.getGraph())) {
-                        copy.add(org.apache.jena.sparql.graph.NodeTransformLib.transform(transform, q));
+                    if (!isUserGraph(q.getGraph())) {
+                        continue;
                     }
+                    if (q.getObject().isTripleTerm()) {
+                        // Same stance as the SPARQL endpoint: JSON-LD has no RDF 1.2
+                        // triple-term syntax, so refuse plainly instead of emitting a
+                        // corrupt document or an opaque serializer failure (BG-268).
+                        throw new IllegalArgumentException("JSON-LD cannot represent RDF 1.2 triple terms ("
+                                + h5.getName() + " holds " + q.getObject() + "); export as NT, NQ, TTL or TRIG instead");
+                    }
+                    copy.add(org.apache.jena.sparql.graph.NodeTransformLib.transform(transform, q));
                 }
                 org.apache.jena.riot.RDFDataMgr.write(os, copy, org.apache.jena.riot.Lang.JSONLD);
             }
@@ -530,6 +635,20 @@ public class BeakGraphCLI {
      */
     private int effectiveMethod() {
         return (params.method == 0 && params.huge) ? 1 : params.method;
+    }
+
+    /**
+     * An OutOfMemoryError from an in-RAM engine is almost always "the input
+     * does not fit": say so and name the way out, instead of leaving the
+     * operator with a bare heap dump - a decompressed .gz/.zip source can be
+     * many times its size (BG-226).
+     */
+    private void hintOnHeapExhaustion(Throwable ex, String what) {
+        int method = effectiveMethod();
+        if (ex instanceof OutOfMemoryError && (method == 0 || method == 2 || method == 3)) {
+            logger.error("Out of memory converting {} with the in-memory -method {}: the (decompressed) input is "
+                    + "too large for the heap; use a disk-based engine (-method 1, 4 or 5) or a larger -Xmx", what, method);
+        }
     }
 
     /** True inside a GraalVM native image (the runtime sets this property; tests may set it too). */
@@ -570,6 +689,11 @@ public class BeakGraphCLI {
                     params.workdir.mkdirs();
                     builder.setWorkDirectory(params.workdir.toPath());
                 }
+                // Spill sizing (BG-125): the builders' knobs, reachable from the command line.
+                if (params.termSpillBatch != null) builder.setTermSpillBatch(params.termSpillBatch);
+                if (params.idSpillBatch != null) builder.setIdSpillBatch(params.idSpillBatch);
+                if (params.mergeFanIn != null) builder.setMergeFanIn(params.mergeFanIn);
+                if (params.spillMB != null) builder.setTermSpillBytes(params.spillMB * (1L << 20));
                 return builder.build();
             }
             case 2 -> {
@@ -613,6 +737,11 @@ public class BeakGraphCLI {
                     params.workdir.mkdirs();
                     builder.setWorkDirectory(params.workdir.toPath());
                 }
+                // Spill sizing (BG-125): the builders' knobs, reachable from the command line.
+                if (params.termSpillBatch != null) builder.setTermSpillBatch(params.termSpillBatch);
+                if (params.idSpillBatch != null) builder.setIdSpillBatch(params.idSpillBatch);
+                if (params.mergeFanIn != null) builder.setMergeFanIn(params.mergeFanIn);
+                if (params.spillMB != null) builder.setTermSpillBytes(params.spillMB * (1L << 20));
                 return builder.build();
             }
             case 5 -> {
@@ -631,6 +760,11 @@ public class BeakGraphCLI {
                     params.workdir.mkdirs();
                     builder.setWorkDirectory(params.workdir.toPath());
                 }
+                // Spill sizing (BG-125): the builders' knobs, reachable from the command line.
+                if (params.termSpillBatch != null) builder.setTermSpillBatch(params.termSpillBatch);
+                if (params.idSpillBatch != null) builder.setIdSpillBatch(params.idSpillBatch);
+                if (params.mergeFanIn != null) builder.setMergeFanIn(params.mergeFanIn);
+                if (params.spillMB != null) builder.setTermSpillBytes(params.spillMB * (1L << 20));
                 return builder.build();
             }
             default -> {
@@ -723,9 +857,12 @@ public class BeakGraphCLI {
             // floor, the file reported as converted and the run exiting 0.
             try {
                 if (dest.toFile().exists() && dest.toFile().length() > 0) {
-                    fc.incrementSkippedExistingCount();
-                    logger.info("Skipping {}: destination {} exists", src, dest);
-                    return null;
+                    if (!params.force) {
+                        fc.incrementSkippedExistingCount();
+                        logger.info("Skipping {}: destination {} exists (use -force to rebuild)", src, dest);
+                        return null;
+                    }
+                    logger.info("Rebuilding {} over the existing {} (-force)", src, dest);
                 }
                 dest.getParent().toFile().mkdirs();
                 newWriter(src.toFile(), null, dest.toFile()).write();
@@ -736,6 +873,7 @@ public class BeakGraphCLI {
                     logger.error("The JVM reported {} while converting {}; later results in this run may be unreliable",
                             ex.getClass().getSimpleName(), src);
                 }
+                hintOnHeapExhaustion(ex, src.toString());
             }
             return null;
         }

@@ -32,22 +32,33 @@ public final class IndexCounts {
 
     private IndexCounts() {}
 
-    /** Exact quad count of {@code graph}, or -1 when not index-answerable. */
+    /** Exact quad count of {@code graph} from GSPO, or -1 when not index-answerable. */
     public static long quads(HDF5Reader reader, Node graph) {
+        return quads(reader, graph, Index.GSPO);
+    }
+
+    /**
+     * Exact quad count of {@code graph} descending the three levels of
+     * {@code index}, or -1 when not index-answerable. Both indexes hold the
+     * same rows, so GSPO and GPOS must agree; {@code -verify -deep} compares
+     * them (BG-147).
+     */
+    public static long quads(HDF5Reader reader, Node graph, Index index) {
         long gi = resolveGraph(reader, graph);
         if (gi == UNSUPPORTED) return -1;
-        IndexReader gspo = reader.getIndexReader(Index.GSPO);
-        if (gspo == null) return -1;
-        long[] s = firstLevelRange(gspo, 'S', gi);
-        if (s == null) return 0;
-        // Predicate positions spanned by subjects [sStart..sEnd]: blocks are contiguous,
-        // so the range runs from subject sStart's first predicate to the position just
-        // before subject (sEnd+1)'s first predicate - and identically P -> O below.
-        long[] p = childRange(gspo, 'P', s[0], s[1]);
-        if (p == null) return 0;
-        long[] o = childRange(gspo, 'O', p[0], p[1]);
-        if (o == null) return 0;
-        return o[1] - o[0] + 1;
+        IndexReader ir = reader.getIndexReader(index);
+        if (ir == null) return -1;
+        String order = index.name();
+        long[] l1 = firstLevelRange(ir, order.charAt(1), gi);
+        if (l1 == null) return 0;
+        // Child positions spanned by parents [start..end]: blocks are contiguous,
+        // so the range runs from parent start's first child to the position just
+        // before parent (end+1)'s first child - and identically one level down.
+        long[] l2 = childRange(ir, order.charAt(2), l1[0], l1[1]);
+        if (l2 == null) return 0;
+        long[] l3 = childRange(ir, order.charAt(3), l2[0], l2[1]);
+        if (l3 == null) return 0;
+        return l3[1] - l3[0] + 1;
     }
 
     /** Exact {@code COUNT(DISTINCT ?s)} over {@code { ?s ?p ?o }} in {@code graph}, or -1. */

@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
@@ -14,7 +15,6 @@ import com.ebremer.beakgraph.huge.HugeRecords.RowId;
 import com.ebremer.beakgraph.huge.HugeRecords.TermRow;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import com.ebremer.beakgraph.utils.RdfSources;
-import com.ebremer.ns.GEO;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -34,6 +34,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
@@ -41,7 +42,6 @@ import com.ebremer.beakgraph.core.lib.RelativeIris;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.RDF;
-import org.apache.jena.vocabulary.XSD;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,9 +50,13 @@ import org.slf4j.LoggerFactory;
  * records, external-sort them, derive the dictionaries by merge-dedup, assign
  * ids by sort-merge join (no random lookups), zip the id columns into encoded
  * quads, external-sort those twice for the GSPO/GPOS indexes, and stream every
- * buffer into the HDF5 file. RAM stays bounded by the sorter batch sizes plus
- * the small in-memory populations (predicates, datatypes, language tags, VoID
- * statistics) regardless of quad count.
+ * buffer into the HDF5 file. RAM stays bounded by the sorter batch sizes (a
+ * record cap AND a byte budget per term sorter, BG-125) plus the small
+ * in-memory populations (predicates, datatypes, language tags, VoID
+ * statistics) regardless of quad count - with one exception: a JSON-LD
+ * source has no streaming parser and is expanded whole in memory before its
+ * first quad reaches the sorters, so for JSON-LD the bound is per document
+ * (BG-425; {@link RdfSources#warnIfMaterialized}).
  *
  * <p>Quad-level transforms (default-graph rewrite, relative-IRI handling,
  * numeric canonicalization, spatial/feature augmentation, VoID metadata) mirror
@@ -169,6 +173,13 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 SorterProvider.sequential(termSpillBatch, idSpillBatch, mergeFanIn), null, null);
     }
 
+    HugeBuildPipeline(List<File> sources, boolean spatial, boolean features,
+                      com.ebremer.beakgraph.core.VoidMode voidMode, Path workDir,
+                      int termSpillBatch, int idSpillBatch, int mergeFanIn, long termSpillBytes) {
+        this(sources, spatial, features, voidMode, workDir,
+                SorterProvider.sequential(termSpillBatch, idSpillBatch, mergeFanIn, termSpillBytes), null, null);
+    }
+
     /**
      * The injectable form: {@code provider} supplies every sorter the build
      * uses, and a non-null {@code stagePool} runs independent stage groups
@@ -216,7 +227,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /**
      * Runs independent stages sequentially (no pool: -method 1 behaviour,
      * bounded RAM) or concurrently on the stage pool (-method 4). Every stage
-     * is awaited before returning; the first failure wins.
+     * is awaited before returning. Stages are watched in COMPLETION order, so
+     * the first failure surfaces the moment it happens; the siblings are then
+     * cancelled (interrupted) and waited for before the failure is thrown -
+     * they used to run to the end of their multi-hour sorts first, and the
+     * pipeline never raced ahead of a stage still touching its files (BG-213).
      */
     private void runStages(String what, Stage... stages) throws IOException {
         if (stagePool == null) {
@@ -225,28 +240,63 @@ public final class HugeBuildPipeline implements AutoCloseable {
             }
             return;
         }
-        List<java.util.concurrent.Future<?>> futures = new ArrayList<>(stages.length);
+        java.util.concurrent.BlockingQueue<TrackedTask<Void>> completed = new java.util.concurrent.LinkedBlockingQueue<>();
+        List<TrackedTask<Void>> tasks = new ArrayList<>(stages.length);
         for (Stage s : stages) {
-            futures.add(stagePool.submit(() -> {
+            tasks.add(TrackedTask.submit(stagePool, () -> {
                 s.run();
                 return null;
-            }));
+            }, completed::add));
         }
         IOException first = null;
-        for (java.util.concurrent.Future<?> f : futures) {
+        for (int i = 0; i < stages.length && first == null; i++) {
             try {
-                f.get();
+                completed.take().get();
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
-                if (first == null) first = new IOException("Interrupted during " + what, ex);
+                first = new IOException("Interrupted during " + what, ex);
             } catch (ExecutionException ex) {
                 Throwable c = ex.getCause();
-                if (first == null) {
-                    first = (c instanceof IOException io) ? io : new IOException(what + " failed", c);
-                }
+                c = unwrapPoolWrappers(c);
+                first = (c instanceof IOException io) ? io
+                        : (c instanceof UncheckedIOException uio) ? uio.getCause()
+                        : new IOException(what + " failed", c);
+            } catch (java.util.concurrent.CancellationException ex) {
+                first = new IOException(what + " cancelled", ex);
             }
         }
-        if (first != null) throw first;
+        if (first != null) {
+            for (TrackedTask<Void> t : tasks) {
+                t.abandon();
+            }
+            throw first;
+        }
+    }
+
+    /**
+     * The exception a stage threw, without the pool's wrappers: ForkJoinTask.get()
+     * re-creates the recorded exception through its (Throwable) constructor to
+     * attach the caller's stack (same class, message = cause.toString()), and a
+     * Callable's checked exception may also arrive inside a bare RuntimeException.
+     */
+    static Throwable unwrapPoolWrappers(Throwable c) {
+        while (c != null && c.getCause() != null) {
+            Throwable cause = c.getCause();
+            boolean bareRuntime = c.getClass() == RuntimeException.class;
+            boolean recreated = c.getClass() == cause.getClass() && java.util.Objects.equals(c.getMessage(), cause.toString());
+            if (!bareRuntime && !recreated) {
+                break;
+            }
+            c = cause;
+        }
+        return c;
+    }
+
+    /** Cooperative cancellation point for the long loops: an interrupted stage stops between records. */
+    public static void checkCancelled(String what) throws IOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new IOException("Cancelled: " + what);
+        }
     }
 
     /** Runs the whole build, producing the finished HDF5 file at {@code tmpH5}. */
@@ -255,7 +305,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
 
         // ---- Predicates: final rank ids from the in-RAM population ----
         Node[] sortedPreds = predByTempId.toArray(Node[]::new);
-        Arrays.parallelSort(sortedPreds, NodeComparator.INSTANCE);
+        NodeSorter.parallelSort(sortedPreds);
         long numPredicates = sortedPreds.length;
         long[] tempToFinal = new long[(int) Math.min(Integer.MAX_VALUE, predByTempId.size())];
         // Kept beyond the remap: triple-term predicate components resolve
@@ -299,11 +349,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
         }
 
         // ---- Distinct sorted dictionaries on disk ----
-        RecordFile<Node> entFile = new RecordFile<>(workDir.resolve("entities.sorted"), NodeCodec.INSTANCE);
+        RecordFile<Node> entFile = track(new RecordFile<>(workDir.resolve("entities.sorted"), NodeCodec.INSTANCE));
         mergeDistinctEntities(entFile, gSorted, sSorted, oSorted, iEntSorted);
         long numEntities = entFile.count();
 
-        RecordFile<Node> litFile = new RecordFile<>(workDir.resolve("literals.sorted"), NodeCodec.INSTANCE);
+        RecordFile<Node> litFile = track(new RecordFile<>(workDir.resolve("literals.sorted"), NodeCodec.INSTANCE));
         distinctLiterals(litFile, oSorted, iLitSorted);
         long numLiterals = litFile.count();
         if (iEntSorted != null) {
@@ -374,7 +424,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
         RecordSorter<RowId> gIds = track(provider.rowIdSorter(workDir, "gid", rows, numObjects));
         RecordSorter<RowId> sIds = track(provider.rowIdSorter(workDir, "sid", rows, numObjects));
         RecordSorter<RowId> oIds = track(provider.rowIdSorter(workDir, "oid", rows, numObjects));
-        RecordFile<Long> pFinal = new RecordFile<>(workDir.resolve("pcol.final"), HugeRecords.VAR_LONG_CODEC);
+        RecordFile<Long> pFinal = track(new RecordFile<>(workDir.resolve("pcol.final"), HugeRecords.VAR_LONG_CODEC));
         runStages("id join",
                 () -> joinColumn(gSorted, "Graph", entityCursor(entFile, null, numEntities), graphsList, gIds),
                 () -> joinColumn(sSorted, "Subject", entityCursor(entFile, null, numEntities), subjectsList, sIds),
@@ -458,7 +508,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     // ------------------------------------------------------------------
 
     private void ingest() throws IOException {
-        this.pTempFile = new RecordFile<>(workDir.resolve("pcol.tmpids"), HugeRecords.VAR_LONG_CODEC);
+        this.pTempFile = track(new RecordFile<>(workDir.resolve("pcol.tmpids"), HugeRecords.VAR_LONG_CODEC));
         if (parallelIngest != null) {
             parallelIngest.run(sources, sourceRoot, spatial, features, xvoid, this::commitBatch);
             finishIngest();
@@ -517,15 +567,19 @@ public final class HugeBuildPipeline implements AutoCloseable {
         // Turtle); .gz and .zip are decompressed transparently - one shared rule
         // with the RAM writer and the CLI filter (RdfSources).
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase);
+            RdfSources.warnIfMaterialized(input, opened.lang(), logger);   // JSON-LD: whole document in RAM (BG-425)
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase, input);
             SpatialAugmenter augmenter = new SpatialAugmenter(features);
             // Spatial tasks run concurrently exactly like the RAM writer, but the
             // completion window is BOUNDED: results are drained and spilled as
             // soon as the window fills instead of accumulating until end of parse.
             final int maxInFlight = Math.max(8, Runtime.getRuntime().availableProcessors() * 4);
             final ArrayDeque<Future<ArrayList<Quad>>> inFlight = new ArrayDeque<>();
-            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor()) {
-                parserBuilder.streamQuads()
+            // The quad stream closes before the executor: that aborts and joins
+            // the parser thread when the loop throws (BG-100).
+            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor();
+                 Stream<Quad> quads = parserBuilder.streamQuads()) {
+                quads
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)
@@ -708,20 +762,19 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     /**
-     * Literal stats accounting, mirroring ProcessQuad's branches. RAM counts
-     * distinct literals; per-occurrence counting yields identical min/max and
-     * identical zero-ness of every count, which is all the dictionary widths
-     * and buffer-allocation gates consume.
+     * Literal stats accounting: the CDT guard and the datatype / language
+     * bookkeeping here, the storage-class routing in the RAM builder's ONE
+     * {@code countLiteralStats} (BG-297). RAM counts distinct literals;
+     * per-occurrence counting yields identical min/max and identical
+     * zero-ness of every count, which is all the dictionary widths and
+     * buffer-allocation gates consume.
      */
     private void collectLiteralStats(Node o) {
-        // Same guard as ProcessQuad: blank nodes inside a composite (cdt:) literal
-        // would silently stop co-referring after rank relabeling. This pipeline
+        // Same guard as ProcessQuad: blank nodes or relative IRIs inside a
+        // composite (cdt:) literal would silently stop co-referring. This pipeline
         // has no distinct-literal set, so the check runs per occurrence - it
         // parses composite values only, everything else is one instanceof.
-        if (CdtTerms.containsBlankNode(o)) {
-            throw new IllegalStateException(
-                    "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
-        }
+        CdtTerms.requireStorable(o);
         String dt = o.getLiteralDatatypeURI();
         dataTypes.add(dt);
         String lang = o.getLiteralLanguage();
@@ -731,62 +784,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 langDirSeen = true;
             }
         }
-        if (dt.equals(XSD.xlong.getURI())) {
-            if (literalValueOrNull(o) instanceof Number n) {
-                stats.maxLong = Math.max(stats.maxLong, n.longValue());
-                stats.minLong = Math.min(stats.minLong, n.longValue());
-                stats.numLong++;
-            } else {
-                countStringStored(o.getLiteralLexicalForm());
-            }
-        } else if (dt.equals(XSD.xint.getURI())) {
-            if (literalValueOrNull(o) instanceof Number n) {
-                stats.maxInteger = Math.max(stats.maxInteger, n.intValue());
-                stats.minInteger = Math.min(stats.minInteger, n.intValue());
-                stats.numInteger++;
-            } else {
-                countStringStored(o.getLiteralLexicalForm());
-            }
-        } else if (dt.equals(XSD.xfloat.getURI())) {
-            if (literalValueOrNull(o) instanceof Number n) {
-                stats.maxFloat = Math.max(stats.maxFloat, n.floatValue());
-                stats.minFloat = Math.min(stats.minFloat, n.floatValue());
-                stats.numFloat++;
-            } else {
-                countStringStored(o.getLiteralLexicalForm());
-            }
-        } else if (dt.equals(XSD.xdouble.getURI())) {
-            if (literalValueOrNull(o) instanceof Number n) {
-                stats.maxDouble = Math.max(stats.maxDouble, n.doubleValue());
-                stats.minDouble = Math.min(stats.minDouble, n.doubleValue());
-                stats.numDouble++;
-            } else {
-                countStringStored(o.getLiteralLexicalForm());
-            }
-        } else if (dt.equals(XSD.xstring.getURI()) || dt.equals(GEO.wktLiteral.getURI())
-                || dt.equals(XSD.xboolean.getURI()) || dt.equals(RDF.langString.getURI())) {
-            countStringStored(o.getLiteralLexicalForm());
-        } else if (dt.equals(XSD.dateTime.getURI())) {
-            String lex = o.getLiteralLexicalForm();
-            int t = lex.indexOf('T');
-            countStringStored((t > 0) ? lex.substring(0, t) : lex);
-        } else {
-            countStringStored(o.getLiteralLexicalForm());
-        }
-    }
-
-    private void countStringStored(String lex) {
-        stats.longestStringLength = Math.max(stats.longestStringLength, lex.length());
-        stats.shortestStringLength = Math.min(stats.shortestStringLength, lex.length());
-        stats.numStrings++;
-    }
-
-    private static Object literalValueOrNull(Node o) {
-        try {
-            return o.getLiteralValue();
-        } catch (RuntimeException e) {
-            return null;
-        }
+        PositionalDictionaryWriterBuilder.countLiteralStats(o, stats);
     }
 
     private static boolean isGeoLiteral(Quad quad) {
@@ -798,33 +796,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     // ------------------------------------------------------------------
 
     public static Quad relativize(Quad q) {
-        Node qg = q.getGraph();
-        Node qs = q.getSubject();
-        Node qp = q.getPredicate();
-        Node qo = q.getObject();
-        Node g = relativizeNode(qg);
-        Node s = relativizeNode(qs);
-        Node p = relativizeNode(qp);
-        Node o = relativizeNode(qo);
-        if (g == qg && s == qs && p == qp && o == qo) {
-            return q;
-        }
-        return new Quad(g, s, p, o);
-    }
-
-    private static Node relativizeNode(Node n) {
-        if (n != null && n.isTripleTerm()) {
-            // A sentinel-based IRI must never survive into stored data no matter
-            // how deeply nested; map() recurses nested triple-term objects itself.
-            return TripleTerms.map(n, HugeBuildPipeline::relativizeNode);
-        }
-        if (n == null || !n.isURI()) {
-            return n;
-        }
-        // See PositionalDictionaryWriterBuilder.relativizeNode: textual
-        // relativization keeps "../x" (any depth) and "/x" forms intact.
-        String rel = RelativeIris.toStorageForm(n.getURI());
-        return rel == null ? n : NodeFactory.createURI(rel);
+        return RelativeIris.relativizeQuad(q);   // the one implementation (BG-432)
     }
 
     /**
@@ -878,10 +850,16 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     private RecordFile<TermRow> materialize(RecordSorter<TermRow> sorter, String name) throws IOException {
-        RecordFile<TermRow> rf = new RecordFile<>(workDir.resolve(name), HugeRecords.TERM_ROW_CODEC);
+        // Tracked: a failure elsewhere must close and delete this file even
+        // when the exception escapes mid-write (BG-124).
+        RecordFile<TermRow> rf = track(new RecordFile<>(workDir.resolve(name), HugeRecords.TERM_ROW_CODEC));
         try (RecordSorter.SortedCursor<TermRow> s = sorter.sorted()) {
+            long n = 0;
             while (s.hasNext()) {
                 rf.append(s.next());
+                if ((++n & 0xFFFF) == 0) {
+                    checkCancelled("materializing " + name);
+                }
             }
         }
         rf.finish();

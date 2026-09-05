@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -142,5 +143,35 @@ class LocaleIndependentIdentifiersTest {
         assertFalse(disk.isEmpty());
         assertEquals(ram, disk, "grid graph names must agree across engines");
         for (String g : disk) assertTrue(GRID.matcher(g).matches(), g);
+    }
+
+    @Test
+    void exportBytesDoNotDependOnTheLocale() throws Exception {
+        // BG-356: the same store exported under ar-EG and under a Latin-digit
+        // locale must produce byte-identical N-Triples (labels are minted at
+        // read time from the id; they were formatted with the default locale).
+        HDF5Reader reader = (HDF5Reader) bg.getReader();
+        java.io.ByteArrayOutputStream arabic = new java.io.ByteArrayOutputStream();
+        assertTrue(com.ebremer.beakgraph.hdf5.jena.IndexExport.tryWrite(reader, arabic, false));
+        Locale before = Locale.getDefault(Locale.Category.FORMAT);
+        Locale.setDefault(Locale.Category.FORMAT, Locale.US);
+        java.io.ByteArrayOutputStream latin = new java.io.ByteArrayOutputStream();
+        try {
+            assertTrue(com.ebremer.beakgraph.hdf5.jena.IndexExport.tryWrite(reader, latin, false));
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, before);
+        }
+        assertArrayEquals(latin.toByteArray(), arabic.toByteArray(), "export bytes must not depend on the JVM locale");
+        String text = arabic.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("_:"), text);
+        for (String line : text.split("\\n")) {
+            for (String token : line.split(" ")) {
+                if (token.startsWith("_:")) {
+                    // NodeFormatterNT prefixes labels it re-encodes with "B".
+                    String label = token.substring(2).replaceFirst("^B", "");
+                    assertTrue(BNODE.matcher(label).matches(), "exported label must be b + 20 ASCII digits: " + token);
+                }
+            }
+        }
     }
 }

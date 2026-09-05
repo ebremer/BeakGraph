@@ -13,9 +13,14 @@ import java.nio.ByteBuffer;
  * <p>Datasets that fit a ByteBuffer keep today's exact path - jHDF's own
  * mapped buffer, whose lifetime jHDF manages via {@code HdfFile.close()}.
  * Datasets past the 2 GiB ByteBuffer ceiling (which {@code getBuffer()}
- * cannot serve at all) are FFM-mapped directly from the underlying file at
- * {@code dataAddress + userBlockSize} - the same file offset jHDF itself
- * would map - with an automatic arena managing the unmap.
+ * cannot serve at all) are FFM-mapped at {@code dataAddress + userBlockSize}
+ * - the same file offset jHDF itself would map - through jHDF's OWN open
+ * channel, with an automatic arena managing the unmap. Mapping through that
+ * channel pins the same file the dataset's metadata (address, size, the
+ * numEntries / width attributes) came from; re-opening the path mapped
+ * whatever the path named at that moment, and index datasets are mapped
+ * lazily at first use, so a store rebuilt in place between open and first
+ * query decoded old metadata against new bytes (BG-448).
  *
  * <p>Channel-backed files (an {@code HdfFile} opened over a
  * {@code SeekableByteChannel}, e.g. HTTP range requests) take neither path:
@@ -52,15 +57,18 @@ public final class DatasetBytes {
             return new ByteBufferBytes(ByteBuffer.allocate(0));
         }
         long address = dataset.getDataAddress();
-        if (address >= 0
-                && dataset.getHdfFile().getHdfBackingStorage() instanceof HdfFileChannel hfc
-                && hfc.getFileChannel() instanceof FileChannelFromSeekableByteChannel) {
+        HdfFileChannel hfc = dataset.getHdfFile().getHdfBackingStorage() instanceof HdfFileChannel c ? c : null;
+        if (address >= 0 && hfc != null && hfc.getFileChannel() instanceof FileChannelFromSeekableByteChannel) {
             return new ChannelBytes(hfc.getFileChannel(),
                     address + dataset.getHdfFile().getUserBlockSize(), size);
         }
         if (size > ffmThreshold && address >= 0) {
             try {
                 long fileOffset = address + dataset.getHdfFile().getUserBlockSize();
+                if (hfc != null) {
+                    // The file jHDF has open - the one the metadata describes.
+                    return MemorySegmentBytes.map(hfc.getFileChannel(), fileOffset, size);
+                }
                 return MemorySegmentBytes.map(dataset.getFileAsPath(), fileOffset, size);
             } catch (IOException e) {
                 throw new UncheckedIOException(

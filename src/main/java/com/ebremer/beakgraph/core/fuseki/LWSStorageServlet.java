@@ -207,8 +207,7 @@ public class LWSStorageServlet extends HttpServlet {
         STORAGE_ROOT = root;
     }
     private boolean isHDF5(Path file) {
-        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
-        return name.endsWith(".h5");
+        return com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(file.getFileName().toString());
     }
 
     private boolean isSparqlRequest(HttpServletRequest req) {
@@ -362,7 +361,9 @@ public class LWSStorageServlet extends HttpServlet {
                     .add("serviceEndpoint", base + "description"))
                 .add(Json.createObjectBuilder()
                     .add("type", "SparqlService")
-                    .add("serviceEndpoint", base + "sparql")))
+                    // /rdf is the SPARQL protocol endpoint in both modes; /sparql
+                    // is the YASGUI page, which answers 405 to a query POST (BG-37).
+                    .add("serviceEndpoint", base + "rdf")))
             .build();
         return writeJson(doc);
     }
@@ -432,14 +433,17 @@ public class LWSStorageServlet extends HttpServlet {
      * onto the live serving base. {@code base} ends with '/' and the canonical
      * remainder starts with '/', so naive concatenation minted double-slash URIs that
      * 404 when dereferenced; the canonical host/port also leaked into Link headers and
-     * linksets whenever the server ran on a non-default port.
+     * linksets whenever the server ran on a non-default port. The canonical model
+     * holds RAW file names, so the remainder is percent-encoded here - the single
+     * encoding point for item ids, Link targets and RDF subjects (a raw space in a
+     * JSON-LD id, a Link {@code <...>} or a Turtle IRI is invalid; BG-40).
      */
     static String toLiveUri(String canonicalUri, String base) {
         String rest = canonicalUri.substring(HTTP_ROOT.length());
         while (rest.startsWith("/")) {
             rest = rest.substring(1);
         }
-        return base + rest;
+        return base + encodeHref(rest);
     }
 
     /**
@@ -830,11 +834,8 @@ public class LWSStorageServlet extends HttpServlet {
                     out.println("<p>");
                     String up = getParentURI(resourceURI);
                     if (up != null) {
-                        // Same target as the rel="up" Link header, percent-encoded
-                        // like every other href (parent names may need it).
-                        String upRest = up.substring(HTTP_ROOT.length());
-                        while (upRest.startsWith("/")) upRest = upRest.substring(1);
-                        out.println("<a href=\"" + escapeHtml(base + encodeHref(upRest)) + "\">&#8679; Parent</a> | ");
+                        // Same (percent-encoded) target as the rel="up" Link header.
+                        out.println("<a href=\"" + escapeHtml(toLiveUri(up, base)) + "\">&#8679; Parent</a> | ");
                     }
                     out.println("<a href=\"" + escapeHtml(base) + "description\">Storage Description</a> | ");
                     out.println("<a href=\"?format=turtle\">Turtle</a> | <a href=\"?format=jsonld\">JSON-LD</a> | ");
@@ -932,7 +933,8 @@ public class LWSStorageServlet extends HttpServlet {
         if (forceTurtle || forceJsonLd) {
             // RDF description of the data resource (its metadata triples).
             Model out = ModelFactory.createDefaultModel();
-            Resource httpR = out.createResource(base + (reqPath.isEmpty() ? "" : reqPath));
+            // The live, percent-encoded name (reqPath is the DECODED path).
+            Resource httpR = out.createResource(toLiveUri(resourceURI, base));
             r.listProperties().forEachRemaining(s -> {
                 RDFNode obj = s.getObject();
                 if (!exposableToClient(obj)) return; // never leak file:/// server paths

@@ -4,6 +4,7 @@ import static com.ebremer.beakgraph.Params.BLOCKSIZE;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
+import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.hdf5.Index;
 import io.jhdf.api.WritableGroup;
 import java.nio.file.Path;
@@ -150,7 +151,9 @@ public class BGIndex {
         // INFO bracketing: sorting millions of quads takes minutes with no other output.
         logger.info("Sorting {} quads for {}...", allQuads.length, type.name());
         long sortStart = System.nanoTime();
-        Arrays.parallelSort(allQuads, type.getComparator());
+        // A per-sort memoizing comparator: literal objects convert once
+        // instead of on every comparison through Jena's global cache (BG-249).
+        Arrays.parallelSort(allQuads, type.getComparator(NodeSorter.sortComparator(allQuads.length)));
         logger.info("Sorted {} in {} s", type.name(), (System.nanoTime() - sortStart) / 1_000_000_000L);
 
         LevelState l1 = new LevelState(), l2 = new LevelState(), l3 = new LevelState();

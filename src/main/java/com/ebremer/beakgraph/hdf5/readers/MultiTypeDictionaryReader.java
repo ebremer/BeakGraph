@@ -146,6 +146,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
     private TieredIndex buildTieredIndex() {
         if (numEntries <= TIER_SPACING) return EMPTY_TIER;
+        // Over HTTP the sampled tier is a false economy: extracting every
+        // 1024th entry decodes a whole front-coded block each, i.e. touches
+        // essentially every range block of the section - a full download on
+        // the first lookup - to save a handful of binary-search probes that
+        // cost O(log n) blocks. The plain search over [1, numEntries] runs
+        // instead; the search and block caches absorb repeats (BG-240).
+        if (offsets.isRemote()) return EMPTY_TIER;
         int tierSize = (int) (numEntries / TIER_SPACING);
         long[] ids = new long[tierSize];
         Node[] nodes = new Node[tierSize];
@@ -271,6 +278,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
     @Override
     public long search(Node element) {
+        // Build the tier (a one-off pass over the section) BEFORE entering the
+        // cache's mapping function, which runs under a ConcurrentHashMap bin
+        // lock: every concurrent search on the section would otherwise queue
+        // behind the build.
+        tieredIndex();
         return searchCache.get(element, this::searchFAST);
     }
 

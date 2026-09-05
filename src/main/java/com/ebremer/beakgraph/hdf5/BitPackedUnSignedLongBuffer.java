@@ -25,7 +25,7 @@ import java.util.stream.StreamSupport;
  * the write side after {@link #prepareForReading()}) the internally
  * accumulated bytes.
  */
-public class BitPackedUnSignedLongBuffer {
+public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
     private ByteBuffer buffer;
     private RandomAccessBytes data;
     private final int bitWidth;
@@ -68,6 +68,23 @@ public class BitPackedUnSignedLongBuffer {
     private BitPackedUnSignedLongBuffer(RandomAccessBytes data, long numEntries, int bitWidth) {
         this.path = null;
         checkWidth(bitWidth);
+        // The attributes are the file's word, not the truth: a corrupted or
+        // foreign numEntries/width used to be stored verbatim and surfaced as
+        // a BufferUnderflow/IndexOutOfBounds at query time, after -verify had
+        // mapped the dataset and said OK (BG-345). Every reader (indexes,
+        // dictionaries, FCD blocks) constructs through here, so the check
+        // fails the open instead.
+        long needed;
+        try {
+            needed = (numEntries < 0) ? Long.MAX_VALUE : (Math.multiplyExact(numEntries, (long) bitWidth) + 7) >>> 3;
+        } catch (ArithmeticException overflow) {
+            needed = Long.MAX_VALUE;
+        }
+        if (numEntries < 0 || needed > data.size()) {
+            throw new IllegalStateException("bit-packed buffer declares " + numEntries + " x " + bitWidth
+                    + "-bit entries (" + (numEntries < 0 ? "negative" : needed + " bytes") + ") but only "
+                    + data.size() + " bytes are stored");
+        }
         this.bitWidth = bitWidth;
         this.buffer = null; // pure read view: the write-side API is unavailable
         this.data = data;
@@ -83,6 +100,11 @@ public class BitPackedUnSignedLongBuffer {
      * constructor overload: the writers construct with a null ByteBuffer
      * literal, which an overload would make ambiguous.
      */
+    /** Whether the backing bytes are read from a remote store (see {@link RandomAccessBytes#isRemote()}). */
+    public boolean isRemote() {
+        return data != null && data.isRemote();
+    }
+
     public static BitPackedUnSignedLongBuffer readView(RandomAccessBytes data, long numEntries, int bitWidth) {
         return new BitPackedUnSignedLongBuffer(data, numEntries, bitWidth);
     }

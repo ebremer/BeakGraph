@@ -40,23 +40,57 @@ public class BGDatasetGraph extends DatasetGraphBase {
     private final Transactional txn = TransactionalLock.createMRSW();
 
     /**
-     * The standard property-function registry minus rdfs:member. BG stores use
-     * rdfs:member as a plain stored predicate; Jena's container-membership property
-     * function would rewrite those patterns into rdf:_1/rdf:_2... lookups and answer
-     * nothing. Scoped here per dataset - the global registry is left untouched.
+     * The global property-function registry minus rdfs:member, consulted LIVE.
+     * BG stores use rdfs:member as a plain stored predicate; Jena's
+     * container-membership property function would rewrite those patterns
+     * into rdf:_1/rdf:_2... lookups and answer nothing. Scoped here per
+     * dataset - the global registry is left untouched. A one-time COPY of the
+     * global registry used to be taken at class initialisation, so a property
+     * function registered later (jena-text, GeoSPARQL setup, application code)
+     * was invisible to every BeakGraph dataset for the JVM's lifetime (BG-6);
+     * this view delegates every lookup to the global registry as it is now.
      */
     private static final class BGPropertyFunctions {
-        static final PropertyFunctionRegistry INSTANCE = build();
-        private static PropertyFunctionRegistry build() {
-            PropertyFunctionRegistry global = PropertyFunctionRegistry.get();
-            PropertyFunctionRegistry reg = new PropertyFunctionRegistry();
-            global.keys().forEachRemaining(uri -> {
-                if (!RDFS.member.getURI().equals(uri)) {
-                    reg.put(uri, global.get(uri));
-                }
-            });
-            return reg;
-        }
+        static final PropertyFunctionRegistry INSTANCE = new PropertyFunctionRegistry() {
+            private boolean masked(String uri) {
+                return RDFS.member.getURI().equals(uri);
+            }
+
+            @Override
+            public org.apache.jena.sparql.pfunction.PropertyFunctionFactory get(String uri) {
+                return masked(uri) ? null : PropertyFunctionRegistry.get().get(uri);
+            }
+
+            @Override
+            public boolean isRegistered(String uri) {
+                return !masked(uri) && PropertyFunctionRegistry.get().isRegistered(uri);
+            }
+
+            @Override
+            public boolean manages(String uri) {
+                return !masked(uri) && PropertyFunctionRegistry.get().manages(uri);
+            }
+
+            @Override
+            public Iterator<String> keys() {
+                return org.apache.jena.atlas.iterator.Iter.filter(PropertyFunctionRegistry.get().keys(), u -> !masked(u));
+            }
+
+            @Override
+            public void put(String uri, org.apache.jena.sparql.pfunction.PropertyFunctionFactory factory) {
+                PropertyFunctionRegistry.get().put(uri, factory);
+            }
+
+            @Override
+            public void put(String uri, Class<?> extClass) {
+                PropertyFunctionRegistry.get().put(uri, extClass);
+            }
+
+            @Override
+            public org.apache.jena.sparql.pfunction.PropertyFunctionFactory remove(String uri) {
+                return PropertyFunctionRegistry.get().remove(uri);
+            }
+        };
     }
 
     /**
@@ -122,8 +156,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public Graph getGraph(Node node) {
-        // A non-owning view over the shared reader (closing it is a no-op).
-        return new BeakGraph(node, bg.getReader());
+        // A non-owning view over the shared reader (closing it is a no-op),
+        // sharing the dataset graph's reorder statistics.
+        return new BeakGraph(node, bg.getReader(), bg);
     }
 
     @Override
@@ -246,7 +281,11 @@ public class BGDatasetGraph extends DatasetGraphBase {
     @Override
     public void begin(TxnType type) {
         if (type == TxnType.WRITE) throw new UnsupportedOperationException("Write transactions not supported");
-        txn.begin(type);
+        // TransactionalLock rejects the promote types outright; this store is
+        // immutable, so a promotable read is simply a read (promote() answers
+        // false) - the default begin() / Txn.execute() entry points used to
+        // throw before any read ran (BG-3). transactionType() reports READ.
+        txn.begin(TxnType.READ);
     }
 
     @Override

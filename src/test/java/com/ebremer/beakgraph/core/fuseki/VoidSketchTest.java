@@ -98,4 +98,23 @@ class VoidSketchTest {
         assertTrue(it.hasNext(), "expected a value for " + p);
         return it.next().asLiteral().getLong();
     }
+
+    @Test
+    void vocabularyIsBoundedByPredicatesAndClasses() {
+        // BG-43: hierarchical object IRIs (one "namespace" per entity) used to
+        // feed an unbounded set and were emitted as bogus void:vocabulary.
+        BGVoIDSD v = new BGVoIDSD("https://ebremer.com/void/");
+        for (int i = 0; i < 200_000; i++) {
+            v.add(new Quad(Quad.defaultGraphIRI,
+                    NodeFactory.createURI("http://ex.org/data/s" + (i % 1000)),
+                    NodeFactory.createURI("http://ex.org/p" + (i % 3)),
+                    NodeFactory.createURI("http://ex.org/r/" + i + "/x")));
+        }
+        v.add(new Quad(Quad.defaultGraphIRI, NodeFactory.createURI("http://ex.org/data/s1"), RDF.type.asNode(),
+                NodeFactory.createURI("http://schema.org/Thing")));
+        Model m = v.getModel();
+        java.util.Set<String> vocab = m.listObjectsOfProperty(VOID.vocabulary).mapWith(n -> n.asResource().getURI()).toSet();
+        assertEquals(java.util.Set.of("http://ex.org/", "http://www.w3.org/1999/02/22-rdf-syntax-ns#", "http://schema.org/"), vocab,
+                "predicate and class namespaces only");
+    }
 }

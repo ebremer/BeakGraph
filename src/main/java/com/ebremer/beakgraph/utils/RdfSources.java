@@ -14,6 +14,8 @@ import org.apache.jena.riot.RDFLanguages;
 import org.apache.jena.riot.lang.LabelToNode;
 import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
+import org.apache.jena.riot.system.jsonld.TitaniumJsonLdOptions;
+import org.slf4j.Logger;
 
 /**
  * The single home for "what RDF source files does BeakGraph accept and how are
@@ -58,17 +60,94 @@ public final class RdfSources {
         }
     }
 
+    /** System property: elements per chunk handed from Jena's parser thread to the ingest (Jena's default when unset). */
+    public static final String CHUNK_PROPERTY = "beakgraph.parser.chunk";
+    /** System property: chunks the parser thread may run ahead of the ingest (Jena's default when unset). */
+    public static final String QUEUE_PROPERTY = "beakgraph.parser.queue";
+
     /**
      * The one parser configuration every ingest pipeline uses (RAM, parallel,
-     * ultra, huge, plaid): relative references resolve against {@code base}
-     * and blank-node labels are kept as written, so per-document scoping and
-     * bnode alignment see the source labels. A JSON-LD or RDF/XML option added
-     * here reaches all six engines at once (BG-429).
+     * ultra, huge, plaid): relative references resolve against {@code base},
+     * blank-node labels are kept as written, so per-document scoping and
+     * bnode alignment see the source labels, and a JSON-LD document's
+     * {@code @context} references load through {@link JsonLdContexts} (from
+     * the source tree; remote ones only when enabled). A JSON-LD or RDF/XML
+     * option added here reaches all six engines at once (BG-429).
+     * <p>
+     * The parser runs on its own thread and hands chunks over a bounded
+     * queue; {@value #CHUNK_PROPERTY} / {@value #QUEUE_PROPERTY} size them.
+     * The caller MUST close the quad stream it obtains (try-with-resources):
+     * closing is what aborts and joins that thread when the ingest fails
+     * part-way, otherwise it stays parked on the full queue with up to a
+     * queue's worth of parsed quads for the life of the process (BG-100).
+     *
+     * @param input the source file, for the JSON-LD context loader's source tree
      */
-    public static AsyncParserBuilder parser(OpenedSource opened, String base) {
+    public static AsyncParserBuilder parser(OpenedSource opened, String base, File input) {
         AsyncParserBuilder builder = AsyncParser.of(opened.stream(), opened.lang(), base);
-        builder.mutateSources(rdfBuilder -> rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+        Integer chunk = Integer.getInteger(CHUNK_PROPERTY);
+        if (chunk != null && chunk > 0) {
+            builder.setChunkSize(chunk);
+        }
+        Integer queue = Integer.getInteger(QUEUE_PROPERTY);
+        if (queue != null && queue > 0) {
+            builder.setQueueSize(queue);
+        }
+        boolean jsonLd = !isStreaming(opened.lang());
+        builder.mutateSources(rdfBuilder -> {
+            rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven());
+            if (jsonLd) {
+                rdfBuilder.set(TitaniumJsonLdOptions.JSONLD_OPTIONS, JsonLdContexts.options(base, input));
+            }
+        });
         return builder;
+    }
+
+    /**
+     * False for a syntax Jena cannot parse as a stream. JSON-LD is the one
+     * accepted syntax without a streaming parser: Jena hands the WHOLE
+     * document to Titanium, which builds the JSON tree and expands it in
+     * memory before the first quad is emitted, so heap is proportional to the
+     * (decompressed) document, not to any spill batch. The disk-based engines'
+     * bounded-RAM promise therefore holds per JSON-LD document, not per quad
+     * count (BG-425).
+     */
+    public static boolean isStreaming(Lang lang) {
+        return lang == null || !lang.getName().toUpperCase(Locale.ROOT).contains("JSON-LD");
+    }
+
+    /**
+     * The syntax {@link #open} will assign from the file name alone
+     * ({@code .gz} / {@code .zip} stripped; for a zip the entry name may still
+     * refine it once opened).
+     */
+    public static Lang langOf(File src) {
+        String name = src.getName();
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".gz")) {
+            return detectLang(name.substring(0, name.length() - 3));
+        }
+        if (lower.endsWith(".zip")) {
+            return detectLang(name.substring(0, name.length() - 4));
+        }
+        return detectLang(name);
+    }
+
+    /**
+     * For the disk-based engines: warns that {@code src} is about to be parsed
+     * fully in memory when its syntax has no streaming parser
+     * ({@link #isStreaming}), naming the file, its size and the way out.
+     */
+    public static void warnIfMaterialized(File src, Lang lang, Logger log) {
+        if (isStreaming(lang)) {
+            return;
+        }
+        String lower = src.getName().toLowerCase(Locale.ROOT);
+        boolean compressed = lower.endsWith(".gz") || lower.endsWith(".zip");
+        log.warn("{}: {} has no streaming parser - the whole document ({} MB{}) is loaded and expanded in "
+                + "memory before its first quad reaches the sorters, so RAM is NOT bounded by the spill "
+                + "batches for this file; convert bulk JSON-LD to N-Quads first (riot --output=nq)",
+                src, lang.getName(), Math.max(1, src.length() >> 20), compressed ? " compressed" : "");
     }
 
     /**

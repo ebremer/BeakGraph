@@ -7,11 +7,8 @@ import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.huge.HugeBuildPipeline;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
 import org.slf4j.Logger;
@@ -61,8 +58,8 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
     public void write() throws IOException {
         logger.info("Writing BeakGraph (hugeUltra: disk-based, {} cores) to {}",
                 builder.cores, builder.getDestination());
-        // Fail before any parsing or sorting if the native HDF5 library is missing (BG-441).
-        com.ebremer.beakgraph.huge.NativeHdf5File.requireAvailable();
+        // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
+        com.ebremer.beakgraph.huge.StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
         Path tmp = AtomicPublish.tempFor(dest);
         Path workBase = (builder.workDir != null) ? builder.workDir
@@ -73,8 +70,13 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
                 : builder.getSources();
         ForkJoinPool pool = new ForkJoinPool(builder.cores);
         try {
+            // Prove the installed backend (native, or a replaced provider) can
+            // write a file here before any work is done (BG-135).
+            com.ebremer.beakgraph.huge.StreamingHdf5.requireWritable(workspace);
+            com.ebremer.beakgraph.huge.StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
             UltraSorterProvider provider = new UltraSorterProvider(
-                    builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn, pool);
+                    builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn, builder.termSpillBytes,
+                    builder.effectiveMergeConcurrency(), pool);
             try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
                     inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
                     workspace, provider, pool)) {
@@ -89,33 +91,16 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
             }
             throw ex;
         } finally {
-            pool.shutdown();
-            deleteRecursively(workspace);
+            // Stop and DRAIN the pool before touching the workspace: a spill
+            // or merge still running would keep its run file open (undeletable
+            // on Windows) and outlive write() (BG-134).
+            com.ebremer.beakgraph.huge.Workspaces.drain(pool, logger);
+            com.ebremer.beakgraph.huge.Workspaces.deleteTree(workspace, logger);
         }
         // Publish OUTSIDE the build's try/catch: a busy destination must not
         // delete a finished build (AtomicPublish keeps it as <dest>.new).
         AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
-    }
-
-    private static void deleteRecursively(Path dir) {
-        try {
-            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.deleteIfExists(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
-                    Files.deleteIfExists(d);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException e) {
-            logger.warn("Failed to remove workspace {}", dir, e);
-        }
     }
 
     public static class Builder extends AbstractGraphBuilder<Builder> {
@@ -125,6 +110,8 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
         private int termSpillBatch = 1 << 19;  // 524288 term records per run
         private int idSpillBatch = 1 << 22;    // 4M packed id records per run
         private int mergeFanIn = 128;
+        private long termSpillBytes = com.ebremer.beakgraph.huge.SorterProvider.defaultTermSpillBytes(2);
+        private int mergeConcurrency = 0;   // 0 = UltraSorterProvider.defaultMergeConcurrency(mergeFanIn, cores)
 
         /** Workspace for spill runs; needs disk on the order of a few times the source. */
         public Builder setWorkDirectory(Path dir) {
@@ -151,9 +138,45 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
             return this;
         }
 
+        /**
+         * Maximum spill runs merged in one pass. Each running merge holds
+         * {@code fanIn + 1} open files; a level runs at most
+         * {@link #setMergeConcurrency} merges at a time.
+         */
         public Builder setMergeFanIn(int fanIn) {
             if (fanIn < 2) throw new IllegalArgumentException("mergeFanIn must be >= 2");
             this.mergeFanIn = fanIn;
+            return this;
+        }
+
+        /**
+         * Merge groups one sorter level runs concurrently (default: at most
+         * one per core and no more than fit 1024 open files at
+         * {@code mergeFanIn + 1} each). The peak is {@code concurrency x
+         * (mergeFanIn + 1)} file descriptors and, for the term sorters,
+         * {@code concurrency x termSpillBatch} live records (BG-133).
+         */
+        public Builder setMergeConcurrency(int merges) {
+            if (merges < 1) throw new IllegalArgumentException("mergeConcurrency must be >= 1");
+            this.mergeConcurrency = merges;
+            return this;
+        }
+
+        int effectiveMergeConcurrency() {
+            return (mergeConcurrency > 0) ? mergeConcurrency
+                    : com.ebremer.beakgraph.hdf5.writers.hugeUltra.UltraSorterProvider.defaultMergeConcurrency(mergeFanIn, cores);
+        }
+
+        /**
+         * Estimated heap of parsed terms one term sorter buffers before a run
+         * spills, whatever the record count (default: max heap / 16 - three
+         * term sorters, each with a batch spilling in the background). The
+         * bound that keeps multi-KB WKT literals from exhausting the heap
+         * (BG-125).
+         */
+        public Builder setTermSpillBytes(long bytes) {
+            if (bytes < 1) throw new IllegalArgumentException("termSpillBytes must be >= 1");
+            this.termSpillBytes = bytes;
             return this;
         }
 
@@ -169,6 +192,7 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
 
         @Override
         public HugeUltraHDF5Writer build() {
+            requireSourceAndDestination();
             return new HugeUltraHDF5Writer(this);
         }
     }

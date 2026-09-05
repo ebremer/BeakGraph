@@ -92,6 +92,7 @@ public class HDF5Writer implements BeakGraphWriter {
 
         @Override
         public HDF5Writer build() {
+            requireSourceAndDestination();
             return new HDF5Writer(this);
         }
     }

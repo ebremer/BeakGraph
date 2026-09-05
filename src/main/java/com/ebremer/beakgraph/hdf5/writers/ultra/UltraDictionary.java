@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdf5.writers.ultra;
 
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.hdf5.Types;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
@@ -48,9 +49,12 @@ final class UltraDictionary {
     private final long numPredicates;
     private final long numLiterals;
 
-    private final ConcurrentHashMap<Node, Long> entityIds;
-    private final ConcurrentHashMap<Node, Long> predicateIds;
-    private final ConcurrentHashMap<Node, Long> literalIds;
+    // Released by releaseRankMaps() once the packing pass and the column
+    // fills are done: ~50-60 bytes per term of overhead that otherwise stayed
+    // live through the whole HDF5 emission (BG-115).
+    private ConcurrentHashMap<Node, Long> entityIds;
+    private ConcurrentHashMap<Node, Long> predicateIds;
+    private ConcurrentHashMap<Node, Long> literalIds;
 
     private final ForkJoinTask<DictionaryWriter> entitiesTask;
     private final ForkJoinTask<DictionaryWriter> predicatesTask;
@@ -135,7 +139,7 @@ final class UltraDictionary {
 
     private static Node[] sortedArray(Set<Node> nodes) {
         Node[] arr = nodes.toArray(Node[]::new);
-        Arrays.parallelSort(arr, NodeComparator.INSTANCE);
+        NodeSorter.parallelSort(arr);   // per-sort memoizing comparator (BG-249)
         return arr;
     }
 
@@ -185,7 +189,7 @@ final class UltraDictionary {
     private UltraPackedBuffer populate(String bufferName, Set<Node> nodes, java.util.function.ToLongFunction<Node> locator,
                                        int bits, ForkJoinPool pool) {
         Node[] sorted = nodes.toArray(Node[]::new);
-        Arrays.parallelSort(sorted, NodeComparator.INSTANCE);
+        NodeSorter.parallelSort(sorted);   // per-sort memoizing comparator (BG-249)
         UltraPackedBuffer target = new UltraPackedBuffer(bufferName, sorted.length, bits);
         ParallelRadixSort.runChunks(pool, Math.max(1, Math.min(pool.getParallelism() * 2, sorted.length)),
                 sorted.length, (c, from, to) -> {
@@ -200,30 +204,49 @@ final class UltraDictionary {
     // id resolution (O(1) map lookups)
     // ------------------------------------------------------------------
 
+    /**
+     * Drops the rank maps. Legal only after {@link #awaitStorage()}: the
+     * asynchronous column fills resolve ids through them until then. The
+     * writer calls this right after the storage join so the maps are
+     * collectable during the HDF5 emission (BG-115).
+     */
+    void releaseRankMaps() {
+        entityIds = null;
+        predicateIds = null;
+        literalIds = null;
+    }
+
+    private ConcurrentHashMap<Node, Long> map(ConcurrentHashMap<Node, Long> m) {
+        if (m == null) {
+            throw new IllegalStateException("Rank maps already released (releaseRankMaps)");
+        }
+        return m;
+    }
+
     long locateGraph(Node element) {
-        Long c = entityIds.get(element);
+        Long c = map(entityIds).get(element);
         if (c != null) return c;
         throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
     }
 
     long locateSubject(Node element) {
-        Long c = entityIds.get(element);
+        Long c = map(entityIds).get(element);
         if (c != null) return c;
         throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
     }
 
     long locatePredicate(Node element) {
-        Long c = predicateIds.get(element);
+        Long c = map(predicateIds).get(element);
         if (c != null) return c;
         throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
     }
 
     long locateObject(Node element) {
         if (element.isLiteral() || element.isTripleTerm()) {
-            Long c = literalIds.get(element);
+            Long c = map(literalIds).get(element);
             if (c != null) return c + maxEntityId; // literals (and triple terms) sit above the entity id block
         } else {
-            Long c = entityIds.get(element);
+            Long c = map(entityIds).get(element);
             if (c != null) return c;
         }
         throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);

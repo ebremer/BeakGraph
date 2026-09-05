@@ -5,10 +5,8 @@ import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.core.lib.TripleTerms;
-import com.ebremer.beakgraph.utils.ImageTools;
 import com.ebremer.beakgraph.utils.RdfSources;
-import com.ebremer.halcyon.hilbert.HilbertSpace;
-import com.ebremer.halcyon.hilbert.PolygonScaler;
+import com.ebremer.beakgraph.huge.SpatialAugmenter;
 import com.ebremer.halcyon.hilbert.WKTDatatype;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -22,6 +20,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
@@ -33,20 +32,14 @@ import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.XSD;
 import org.locationtech.jts.geom.Envelope;
-import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
-import org.locationtech.jts.geom.Polygonal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static com.ebremer.beakgraph.Params.BGVOID;
-import com.ebremer.beakgraph.features.MajorMinor;
-import com.ebremer.beakgraph.features.pyradiomics.Gen2DFeatures;
 import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.ns.GEO;
 import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.VOID;
-import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.io.WKTReader;
 
 public class PositionalDictionaryWriterBuilder {
     static {
@@ -87,48 +80,6 @@ public class PositionalDictionaryWriterBuilder {
     // base. One constant for every engine, so they cannot drift apart.
     protected static final String REL_BASE = RelativeIris.SENTINEL_BASE;
     
-    private static final Node[] asHilbert = {
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert2"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert3"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert4"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert5"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert6"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert7"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert8"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert9"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert10"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert11")
-    };
-    private static final Node[] low = {
-        NodeFactory.createURI("https://halcyon.is/ns/low0"), NodeFactory.createURI("https://halcyon.is/ns/low1"),
-        NodeFactory.createURI("https://halcyon.is/ns/low2"), NodeFactory.createURI("https://halcyon.is/ns/low3"),
-        NodeFactory.createURI("https://halcyon.is/ns/low4"), NodeFactory.createURI("https://halcyon.is/ns/low5"),
-        NodeFactory.createURI("https://halcyon.is/ns/low6"), NodeFactory.createURI("https://halcyon.is/ns/low7"),
-        NodeFactory.createURI("https://halcyon.is/ns/low8"), NodeFactory.createURI("https://halcyon.is/ns/low9"),
-        NodeFactory.createURI("https://halcyon.is/ns/low10"), NodeFactory.createURI("https://halcyon.is/ns/low11")
-    };
-    private static final Node[] high = {
-        NodeFactory.createURI("https://halcyon.is/ns/high0"), NodeFactory.createURI("https://halcyon.is/ns/high1"),
-        NodeFactory.createURI("https://halcyon.is/ns/high2"), NodeFactory.createURI("https://halcyon.is/ns/high3"),
-        NodeFactory.createURI("https://halcyon.is/ns/high4"), NodeFactory.createURI("https://halcyon.is/ns/high5"),
-        NodeFactory.createURI("https://halcyon.is/ns/high6"), NodeFactory.createURI("https://halcyon.is/ns/high7"),
-        NodeFactory.createURI("https://halcyon.is/ns/high8"), NodeFactory.createURI("https://halcyon.is/ns/high9"),
-        NodeFactory.createURI("https://halcyon.is/ns/high10"), NodeFactory.createURI("https://halcyon.is/ns/high11")
-    };
-    private static final Node[] hasRange = {
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange0"), NodeFactory.createURI("https://halcyon.is/ns/hasRange1"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange2"), NodeFactory.createURI("https://halcyon.is/ns/hasRange3"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange4"), NodeFactory.createURI("https://halcyon.is/ns/hasRange5"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange6"), NodeFactory.createURI("https://halcyon.is/ns/hasRange7"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange8"), NodeFactory.createURI("https://halcyon.is/ns/hasRange9"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange10"), NodeFactory.createURI("https://halcyon.is/ns/hasRange11")
-    };
-    private static final Node[] asWKT = {
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT0"), NodeFactory.createURI("https://halcyon.is/ns/asWKT1"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT2"), NodeFactory.createURI("https://halcyon.is/ns/asWKT3"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT4"), NodeFactory.createURI("https://halcyon.is/ns/asWKT5"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT6"), NodeFactory.createURI("https://halcyon.is/ns/asWKT7"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT8"), NodeFactory.createURI("https://halcyon.is/ns/asWKT9"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT10"), NodeFactory.createURI("https://halcyon.is/ns/asWKT11"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT12"), NodeFactory.createURI("https://halcyon.is/ns/asWKT13"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT14")
-    };
     /**
      * Spatial index entry parameters. Each geometry part's bbox is covered by
      * whole Hilbert cells at the coarsest scale where the cover holds at most
@@ -223,171 +174,19 @@ public class PositionalDictionaryWriterBuilder {
         MaxY = Math.max(MaxY, (int) env.getMaxY());
     }
     
-    private List<Node> generateGridURNs(Polygon polygon, int resolutionLevel) {
-        List<Node> intersectingURNs = new ArrayList<>();
-        Envelope env = polygon.getEnvelopeInternal();   
-        double cellSize = Params.GRIDTILESIZE;   
-        long minTileX = (long) Math.floor(env.getMinX() / cellSize);
-        long maxTileX = (long) Math.floor(env.getMaxX() / cellSize);
-        long minTileY = (long) Math.floor(env.getMinY() / cellSize);
-        long maxTileY = (long) Math.floor(env.getMaxY() / cellSize);   
-        GeometryFactory gf = polygon.getFactory();
-        for (long x = minTileX; x <= maxTileX; x++) {
-            double tileMinX = x * cellSize;
-            double tileMaxX = tileMinX + cellSize;
-            for (long y = minTileY; y <= maxTileY; y++) {
-                double tileMinY = y * cellSize;
-                double tileMaxY = tileMinY + cellSize;            
-                Envelope tileEnv = new Envelope(tileMinX, tileMaxX, tileMinY, tileMaxY);
-                if (env.intersects(tileEnv)) {
-                    Polygon tilePoly = (Polygon) gf.toGeometry(tileEnv);
-                    if (polygon.intersects(tilePoly)) {
-                        intersectingURNs.add(Params.gridGraph(resolutionLevel, x, y));
-                    }
-                }
-            }
-        }
-        return intersectingURNs;
-    }
-    
-    // Protected, not private: thread-safe per-quad augmentation (guarded by the
-    // spatial/features flags only), reused by the ultra subclass's per-document
-    // parallel parse. Both callers already invoke it concurrently.
-    protected ArrayList<Quad> addSpatial(Quad quad) {
-        final ArrayList<Quad> qqq = new ArrayList<>();
-        // The GeoSPARQL-standard "<crs-uri> WKT" form must be indexed too: strip the
-        // prefix once here so the parser and the scaler both see plain WKT
-        // (previously such geometries failed the parse and were silently dropped).
-        String wkt = ImageTools.stripCrs(quad.getObject().getLiteralLexicalForm());
-        if (features) {
-            // Same containment as the geometry block below: feature generation runs
-            // inside the spatial task, so anything escaping here feeds Future.get()
-            // and fails the whole write over one bad geometry.
-            try {
-                addFeatures(qqq, quad, wkt);
-            } catch (Exception ex) {
-                logger.warn("Failed to generate features for {}: {}", quad.getSubject(), ex.toString());
-            }
-        }
-        // Everything geometry-related sits inside the catch-all below: a single bad
-        // geometry must never abort the build (these tasks feed Future.get(), whose
-        // ExecutionException would otherwise fail the whole write).
-        try {
-            // Index EVERY polygonal part: MULTIPOLYGON members each get their own
-            // pyramid and corner entries (indexing only the first part made the
-            // others unfindable). Non-areal members (POINT, LINESTRING) are indexed
-            // via their expanded envelopes - PER MEMBER, not only as a fallback
-            // when no polygon exists: in a mixed GEOMETRYCOLLECTION the point/line
-            // members next to a polygon member were silently unindexed, invisible
-            // to every spatial query.
-            Geometry g = new WKTReader().read(wkt);
-            if (g.isEmpty()) {
-                return qqq;
-            }
-            List<Polygon> parts = new ArrayList<>(ImageTools.wktToPolygons(wkt));
-            GeometryFactory gf = new GeometryFactory();
-            for (int i = 0; i < g.getNumGeometries(); i++) {
-                Geometry member = g.getGeometryN(i);
-                if (!(member instanceof Polygonal) && !member.isEmpty()) {
-                    Envelope env = member.getEnvelopeInternal();
-                    env.expandBy(0.5); // a point/degenerate envelope still needs area
-                    parts.add((Polygon) gf.toGeometry(env));
-                }
-            }
-            for (Polygon part : parts) {
-                addSpatialIndexCells(qqq, quad, part);
-                addSpatialScales(qqq, quad, wkt, PolygonScaler.toPolygons(part));
-            }
-        } catch (Exception ex) {
-            // Expected data condition (pathology exports contain degenerate
-            // geometries such as two-point rings): one line per skip, no stack -
-            // a slide can contain thousands of these.
-            logger.warn("Skipping spatial indexing for {}: {} ({})",
-                    quad.getSubject(), ex.toString(), abbrevWkt(wkt));
-        }
-        return qqq;
-    }
-
-    private void addSpatialScales(ArrayList<Quad> qqq, Quad quad, String wkt, Polygon[] scales) {
-        if (scales == null) {
-            return;
-        }
-        final String[] wktScales = PolygonScaler.toWKT(scales);
-        for (int s=0; s<Math.min(scales.length, asWKT.length); s++) {
-            List<Node> tiles = generateGridURNs(scales[s],s);
-            try {
-                for (int ii=0; ii<tiles.size(); ii++) {
-                    qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
-                }
-            } catch (Exception ex) {
-                logger.error("Failed to add spatial tile quads for {}", abbrevWkt(wkt), ex);
-            }
-            try {
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
-            } catch (Exception ex) {
-                logger.error("Failed to add scaled WKT quad for {}", abbrevWkt(wkt), ex);
-            }
-        }
-    }
-
     /**
-     * Emits this part's recall-safe spatial index entries: the Hilbert indices of
-     * every whole cell covering its bbox, at the coarsest scale where that cover
-     * is at most {@link #MAX_INDEX_CELLS} cells. Cell coordinates use floor
-     * snapping - the query side MUST snap identically or shared cells are missed.
+     * Spatial index + derived-feature quads for one geometry-carrying quad.
+     * ONE implementation for every engine: {@link SpatialAugmenter}, the
+     * disk pipeline's port of the ~150-line block that lived here, is now the
+     * only copy - the two had to stay byte-identical to each other and to
+     * SpatialIndexIterator's floor snapping (BG-296). Protected, thread-safe:
+     * the ultra subclass's per-document parallel parse calls it too.
      */
-    private void addSpatialIndexCells(ArrayList<Quad> qqq, Quad quad, Polygon part) {
-        Envelope env = part.getEnvelopeInternal();
-        // The Hilbert domain is [0, 2^31), so bboxes are CLAMPED into it - never
-        // skipped, never allowed to alias (the curve masks out-of-range bits).
-        // Clamping is a monotone projection applied identically on the query
-        // side, so overlapping boxes still overlap after it and recall is
-        // preserved; out-of-domain geometry just indexes coarsely at the domain
-        // edge cells (false positives there are killed by the sfIntersects
-        // verification on the exact original WKT). Skipping fully-negative
-        // geometry instead made it unfindable by ANY query.
-        long minX = HilbertSpace.clampToDomain((long) Math.floor(env.getMinX()));
-        long maxX = HilbertSpace.clampToDomain((long) Math.floor(env.getMaxX()));
-        long minY = HilbertSpace.clampToDomain((long) Math.floor(env.getMinY()));
-        long maxY = HilbertSpace.clampToDomain((long) Math.floor(env.getMaxY()));
-        int s = 0;
-        while (s < MAX_INDEX_SCALE && cellCount(minX, maxX, minY, maxY, s) > MAX_INDEX_CELLS) {
-            s++;
-        }
-        long cell = 1L << s;
-        Node pred = NodeFactory.createURI(HILBERT_CELL_NS + s);
-        HashSet<Long> cells = new HashSet<>();
-        for (long x = Math.floorDiv(minX, cell); x <= Math.floorDiv(maxX, cell); x++) {
-            for (long y = Math.floorDiv(minY, cell); y <= Math.floorDiv(maxY, cell); y++) {
-                cells.add(HilbertSpace.hc.index(new long[]{x, y}));
-            }
-        }
-        for (Long c : cells) {
-            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), pred, NodeFactory.createLiteralByValue((long) c)));
-        }
+    protected ArrayList<Quad> addSpatial(Quad quad) {
+        return new SpatialAugmenter(features).addSpatial(quad);
     }
 
-    private static long cellCount(long minX, long maxX, long minY, long maxY, int s) {
-        long cell = 1L << s;
-        long nx = Math.floorDiv(maxX, cell) - Math.floorDiv(minX, cell) + 1;
-        long ny = Math.floorDiv(maxY, cell) - Math.floorDiv(minY, cell) + 1;
-        return nx * ny;
-    }
 
-    private static String abbrevWkt(String wkt) {
-        return (wkt != null && wkt.length() > 200) ? wkt.substring(0, 200) + "..." : wkt;
-    }
-    
-    // Takes the CRS-stripped WKT computed once in addSpatial: re-reading the raw
-    // lexical form here made JTS throw on every "<crs-uri> WKT"-form literal, so
-    // CRS-prefixed geometries silently got no derived features while identical
-    // unprefixed ones did.
-    private void addFeatures(ArrayList<Quad> qqq, Quad quad, String wkt) {
-        Node geo = quad.getSubject();
-        Gen2DFeatures.generate(qqq, geo, wkt);
-        MajorMinor.add(qqq, geo, wkt);
-    }
-    
     // Not synchronized: called only from the sequential streamQuads().forEach pipeline
     // (one consumer thread), like the other per-quad steps; the concurrent addSpatial
     // tasks never touch bmap.
@@ -428,39 +227,7 @@ public class PositionalDictionaryWriterBuilder {
      * are resolved against the serving URL at query time.
      */
     protected final Quad relativize(Quad q) {
-        Node qg = q.getGraph();
-        Node qs = q.getSubject();
-        Node qp = q.getPredicate();
-        Node qo = q.getObject();
-        Node g = relativizeNode(qg);
-        Node s = relativizeNode(qs);
-        Node p = relativizeNode(qp);
-        Node o = relativizeNode(qo);
-        // relativizeNode returns the same Node when nothing changed; if no
-        // position held a document-relative IRI, reuse the quad as-is.
-        if (g == qg && s == qs && p == qp && o == qo) {
-            return q;
-        }
-        return new Quad(g, s, p, o);
-    }
-
-    private Node relativizeNode(Node n) {
-        if (n != null && n.isTripleTerm()) {
-            // A sentinel-based IRI must never survive into stored data no matter
-            // how deeply nested; map() recurses nested triple-term objects itself.
-            return TripleTerms.map(n, this::relativizeNode);
-        }
-        if (n == null || !n.isURI()) {
-            return n;
-        }
-        // Textual relativization against the sentinel: "" / "#f" / "?q" for the
-        // document, "x" for children, "../x" (any number of levels) for parents.
-        // Jena's IRIx.relativize only steps up ONE level and otherwise emits a
-        // path-absolute form, which resolves wrongly against a served URL of a
-        // different depth; the old one-segment sentinel collapsed <../x> and
-        // </x> onto the child form "x" outright.
-        String rel = RelativeIris.toStorageForm(n.getURI());
-        return rel == null ? n : NodeFactory.createURI(rel);
+        return RelativeIris.relativizeQuad(q);   // the one implementation (BG-432)
     }
 
     /**
@@ -543,9 +310,12 @@ public class PositionalDictionaryWriterBuilder {
      * encodes the node. Extracted from {@link #ProcessQuad} so the ultra
      * writer's post-dedup, chunk-parallel stats pass counts literals with
      * EXACTLY the sequential rules (a drifted copy here would corrupt buffer
-     * allocation, not just reporting). Must be called once per unique literal.
+     * allocation, not just reporting). Called once per unique literal here;
+     * the disk pipeline calls it once per OCCURRENCE, which is safe because
+     * only the min/max values and the zero-ness of the counts are consumed
+     * there (BG-297: it used to keep a byte-identical copy).
      */
-    protected static void countLiteralStats(Node o, Stats stats) {
+    public static void countLiteralStats(Node o, Stats stats) {
         String dt = o.getLiteralDatatypeURI();
         if (dt.equals(XSD.xlong.getURI())) {
             if (literalValueOrNull(o) instanceof Number n) {
@@ -663,14 +433,10 @@ public class PositionalDictionaryWriterBuilder {
         if (literals.contains(o)) {
             return;
         }
-        // Blank nodes inside a composite (cdt:) literal: labels regenerate
-        // from dictionary rank, so the label in the literal's text would
-        // silently stop co-referring with the graph. Reject at ingest
-        // (checked once per distinct literal; parses composite values only).
-        if (CdtTerms.containsBlankNode(o)) {
-            throw new IllegalStateException(
-                    "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
-        }
+        // Blank nodes or relative IRIs inside a composite (cdt:) literal would
+        // silently stop co-referring with the graph. Reject at ingest (checked
+        // once per distinct literal; parses composite values only).
+        CdtTerms.requireStorable(o);
         dataTypes.add(o.getLiteralDatatypeURI());
         countLiteralStats(o, stats);
         literals.add(o);
@@ -821,14 +587,19 @@ public class PositionalDictionaryWriterBuilder {
             // directory). The relativize() step below strips the sentinel back
             // off; the relative form is resolved at query time against the URL
             // the .h5 file is served from.
-            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input));
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input), input);
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
             // A per-task virtual-thread executor (final API since JDK 21). Its
             // try-with-resources close() blocks until every submitted spatial task finishes,
             // giving the same "join all forked work" guarantee as a structured task scope -
-            // without depending on a preview API.
-            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor()) {
-                parserBuilder.streamQuads()
+            // without depending on a preview API. The quad stream is a resource
+            // too, declared after the executor so it closes FIRST: closing it
+            // aborts and joins Jena's parser thread when the loop below throws
+            // (a guard, an invalid term), which otherwise stayed parked on its
+            // full queue for the life of the process (BG-100).
+            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor();
+                 Stream<Quad> quads = parserBuilder.streamQuads()) {
+                quads
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)

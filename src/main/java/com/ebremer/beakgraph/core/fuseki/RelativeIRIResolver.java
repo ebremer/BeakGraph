@@ -7,6 +7,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.function.Predicate;
 import org.apache.jena.graph.Node;
+import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.irix.IRIx;
@@ -104,8 +105,33 @@ public class RelativeIRIResolver {
                     // leave the node unchanged on any IRI parsing failure
                 }
             }
+            // A literal typed with an absolute datatype IRI under the base may be
+            // stored with the relative datatype the source spelled (BG-394).
+            if (base != null && node != null && node.isLiteral()) {
+                String dt = node.getLiteralDatatypeURI();
+                if (dt != null && !UTIL.isRelativeIRI(dt)) {
+                    try {
+                        if (storedTerm.test(node)) {
+                            return node;
+                        }
+                        for (String candidate : storageCandidates(dt)) {
+                            Node relNode = withDatatype(node, candidate);
+                            if (storedTerm.test(relNode)) {
+                                return relNode;
+                            }
+                        }
+                    } catch (RuntimeException ignore) {
+                        // leave the node unchanged on any IRI parsing failure
+                    }
+                }
+            }
             return node;
         });
+    }
+
+    private static Node withDatatype(Node literal, String datatypeUri) {
+        return NodeFactory.createLiteralDT(literal.getLiteralLexicalForm(),
+                TypeMapper.getInstance().getSafeTypeByName(datatypeUri));
     }
 
     /** Distinct relative forms the writer may have stored for {@code absolute}, most likely first. */
@@ -140,7 +166,10 @@ public class RelativeIRIResolver {
 
     /**
      * Output transform: a relative IRI (storage form) is resolved against the
-     * document base into an absolute IRI. Absolute IRIs pass through unchanged.
+     * document base into an absolute IRI - as a term, and as the datatype of a
+     * literal ({@code "7"^^<scoreType>} is served as
+     * {@code "7"^^<base-resolved scoreType>}). Absolute IRIs pass through
+     * unchanged.
      */
     public NodeTransform storageToAbsolute() {
         return tripleTermRecursive(node -> {
@@ -150,6 +179,16 @@ public class RelativeIRIResolver {
                     return NodeFactory.createURI(base.resolve(node.getURI()).str());
                 } catch (RuntimeException ignore) {
                     // leave the node unchanged on any IRI parsing failure
+                }
+            }
+            if (base != null && node != null && node.isLiteral()) {
+                String dt = node.getLiteralDatatypeURI();
+                if (dt != null && UTIL.isRelativeIRI(dt)) {
+                    try {
+                        return withDatatype(node, base.resolve(dt).str());
+                    } catch (RuntimeException ignore) {
+                        // leave the node unchanged on any IRI parsing failure
+                    }
                 }
             }
             return node;
@@ -178,6 +217,19 @@ public class RelativeIRIResolver {
             }
         };
         return ResultSetStream.create(vars, it);
+    }
+
+    /**
+     * Resolve every relative IRI of a CONSTRUCT / DESCRIBE triple stream on the
+     * way out - lazily, one triple at a time (the streaming counterpart of
+     * {@link #resolve(Model)}, for responses that must not be materialized).
+     */
+    public Iterator<Triple> resolve(Iterator<Triple> triples) {
+        if (base == null) {
+            return triples;
+        }
+        final NodeTransform t = storageToAbsolute();
+        return org.apache.jena.atlas.iterator.Iter.map(triples, triple -> NodeTransformLib.transform(t, triple));
     }
 
     /**

@@ -302,6 +302,88 @@ public class ParallelWriterParityTest {
         assertSameBytes(seq, par);
     }
 
+    /** BG-112 fixture: several graphs, rdf:type triples, duplicate quads, typed and tagged literals. */
+    public static final String VOID_FIXTURE = "@prefix ex: <http://ex.org/> .\n"
+            + "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            + "ex:a rdf:type ex:T1 . ex:a ex:p ex:b . ex:a ex:p \"x\" . ex:a ex:p ex:b .\n"
+            + "ex:b rdf:type ex:T2 . ex:b ex:q \"1\"^^<http://www.w3.org/2001/XMLSchema#int> . ex:b ex:q \"2\"^^<http://www.w3.org/2001/XMLSchema#int> .\n"
+            + "ex:g1 { ex:c rdf:type ex:T1 . ex:c ex:p ex:d . ex:c ex:p ex:d . ex:d ex:q \"y\"@en . ex:d ex:r _:n . }\n"
+            + "ex:g2 { ex:e ex:p ex:f . ex:e rdf:type ex:T3 . }\n";
+
+    /**
+     * BG-112: the statistics graph of two stores must be isomorphic and every
+     * (predicate, value) pair in it must agree - void:triples,
+     * distinctSubjects/Objects, properties, classes, entities and the
+     * partitions are all literal or IRI values hanging off blank nodes, so
+     * this is label-independent and complete.
+     */
+    public static void assertVoidParity(Path seqH5, Path otherH5, String label) throws Exception {
+        try (BeakGraph a = new BeakGraph(new HDF5Reader(seqH5.toFile()));
+             BeakGraph b = new BeakGraph(new HDF5Reader(otherH5.toFile()))) {
+            org.apache.jena.query.Dataset da = a.getDataset();
+            org.apache.jena.query.Dataset db = b.getDataset();
+            Model va = graphModel(da, Params.VOIDSTRING);
+            Model vb = graphModel(db, Params.VOIDSTRING);
+            assertTrue(va.size() > 10, label + ": the statistics graph exists (" + va.size() + ")");
+            assertTrue(va.isIsomorphicWith(vb), label + ": statistics graphs must be isomorphic (seq=" + va.size() + ", other=" + vb.size() + ")");
+            String g = "GRAPH <" + Params.VOIDSTRING + ">";
+            for (String probe : new String[]{
+                    "SELECT ?p (COUNT(*) AS ?n) WHERE { " + g + " { ?s ?p ?o } } GROUP BY ?p ORDER BY ?p",
+                    "SELECT ?p ?o WHERE { " + g + " { ?s ?p ?o } FILTER(isLiteral(?o)) } ORDER BY ?p ?o",
+                    "SELECT ?p ?o WHERE { " + g + " { ?s ?p ?o } FILTER(isIRI(?o)) } ORDER BY ?p ?o",
+                    "SELECT ?s ?p ?o WHERE { " + g + " { ?s ?p ?o } FILTER(isIRI(?s) && !isBlank(?o)) } ORDER BY ?s ?p ?o"}) {
+                assertEquals(select(da, probe), select(db, probe), label + ": " + probe);
+            }
+        }
+    }
+
+    @Test
+    void voidStatisticsParityInBothModes() throws Exception {
+        File src = dir.resolve("voidparity.trig").toFile();
+        Files.write(src.toPath(), VOID_FIXTURE.getBytes(StandardCharsets.UTF_8));
+        for (com.ebremer.beakgraph.core.VoidMode mode : new com.ebremer.beakgraph.core.VoidMode[]{
+                com.ebremer.beakgraph.core.VoidMode.EXACT, com.ebremer.beakgraph.core.VoidMode.SKETCH}) {
+            File seq = dir.resolve("voidparity-" + mode + ".seq.h5").toFile();
+            File par = dir.resolve("voidparity-" + mode + ".par.h5").toFile();
+            HDF5Writer.Builder().setSource(src).setDestination(seq).setVoidMode(mode).build().write();
+            ParallelHDF5Writer.Builder().setSource(src).setDestination(par).setVoidMode(mode).setCores(3).build().write();
+            assertStoresEquivalent(seq.toPath(), par.toPath(),
+                    "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g");
+            assertVoidParity(seq.toPath(), par.toPath(), "parallel " + mode);
+        }
+    }
+
+    /** BG-112: the parallel engine's -merge path had no parity test at all. */
+    @Test
+    void mergeParityWithSequentialMerge() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("mergesrc"));
+        Files.write(src.resolve("m1.ttl"),
+                "<http://ex.org/s> <http://ex.org/p> <http://ex.org/o1> .\n_:b0 <http://ex.org/bp> \"v1\" .\n"
+                        .getBytes(StandardCharsets.UTF_8));
+        Files.write(src.resolve("m2.nq"),
+                "<http://ex.org/s> <http://ex.org/p> <http://ex.org/o2> <http://ex.org/gm> .\n"
+                        .getBytes(StandardCharsets.UTF_8));
+        Files.write(src.resolve("m3.ttl"),
+                "_:b0 <http://ex.org/bp> \"v2\" .\n<http://ex.org/s> <http://ex.org/p> <http://ex.org/o3> .\n"
+                        .getBytes(StandardCharsets.UTF_8));
+        java.util.List<File> inputs = java.util.List.of(src.resolve("m1.ttl").toFile(), src.resolve("m2.nq").toFile(),
+                src.resolve("m3.ttl").toFile());
+        for (com.ebremer.beakgraph.core.VoidMode mode : new com.ebremer.beakgraph.core.VoidMode[]{
+                com.ebremer.beakgraph.core.VoidMode.NONE, com.ebremer.beakgraph.core.VoidMode.EXACT}) {
+            File seq = dir.resolve("merge-" + mode + ".seq.h5").toFile();
+            File par = dir.resolve("merge-" + mode + ".par.h5").toFile();
+            HDF5Writer.Builder().setSources(inputs).setDestination(seq).setVoidMode(mode).build().write();
+            ParallelHDF5Writer.Builder().setSources(inputs).setDestination(par).setVoidMode(mode).setCores(3).build().write();
+            assertStoresEquivalent(seq.toPath(), par.toPath(),
+                    "SELECT ?o WHERE { <http://ex.org/s> <http://ex.org/p> ?o }",
+                    "SELECT ?o WHERE { GRAPH <http://ex.org/gm> { <http://ex.org/s> ?p ?o } }",
+                    "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?v }");
+            if (mode != com.ebremer.beakgraph.core.VoidMode.NONE) {
+                assertVoidParity(seq.toPath(), par.toPath(), "parallel merge " + mode);
+            }
+        }
+    }
+
     @Test
     void exactVoidModeKeepsStructuralParityOnly() throws Exception {
         // The VoID generator mints fresh blank-node labels per write, so with

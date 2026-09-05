@@ -14,6 +14,8 @@ import com.ebremer.beakgraph.turbo.Spatial;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Attribute;
 import io.jhdf.api.Group;
+import io.jhdf.nio.FileChannelFromSeekableByteChannel;
+import io.jhdf.storage.HdfFileChannel;
 import java.io.File;
 import java.net.URI;
 import java.nio.channels.SeekableByteChannel;
@@ -46,6 +48,8 @@ public class HDF5Reader implements BGReader {
     private final Map<Index, IndexReader> indexCache = new ConcurrentHashMap<>();
     private final URI uri;
     private final long formatVersion;
+    private final boolean hasFormatVersionAttribute;
+    private final long numQuads;
     // Closed readers must be detectable (pool validation) and close() must be
     // idempotent (a poisoned pooled instance is closed again on destroy).
     private volatile boolean open = true;
@@ -115,6 +119,8 @@ public class HDF5Reader implements BGReader {
                         "Not a BeakGraph file (no '" + Params.BG + "' group): " + uri);
             }
             this.formatVersion = readFormatVersion(hdt);
+            this.hasFormatVersionAttribute = hdt.getAttribute("formatVersion") != null;
+            this.numQuads = readNumQuads(hdt);
             if (formatVersion > Params.FORMAT_VERSION) {
                 throw new IllegalStateException(
                         "BeakGraph HDF5 format version " + formatVersion + " in " + uri
@@ -148,23 +154,59 @@ public class HDF5Reader implements BGReader {
 
     /**
      * Reads the on-disk format version from the .BG group. Files written before
-     * format versioning have no attribute and are treated as version 1.
+     * format versioning have no attribute and are treated as version 1 - the
+     * only case SPECIFICATIONS §4.1 defines as v1. An attribute that is present
+     * but unreadable, non-numeric or below 1 is corruption, not a legacy file:
+     * it used to be silently read as v1, which disabled the rank directories
+     * and turned every lookup into a linear scan (BG-350).
      */
     private static long readFormatVersion(Group hdt) {
+        Attribute a = hdt.getAttribute("formatVersion");
+        if (a == null) {
+            return 1L;
+        }
+        Object data;
         try {
-            Attribute a = hdt.getAttribute("formatVersion");
+            data = a.getData();
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("formatVersion attribute is present but unreadable", e);
+        }
+        if (data instanceof Number n && n.longValue() >= 1) {
+            return n.longValue();
+        }
+        throw new IllegalStateException("formatVersion attribute is present but not a version number: " + data);
+    }
+
+    /** False for a legacy (pre-versioning) file, which the reader treats as format v1. */
+    public boolean hasFormatVersionAttribute() {
+        return hasFormatVersionAttribute;
+    }
+
+    /** The store's numQuads attribute (source quads before de-duplication, SPECIFICATIONS §9.6), or -1 when absent. */
+    public long getNumQuads() {
+        return numQuads;
+    }
+
+    private static long readNumQuads(Group hdt) {
+        try {
+            Attribute a = hdt.getAttribute("numQuads");
             if (a != null && a.getData() instanceof Number n) {
                 return n.longValue();
             }
-        } catch (Exception ignore) {
-            // unreadable attribute - treat as a legacy (pre-versioning) file
+        } catch (RuntimeException ignore) {
+            // informational only
         }
-        return 1L;
+        return -1;
     }
 
     @Override
     public URI getURI() {
         return uri;
+    }
+
+    @Override
+    public long getFormatVersion() {
+        return formatVersion;
     }
     
     public IndexReader getIndexReader(Index indexType) {
@@ -203,7 +245,10 @@ public class HDF5Reader implements BGReader {
             return Collections.emptyIterator();
         }
         if (Quad.isUnionGraph(ng)) {
-            return readUnion(bnid, triple, filter, nodeTable);
+            Iterator<Node> named = dict.streamGraphs()
+                .filter(n -> !(n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated)))
+                .iterator();
+            return readUnion(named, bnid, triple, filter, nodeTable);
         }
         boolean isDefault = ng.equals(Quad.defaultGraphNodeGenerated) || ng.equals(Quad.defaultGraphIRI);
         Node g = isDefault ? this.defaultGraph : ng;
@@ -220,14 +265,25 @@ public class HDF5Reader implements BGReader {
         return new BGIteratorMaster(this, dict, bnid, quadPattern, filter, nodeTable);
     }
 
+    @Override
+    public Iterator<BindingNodeId> readGraphs(java.util.Collection<Node> graphs, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        if (dict.isEmpty()
+                || boundToMissing(triple.getSubject(), bnid)
+                || boundToMissing(triple.getPredicate(), bnid)
+                || boundToMissing(triple.getObject(), bnid)) {
+            return Collections.emptyIterator();
+        }
+        return readUnion(graphs.iterator(), bnid, triple, filter, nodeTable);
+    }
+
     /**
-     * {@code urn:x-arq:unionGraph}: the union of all named graphs, with the
-     * SPARQL-mandated set semantics - a triple present in several named graphs
-     * appears once. Rows are deduplicated on the values of the pattern's
-     * variables (the concrete positions are identical across graphs by
-     * construction).
+     * The set union of {@code graphs} - {@code urn:x-arq:unionGraph} (every
+     * named graph) or an explicit FROM list - with the SPARQL-mandated set
+     * semantics: a triple present in several members appears once. Rows are
+     * deduplicated on the values of the pattern's variables (the concrete
+     * positions are identical across graphs by construction).
      */
-    private Iterator<BindingNodeId> readUnion(BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+    private Iterator<BindingNodeId> readUnion(Iterator<Node> graphs, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
         List<Var> varList = new ArrayList<>(3);
         for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
             if (n.isVariable()) {
@@ -244,9 +300,6 @@ public class HDF5Reader implements BGReader {
         // Lazy per-graph chaining: constructing every graph's iterator up front
         // paid each one's index binary searches before the first row came back
         // (spatial stores hold thousands of tile graphs).
-        Iterator<Node> graphs = dict.streamGraphs()
-            .filter(n -> !(n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated)))
-            .iterator();
         Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gn -> read(gn, bnid, triple, filter, nodeTable));
         // The dedup set is inherent to union set-semantics (rows arrive per
         // graph, not globally sorted). Up to three variables - every pattern
@@ -485,6 +538,21 @@ public class HDF5Reader implements BGReader {
 
     @Override
     public NodeTable getNodeTable() { return nodeTable; }
+
+    /**
+     * Whether the file is read through a caller-supplied
+     * {@link SeekableByteChannel} (an HTTP range channel, typically) rather
+     * than mapped from a local path. Every dataset read then goes through the
+     * channel's single lock and its block cache, so concurrent readers of one
+     * file gain nothing and only contend; the query engine keeps such stores
+     * on the sequential scan path (BG-247). Same test as
+     * {@code DatasetBytes.of}, which picks the lazy channel-reading view for
+     * exactly these files.
+     */
+    public boolean isChannelBacked() {
+        return hdf.getHdfBackingStorage() instanceof HdfFileChannel hfc
+                && hfc.getFileChannel() instanceof FileChannelFromSeekableByteChannel;
+    }
 
     @Override
     public void close() {

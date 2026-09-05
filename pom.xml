@@ -437,8 +437,15 @@
         <profile>
             <!-- OPT-IN (-Dhdf5.ffm=true): the HDF Group's own Java bindings for HDF5
                  ${hdf5.ffm.version}, using the Java 25 FFM API (no JNI glue). Same
-                 hdf.hdf5lib.H5 API, so no BeakGraph code changes - any 2.x
-                 signature drift would surface only in NativeHdf5File.
+                 hdf.hdf5lib.H5 API SURFACE, not the same implementation: the
+                 2.1.x FFM binding ships the typed helpers (H5Awrite_int/_long,
+                 H5Dwrite_int/..., 21 methods) as throwing "not implemented yet"
+                 stubs, so NativeHdf5File uses only the byte[] entry points
+                 (H5Awrite / H5Dwrite with a byte[]), which both bindings
+                 implement; NativeHdf5PortabilityTest pins that rule (BG-439).
+                 No CI leg builds this profile (it needs a PAT), so after touching
+                 NativeHdf5File run NativeHdf5SmokeTest by hand with
+                 -Dhdf5.ffm=true on a host with HDF5 2.1.x installed.
                  Two prerequisites, which is why this is not the default:
                  1. GitHub Packages requires authentication even for public
                     artifacts. Add to ~/.m2/settings.xml:

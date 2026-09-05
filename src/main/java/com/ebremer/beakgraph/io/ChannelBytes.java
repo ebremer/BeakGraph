@@ -50,6 +50,11 @@ public final class ChannelBytes implements RandomAccessBytes {
     }
 
     @Override
+    public boolean isRemote() {
+        return true;
+    }
+
+    @Override
     public long size() {
         return size;
     }

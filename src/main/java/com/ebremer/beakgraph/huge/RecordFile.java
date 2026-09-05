@@ -20,7 +20,7 @@ import java.util.NoSuchElementException;
  *
  * @author Erich Bremer
  */
-final class RecordFile<T> {
+final class RecordFile<T> implements AutoCloseable {
 
     private final Path path;
     private final ExternalSorter.Codec<T> codec;
@@ -68,15 +68,26 @@ final class RecordFile<T> {
         }
         DataInputStream in = new DataInputStream(
                 new BufferedInputStream(Files.newInputStream(path), 1 << 16));
+        final long expected = count;
         return new RecordSorter.SortedCursor<T>() {
+            private long read = 0;
             private T head = advance();
             private boolean closed = false;
 
             private T advance() {
                 try {
-                    return codec.read(in);
+                    T record = codec.read(in);
+                    read++;
+                    return record;
                 } catch (EOFException eof) {
                     closeStream();
+                    // Every codec reads multi-byte records, and DataInput throws
+                    // the same EOFException for a record cut in the middle as
+                    // for a clean end: only the count tells them apart (BG-129).
+                    if (read != expected) {
+                        throw new UncheckedIOException(new IOException("Record file " + path + " truncated: read "
+                                + read + " of " + expected + " records"));
+                    }
                     return null;
                 } catch (IOException e) {
                     closeStream();
@@ -119,5 +130,11 @@ final class RecordFile<T> {
             }
             Files.deleteIfExists(path);
         } catch (IOException ignored) {}
+    }
+
+    /** Closes the write stream (if any) and removes the file; idempotent. Lets the pipeline track() it (BG-124). */
+    @Override
+    public void close() {
+        delete();
     }
 }

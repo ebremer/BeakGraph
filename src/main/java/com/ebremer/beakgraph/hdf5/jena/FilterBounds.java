@@ -1,6 +1,8 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.lib.CdtTerms;
+import javax.xml.datatype.DatatypeConstants;
+import javax.xml.datatype.Duration;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.expr.E_GreaterThan;
@@ -10,6 +12,7 @@ import org.apache.jena.sparql.expr.E_LessThanOrEqual;
 import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.ExprFunction2;
 import org.apache.jena.sparql.expr.ExprList;
+import org.apache.jena.sparql.expr.NodeValue;
 
 /**
  * Extracts range-pushdown hints ({@code ?var OP constant}) from a FILTER
@@ -39,10 +42,17 @@ final class FilterBounds {
         void bound(Var var, String op, Node value);
     }
 
-    static void scan(ExprList filter, Sink sink) {
+    /** Number of range bounds handed to an iterator - tests pin that a FILTER reached the reader. */
+    static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
+
+    static void scan(ExprList filter, Sink rawSink) {
         if (filter == null || filter.isEmpty()) {
             return;
         }
+        Sink sink = (var, op, value) -> {
+            HITS.incrementAndGet();
+            rawSink.bound(var, op, value);
+        };
         for (Expr expr : filter.getList()) {
             if (!(expr instanceof ExprFunction2 func)) {
                 continue;
@@ -81,7 +91,17 @@ final class FilterBounds {
      *       Jena 6 canonicalises tag case at node creation, so "m"@EN and
      *       "m"@en are one term today; the gate still covers rdf:dirLangString
      *       variants and stores written by a non-canonicalising Jena, and a
-     *       range comparison against a language-tagged constant is rare.</li>
+     *       range comparison against a language-tagged constant is rare;</li>
+     *   <li><b>mixed durations</b> (a year/month part AND a day/time part, e.g.
+     *       "P1M35D"): the dictionary orders durations by total months, then
+     *       total seconds; ARQ compares two mixed durations by XSD's
+     *       four-reference-point rule, which is determinate for some pairs the
+     *       months-first order gets the other way round ("P1M35D" is greater
+     *       than "P2M1D" for ARQ, yet ranks before it), so a snapped bound
+     *       dropped such rows. A pure year/month or day/time constant is safe:
+     *       same-class stored values order exactly as XSD does, and ARQ answers
+     *       every cross-class comparison false, so the rows the hint excludes
+     *       would not survive the filter anyway (BG-326).</li>
      * </ul>
      * Every other space is ordered by value with value-equal terms adjacent
      * (see {@code NodeComparator}), so the hint is over-inclusive, never lossy.
@@ -96,7 +116,28 @@ final class FilterBounds {
             return false;
         }
         String lang = value.getLiteralLanguage();
-        return lang == null || lang.isEmpty();
+        if (lang != null && !lang.isEmpty()) {
+            return false;
+        }
+        return !isMixedDuration(value);
+    }
+
+    /** A well-formed xsd:duration with both a year/month and a day/time component set. */
+    static boolean isMixedDuration(Node value) {
+        NodeValue nv;
+        try {
+            nv = NodeValue.makeNode(value);
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (!nv.isDuration()) {
+            return false;
+        }
+        Duration d = nv.getDuration();
+        boolean yearMonth = d.isSet(DatatypeConstants.YEARS) || d.isSet(DatatypeConstants.MONTHS);
+        boolean dayTime = d.isSet(DatatypeConstants.DAYS) || d.isSet(DatatypeConstants.HOURS)
+                || d.isSet(DatatypeConstants.MINUTES) || d.isSet(DatatypeConstants.SECONDS);
+        return yearMonth && dayTime;
     }
 
     /** The comparison symbol for an ordering comparison, or {@code null} for any other function. */

@@ -15,6 +15,8 @@ import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryFactory;
 import org.apache.jena.rdf.model.Model;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -141,6 +143,78 @@ class PlaidWriterParityTest {
     }
 
     /** BG-182: the SPATIAL graph and the derived features must match the sequential build. */
+    /**
+     * BG-110: when one of several documents fails, the other parse workers
+     * are stopped and DRAINED before the pipeline is closed and the workspace
+     * removed - no worker keeps committing into closed sorters, no run file
+     * is left open under the deletion, no {@code .bgplaid-*} directory
+     * survives.
+     */
+    @Test
+    void aFailingDocumentAbortsTheMergeCleanly() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("abortsrc"));
+        List<File> inputs = new ArrayList<>();
+        for (int f = 0; f < 6; f++) {
+            StringBuilder nq = new StringBuilder();
+            for (int i = 0; i < 4000; i++) {
+                nq.append("<http://ex.org/s").append(i % 500).append("> <http://ex.org/p").append(f)
+                  .append("> \"v").append(i).append("\" .\n");
+            }
+            if (f == 3) {
+                nq.append("not an n-quads line @@@\n");
+            }
+            File file = src.resolve("doc" + f + ".nq").toFile();
+            Files.write(file.toPath(), nq.toString().getBytes(StandardCharsets.UTF_8));
+            inputs.add(file);
+        }
+        Path work = Files.createDirectories(dir.resolve("abortwork"));
+        File dest = dir.resolve("abort.h5").toFile();
+        assertThrows(java.io.IOException.class, () -> PlaidHDF5Writer.Builder()
+                .setSources(inputs).setDestination(dest).setWorkDirectory(work).setCores(3)
+                .setTermSpillBatch(64).setIdSpillBatch(128).setMergeFanIn(2)
+                .build().write());
+        try (var entries = Files.list(work)) {
+            assertEquals(List.of(), entries.toList(), "no workspace survives the failed merge");
+        }
+        assertFalse(dest.exists(), "nothing was published");
+        try (var entries = Files.list(dir)) {
+            assertTrue(entries.noneMatch(p -> p.getFileName().toString().endsWith(".tmp")), "no temp output left");
+        }
+    }
+
+    /**
+     * BG-112: VoID statistics computed from parse workers calling the
+     * accumulator concurrently must equal the sequential writer's, in both
+     * modes - the statistics graph is isomorphic and every (predicate, value)
+     * pair in it agrees.
+     */
+    @Test
+    void voidStatisticsParity() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("voidsrc"));
+        List<File> inputs = new ArrayList<>();
+        for (int f = 0; f < 4; f++) {
+            String trig = "@prefix ex: <http://ex.org/> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+                    + "ex:a" + f + " rdf:type ex:T1 . ex:a" + f + " ex:p ex:b . ex:a" + f + " ex:p \"x" + f + "\" . ex:a" + f + " ex:p ex:b .\n"
+                    + "ex:b rdf:type ex:T2 . ex:b ex:q \"1\"^^<http://www.w3.org/2001/XMLSchema#int> .\n"
+                    + "ex:g1 { ex:c" + f + " rdf:type ex:T1 . ex:c" + f + " ex:p ex:d . ex:c" + f + " ex:p ex:d . ex:d ex:q \"y\"@en . }\n"
+                    + "ex:g" + f + " { ex:e ex:p ex:f" + f + " . }\n";
+            File file = src.resolve("v" + f + ".trig").toFile();
+            Files.write(file.toPath(), trig.getBytes(StandardCharsets.UTF_8));
+            inputs.add(file);
+        }
+        for (com.ebremer.beakgraph.core.VoidMode mode : new com.ebremer.beakgraph.core.VoidMode[]{
+                com.ebremer.beakgraph.core.VoidMode.EXACT, com.ebremer.beakgraph.core.VoidMode.SKETCH}) {
+            File seq = dir.resolve("void-" + mode + ".seq.h5").toFile();
+            File plaid = dir.resolve("void-" + mode + ".plaid.h5").toFile();
+            HDF5Writer.Builder().setSources(inputs).setDestination(seq).setVoidMode(mode).build().write();
+            PlaidHDF5Writer.Builder().setSources(inputs).setDestination(plaid).setVoidMode(mode)
+                    .setWorkDirectory(Files.createDirectories(dir.resolve("voidwork-" + mode))).setCores(3)
+                    .setTermSpillBatch(64).setIdSpillBatch(128).setMergeFanIn(2)
+                    .build().write();
+            com.ebremer.beakgraph.hdf5.writers.parallel.ParallelWriterParityTest.assertVoidParity(seq.toPath(), plaid.toPath(), mode.toString());
+        }
+    }
+
     @Test
     void spatialAndFeaturesParity() throws Exception {
         String trig = """

@@ -26,10 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import static com.ebremer.beakgraph.utils.UTIL.isRelativeIRI;
 import org.apache.jena.graph.Node;
-import org.apache.jena.graph.TextDirection;
-import org.apache.jena.vocabulary.XSD;
 
 /**
  * MultiType Dictionary Writer
@@ -226,139 +223,29 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         }
     }
 
+    // Built on first use, once every buffer field is final (BG-298: one
+    // encoder for the RAM and the streaming dictionary writers).
+    private DictionaryNodeEncoder encoder;
+
     private void addNodeInternal(Node node) {
-        if (node.isBlank()) {
-            // Rank-based BNodes: We write 0 for offset and regenerate label from ID during read
-            nativedatatypes.writeInteger(DataType.BNODE.ordinal());
-            offsets.writeLong(0);
-            if (literalsPresent) typedLiterals.writeLong(0);
-            if (langTags != null) langTags.writeLong(0);
-            if (langDirs != null) langDirs.writeLong(0);
+        if (encoder == null) {
+            encoder = new DictionaryNodeEncoder(name, sorted.size(), offsets, nativedatatypes, typedLiterals,
+                    integers, longs, floats, doubles, iri, strings, langTags, langDirs,
+                    dataTypesLookUp, langLookUp, literalsPresent,
+                    (tripleTerms == null) ? null : tt -> {
+                        // Component ids resolve NOW - the section's sort already fixed
+                        // every rank, so nested terms resolve through this (partially
+                        // encoded) section's own locate() (the "flat second pass").
+                        long ordinal = tripleTerms.getNumEntries() / 3;
+                        long[] c = tripleTermEncoder.encode(tt, this);
+                        tripleTerms.writeLong(c[0]);
+                        tripleTerms.writeLong(c[1]);
+                        tripleTerms.writeLong(c[2]);
+                        return ordinal;
+                    });
         }
-        else if (node.isURI()) {
-            try {
-                boolean relative = isRelativeIRI(node.getURI());
-                offsets.writeLong(iri.getNumEntries());
-                nativedatatypes.writeInteger((relative ? DataType.RELATIVE_IRI : DataType.IRI).ordinal());
-                iri.add(node.getURI());
-                if (literalsPresent) typedLiterals.writeLong(0);
-                if (langTags != null) langTags.writeLong(0);
-                if (langDirs != null) langDirs.writeLong(0);
-            } catch (IOException ex) {
-                // Continuing after a failed iri.add() would leave the offsets and
-                // datatypes buffers one entry ahead of the IRI dictionary, silently
-                // corrupting every node after this one. Abort the build instead.
-                throw new UncheckedIOException("Failed to add IRI to dictionary: " + node, ex);
-            }
-        }
-        else if (node.isLiteral()) {
-            String dt = node.getLiteralDatatypeURI();
-            long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
-            if (literalsPresent) typedLiterals.writeLong(dtId);
-            if (langTags != null) {
-                String lang = node.getLiteralLanguage();
-                langTags.writeLong((lang == null || lang.isEmpty()) ? 0L : langLookUp.getOrDefault(lang, 0L));
-            }
-            if (langDirs != null) {
-                TextDirection dir = node.getLiteralBaseDirection();
-                langDirs.writeLong((dir == null) ? 0L : (dir == TextDirection.LTR ? 1L : 2L));
-            }
-            // An ill-typed literal ("abc"^^xsd:int) has no parseable value but is a
-            // valid RDF term: route it to the strings branch below (term-exact, with
-            // its datatype IRI) instead of aborting the build here. ProcessQuad
-            // counts those same terms toward numStrings, so the buffer exists.
-            Object val;
-            try {
-                val = node.getLiteralValue();
-            } catch (RuntimeException ex) {
-                val = null;
-            }
-            if (dt.equals(XSD.xlong.getURI()) && longs != null && val instanceof Number num) {
-                offsets.writeLong(longs.getNumEntries());
-                nativedatatypes.writeInteger(DataType.LONG.ordinal());
-                longs.writeLong(num.longValue());
-            }
-            else if (dt.equals(XSD.xint.getURI()) && integers != null && val instanceof Number num) {
-                // Only xsd:int is bit-packed (32-bit). xsd:integer is unbounded and is
-                // stored via the strings branch below so its value and datatype survive.
-                offsets.writeLong(integers.getNumEntries());
-                nativedatatypes.writeInteger(DataType.INTEGER.ordinal());
-                integers.writeInteger(num.intValue());
-            }
-            else if (dt.equals(XSD.xdouble.getURI()) && doubles != null && val instanceof Number num) {
-                offsets.writeLong(doubles.getNumEntries());
-                nativedatatypes.writeInteger(DataType.DOUBLE.ordinal());
-                try {
-                    doubles.writeDouble(num.doubleValue());
-                } catch (IOException ex) {
-                    // See the IRI case: a skipped value desynchronises the dictionary.
-                    throw new UncheckedIOException("Failed to add double literal to dictionary", ex);
-                }
-            }
-            else if (dt.equals(XSD.xfloat.getURI()) && floats != null && val instanceof Number num) {
-                offsets.writeLong(floats.getNumEntries());
-                nativedatatypes.writeInteger(DataType.FLOAT.ordinal());
-                try {
-                    floats.writeFloat(num.floatValue());
-                } catch (IOException ex) {
-                    throw new UncheckedIOException("Failed to add float literal to dictionary", ex);
-                }
-            }
-            else if (strings != null) {
-                // Fallback for strings, booleans, dates, and custom types
-                String lex = node.getLiteralLexicalForm();
-                offsets.writeLong(strings.getNumEntries());
-                nativedatatypes.writeInteger(DataType.STRING.ordinal());
-                try {
-                    strings.add(lex);
-                } catch (IOException ex) {
-                    throw new UncheckedIOException("Failed to add string literal to dictionary", ex);
-                }
-            }
-            else {
-                // Unreachable in normal operation: every string-stored datatype is
-                // counted in stats.numStrings (PositionalDictionaryWriterBuilder.ProcessQuad),
-                // which forces the strings buffer to be allocated above. Reaching here
-                // means a stats/allocation mismatch. Fail loudly rather than skip the
-                // node, which would leave offsets/datatypes one entry short and corrupt
-                // every subsequent node in the dictionary.
-                throw new IllegalStateException(
-                    "No writer buffer for literal datatype " + dt + " (strings buffer not allocated); "
-                  + "refusing to write a misaligned dictionary entry.");
-            }
-        }
-        else if (node.isTripleTerm()) {
-            if (tripleTerms == null) {
-                // Reaching here means the stats pass never counted this term -
-                // a stats/allocation mismatch, same class of bug as the strings
-                // fallback below guards against.
-                throw new IllegalStateException(
-                        "Triple term reached dictionary '" + name + "' without a tripleTerms buffer: " + node);
-            }
-            offsets.writeLong(tripleTerms.getNumEntries() / 3);
-            nativedatatypes.writeInteger(DataType.TRIPLE_TERM.ordinal());
-            if (literalsPresent) typedLiterals.writeLong(0);
-            if (langTags != null) langTags.writeLong(0);
-            if (langDirs != null) langDirs.writeLong(0);
-            // Component ids resolve NOW - the section's sort already fixed every
-            // rank, so nested terms resolve through this (partially encoded)
-            // section's own locate() (the "flat second pass" of the dictionary design).
-            long[] c = tripleTermEncoder.encode(node, this);
-            tripleTerms.writeLong(c[0]);
-            tripleTerms.writeLong(c[1]);
-            tripleTerms.writeLong(c[2]);
-        }
-        else {
-            // A node that is neither blank, URI, literal nor triple term (e.g. a
-            // variable) would write NO buffer entries at all, leaving
-            // offsets/datatypes one entry short of the sorted node list - every
-            // id after it silently shifts. Fail the build loudly instead.
-            throw new IllegalStateException("Unsupported node kind in dictionary '" + name + "': " + node);
-        }
-        long c = cc.incrementAndGet();
-        if (c % 1_000_000 == 0) {
-            logger.info("Dictionary '{}': encoded {} / {} nodes", name, c, sorted.size());
-        }
+        encoder.encode(node);
+        cc.incrementAndGet();
     }
 
     @Override

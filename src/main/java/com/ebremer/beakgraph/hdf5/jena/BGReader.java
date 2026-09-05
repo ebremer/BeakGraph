@@ -20,6 +20,14 @@ public interface BGReader extends AutoCloseable {
     public GSPODictionary getDictionary();
     public NodeTable getNodeTable();
     public Iterator<BindingNodeId> read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable);
+
+    /**
+     * The set union of several graphs - a {@code FROM <g1> FROM <g2>} dataset
+     * clause - with the union graph's semantics: a row present in more than
+     * one member is returned once. Members may name the default graph and
+     * {@code urn:x-arq:UnionGraph}; an absent member contributes nothing.
+     */
+    public Iterator<BindingNodeId> readGraphs(java.util.Collection<Node> graphs, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable);
     public ExtendedIterator<Triple> graphBaseFind(Node graph, Triple tp);
     public Iterator<Node> listGraphNodes();
     public boolean containsGraph(Node graphNode);
@@ -30,6 +38,14 @@ public interface BGReader extends AutoCloseable {
      * instances whose underlying storage has been closed.
      */
     public default boolean isOpen() { return true; }
+
+    /**
+     * The on-disk format version of the store ({@code formatVersion} on the
+     * {@code .BG} group; files written before versioning are 1), or -1 when the
+     * storage has no such notion. What {@code -verify} prints so operators can
+     * tell which stores predate a format change (BG-266).
+     */
+    public default long getFormatVersion() { return -1; }
 
     /**
      * Exact triple count of {@code graph} computed from index structure alone,

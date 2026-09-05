@@ -71,12 +71,22 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                     }
                 }
             } else {
-                // G bound, P variable -> Scan SP (Index: GSPO)
-                IndexReader gspo = reader.getIndexReader(Index.GSPO);
-                if (gspo != null) {
-                    chain = new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable);
+                IndexReader gpos = (oBound && !sBound && BGIteratorObjectFirst.applicable(quad))
+                        ? reader.getIndexReader(Index.GPOS) : null;
+                if (gpos != null) {
+                    // G, O bound, S and P variable (?s ?p <o>) -> one GPOS probe per
+                    // predicate of the graph (Index: GPOS). There is no GOSP index,
+                    // and the alternative was BGIteratorSPO_All: a walk over every
+                    // row of the graph with an object clamp (BG-335).
+                    chain = new BGIteratorObjectFirst(dict, gpos, bnid, quad, filter, nodeTable);
                 } else {
-                    throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
+                    // G bound, P variable -> Scan SP (Index: GSPO)
+                    IndexReader gspo = reader.getIndexReader(Index.GSPO);
+                    if (gspo != null) {
+                        chain = new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable);
+                    } else {
+                        throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
+                    }
                 }
             }
         } else {

@@ -191,4 +191,27 @@ class FCDCorruptionTest {
         assertThrows(IllegalArgumentException.class, () -> su.decompress(new byte[]{1, 2, 3}));
         assertThrows(IllegalArgumentException.class, () -> su.decompress(ByteBuffer.wrap(new byte[]{1, 2})));
     }
+
+    @Test
+    void prefixOnePastThePreviousStringIsCorruptionNotPadding() throws Exception {
+        // BG-80: "alphabet soup" is 13 chars; a shared prefix of 14 has no
+        // meaning. StringBuilder.setLength(14) would silently NUL-pad and the
+        // rest of the block would inherit the damage.
+        long start = firstBlockOffset();
+        byte[] original;
+        try (HdfFile f = new HdfFile(store.toPath())) {
+            original = (byte[]) ((Dataset) f.getByPath(STRINGS + "/stringbuffer")).getData();
+        }
+        int len = original[(int) start] & 0x7F;
+        long prefixAt = start + 1 + len;
+        assertEquals("alphabet soup".length(), len, "fixture: the first entry is the shortest string");
+        assertTrue((original[(int) prefixAt] & 0x80) != 0, "fixture: the second entry's prefix is one VByte byte");
+        File h5 = corruptedCopy("prefix-plus-one", buf -> overwrite(buf, prefixAt, vbyte(len + 1)));
+        FCDReader r = reader(h5);
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> r.get(1));
+        assertTrue(ex.getMessage().contains("prefix length " + (len + 1)), ex.getMessage());
+        assertTrue(ex.getMessage().contains("exceeds the previous string's " + len), ex.getMessage());
+        // The intact copy decodes the same entry without a NUL anywhere.
+        assertEquals(-1, reader(store).get(1).indexOf('\u0000'));
+    }
 }

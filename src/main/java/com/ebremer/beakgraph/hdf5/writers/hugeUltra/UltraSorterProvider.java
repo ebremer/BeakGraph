@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.hugeUltra;
 
+import com.ebremer.beakgraph.core.lib.CachingNodeComparator;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.huge.HugeIO;
@@ -31,12 +32,46 @@ public final class UltraSorterProvider implements SorterProvider {
     private final int termSpillBatch;
     private final int idSpillBatch;
     private final int fanIn;
+    private final long termSpillBytes;
+    private final int maxConcurrentMerges;
     private final ForkJoinPool pool;
 
+    /** File descriptors a sorter level may hold in open runs by default; sizes the merge concurrency. */
+    public static final int DEFAULT_FD_BUDGET = 1024;
+
+    /**
+     * Merge groups one sorter runs at a time: at most one per core, and no
+     * more than fit {@link #DEFAULT_FD_BUDGET} open files at {@code fanIn + 1}
+     * per running merge. A level's merges used to be submitted all at once,
+     * so -cores 32 with fan-in 128 held ~4000 descriptors and 32 batches of
+     * live records (BG-133).
+     */
+    public static int defaultMergeConcurrency(int fanIn, int cores) {
+        return Math.max(1, Math.min(Math.max(1, cores), DEFAULT_FD_BUDGET / (Math.max(2, fanIn) + 1)));
+    }
+
+    /** With the default term byte budget ({@link SorterProvider#defaultTermSpillBytes}, two batches in flight). */
     public UltraSorterProvider(int termSpillBatch, int idSpillBatch, int fanIn, ForkJoinPool pool) {
+        this(termSpillBatch, idSpillBatch, fanIn, SorterProvider.defaultTermSpillBytes(2), pool);
+    }
+
+    /**
+     * @param termSpillBytes estimated term heap one term sorter buffers before
+     *                       a run spills, whatever the record count (BG-125)
+     */
+    public UltraSorterProvider(int termSpillBatch, int idSpillBatch, int fanIn, long termSpillBytes, ForkJoinPool pool) {
+        this(termSpillBatch, idSpillBatch, fanIn, termSpillBytes,
+                defaultMergeConcurrency(fanIn, pool.getParallelism()), pool);
+    }
+
+    /** @param maxConcurrentMerges merge groups one sorter level runs at a time (BG-133) */
+    public UltraSorterProvider(int termSpillBatch, int idSpillBatch, int fanIn, long termSpillBytes,
+                               int maxConcurrentMerges, ForkJoinPool pool) {
         this.termSpillBatch = termSpillBatch;
         this.idSpillBatch = idSpillBatch;
         this.fanIn = fanIn;
+        this.termSpillBytes = termSpillBytes;
+        this.maxConcurrentMerges = Math.max(1, maxConcurrentMerges);
         this.pool = pool;
     }
 
@@ -45,21 +80,23 @@ public final class UltraSorterProvider implements SorterProvider {
         // A PER-SORTER comparator: literal NodeValue conversions memoize
         // locally instead of contending on Jena's global cache (see
         // CachingNodeComparator). Cap ~= two spill batches of distinct nodes.
+        int memo = (int) Math.min(1 << 22, Math.max(1 << 16, 2L * termSpillBatch));
         return new ParallelSpillSorter<>(workDir, tag,
-                fastTermOrder(new CachingNodeComparator(Math.max(1 << 16, termSpillBatch * 2))),
-                new GroupedTermFormat(), termSpillBatch, fanIn, pool);
+                fastTermOrder(new CachingNodeComparator(memo)),
+                new GroupedTermFormat(), termSpillBatch, fanIn, pool,
+                HugeRecords.TERM_ROW_BYTES, termSpillBytes, maxConcurrentMerges);
     }
 
     @Override
     public RecordSorter<RowId> rowIdSorter(Path workDir, String tag, long maxRow, long maxId) {
-        return new PackedRowIdSorter(workDir, tag, maxRow, maxId, idSpillBatch, fanIn, pool, pool);
+        return new PackedRowIdSorter(workDir, tag, maxRow, maxId, idSpillBatch, fanIn, pool, pool, maxConcurrentMerges);
     }
 
     @Override
     public RecordSorter<HugeRecords.IdQuad> quadSorter(Path workDir, String tag, Index order,
                                                        long numEntities, long numPredicates, long numObjects) {
         return new PackedQuadSorter(workDir, tag, order, numEntities, numPredicates, numObjects,
-                idSpillBatch, fanIn, pool, pool);
+                idSpillBatch, fanIn, pool, pool, maxConcurrentMerges);
     }
 
     // ------------------------------------------------------------------

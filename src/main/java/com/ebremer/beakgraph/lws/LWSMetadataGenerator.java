@@ -16,6 +16,31 @@ import java.util.zip.GZIPOutputStream;
 
 public class LWSMetadataGenerator {
 
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(LWSMetadataGenerator.class);
+
+    /**
+     * A tree walk that skips what it cannot read instead of aborting. The
+     * inherited {@code visitFileFailed} rethrows, so one unreadable entry (a
+     * permission-denied directory, a locked file) used to fail the whole
+     * generation - and the endpoint then served an EMPTY model, 404ing every
+     * path of a 5,000-file tree for one bad entry (BG-39).
+     */
+    static class LenientVisitor extends SimpleFileVisitor<Path> {
+        @Override
+        public FileVisitResult visitFileFailed(Path file, IOException exc) {
+            logger.warn("Skipping unreadable entry {} while scanning LWS storage: {}", file, exc.toString());
+            return FileVisitResult.CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+            if (exc != null) {
+                logger.warn("Directory {} could not be fully read while scanning LWS storage: {}", dir, exc.toString());
+            }
+            return FileVisitResult.CONTINUE;
+        }
+    }
+
     private static final String AS_NS = "https://www.w3.org/ns/activitystreams#";
     private static final String SCHEMA_NS = "https://schema.org/";
 
@@ -70,7 +95,7 @@ public class LWSMetadataGenerator {
         Resource rootResource = model.createResource(CANONICAL_BASE);
         rootResource.addProperty(RDF.type, containerType);
 
-        Files.walkFileTree(rootPath, new SimpleFileVisitor<Path>() {
+        Files.walkFileTree(rootPath, new LenientVisitor() {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
@@ -136,7 +161,7 @@ public class LWSMetadataGenerator {
      */
     public static Set<String> treeSignature(Path rootPath) throws IOException {
         Set<String> signature = new HashSet<>();
-        Files.walkFileTree(rootPath, new SimpleFileVisitor<Path>() {
+        Files.walkFileTree(rootPath, new LenientVisitor() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 if (!isCacheArtifact(file)) {

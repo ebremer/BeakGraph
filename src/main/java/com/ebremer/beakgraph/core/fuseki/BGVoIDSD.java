@@ -29,9 +29,11 @@ import org.apache.jena.vocabulary.VOID;
  * distinct-object, and per-class instance counts are exact up to
  * {@value Stats#EXACT_LIMIT} distinct nodes per graph and then spill into
  * HyperLogLog sketches ({@link DistinctNodeCounter}); the
- * {@code void:uriSpace} common prefix and {@code void:vocabulary} namespaces
- * are maintained incrementally (exact, tiny state) instead of over retained
- * node sets. Small and medium stores therefore report byte-identical VoID
+ * {@code void:uriSpace} common prefix is maintained incrementally (one
+ * string) and {@code void:vocabulary} is derived from the predicate and
+ * class namespaces - state bounded by the number of predicates and classes,
+ * never by the number of objects (a hierarchical object IRI's parent path is
+ * not a vocabulary, and one string per object was unbounded; BG-43). Small and medium stores therefore report byte-identical VoID
  * to previous versions; billion-quad disk builds report deterministic
  * estimates (~0.8% error) instead of holding much of their dictionary on
  * the heap. Fully thread-safe: parallel-ingest writers call {@link #add}
@@ -132,11 +134,9 @@ public class BGVoIDSD {
         private final ConcurrentHashMap<Node, DistinctNodeCounter> classInstances = new ConcurrentHashMap<>();
         private final DistinctNodeCounter distinctSubjects;
         private final DistinctNodeCounter distinctObjects;
-        // Incremental replacements for what used to be derived from the FULL
-        // retained node sets: object-URI namespaces (small set of strings) and
-        // the running longest common prefix of absolute subject URIs (one
-        // string; null = none seen yet, "" = no common prefix).
-        private final Set<String> objectNamespaces = ConcurrentHashMap.newKeySet();
+        // Incremental replacement for what used to be derived from the FULL
+        // retained subject set: the running longest common prefix of absolute
+        // subject URIs (one string; null = none seen yet, "" = no common prefix).
         private final AtomicReference<String> subjectPrefix = new AtomicReference<>(null);
 
         Stats(int exactLimit) {
@@ -155,9 +155,6 @@ public class BGVoIDSD {
             distinctObjects.add(oNode);
             if (sNode.isURI() && !UTIL.isRelativeIRI(sNode.getURI())) {
                 updateSubjectPrefix(sNode.getURI());
-            }
-            if (oNode.isURI() && !UTIL.isRelativeIRI(oNode.getURI())) {
-                objectNamespaces.add(getNamespaceBase(oNode.getURI()));
             }
             // Classes and instances (rdf:type)
             if (pNode.equals(RDF.type.asNode()) && oNode.isURI() && sNode.isURI()) {
@@ -196,7 +193,9 @@ public class BGVoIDSD {
                     .addLiteral(VOID.distinctSubjects, distinctSubjects.count())
                     .addLiteral(VOID.distinctObjects, distinctObjects.count())
                     .addLiteral(VOID.entities, entities);
-            Set<String> vocabNamespaces = new HashSet<>(objectNamespaces);
+            // void:vocabulary: the namespaces of the predicates and of the classes
+            // (rdf:type objects) in use - the ontologies the data draws on.
+            Set<String> vocabNamespaces = new HashSet<>();
             // Process Property Partitions & capture predicate namespaces
             predicateCounts.forEach((pNode, count) -> {
                 if (pNode.isURI()) {
@@ -213,6 +212,9 @@ public class BGVoIDSD {
             // Process Class Partitions
             classInstances.forEach((cNode, instances) -> {
                 if (cNode.isURI()) {
+                    if (!UTIL.isRelativeIRI(cNode.getURI())) {
+                        vocabNamespaces.add(getNamespaceBase(cNode.getURI()));
+                    }
                     Resource clazz = ResourceFactory.createResource(cNode.getURI());
                     graphRes.addProperty(VOID.classPartition,
                         graphRes.getModel().createResource()

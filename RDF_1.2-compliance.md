@@ -95,7 +95,7 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
   `DirLangSpillCodecTest`, `TermFidelityTest`, `ExportTest`). v3 files read unchanged (no
   directions); v4 files are rejected by older builds via the format-version gate.
   **History: versions ≤ 0.17.0 silently stored these as plain lang-tagged terms** — `"x"@en`, a
-  different RDF term, with nothing recording the change. `-verify` cannot detect it retroactively
+  different RDF term, with nothing recording the change. `-verify` prints each store's format version (`(format vN)` on the verdict line), so stores below v4 can be found and rebuilt; the loss itself is not detectable in the file
   (the file is internally consistent; it is just not what the source said). Rebuilding an affected
   source under a guarded or v4 build produces the correct terms — a diff against the old store is
   the detection mechanism.
@@ -124,6 +124,10 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
   - **Blank nodes inside composite literals are rejected at ingest** (`CdtBlankNodeGuardTest`):
     BeakGraph regenerates blank-node labels from dictionary rank, so a label inside a literal's
     lexical form would silently stop co-referring with the graph, which SPARQL-CDT §5.2 requires.
+  - **Relative IRIs inside composite literals are rejected at ingest** (`CdtRelativeIriGuardTest`):
+    the lexical form is stored verbatim, so a document-relative reference inside it would be neither
+    relativized at ingest nor resolved when served - `cdt:get` would re-parse it against the server's
+    working directory while the same reference outside the literal is served under the store's URL.
   - Ill-formed composite lexical forms never reach BeakGraph from documents: RIOT's CDT-aware
     default profile rejects them at parse.
 
@@ -141,7 +145,7 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
 | RDF 1.2 triple terms | Stored term-exactly (format v5, `tripleTerms` component store), all engines; SPARQL 1.2 patterns answered |
 | RDF 1.2 base-direction literals | Stored term-exactly (format v4, `langDirs`); ≤ 0.17.0 stored them silently corrupted — rebuild |
 | RDF 1.2 conformance level | **Full** (RDF suites: 215 executed, 0 failures; SPARQL 1.2 suites: 266 executed, 0 failures; Jena 6.2.0) |
-| SPARQL-CDT composite literals | Stored term-exact; lexical dictionary order (≤ 0.17.0 stores need rebuild); embedded blank nodes rejected |
+| SPARQL-CDT composite literals | Stored term-exact; lexical dictionary order (≤ 0.17.0 stores need rebuild); embedded blank nodes and relative IRIs rejected |
 | Numeric literal term identity | **Deviation** — canonicalized at ingest |
 | Absolute-IRI requirement | **Deviation** — relative IRIs stored, resolved at serving time |
 | Dataset faithfulness | **Caveat** — metadata graphs injected |

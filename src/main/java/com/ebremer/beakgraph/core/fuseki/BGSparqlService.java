@@ -10,11 +10,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.Triple;
 import org.apache.jena.query.Dataset;
 import org.apache.jena.query.Query;
 import org.apache.jena.query.QueryExecution;
@@ -22,9 +24,18 @@ import org.apache.jena.query.QueryFactory;
 import org.apache.jena.query.ResultSet;
 import org.apache.jena.query.ResultSetFormatter;
 import org.apache.jena.rdf.model.Model;
+import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.riot.RDFFormat;
+import org.apache.jena.riot.system.StreamRDF;
+import org.apache.jena.riot.system.StreamRDFWriter;
 import org.apache.jena.sparql.core.DatasetDescription;
+import org.apache.jena.sparql.engine.binding.Binding;
+import org.apache.jena.sparql.engine.binding.BindingBuilder;
+import org.apache.jena.sparql.graph.NodeTransform;
+import org.apache.jena.sparql.syntax.ElementData;
+import org.apache.jena.sparql.syntax.ElementVisitorBase;
+import org.apache.jena.sparql.syntax.ElementWalker;
 import org.apache.jena.sparql.syntax.syntaxtransform.QueryTransformOps;
 
 /**
@@ -54,6 +65,17 @@ public final class BGSparqlService {
      */
     static long queryTimeoutSeconds() {
         return Long.getLong("beakgraph.query.timeout.seconds", 30L);
+    }
+
+    /**
+     * Largest CONSTRUCT / DESCRIBE result served in a format that has to be
+     * materialized (JSON-LD, RDF/XML). Turtle and N-Triples are streamed and
+     * unbounded. Configurable via {@code beakgraph.query.construct.max.triples};
+     * 0 or negative disables the cap. The wall-clock limit alone did not bound
+     * memory: a fast whole-store CONSTRUCT filled the heap well inside it (BG-222).
+     */
+    static long constructMaxTriples() {
+        return Long.getLong("beakgraph.query.construct.max.triples", 1_000_000L);
     }
 
     /** Thrown when a POST body exceeds {@link #MAX_QUERY_BODY_BYTES}; callers map it to HTTP 413. */
@@ -236,6 +258,43 @@ public final class BGSparqlService {
         return false;
     }
 
+    /**
+     * Jena's syntax transform rewrites the WHERE pattern, but not the nodes a
+     * DESCRIBE names nor the rows of a VALUES clause (inline or top-level);
+     * a client naming the document there by its absolute URL missed the
+     * stored relative term (BG-397). Applied in place to the transformed copy.
+     */
+    static void rewriteOutsideThePattern(Query q, NodeTransform t) {
+        if (q.isDescribeType()) {
+            List<Node> nodes = q.getResultURIs();
+            List<Node> rewritten = nodes.stream().map(t::apply).toList();
+            nodes.clear();
+            nodes.addAll(rewritten);
+        }
+        if (q.hasValues()) {
+            List<Binding> rows = q.getValuesData().stream().map(b -> transformValues(b, t)).toList();
+            q.setValuesDataBlock(q.getValuesVariables(), rows);
+        }
+        if (q.getQueryPattern() != null) {
+            ElementWalker.walk(q.getQueryPattern(), new ElementVisitorBase() {
+                @Override
+                public void visit(ElementData el) {
+                    List<Binding> rows = el.getRows();
+                    for (int i = 0; i < rows.size(); i++) {
+                        rows.set(i, transformValues(rows.get(i), t));
+                    }
+                }
+            });
+        }
+    }
+
+    /** The row with every VALUE mapped through {@code t} (Jena's NodeTransformLib maps the variables, not the values). */
+    private static Binding transformValues(Binding row, NodeTransform t) {
+        BindingBuilder bb = Binding.builder();
+        row.forEach((v, node) -> bb.add(v, t.apply(node)));
+        return bb.build();
+    }
+
     private static Predicate<Node> storedTermProbe(Dataset ds) {
         if (ds.asDatasetGraph() instanceof BGDatasetGraph bgd) {
             NodeTable nodeTable = bgd.getBeakGraph().getReader().getNodeTable();
@@ -279,14 +338,22 @@ public final class BGSparqlService {
             // SUBJECT/OBJECT etc., AND the CDT extensions (UNFOLD/FOLD), while
             // syntaxSPARQL_12 drops UNFOLD from the grammar and silently breaks
             // the supported CDT surface (the syntaxARQ decision, CHANGELOG.md "Format v5 design notes").
-            Query query = QueryFactory.create(queryStr);
-            applyProtocolDataset(query, protocolDataset);
+            // The served URL is the query's base as well: a client naming the
+            // document by relative reference (<>, <image.png>) must reach the
+            // stored relative term through the same relativization, not the
+            // JVM's working directory as a file: IRI (BG-41). The two-argument
+            // overload keeps the default syntax; a client's own BASE still wins.
             RelativeIRIResolver resolver = new RelativeIRIResolver(baseURI);
+            Query query = resolver.isActive() ? QueryFactory.create(queryStr, baseURI) : QueryFactory.create(queryStr);
+            applyProtocolDataset(query, protocolDataset);
             // Relativize document IRIs the query names so they match the
             // dictionary. Skip the whole-query walk when there is no base.
-            Query execQuery = resolver.isActive()
-                    ? QueryTransformOps.transform(query, resolver.absoluteToStorage(storedTermProbe(ds)))
-                    : query;
+            Query execQuery = query;
+            if (resolver.isActive()) {
+                NodeTransform toStorage = resolver.absoluteToStorage(storedTermProbe(ds));
+                execQuery = QueryTransformOps.transform(query, toStorage);
+                rewriteOutsideThePattern(execQuery, toStorage);
+            }
             long timeoutSeconds = queryTimeoutSeconds();
             var qexecBuilder = QueryExecution.dataset(ds).query(execQuery);
             if (timeoutSeconds > 0) {
@@ -309,31 +376,77 @@ public final class BGSparqlService {
                         ResultSetFormatter.outputAsXML(out, rs);
                     }
                 } else if (execQuery.isAskType()) {
+                    // Negotiated like SELECT, through Jena's formatters: the
+                    // hand-written {"boolean":b} lacked the mandatory "head"
+                    // member and ignored the Accept header (BG-42).
                     boolean b = qexec.execAsk();
-                    resp.setContentType("application/sparql-results+json");
-                    out = new ResponseOutput(resp.getOutputStream());
-                    out.write(("{\"boolean\":" + b + "}").getBytes(StandardCharsets.UTF_8));
-                } else if (execQuery.isConstructType() || execQuery.isDescribeType()) {
-                    Model m = execQuery.isConstructType() ? qexec.execConstruct() : qexec.execDescribe();
-                    m = resolver.resolve(m);
-                    if (containsTripleTerms(m) && !accept.contains("turtle")) {
-                        // JSON-LD and RDF/XML have no RDF 1.2 triple-term
-                        // syntax; refuse plainly rather than emit a corrupt
-                        // body or an opaque serializer failure.
-                        resp.sendError(400, "Result contains RDF 1.2 triple terms, which this response format "
-                                + "cannot represent; request text/turtle");
-                    } else if (accept.contains("json")) {
-                        resp.setContentType("application/ld+json");
+                    if (accept.contains("json")) {
+                        resp.setContentType("application/sparql-results+json");
                         out = new ResponseOutput(resp.getOutputStream());
-                        RDFDataMgr.write(out, m, RDFFormat.JSONLD);
-                    } else if (accept.contains("turtle")) {
-                        resp.setContentType("text/turtle");
+                        ResultSetFormatter.outputAsJSON(out, b);
+                    } else if (accept.contains("csv")) {
+                        resp.setContentType("text/csv");
                         out = new ResponseOutput(resp.getOutputStream());
-                        RDFDataMgr.write(out, m, RDFFormat.TURTLE);
+                        ResultSetFormatter.outputAsCSV(out, b);
                     } else {
-                        resp.setContentType("application/rdf+xml");
+                        resp.setContentType("application/sparql-results+xml");
                         out = new ResponseOutput(resp.getOutputStream());
-                        RDFDataMgr.write(out, m, RDFFormat.RDFXML);
+                        ResultSetFormatter.outputAsXML(out, b);
+                    }
+                } else if (execQuery.isConstructType() || execQuery.isDescribeType()) {
+                    Iterator<Triple> triples = resolver.resolve(execQuery.isConstructType()
+                            ? qexec.execConstructTriples() : qexec.execDescribeTriples());
+                    boolean ntriples = accept.contains("n-triples") || accept.contains("ntriples");
+                    if (accept.contains("turtle") || ntriples) {
+                        // Streamed triple by triple: no Model, no size limit.
+                        // (Turtle carries RDF 1.2 triple terms natively.)
+                        resp.setContentType(ntriples ? "application/n-triples" : "text/turtle");
+                        out = new ResponseOutput(resp.getOutputStream());
+                        StreamRDF stream = StreamRDFWriter.getWriterStream(out,
+                                ntriples ? RDFFormat.NTRIPLES : RDFFormat.TURTLE_BLOCKS);
+                        stream.start();
+                        if (!ntriples) {
+                            execQuery.getPrefixMapping().getNsPrefixMap().forEach(stream::prefix);
+                        }
+                        while (triples.hasNext()) {
+                            stream.triple(triples.next());
+                        }
+                        stream.finish();
+                    } else {
+                        // JSON-LD and RDF/XML are whole-document formats: the
+                        // result must be materialized, so it is capped.
+                        long cap = constructMaxTriples();
+                        Model m = ModelFactory.createDefaultModel();
+                        m.setNsPrefixes(execQuery.getPrefixMapping());
+                        long n = 0;
+                        boolean tooLarge = false;
+                        while (triples.hasNext()) {
+                            Triple t = triples.next();
+                            if (cap > 0 && ++n > cap) {
+                                tooLarge = true;
+                                break;
+                            }
+                            m.getGraph().add(t);
+                        }
+                        if (tooLarge) {
+                            resp.sendError(413, "Result exceeds " + cap + " triples, the limit for a response format "
+                                    + "that must be held in memory; request text/turtle or application/n-triples, "
+                                    + "which are streamed (server limit; adjustable with beakgraph.query.construct.max.triples)");
+                        } else if (containsTripleTerms(m)) {
+                            // JSON-LD and RDF/XML have no RDF 1.2 triple-term
+                            // syntax; refuse plainly rather than emit a corrupt
+                            // body or an opaque serializer failure.
+                            resp.sendError(400, "Result contains RDF 1.2 triple terms, which this response format "
+                                    + "cannot represent; request text/turtle");
+                        } else if (accept.contains("json")) {
+                            resp.setContentType("application/ld+json");
+                            out = new ResponseOutput(resp.getOutputStream());
+                            RDFDataMgr.write(out, m, RDFFormat.JSONLD);
+                        } else {
+                            resp.setContentType("application/rdf+xml");
+                            out = new ResponseOutput(resp.getOutputStream());
+                            RDFDataMgr.write(out, m, RDFFormat.RDFXML);
+                        }
                     }
                 } else {
                     resp.sendError(400, "Unsupported SPARQL query type");

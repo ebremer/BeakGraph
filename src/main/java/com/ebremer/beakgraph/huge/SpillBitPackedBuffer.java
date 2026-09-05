@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -18,7 +19,7 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-final class SpillBitPackedBuffer implements AutoCloseable {
+final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongSink {
 
     private final Path file;
     private final OutputStream out;
@@ -43,7 +44,7 @@ final class SpillBitPackedBuffer implements AutoCloseable {
         this.out = new BufferedOutputStream(Files.newOutputStream(file), 1 << 16);
     }
 
-    void writeInteger(int value) {
+    public void writeInteger(int value) {
         if (bitWidth != 32 && bitWidth != 64 && (value < 0 || value > ((1L << bitWidth) - 1))) {
             throw new IllegalArgumentException("Value " + value + " does not fit in " + bitWidth + " bits");
         }
@@ -51,7 +52,7 @@ final class SpillBitPackedBuffer implements AutoCloseable {
         numEntries++;
     }
 
-    void writeLong(long value) {
+    public void writeLong(long value) {
         if (bitWidth != 64 && (value < 0 || value > ((1L << bitWidth) - 1))) {
             throw new IllegalArgumentException("Value " + value + " does not fit in " + bitWidth + " bits");
         }
@@ -91,7 +92,7 @@ final class SpillBitPackedBuffer implements AutoCloseable {
         out.close();
     }
 
-    long getNumEntries() {
+    public long getNumEntries() {
         return numEntries;
     }
 

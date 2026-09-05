@@ -8,6 +8,7 @@ public class CustomFileTypeDetector extends FileTypeDetector {
 
     private static final Map<String, String> TYPE_MAP = Map.of(
         "h5",       "application/vnd.hdfgroup.hdf5",
+        "hdf5",     "application/vnd.hdfgroup.hdf5",
         "h4",       "application/vnd.hdfgroup.hdf4",
         "json",     "application/json",
         "avro",     "application/avro",

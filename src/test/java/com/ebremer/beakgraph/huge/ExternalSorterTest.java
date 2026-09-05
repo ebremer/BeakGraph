@@ -57,6 +57,85 @@ class ExternalSorterTest {
         }
     }
 
+    private static final ExternalSorter.Codec<String> STRINGS = new ExternalSorter.Codec<>() {
+        @Override public void write(DataOutput out, String record) throws IOException { out.writeUTF(record); }
+        @Override public String read(DataInput in) throws IOException { return in.readUTF(); }
+    };
+
+    private static List<String> bigStrings(int n, int length) {
+        Random rnd = new Random(11);
+        List<String> out = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            StringBuilder sb = new StringBuilder(length);
+            sb.append(rnd.nextInt(1_000_000)).append('|');
+            while (sb.length() < length) sb.append('x');
+            out.add(sb.toString());
+        }
+        return out;
+    }
+
+    /** BG-125: a byte budget spills long before a generous record cap would. */
+    @Test
+    void byteBudgetSpillsBigRecordsBeforeTheRecordCap() throws Exception {
+        List<String> input = bigStrings(200, 4096);
+        List<String> expected = new ArrayList<>(input);
+        expected.sort(Comparator.naturalOrder());
+        try (ExternalSorter<String> sorter = new ExternalSorter<>(dir, "b", STRINGS, Comparator.naturalOrder(),
+                1_000_000, 4, s -> 2L * s.length(), 64 << 10)) {
+            for (String s : input) {
+                sorter.add(s);
+            }
+            // 200 x ~8 KB estimated against a 64 KiB budget: a run every 8 records.
+            assertTrue(sorter.runsSpilled() >= 20, "runs spilled on the byte budget: " + sorter.runsSpilled());
+            List<String> actual = new ArrayList<>();
+            try (RecordSorter.SortedCursor<String> s = sorter.sorted()) {
+                s.forEachRemaining(actual::add);
+            }
+            assertEquals(expected, actual, "multi-level merge of byte-budgeted runs must still sort exactly");
+        }
+        try (var files = Files.list(dir)) {
+            assertTrue(files.findAny().isEmpty(), "all spill runs must be deleted after consumption");
+        }
+    }
+
+    /** BG-129: a run cut mid-record used to read as a clean, shorter run. */
+    @Test
+    void aTruncatedRunIsReportedNotSilentlyShortened() throws Exception {
+        try (ExternalSorter<Long> sorter = new ExternalSorter<>(dir, "t2", LONGS, Comparator.naturalOrder(), 1_000, 4)) {
+            Random rnd = new Random(3);
+            for (int i = 0; i < 10_000; i++) {
+                sorter.add(rnd.nextLong());
+            }
+            Path victim;
+            try (var files = Files.list(dir)) {
+                victim = files.filter(f -> f.getFileName().toString().startsWith("t2.run")).sorted().findFirst().orElseThrow();
+            }
+            try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(victim, java.nio.file.StandardOpenOption.WRITE)) {
+                ch.truncate(ch.size() - 3);
+            }
+            Exception ex = org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> {
+                try (RecordSorter.SortedCursor<Long> s = sorter.sorted()) {
+                    while (s.hasNext()) {
+                        s.next();
+                    }
+                }
+            });
+            String messages = "";
+            for (Throwable t = ex; t != null; t = t.getCause()) messages += t.getMessage() + " | ";
+            assertTrue(messages.contains("truncated"), messages);
+        }
+    }
+
+    @Test
+    void withoutASizerOnlyTheRecordCapSpills() throws Exception {
+        try (ExternalSorter<String> sorter = new ExternalSorter<>(dir, "r", STRINGS, Comparator.naturalOrder(), 1_000_000, 4)) {
+            for (String s : bigStrings(200, 4096)) {
+                sorter.add(s);
+            }
+            assertEquals(0, sorter.runsSpilled(), "no sizer: 200 records stay in RAM under a 1M cap");
+        }
+    }
+
     @Test
     void allInMemoryPathSkipsDisk() throws Exception {
         try (ExternalSorter<Long> sorter = new ExternalSorter<>(dir, "m", LONGS, Comparator.naturalOrder(), 1_000_000, 8)) {

@@ -6,11 +6,8 @@ import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,8 +19,12 @@ import org.slf4j.LoggerFactory;
  * spilled to a temp workspace, dictionaries are derived by external merge sort,
  * ids are assigned by sort-merge joins, and every dataset streams into the file
  * through the {@link StreamingHdf5} backend. Peak heap stays bounded by the
- * configured spill batch sizes; the size ceiling moves from RAM to free disk in
- * the workspace (roughly a few times the source size, transiently).
+ * configured spill batches - a record cap per sorter plus a byte budget per
+ * term sorter ({@link Builder#setTermSpillBytes}), so multi-KB literals
+ * cannot blow the bound (BG-125); the size ceiling moves from RAM to free
+ * disk in the workspace (roughly a few times the source size, transiently).
+ * The one exception is a JSON-LD source, which Jena parses whole in memory
+ * (see {@link com.ebremer.beakgraph.utils.RdfSources#isStreaming}).
  *
  * <p>Usage mirrors HDF5Writer:
  * <pre>{@code
@@ -59,8 +60,8 @@ public class HugeHDF5Writer implements BeakGraphWriter {
     @Override
     public void write() throws IOException {
         logger.info("Writing BeakGraph (huge/disk-based) to {}", builder.getDestination());
-        // Fail before any parsing or sorting if the native HDF5 library is missing (BG-441).
-        com.ebremer.beakgraph.huge.NativeHdf5File.requireAvailable();
+        // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
+        StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
         // Same publish discipline as HDF5Writer: build into a sibling temp file,
         // swap in atomically on success, never disturb a previous good artifact.
@@ -74,9 +75,14 @@ public class HugeHDF5Writer implements BeakGraphWriter {
                 ? List.of(builder.getSource())
                 : builder.getSources();
         try {
+            // Prove the installed backend (native, or a replaced provider) can
+            // write a file here before any work is done (BG-135).
+            StreamingHdf5.requireWritable(workspace);
+            StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
             try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
                     inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
-                    workspace, builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn)) {
+                    workspace, builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn,
+                    builder.termSpillBytes)) {
                 pipeline.setSourceRoot(builder.getSourceRoot());
                 pipeline.run(tmp);
             }
@@ -88,32 +94,12 @@ public class HugeHDF5Writer implements BeakGraphWriter {
             }
             throw ex;
         } finally {
-            deleteRecursively(workspace);
+            Workspaces.deleteTree(workspace, logger);
         }
         // Publish OUTSIDE the build's try/catch: a busy destination must not
         // delete a finished build (AtomicPublish keeps it as <dest>.new).
         AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
-    }
-
-    private static void deleteRecursively(Path dir) {
-        try {
-            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.deleteIfExists(file);
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
-                    Files.deleteIfExists(d);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException e) {
-            logger.warn("Failed to remove workspace {}", dir, e);
-        }
     }
 
     public static class Builder extends AbstractGraphBuilder<Builder> {
@@ -122,6 +108,7 @@ public class HugeHDF5Writer implements BeakGraphWriter {
         private int termSpillBatch = 1 << 18;  // 262144 (term, row) records per column before a run spills
         private int idSpillBatch = 1 << 21;    // 2M numeric records per run for the id/quad sorts
         private int mergeFanIn = 64;
+        private long termSpillBytes = SorterProvider.defaultTermSpillBytes(1);
 
         /**
          * Directory for the build workspace (spill runs, staged buffers).
@@ -154,6 +141,18 @@ public class HugeHDF5Writer implements BeakGraphWriter {
             return this;
         }
 
+        /**
+         * Estimated heap of parsed terms one term sorter buffers before a run
+         * spills, whatever the record count (default: max heap / 8; three
+         * term sorters are live at once). The bound that keeps multi-KB WKT
+         * literals from exhausting the heap (BG-125).
+         */
+        public Builder setTermSpillBytes(long bytes) {
+            if (bytes < 1) throw new IllegalArgumentException("termSpillBytes must be >= 1");
+            this.termSpillBytes = bytes;
+            return this;
+        }
+
         @Override
         protected Builder self() {
             return this;
@@ -166,6 +165,7 @@ public class HugeHDF5Writer implements BeakGraphWriter {
 
         @Override
         public HugeHDF5Writer build() {
+            requireSourceAndDestination();
             return new HugeHDF5Writer(this);
         }
     }

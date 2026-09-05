@@ -273,6 +273,45 @@ class ExportTest {
         assertTrue(ds.getDefaultModel().isIsomorphicWith(expectedTriples()));
     }
 
+    /** BG-159: a directory scan exports .hdf5 stores too, as -verify already accepted them. */
+    @Test
+    void hdf5ExtensionIsExportedToo() throws Exception {
+        Path sub = Files.createDirectories(dir.resolve("mixedext"));
+        File src = sub.resolve("one.nt").toFile();
+        Files.write(src.toPath(), TRIPLES.getBytes(StandardCharsets.UTF_8));
+        HDF5Writer.Builder().setSource(src).setDestination(sub.resolve("one.h5").toFile()).build().write();
+        Path nested = Files.createDirectories(sub.resolve("nested"));
+        Files.copy(sub.resolve("one.h5"), nested.resolve("nested-good.hdf5"));
+        Files.copy(sub.resolve("one.h5"), nested.resolve("UPPER.HDF5"));
+        runExport(sub.toFile(), "NT", false);
+        assertTrue(Files.exists(sub.resolve("one.nt")));
+        assertTrue(Files.exists(nested.resolve("nested-good.nt")), "the .hdf5 store is exported under its own base name");
+        assertTrue(Files.exists(nested.resolve("UPPER.nt")), "case-insensitive suffix");
+        Dataset ds = parse(nested.resolve("nested-good.nt"), Lang.NTRIPLES, false);
+        assertTrue(ds.getDefaultModel().isIsomorphicWith(expectedTriples()));
+    }
+
+    /** BG-268: JSON-LD has no RDF 1.2 triple-term syntax, so the export refuses plainly, like the endpoint. */
+    @Test
+    void jsonLdExportRefusesTripleTerms() throws Exception {
+        String ttTriples = "<http://ex.org/r> <http://ex.org/says> <<( <http://ex.org/a> <http://ex.org/b> <http://ex.org/c> )>> .\n"
+                + "<http://ex.org/s1> <http://ex.org/p> <http://ex.org/o1> .\n";
+        File h5 = buildStore("ttjsonld", ttTriples);
+        Parameters p = new Parameters();
+        p.src = h5;
+        p.export = "JSON-LD";
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.export();
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount(), "the export is a counted failure, not a corrupt document");
+        assertFalse(Files.exists(dir.resolve("ttjsonld.jsonld")), "no output file");
+        try (var files = Files.list(dir)) {
+            assertTrue(files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp")), "no temp output either");
+        }
+        // The same store exports fine in a triple-term-capable syntax.
+        runExport(h5, "NT", false);
+        assertTrue(Files.readString(dir.resolve("ttjsonld.nt")).contains("<<("));
+    }
+
     @Test
     void exportOptionParsesAndRejectsUnknownFormats() {
         Parameters p = new Parameters();
@@ -356,5 +395,33 @@ class ExportTest {
         runExport(h5, "TTL", false);
         String ttl = Files.readString(dir.resolve("relttl.ttl"));
         assertTrue(ttl.contains("<img.png>") || ttl.contains("<>"), ttl);
+    }
+    /**
+     * BG-342: a store built from an EMPTY source with the default VoID mode
+     * (NONE) still carries the GSPO/GPOS groups, but the level datasets were
+     * never written (zero rows); the NT/NQ fast path took the "index present"
+     * branch and dereferenced them. Every engine lays the file out the same
+     * way, so every engine is built here; the fast path must be taken (not
+     * disabled) and must produce an empty, parseable file.
+     */
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("com.ebremer.beakgraph.WriterEngines#all")
+    void emptyStoreFastPathExportsAreEmptyOnEveryEngine(com.ebremer.beakgraph.WriterEngines.Engine engine) throws Exception {
+        engine.assumeAvailable();
+        Path sub = Files.createDirectories(dir.resolve("empty-" + engine.name()));
+        File src = sub.resolve("empty.nt").toFile();
+        Files.write(src.toPath(), new byte[0]);
+        File h5 = sub.resolve("empty.h5").toFile();
+        engine.buildStore(src, h5);
+        assertEquals("true", System.getProperty("beakgraph.export.fastpath", "true"), "the fast path must be on for this test");
+        long before = com.ebremer.beakgraph.hdf5.jena.IndexExport.HITS.get();
+        runExport(h5, "NT", false);
+        runExport(h5, "NQ", false);
+        assertEquals(before + 2, com.ebremer.beakgraph.hdf5.jena.IndexExport.HITS.get(), "both exports must go through the index fast path");
+        Dataset nt = parse(sub.resolve("empty.nt"), Lang.NTRIPLES, false);
+        assertEquals(0, nt.getDefaultModel().size());
+        Dataset nq = parse(sub.resolve("empty.nq"), Lang.NQUADS, false);
+        assertEquals(0, nq.getDefaultModel().size());
+        assertFalse(nq.listNames().hasNext());
     }
 }

@@ -88,6 +88,7 @@ public final class DistinctTermFastPath {
      */
     public static QueryIterator tryExecute(OpDistinct opDistinct, QueryIterPeek input, ExecutionContext execCxt) {
         if (!(execCxt.getActiveGraph() instanceof BeakGraph bg)) return null;
+        if (bg.isGraphSetView()) return null; // several graphs: no single index level answers it
         if (!(bg.getReader() instanceof HDF5Reader reader)) return null;
         if (!(reader.getDictionary() instanceof PositionalDictionaryReader dict)) return null;
 

@@ -103,6 +103,7 @@ final class HugeTripleTerms implements AutoCloseable {
         int width = 1 + MinBits(numObjects);
         if (width > 57) width = 64; // bit-packed widths are 1..57 or 64
         SpillBitPackedBuffer store = new SpillBitPackedBuffer(workDir.resolve("tripleTerms.store"), width);
+        boolean ok = false;
         try (var ids = resolved.sorted()) {
             long expect = 0;
             while (ids.hasNext()) {
@@ -118,11 +119,17 @@ final class HugeTripleTerms implements AutoCloseable {
                 throw new IllegalStateException("Resolved " + expect
                         + " triple-term components for " + count + " terms");
             }
+            store.complete();
+            ok = true;
+            return store;
         } finally {
             resolved.close();
+            if (!ok) {
+                // A misalignment used to leave the store's stream open under the
+                // workspace deletion (BG-124).
+                try { store.close(); } catch (IOException ignored) { }
+            }
         }
-        store.complete();
-        return store;
     }
 
     @Override

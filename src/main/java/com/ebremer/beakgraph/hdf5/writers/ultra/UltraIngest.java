@@ -23,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.rdf.model.Model;
@@ -139,6 +140,20 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
     /** Drops the quad array once the index stage has packed its keys. */
     void releaseQuads() {
         this.quads = null;
+    }
+
+    /**
+     * Empties the node sets once the dictionary has sorted them and its
+     * column fills are joined: they hold the same Node keys as the rank maps
+     * and were live through the HDF5 emission (BG-115).
+     */
+    void releaseNodeSets() {
+        entities.clear();
+        predicates.clear();
+        literals.clear();
+        uniqueGraphs.clear();
+        uniqueSubjects.clear();
+        uniqueObjects.clear();
     }
 
     // ------------------------------------------------------------------
@@ -266,10 +281,13 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         final String labelPrefix = multi ? ("b" + docIndex + "_") : "b";
         final long docStart = System.nanoTime();
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input));
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input), input);
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
-            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor()) {
-                parserBuilder.streamQuads()
+            // The quad stream closes before the executor: that aborts and joins
+            // the parser thread when the loop throws (BG-100).
+            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor();
+                 Stream<Quad> quads = parserBuilder.streamQuads()) {
+                quads
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)
@@ -395,9 +413,8 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
      * builder's first-encounter semantics.
      */
     private void registerLiteralSet(Node o) {
-        if (literals.add(o) && CdtTerms.containsBlankNode(o)) {
-            throw new IllegalStateException(
-                    "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
+        if (literals.add(o)) {
+            CdtTerms.requireStorable(o);
         }
         dataTypes.add(o.getLiteralDatatypeURI());
     }

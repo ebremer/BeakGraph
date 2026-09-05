@@ -133,6 +133,26 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 * Numeric literals typed `xsd:int`, `xsd:long`, `xsd:float` or `xsd:double` are
   stored by value and canonicalized at ingest: `"01"^^xsd:int` is stored - and
   matched - as `"1"^^xsd:int`.
+* A store carries exactly two quad indexes, `GSPO` and `GPOS`
+  ([SPECIFICATIONS.md](SPECIFICATIONS.md) §8); there is no object-first index.
+  A pattern that binds only the object (`?s ?p <o>`) is answered with one
+  `GPOS` probe per predicate present in the graph - cheap for the usual
+  handful of predicates, proportional to the predicate count otherwise. A
+  pattern binding neither subject nor predicate nor object is a scan of the
+  graph. Property paths are evaluated by Jena's generic path engine over
+  `Graph.find`: each step is one index lookup (object-seeded steps such as
+  `?s :p+ <o>` use the per-predicate probes above), but an ungrounded `*` or
+  `+` path (`?s :p* ?o`) makes Jena collect **every subject and object node of
+  the graph** in memory before the first row, and under
+  `urn:x-arq:UnionGraph` each step costs one lookup per named graph. Ground
+  one end of such paths, or run them inside `GRAPH <g>`.
+* Dataset clauses (`FROM`, `FROM NAMED`, and the SPARQL protocol's
+  `default-graph-uri` / `named-graph-uri`) keep the BeakGraph engine: a single
+  `FROM <g>` is the graph's own view and several `FROM` graphs are a set-union
+  view de-duplicated on ids (the whole-graph `DISTINCT ?p` / `COUNT(*)`
+  shortcuts apply to a single graph only). A dataset with a BeakGraph default
+  graph that is *not* a BeakGraph dataset (a Jena `Model` over the graph) takes
+  Jena's generic construction instead.
 * RDF 1.2 support is at the spec's **full conformance** level (format v5):
   base-direction literals (`"x"@en--ltr`, `rdf:dirLangString`; format v4) and
   triple terms (`<<( s p o )>>`, including the reifier/annotation sugar and
@@ -142,8 +162,10 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   executed, 0 failures) and SPARQL 1.2 suites (266 executed, 0 failures) run in
   CI over real stores, on every writer engine (`W3CRdf12SuiteTest`, `W3CSparql12SuiteTest`; see
   [RDF_1.2-compliance.md](RDF_1.2-compliance.md)). Versions ≤ 0.17.0 silently
-  stored base-direction literals as plain `"x"@en` — rebuild affected stores; a
-  version that rejects or correctly stores them is the detector.
+  stored base-direction literals as plain `"x"@en` — rebuild affected stores.
+  `-verify` prints each store's format version: anything below v4 must be
+  rebuilt if its source held base-direction literals, below v5 if it held
+  triple terms ([docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md), "Format versions").
 * SPARQL-CDT composite literals (`cdt:List`/`cdt:Map`; the
   [spec](https://awslabs.github.io/SPARQL-CDTs/spec/latest.html) is an
   **Unofficial Draft**) are stored term-exactly and queryable with Jena's

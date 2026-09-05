@@ -40,4 +40,13 @@ public interface RandomAccessBytes {
 
     /** Copies {@code length} bytes starting at {@code offset} into {@code dst}. */
     void get(long offset, byte[] dst, int dstOffset, int length);
+
+    /**
+     * Whether reads reach a remote store (an HTTP range channel) rather than
+     * local memory or a local file. Readers use it to skip eager accelerators
+     * that touch a whole section - over HTTP that is a full download (BG-240).
+     */
+    default boolean isRemote() {
+        return false;
+    }
 }

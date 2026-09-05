@@ -48,6 +48,75 @@ class BeakGraphCLIConversionTest {
                 "the well-formed source must still convert");
     }
 
+    /**
+     * BG-157: an existing non-empty destination is skipped (logged, counted
+     * as skipped - NOT as a success) unless -force asks for a rebuild.
+     */
+    @Test
+    void existingDestinationsAreSkippedUnlessForced() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("srcskip"));
+        Path ttl = src.resolve("data.ttl");
+        Files.writeString(ttl, "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("outskip").toFile();
+        BeakGraphCLI first = new BeakGraphCLI(p);
+        first.traverse();
+        assertEquals(1, first.getFileCounter().getSuccessfulConversionCount());
+        assertEquals(0, first.getFileCounter().getSkippedExistingCount());
+        File h5 = dir.resolve("outskip").resolve("data.h5").toFile();
+        byte[] original = Files.readAllBytes(h5.toPath());
+
+        // The source changes; a plain re-run leaves the stale store alone and says so in the counters.
+        Files.writeString(ttl, "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n"
+                + "<http://ex.org/a> <http://ex.org/q> <http://ex.org/c> .\n", StandardCharsets.UTF_8);
+        BeakGraphCLI second = new BeakGraphCLI(p);
+        second.traverse();
+        assertEquals(1, second.getFileCounter().getSkippedExistingCount());
+        assertEquals(0, second.getFileCounter().getSuccessfulConversionCount(), "a skip is not a success");
+        assertEquals(0, second.getFileCounter().getFailedConversionFileCount());
+        assertTrue(second.getFileCounter().toString().contains("Skipped (existing)     : 1"));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(original, Files.readAllBytes(h5.toPath()), "the stale store was left alone");
+
+        // -force rebuilds it.
+        p.force = true;
+        BeakGraphCLI third = new BeakGraphCLI(p);
+        third.traverse();
+        assertEquals(0, third.getFileCounter().getSkippedExistingCount());
+        assertEquals(1, third.getFileCounter().getSuccessfulConversionCount());
+        assertEquals(0, third.getFileCounter().getFailedConversionFileCount());
+        assertFalse(java.util.Arrays.equals(original, Files.readAllBytes(h5.toPath())), "the store was rebuilt");
+        assertTrue(hasTriple(h5, "http://ex.org/q"), "the store was rebuilt from the changed source");
+    }
+
+    private static boolean hasTriple(File h5, String predicate) throws Exception {
+        try (com.ebremer.beakgraph.core.BeakGraph bg = new com.ebremer.beakgraph.core.BeakGraph(
+                new com.ebremer.beakgraph.hdf5.readers.HDF5Reader(h5))) {
+            return bg.find(org.apache.jena.graph.Node.ANY, org.apache.jena.graph.NodeFactory.createURI(predicate),
+                    org.apache.jena.graph.Node.ANY).hasNext();
+        }
+    }
+
+    /** BG-226: an Error inside -merge is counted and summarised, not thrown out of main with a stack trace. */
+    @Test
+    void outOfMemoryDuringMergeIsCountedNotThrown() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("srcoommerge"));
+        Files.writeString(src.resolve("a.ttl"), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("oommerge.h5").toFile();
+        p.merge = true;
+        BeakGraphCLI cli = new BeakGraphCLI(p) {
+            @Override
+            com.ebremer.beakgraph.core.BeakGraphWriter newWriter(File source, List<File> sources, File dest) {
+                return () -> { throw new OutOfMemoryError("simulated"); };
+            }
+        };
+        cli.merge();
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount());
+        assertFalse(dir.resolve("oommerge.h5").toFile().exists());
+    }
+
     @Test
     void hugeFlagConvertsThroughDiskBasedWriter() throws Exception {
         com.ebremer.beakgraph.NativeTestSupport.assumeNative();

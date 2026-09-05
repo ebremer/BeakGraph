@@ -168,7 +168,8 @@ class HttpChannelReadTest {
             }
             assertArrayEquals(data, all.toByteArray());
             long afterScan = ch.getRangeRequestCount();
-            assertEquals(3, afterScan, "three blocks -> three range requests");
+            assertTrue(afterScan <= 2, "block 0 alone, then blocks 1-2 in one read-ahead request: " + afterScan);
+            assertEquals(data.length, ch.getBytesFetched(), "every byte fetched exactly once");
 
             // cache: re-reading issues no further requests
             ch.position(0);
@@ -325,7 +326,11 @@ class HttpChannelReadTest {
                 chunk.clear();
             }
             assertArrayEquals(data, all.toByteArray());
-            assertEquals(64, ch.getRangeRequestCount(), "one request per block on the sequential pass");
+            long sequential = ch.getRangeRequestCount();
+            // Read-ahead is capped at half the cache (2 blocks here): about one
+            // request per two blocks, never more than one per block.
+            assertTrue(sequential >= 32 && sequential <= 64, "sequential pass: " + sequential + " requests");
+            assertEquals(data.length, ch.getBytesFetched(), "every byte fetched once on the sequential pass");
             java.util.Random rnd = new java.util.Random(5);
             for (int i = 0; i < 200; i++) {
                 int at = rnd.nextInt(data.length - 64);
@@ -335,7 +340,7 @@ class HttpChannelReadTest {
                 assertEquals(len, ch.read(bb));
                 assertArrayEquals(Arrays.copyOfRange(data, at, at + len), bb.array(), "random read at " + at);
             }
-            assertTrue(ch.getRangeRequestCount() > 64,
+            assertTrue(ch.getRangeRequestCount() > sequential,
                     "with a 4-block cache the random reads must miss (evicted blocks are re-fetched)");
             assertTrue(ch.getRangeRequestCount() < 64 + 200, "but hot blocks must still hit");
         }
@@ -366,8 +371,10 @@ class HttpChannelReadTest {
         private static final Pattern RANGE = Pattern.compile("bytes=(\\d+)-(\\d+)");
 
         private final ServerSocket server;
-        private final byte[] content;
+        private volatile byte[] content;
         final List<String> requests = Collections.synchronizedList(new ArrayList<>());
+        /** Emit a strong ETag derived from the content and honour If-Range (BG-380). */
+        volatile boolean emitEtag = true;
         volatile boolean rejectHead;
         volatile boolean ignoreRanges;
         volatile int failFirstN;
@@ -385,6 +392,15 @@ class HttpChannelReadTest {
 
         URI uri(String path) {
             return URI.create("http://127.0.0.1:" + server.getLocalPort() + path);
+        }
+
+        /** Overwrites the served resource in place, as an S3 PUT or a rebuild into a served directory would. */
+        void replace(byte[] newContent) {
+            this.content = newContent;
+        }
+
+        private String etag() {
+            return "\"" + Integer.toHexString(Arrays.hashCode(content)) + "-" + content.length + "\"";
         }
 
         @Override
@@ -413,11 +429,20 @@ class HttpChannelReadTest {
                 String method = requestLine[0];
                 String path = requestLine[1];
                 String range = null;
+                String ifRange = null;
                 for (int i = 1; i < head.size(); i++) {
                     int colon = head.get(i).indexOf(':');
                     if (colon > 0 && head.get(i).substring(0, colon).trim().equalsIgnoreCase("Range")) {
                         range = head.get(i).substring(colon + 1).trim();
                     }
+                    if (colon > 0 && head.get(i).substring(0, colon).trim().equalsIgnoreCase("If-Range")) {
+                        ifRange = head.get(i).substring(colon + 1).trim();
+                    }
+                }
+                byte[] content = this.content;
+                if (range != null && ifRange != null && emitEtag && !ifRange.equals(etag())) {
+                    // RFC 9110 13.1.5: a stale validator turns the range request into a full 200.
+                    range = null;
                 }
                 requests.add(method + " " + path + (range == null ? "" : " " + range));
                 OutputStream out = socket.getOutputStream();
@@ -481,11 +506,14 @@ class HttpChannelReadTest {
             return null;
         }
 
-        private static void writeHead(OutputStream out, String status, long contentLength,
+        private void writeHead(OutputStream out, String status, long contentLength,
                 String contentRange) throws IOException {
             StringBuilder sb = new StringBuilder();
             sb.append("HTTP/1.1 ").append(status).append("\r\n");
             sb.append("Content-Length: ").append(contentLength).append("\r\n");
+            if (emitEtag) {
+                sb.append("ETag: ").append(etag()).append("\r\n");
+            }
             sb.append("Accept-Ranges: bytes\r\n");
             if (contentRange != null) {
                 sb.append("Content-Range: ").append(contentRange).append("\r\n");

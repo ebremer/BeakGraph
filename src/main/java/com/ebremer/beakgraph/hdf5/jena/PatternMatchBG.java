@@ -29,7 +29,11 @@ public class PatternMatchBG {
 
     private static final String SF_INTERSECTS = GEOF.sfIntersects.getURI();
 
+    /** Number of BGPs executed by the id-level engine - tests pin that a plan shape does not fall back to Jena's. */
+    public static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
+
     public static QueryIterator execute(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
+        HITS.incrementAndGet();
         List<Triple> triples = new ArrayList<>(bgp.getList());
         List<Abortable> killList = new ArrayList<>();
         Iterator<BindingNodeId> chain = Iter.map(input, SolverLibBeak.convFromBinding(bGraph));
@@ -49,7 +53,8 @@ public class PatternMatchBG {
         if (spatialCtx != null) {
             Triple triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
             if (triggerTriple != null && SpatialIndexIterator.isAvailable(bGraph)) {
-                chain = new SpatialIndexIterator(chain, bGraph, (Var) triggerTriple.getSubject(), spatialCtx);
+                chain = new SpatialIndexIterator(chain, bGraph, (Var) triggerTriple.getSubject(), spatialCtx,
+                        execCxt.getCancelSignal());
             }
         }
 
@@ -85,12 +90,18 @@ public class PatternMatchBG {
     }
 
     /**
-     * First pattern of the BGP. When the input is exactly one binding (the plain
-     * top-level root - by far the common case for scan queries) and the pattern
+     * First pattern of the BGP. When the input is exactly one binding that is
+     * the engine's root (or a copy of it: nothing bound - the plain top-level
+     * execution, a top-level UNION branch or {@code GRAPH <g>}) and the pattern
      * is scan-shaped, answer it with a chunked parallel scan; the scan is
      * registered in the kill-list so cancellation stops its workers, and close
      * reaches it through the Iter close cascade. Multi-binding inputs (spatial
-     * seeding, joins) keep the ordinary lazy per-binding chaining.
+     * seeding, joins) keep the ordinary lazy per-binding chaining - and so does
+     * a single binding that carries variables: that is an OUTER ROW, for which
+     * OPTIONAL, EXISTS, {@code GRAPH ?g} and friends re-execute the pattern
+     * once per row through a singleton input. Planning a parallel scan there
+     * built a worker set, a queue and a Cleaner registration per outer row
+     * (BG-337); the uncorrelated scan runs sequentially instead.
      */
     private static Iterator<BindingNodeId> solveFirst(BeakGraph bGraph, Triple triple, ExprList filter,
                                                       Iterator<BindingNodeId> chain, ExecutionContext execCxt,
@@ -102,6 +113,9 @@ public class PatternMatchBG {
         if (chain.hasNext()) {
             return solve(bGraph, triple, filter, Iter.concat(List.of(b0).iterator(), chain), execCxt);
         }
+        if (!isRootLike(b0)) {
+            return find(bGraph, b0, triple, filter, execCxt);
+        }
         ParallelScan parallel = ScanChunks.tryParallel(bGraph, b0, triple, filter, execCxt);
         if (parallel != null) {
             killList.add(parallel);
@@ -110,10 +124,22 @@ public class PatternMatchBG {
         return find(bGraph, b0, triple, filter, execCxt);
     }
     
+    /**
+     * The engine's root binding or a copy of it: no variable bound at any
+     * level. A binding with variables is an outer row of a re-executed
+     * sub-pattern, not a fresh top-level execution.
+     */
+    static boolean isRootLike(BindingNodeId b) {
+        if (b.iterator().hasNext()) {
+            return false;
+        }
+        Binding parent = b.getParentBinding();
+        return parent == null || parent.isEmpty();
+    }
+
     private static Iterator<BindingNodeId> find(BeakGraph bGraph, BindingNodeId bnid, Triple xPattern, 
                                                 ExprList filter, ExecutionContext execCxt) {
-        return bGraph.getReader().read(bGraph.getNamedGraph(), bnid, xPattern, filter, 
-                                       bGraph.getReader().getNodeTable());
+        return bGraph.read(bnid, xPattern, filter);
     }
 
     public static class SpatialContext {

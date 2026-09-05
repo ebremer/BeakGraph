@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.BeakGraph;
-import org.apache.jena.graph.Graph;
 import org.apache.jena.sparql.ARQInternalErrorException;
 import org.apache.jena.sparql.algebra.Op;
 import org.apache.jena.sparql.algebra.op.*;
@@ -9,6 +8,7 @@ import org.apache.jena.sparql.core.BasicPattern;
 import org.apache.jena.sparql.core.Substitute;
 import org.apache.jena.sparql.engine.ExecutionContext;
 import org.apache.jena.sparql.engine.QueryIterator;
+import org.apache.jena.sparql.engine.iterator.QueryIterFilterExpr;
 import org.apache.jena.sparql.engine.iterator.QueryIterPeek;
 import org.apache.jena.sparql.engine.iterator.QueryIterRoot;
 import org.apache.jena.sparql.engine.main.OpExecutor;
@@ -16,6 +16,7 @@ import org.apache.jena.sparql.engine.main.OpExecutorFactory;
 import org.apache.jena.sparql.engine.main.QC;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderProc;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
+import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.ExprList;
 import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 
@@ -32,6 +33,9 @@ public class OpExecutorBG extends OpExecutor {
             return new OpExecutorBG(execCxt);
         }
     };
+
+    /** BGPs whose triple order the reorder transform changed - tests pin that a route plans, not just solves. */
+    public static final java.util.concurrent.atomic.AtomicLong REORDERS = new java.util.concurrent.atomic.AtomicLong();
 
     private final boolean isForBeakGraph;
 
@@ -114,7 +118,14 @@ public class OpExecutorBG extends OpExecutor {
         return optimizeExecuteTriples(graph, input, opBGP.getPattern(), exprs, execCxt) ;
     }
     
-    private static QueryIterator optimizeExecuteTriples(BeakGraph graph, QueryIterator input, BasicPattern pattern, ExprList exprs, ExecutionContext execCxt) {
+    /**
+     * The BG plan for one BGP: reorder most-selective-first (VoID statistics,
+     * or Jena's fixed heuristic) against the peeked first binding, then the
+     * id-level solver, with the filter's exprs placed as pushdown hints.
+     * Shared with {@link StageGeneratorDirectorBG}, the entry point for BGPs
+     * that do not come through this executor.
+     */
+    static QueryIterator optimizeExecuteTriples(BeakGraph graph, QueryIterator input, BasicPattern pattern, ExprList exprs, ExecutionContext execCxt) {
         if (!input.hasNext()) {
             return input;
         }
@@ -140,49 +151,63 @@ public class OpExecutorBG extends OpExecutor {
             }
             BasicPattern pattern2 = Substitute.substitute(pattern, peek.peek());
             ReorderProc proc = transform.reorderIndexes(pattern2);
-            pattern = proc.reorder(pattern);
+            BasicPattern reordered = proc.reorder(pattern);
+            if (!reordered.getList().equals(pattern.getList())) {
+                REORDERS.incrementAndGet();
+            }
+            pattern = reordered;
         }
         return pattern;
     }
     
     private static QueryIterator plainExecute(Op op, QueryIterator input, ExecutionContext execCxt) {
-        // Jena 6: ExecutionContext is final, so the placed filter can no longer
-        // ride on a context subclass (the old ExecutionContextBG). It rides on a
-        // per-call executor FACTORY instead - immutable and per-execution, so
-        // executors created lazily during iteration (e.g. substitution joins
-        // re-executing the RHS per binding) still see exactly their op's filter.
-        ExprList filter = (op instanceof OpFilter opFilter) ? opFilter.getExprs() : null;
-        ExecutionContext ec = ExecutionContext.copyChangeExecutor(execCxt, new OpExecutorPlainFactoryBeak(filter));
+        // The placed plan runs on a plain (non-reordering) executor whose
+        // OpFilter override hands each filter's exprs to the BGP it wraps. That
+        // matters because placement happens AFTER the BG reorder: moving the
+        // triple that binds the filtered variable first turns
+        // (filter e (bgp t1 t2)) into (sequence (filter e (bgp t1)) (bgp t2)),
+        // and the former "outermost filter rides on the factory" design saw an
+        // OpSequence there and passed null - losing the range pushdown and the
+        // geof:sfIntersects index seeding exactly when the statistics said the
+        // geometry triple was the selective one (BG-58).
+        ExecutionContext ec = ExecutionContext.copyChangeExecutor(execCxt, OpExecutorPlainFactoryBeak.INSTANCE);
         return QC.execute(op, input, ec) ;
     }
 
-    private static class OpExecutorPlainFactoryBeak implements OpExecutorFactory {
-        private final ExprList filter;
-
-        OpExecutorPlainFactoryBeak(ExprList filter) {
-            this.filter = filter;
-        }
+    private static final class OpExecutorPlainFactoryBeak implements OpExecutorFactory {
+        static final OpExecutorPlainFactoryBeak INSTANCE = new OpExecutorPlainFactoryBeak();
 
         @Override
         public OpExecutor create(ExecutionContext execCxt) {
-            return new OpExecutorPlainBeak(execCxt, filter) ;
+            return new OpExecutorPlainBeak(execCxt) ;
         }
     }
 
     private static class OpExecutorPlainBeak extends OpExecutor {
-        final ExprList filter;
 
-        public OpExecutorPlainBeak(ExecutionContext execCxt, ExprList filter) {
+        OpExecutorPlainBeak(ExecutionContext execCxt) {
             super(execCxt);
-            this.filter = filter;
         }
 
         @Override
-        public QueryIterator execute(OpBGP opBGP, QueryIterator input) {
-            Graph g = execCxt.getActiveGraph();
-            if ( g instanceof BeakGraph graphRaptor ) {
-                BasicPattern bgp = opBGP.getPattern() ;
-                return PatternMatchBG.execute(graphRaptor, bgp, input, filter, execCxt);
+        protected QueryIterator execute(OpFilter opFilter, QueryIterator input) {
+            if (execCxt.getActiveGraph() instanceof BeakGraph graph && OpBGP.isBGP(opFilter.getSubOp())) {
+                BasicPattern bgp = ((OpBGP) opFilter.getSubOp()).getPattern();
+                QueryIterator qIter = PatternMatchBG.execute(graph, bgp, input, opFilter.getExprs(), execCxt);
+                // As OpExecutor.execute(OpFilter): the exprs stay in the plan as
+                // the verification stage - what PatternMatchBG received is hints.
+                for (Expr expr : opFilter.getExprs()) {
+                    qIter = new QueryIterFilterExpr(qIter, expr, execCxt);
+                }
+                return qIter;
+            }
+            return super.execute(opFilter, input);
+        }
+
+        @Override
+        protected QueryIterator execute(OpBGP opBGP, QueryIterator input) {
+            if (execCxt.getActiveGraph() instanceof BeakGraph graph) {
+                return PatternMatchBG.execute(graph, opBGP.getPattern(), input, null, execCxt);
             }
             return super.execute(opBGP, input) ;
         }

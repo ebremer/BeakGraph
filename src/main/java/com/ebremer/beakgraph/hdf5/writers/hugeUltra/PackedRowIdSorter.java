@@ -23,11 +23,17 @@ final class PackedRowIdSorter implements RecordSorter<RowId> {
 
     PackedRowIdSorter(Path workDir, String tag, long maxRow, long maxId,
                       int batch, int fanIn, ForkJoinPool pool, ExecutorService exec) {
+        this(workDir, tag, maxRow, maxId, batch, fanIn, pool, exec,
+                UltraSorterProvider.defaultMergeConcurrency(fanIn, pool.getParallelism()));
+    }
+
+    PackedRowIdSorter(Path workDir, String tag, long maxRow, long maxId,
+                      int batch, int fanIn, ForkJoinPool pool, ExecutorService exec, int maxConcurrentMerges) {
         int rowBits = MinBits(Math.max(1, maxRow));
         this.idBits = MinBits(Math.max(1, maxId));
         int totalBits = rowBits + idBits;
         this.twoWords = totalBits > 63;
-        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec);
+        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec, maxConcurrentMerges);
     }
 
     @Override

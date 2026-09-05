@@ -15,18 +15,28 @@ import java.nio.charset.StandardCharsets;
  * Safe for concurrent reads: it never shares mutable position state (every read
  * is absolute through {@link RandomAccessBytes}, with long offsets - so string
  * buffers past 2 GiB are addressable), and the Zstd decompressor - which
- * airlift does not allow sharing across threads - is held per thread.
+ * airlift does not allow sharing across threads - is held per thread, ONCE
+ * per JVM thread for every reader (it holds no reader state; a per-reader
+ * ThreadLocal materialised one ~140 KiB Java decoder per (reader, thread)
+ * pair and kept it alive on the thread after the store closed; BG-169).
  */
 public class FCDReader {
     /**
-     * Decoded-block cache capacity (blocks, per FCD section). Front-coding means
-     * every {@code get(n)} must decode from its block's head - an average of
-     * blockSize/2 fragment decodes (VByte + copy + possible zstd + string build)
-     * per lookup - and both binary searches and result materialization revisit
-     * the same blocks constantly. Caching the decoded block makes those revisits
-     * an array index. Sized via -Dbeakgraph.fcd.cache.blocks.
+     * Decoded-block cache capacity (per FCD section), in blocks of ordinary
+     * strings. Front-coding means every {@code get(n)} must decode from its
+     * block's head - an average of blockSize/2 fragment decodes (VByte + copy +
+     * possible zstd + string build) per lookup - and both binary searches and
+     * result materialization revisit the same blocks constantly. Caching the
+     * decoded block makes those revisits an array index. Sized via
+     * -Dbeakgraph.fcd.cache.blocks. The bound is by WEIGHT, not count: a
+     * string costs 1 plus 1 per 256 chars (as the node-table and search caches
+     * charge), so a section of large literals (WKT polygons, long text) keeps
+     * proportionally fewer blocks instead of pinning up to 65,536 fully
+     * materialised strings per open store (BG-78).
      */
     private static final long CACHE_BLOCKS = Long.getLong("beakgraph.fcd.cache.blocks", 4096L);
+    /** Weight of one block of ordinary strings: the cache holds CACHE_BLOCKS of them. */
+    static final int ORDINARY_BLOCK_WEIGHT = 16;
 
     private final RandomAccessBytes buffer;
     private final RandomAccessBytes offsets;
@@ -34,11 +44,27 @@ public class FCDReader {
     private final long blockSize;
     private final long numEntries;
     private final long numBlocks;
-    private final ThreadLocal<StringUtils> su = ThreadLocal.withInitial(StringUtils::new);
+    private static final ThreadLocal<StringUtils> SU = ThreadLocal.withInitial(StringUtils::new);
     private final com.github.benmanes.caffeine.cache.Cache<Long, String[]> blockCache =
             com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
-                    .maximumSize(CACHE_BLOCKS)
+                    .maximumWeight(CACHE_BLOCKS * ORDINARY_BLOCK_WEIGHT)
+                    .weigher((Long block, String[] strs) -> weightOf(strs))
                     .build();
+
+    /** Cache weight of a decoded block: 1 per string plus 1 per 256 chars of it (mirrors SimpleNodeTable.weightOf). */
+    static int weightOf(String[] strs) {
+        long w = 0;
+        for (String s : strs) {
+            w += 1 + (s.length() >>> 8);
+        }
+        return (int) Math.min(w, Integer.MAX_VALUE);
+    }
+
+    /** Blocks currently cached, after pending evictions are applied (tests). */
+    long cachedBlocks() {
+        blockCache.cleanUp();
+        return blockCache.estimatedSize();
+    }
 
     public FCDReader(Group strings) {
         ContiguousDataset stringbuffer = (ContiguousDataset) strings.getChild("stringbuffer");
@@ -81,7 +107,7 @@ public class FCDReader {
         buffer.get(p, data, 0, dataLen); // absolute bulk read
         p += dataLen;
         boolean isCompressed = compressed.get(entryIndex) == 1;
-        String value = isCompressed ? su.get().decompress(data) : new String(data, StandardCharsets.UTF_8);
+        String value = isCompressed ? SU.get().decompress(data) : new String(data, StandardCharsets.UTF_8);
         return new Fragment(value, p);
     }
 

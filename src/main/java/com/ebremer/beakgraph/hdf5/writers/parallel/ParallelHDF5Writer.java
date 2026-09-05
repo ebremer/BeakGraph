@@ -153,6 +153,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
 
         @Override
         public ParallelHDF5Writer build() {
+            requireSourceAndDestination();
             return new ParallelHDF5Writer(this);
         }
     }

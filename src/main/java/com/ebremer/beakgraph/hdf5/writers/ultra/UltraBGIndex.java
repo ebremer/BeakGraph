@@ -76,8 +76,11 @@ final class UltraBGIndex {
      * ingest's quad array as soon as the keys are packed.
      */
     static UltraBGIndex[] buildBoth(UltraDictionary dict, UltraIngest ingest, ForkJoinPool pool) throws IOException {
-        final Quad[] quads = ingest.getQuads();
-        final int n = quads.length;
+        // Only the COUNT is kept here: the quad array, the packed key arrays
+        // and the pre-dedup sorted pair live inside packSortDedup, so they are
+        // collectable while both index builds and the GPOS repack allocate
+        // (BG-115; ParallelRadixSort's contract asks callers to drop them).
+        final int n = ingest.getQuads().length;
         final long e = dict.getNumberOfGraphs();
         final long p = dict.getNumberOfPredicates();
         final long o = dict.getNumberOfObjects();
@@ -91,35 +94,8 @@ final class UltraBGIndex {
         }
         final boolean twoWords = totalBits > 63;
 
-        logger.info("Packing {} quad keys ({} bits, {} words)...", n, totalBits, twoWords ? 2 : 1);
-        long start = System.nanoTime();
-        long[] lo = new long[n];
-        long[] hi = twoWords ? new long[n] : null;
-        final long[] fLo = lo, fHi = hi;
-        ParallelRadixSort.runChunks(pool, chunksFor(pool, n), n, (c, from, to) -> {
-            for (int i = from; i < to; i++) {
-                Quad q = quads[i];
-                pack(fLo, fHi, i,
-                        dict.locateGraph(q.getGraph()),
-                        dict.locateSubject(q.getSubject()),
-                        dict.locatePredicate(q.getPredicate()),
-                        dict.locateObject(q.getObject()),
-                        gspoLayout);
-            }
-        });
-        ingest.releaseQuads();
-        logger.info("Packed ids for {} quads in {} ms", n, (System.nanoTime() - start) / 1_000_000L);
-
-        logger.info("Sorting {} GSPO keys ({})...", n,
-                (hi == null && n < (1 << 20)) ? "JDK parallel sort" : "parallel radix sort");
-        start = System.nanoTime();
-        long[][] sorted = sortKeys(lo, hi, totalBits, pool);
-        logger.info("GSPO keys sorted in {} ms", (System.nanoTime() - start) / 1_000_000L);
-        start = System.nanoTime();
-        long[][] deduped = dedup(sorted[0], sorted[1], pool);
+        long[][] deduped = packSortDedup(dict, ingest, gspoLayout, totalBits, twoWords, pool);
         final long[] dLo = deduped[0], dHi = deduped[1];
-        logger.info("Deduplicated in {} ms: {} unique quads of {} (GPOS reuses the deduplicated set)",
-                (System.nanoTime() - start) / 1_000_000L, dLo.length, n);
 
         ForkJoinTask<UltraBGIndex> gspoTask = pool.submit(() ->
                 new UltraBGIndex(Index.GSPO, dLo, dHi, gspoLayout, dict, n, pool));
@@ -146,6 +122,44 @@ final class UltraBGIndex {
             return new UltraBGIndex(Index.GPOS, s[0], s[1], gposLayout, dict, n, pool);
         });
         return new UltraBGIndex[]{join(gspoTask, Index.GSPO), join(gposTask, Index.GPOS)};
+    }
+
+    /**
+     * Resolves every quad's ids, packs GSPO keys, sorts and deduplicates; the
+     * ONLY arrays that survive the call are the returned deduplicated pair.
+     */
+    private static long[][] packSortDedup(UltraDictionary dict, UltraIngest ingest, Layout gspoLayout,
+                                          int totalBits, boolean twoWords, ForkJoinPool pool) throws IOException {
+        final Quad[] quads = ingest.getQuads();
+        final int n = quads.length;
+        logger.info("Packing {} quad keys ({} bits, {} words)...", n, totalBits, twoWords ? 2 : 1);
+        long start = System.nanoTime();
+        final long[] lo = new long[n];
+        final long[] hi = twoWords ? new long[n] : null;
+        ParallelRadixSort.runChunks(pool, chunksFor(pool, n), n, (c, from, to) -> {
+            for (int i = from; i < to; i++) {
+                Quad q = quads[i];
+                pack(lo, hi, i,
+                        dict.locateGraph(q.getGraph()),
+                        dict.locateSubject(q.getSubject()),
+                        dict.locatePredicate(q.getPredicate()),
+                        dict.locateObject(q.getObject()),
+                        gspoLayout);
+            }
+        });
+        ingest.releaseQuads();
+        logger.info("Packed ids for {} quads in {} ms", n, (System.nanoTime() - start) / 1_000_000L);
+
+        logger.info("Sorting {} GSPO keys ({})...", n,
+                (hi == null && n < (1 << 20)) ? "JDK parallel sort" : "parallel radix sort");
+        start = System.nanoTime();
+        long[][] sorted = sortKeys(lo, hi, totalBits, pool);
+        logger.info("GSPO keys sorted in {} ms", (System.nanoTime() - start) / 1_000_000L);
+        start = System.nanoTime();
+        long[][] deduped = dedup(sorted[0], sorted[1], pool);
+        logger.info("Deduplicated in {} ms: {} unique quads of {} (GPOS reuses the deduplicated set)",
+                (System.nanoTime() - start) / 1_000_000L, deduped[0].length, n);
+        return deduped;
     }
 
     /**

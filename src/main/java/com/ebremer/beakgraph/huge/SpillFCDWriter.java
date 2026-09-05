@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import static com.ebremer.beakgraph.Params.COMPRESSION_THRESHOLD;
 import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.utils.StringUtils;
@@ -20,7 +21,7 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-final class SpillFCDWriter implements AutoCloseable {
+final class SpillFCDWriter implements AutoCloseable, DictionarySinks.StringSink {
 
     private final String name;
     private final int blockSize;
@@ -46,8 +47,19 @@ final class SpillFCDWriter implements AutoCloseable {
         this.blockSize = blockSize;
         this.stringFile = workDir.resolve(name + ".fcd.strings");
         this.stringOut = new BufferedOutputStream(Files.newOutputStream(stringFile), 1 << 16);
-        this.offsets = new SpillDataBuffer(workDir.resolve(name + ".fcd.offsets"));
-        this.compressed = new SpillBitPackedBuffer(workDir.resolve(name + ".fcd.compressed"), 1);
+        SpillDataBuffer offs = null;
+        try {
+            offs = new SpillDataBuffer(workDir.resolve(name + ".fcd.offsets"));
+            this.compressed = new SpillBitPackedBuffer(workDir.resolve(name + ".fcd.compressed"), 1);
+        } catch (IOException | RuntimeException ex) {
+            // Release the streams already open (BG-128).
+            try { stringOut.close(); } catch (IOException ignored) { }
+            if (offs != null) {
+                try { offs.close(); } catch (IOException ignored) { }
+            }
+            throw ex;
+        }
+        this.offsets = offs;
     }
 
     private void writeFragment(byte[] data) throws IOException {
@@ -66,7 +78,7 @@ final class SpillFCDWriter implements AutoCloseable {
         position += finalData.length;
     }
 
-    void add(String item) throws IOException {
+    public void add(String item) throws IOException {
         numEntries++;
         if (stringsInCurrentBlock == 0) {
             offsets.writeLong(position);
@@ -96,7 +108,7 @@ final class SpillFCDWriter implements AutoCloseable {
         return i;
     }
 
-    long getNumEntries() {
+    public long getNumEntries() {
         return numEntries;
     }
 

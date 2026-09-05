@@ -63,6 +63,17 @@ class HelpTextDriftTest {
                 "-endpoint must describe directory (LWS) mode and its cache file: " + endpoint);
     }
 
+    /** BG-288 / BG-319: the defaults and rules INSTRUCTIONS.md states are in the usage text too. */
+    @Test
+    void defaultsAndRulesAreInTheUsageText() {
+        assertTrue(description("-port").contains("8888"), "-port names its default: " + description("-port"));
+        assertTrue(description("-dest").contains("merged.h5"), "-dest explains the -merge rule: " + description("-dest"));
+        assertTrue(description("-force").contains("rebuild"), description("-force"));
+        assertTrue(description("-src").contains("-export"), "-src covers export mode: " + description("-src"));
+        assertTrue(description("-cores").contains("2/3/4/5"), description("-cores"));
+        assertTrue(description("-verify").contains(".hdf5"), description("-verify"));
+    }
+
     @Test
     void everyOptionHasADescription() {
         List<String> undocumented = new ArrayList<>();

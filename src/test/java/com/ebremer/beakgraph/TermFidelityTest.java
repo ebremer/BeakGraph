@@ -56,6 +56,10 @@ class TermFidelityTest {
         :s :str "plain string" .
         :s :long "this string is deliberately longer than the sixty-four byte zstd compression threshold used by the FCD writer" .
         :s :uni "caf\\u00E9 \\u00FCn\\u00EFcode \\U0001F426" .
+        :s :uniIri <http://ex.org/\\u540D\\u524D/\\u0100> .
+        :s :uniIri <http://ex.org/\\u00FF> .
+        _:b\u00E9 :label "non-Latin-1 blank node label" .
+        _:b\u0100 :label "label beyond 0xFF" .
         :s :lang "hello"@en .
         :s :lang "hello"@en-GB .
         :s :lang "bonjour"@fr .

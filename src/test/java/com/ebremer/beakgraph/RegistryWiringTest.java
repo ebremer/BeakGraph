@@ -226,4 +226,45 @@ class RegistryWiringTest {
         assertFalse(QueryEngineBG.isBeakGraphDataset(DatasetGraphFactory.wrap(ModelFactory.createDefaultModel().getGraph())));
     }
 
+
+    @Test
+    void propertyFunctionsRegisteredLaterAreVisible() {
+        // BG-6: the dataset's scoped registry used to be a one-time copy of the
+        // global one, so a function registered after the first BeakGraph opened
+        // was invisible here (the pattern ran as a plain stored predicate).
+        String uri = "http://ex.org/pf/late-" + System.nanoTime();
+        org.apache.jena.sparql.pfunction.PropertyFunctionFactory factory = u -> new org.apache.jena.sparql.pfunction.PFuncSimple() {
+            @Override
+            public org.apache.jena.sparql.engine.QueryIterator execEvaluated(
+                    org.apache.jena.sparql.engine.binding.Binding binding, org.apache.jena.graph.Node subject,
+                    org.apache.jena.graph.Node predicate, org.apache.jena.graph.Node object,
+                    org.apache.jena.sparql.engine.ExecutionContext execCxt) {
+                org.apache.jena.sparql.engine.binding.Binding b = org.apache.jena.sparql.engine.binding.BindingFactory.binding(
+                        binding, org.apache.jena.sparql.core.Var.alloc(object), org.apache.jena.graph.NodeFactory.createLiteralString("late"));
+                return org.apache.jena.sparql.engine.iterator.QueryIterPlainWrapper.create(java.util.List.of(b).iterator(), execCxt);
+            }
+        };
+        PropertyFunctionRegistry.get().put(uri, factory);
+        try {
+            PropertyFunctionRegistry scoped = PropertyFunctionRegistry.chooseRegistry(ds.asDatasetGraph().getContext());
+            assertTrue(scoped.isRegistered(uri), "the scoped registry sees the late registration");
+            assertTrue(scoped.manages(uri));
+            assertNotNull(scoped.get(uri));
+            assertFalse(scoped.isRegistered(RDFS.member.getURI()), "rdfs:member stays masked");
+            java.util.Set<String> keys = new java.util.HashSet<>();
+            scoped.keys().forEachRemaining(keys::add);
+            assertTrue(keys.contains(uri));
+            assertFalse(keys.contains(RDFS.member.getURI()));
+            try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(
+                    "SELECT ?o WHERE { <http://ex.org/s> <" + uri + "> ?o }")).build()) {
+                ResultSet rs = qe.execSelect();
+                assertTrue(rs.hasNext(), "the property function must answer on a BG dataset");
+                assertEquals("late", rs.next().getLiteral("o").getString());
+            }
+        } finally {
+            PropertyFunctionRegistry.get().remove(uri);
+        }
+        assertFalse(PropertyFunctionRegistry.chooseRegistry(ds.asDatasetGraph().getContext()).isRegistered(uri),
+                "and an unregistration is visible too");
+    }
 }

@@ -244,6 +244,33 @@ class ParallelScanTest {
     }
 
     @Test
+    void subPatternsReExecutedPerOuterRowAreNotReplannedInParallel() throws Exception {
+        // BG-337: EXISTS re-executes its (uncorrelated, scan-shaped) pattern once
+        // per outer row with a singleton input. One binding used to be enough
+        // for a parallel scan, so every outer row built a worker set, a queue
+        // and a Cleaner registration. Only the root-level outer scan may plan
+        // one; the inner scans stay sequential.
+        long before = ParallelScan.HITS.get();
+        Set<String> got = rows(ds, "SELECT ?s WHERE { ?s ex:link ?t FILTER EXISTS { ?x ex:value ?v } }");
+        assertEquals(SUBJECTS, got.size());
+        assertEquals(1, ParallelScan.HITS.get() - before,
+                "exactly the outer scan parallelizes; the EXISTS sub-pattern (one execution per outer row) must not");
+        awaitWorkersDone();
+    }
+
+    @Test
+    void rootLikeInputsStillParallelize() throws Exception {
+        // A top-level GRAPH <g> and UNION branch feed the pattern one EMPTY
+        // binding (a copy of the root) - those are fresh top-level scans, not
+        // per-row re-executions, and keep their parallel plan.
+        long before = ParallelScan.HITS.get();
+        Set<String> got = rows(ds, "SELECT ?s ?v WHERE { GRAPH <" + Quad.defaultGraphIRI.getURI() + "> { ?s ex:value ?v } }");
+        assertEquals(SUBJECTS, got.size());
+        assertEquals(1, ParallelScan.HITS.get() - before, "GRAPH <default> at the root is a top-level scan");
+        awaitWorkersDone();
+    }
+
+    @Test
     void concreteSubjectFallsBack() {
         check("SELECT ?p ?o WHERE { ex:s5 ?p ?o }", false);
     }

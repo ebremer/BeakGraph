@@ -3,7 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.GSPODictionary;
-import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Types;
@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
@@ -116,9 +115,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     }
     
     private static ArrayList<Node> parallelSort(Set<Node> nodes) {
-        return nodes.parallelStream()
-            .sorted(NodeComparator.INSTANCE)
-            .collect(Collectors.toCollection(ArrayList::new));
+        return NodeSorter.parallelSort(nodes);   // per-sort memoizing comparator (BG-249)
     }
    
     public Quad[] getQuads() {

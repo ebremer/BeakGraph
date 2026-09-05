@@ -12,7 +12,7 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-public class DataOutputBuffer implements HDF5Buffer, AutoCloseable {
+public class DataOutputBuffer implements HDF5Buffer, AutoCloseable, DictionarySinks.RealSink {
     
     private final ByteArrayOutputStream baos;
     private final DataOutputStream dos;

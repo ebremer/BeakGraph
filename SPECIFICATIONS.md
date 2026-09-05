@@ -336,6 +336,11 @@ Apply the first matching rule:
    * duration: compare by total months (years·12+months, signed), then total seconds
      (days·86400+hours·3600+minutes·60+seconds, signed, exact decimal), then §6.4. (So
      `"P1D"` < `"PT24H"` only via the §6.4 tie-break — they are value-equal — and both < `"P1M"`.)
+     This agrees with XSD order within the pure year/month class and within the pure day/time
+     class; ARQ answers a cross-class comparison "not comparable" (false). *Mixed* durations
+     (both parts set, e.g. `"P1M35D"`) form a third XSD class whose four-reference-point order is
+     determinate for some pairs this order reverses (`"P1M35D"` is XSD-greater than `"P2M1D"` but
+     ranks before it), so readers must not narrow a range around a mixed-duration constant (§10.4).
 4. **Both numeric** (any XSD numeric datatype) — by **exact value**: `-INF < finite < +INF < NaN`,
    finite values compared as exact decimals (a float or double converts exactly). *Not* SPARQL's
    promoted comparison: promoting a decimal to a float is lossy, and mixing that with the exact
@@ -396,7 +401,12 @@ that exception is confined to composite–composite pairs.)
   lookup; any cyclic comparator makes the sort input-order-dependent.
 * **Value-equal literals are adjacent** (§6.2.4 + §6.3): everything between the first and last term
   with a given value has that value.
-* It never throws: unparseable literals fall into the lexical cluster of §6.2.4.
+* It never throws for ill-formed literals: an unparseable lexical form is classified as a plain
+  node value and falls into the last, term-ordered cluster of rule 5 of §6.2. If *building* a
+  literal's value fails with an exception, that literal alone is classified the same way — against
+  every partner, so the order stays total — and the datatype is logged once; an exception inside a
+  comparison itself is an error (`IllegalStateException`): a build must fail rather than produce an
+  input-order-dependent dictionary.
 
 A practical verification recipe for a new implementation is in §11.
 
@@ -751,8 +761,24 @@ answer = So[oRun]                                      # ascending object ids
 
 Numeric `FILTER` range constraints are pushed into `oRun` via unsigned `lowerBound`/`upperBound` on
 `So`, with bounds widened to whole **value-equal clusters** of the object dictionary (§6.4's
-adjacency invariant). The union graph (`urn:x-arq:unionGraph`) is answered by chaining per-graph
-scans and deduplicating rows.
+adjacency invariant). The union graph (`urn:x-arq:unionGraph`) - and any explicit set of graphs a
+`FROM` list names - is answered by chaining per-graph scans and deduplicating rows.
+
+**Access-path table.** With only `GSPO` and `GPOS` there is no index whose first level after the
+graph is the object, so the pattern shapes resolve as follows (G always bound - an unbound graph
+variable fans out over the graph list):
+
+| bound positions | index | cost |
+|---|---|---|
+| S, P (O free or bound) | `GSPO` | one probe, then the O run |
+| P, O (S free) | `GPOS` | one probe, then the S run |
+| P only | `GPOS` | the predicate's whole O/S sub-tree |
+| S only (P free) | `GSPO` | the subject's whole P/O sub-tree; an object bound too clamps the O runs |
+| O only (S, P free) | `GPOS`, per predicate | one `(G,P,O)` probe for **each predicate id in the graph's P run** |
+| none | `GSPO` | the graph's whole sub-tree (a scan) |
+
+A reader MUST NOT expect an object-first level; the per-predicate probing of the O-only shape is the
+intended answer, not a format extension.
 
 ---
 
@@ -780,6 +806,10 @@ IRI beginning `http://beakgraph.invalid/` is relativized textually against that 
 path-absolute references survive RFC 3986 resolution (which discards `..` above the root); an IRI
 that resolves directly under the sentinel root - a source's `</x>`, or a reference more than 32 levels
 up, which collapses there - is stored path-absolute (`"/x"`).
+A literal's datatype IRIREF is relativized the same way: `"7"^^<scoreType>` is stored with the
+datatype string `"scoreType"` in the typedLiterals dictionary and served with the datatype resolved
+against the serving URL. A relative reference inside a composite (`cdt:`) literal's lexical form is
+not relativized (the form is stored verbatim) and is rejected at ingest.
 The leaf `%00` cannot be authored as a sibling name, so no sibling collapses onto `""`. Stored rows
 get `DataType.RELATIVE_IRI`; an IRI is classified relative iff it has no RFC 3986 scheme (empty
 string included). A non-Java writer can implement this as: parse with the sentinel base, then
@@ -936,7 +966,8 @@ numeric constant the id bounds are widened to the constant's *promotion neighbou
 midpoints around a float/double constant; `(float) c` / `(double) c` for a decimal or integer
 constant when the section holds float / double rows), because ARQ compares mixed numeric types by
 lossy promotion while the dictionary orders them exactly (§6.2.4), and the cluster is scanned rather
-than skipped for `>` / `<`; graph
+than skipped for `>` / `<`; no range narrowing at all around a composite, language-tagged or
+mixed-duration constant (§6.2 rules 1–3: their dictionary order is not ARQ's comparison order); graph
 enumeration and membership via the `graphs` list; union-graph scans; HTTP range reading (a
 consequence of the contiguous-dataset profile, §3 — no format work needed).
 

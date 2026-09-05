@@ -37,8 +37,9 @@ import org.slf4j.LoggerFactory;
  *       ({@link BGIteratorPOS}).</li>
  * </ul>
  * Anything else - union graph (serialized dedup), bound/repeated variables,
- * concrete s/o (index lookups, not scans), sub-threshold ranges - stays
- * sequential. Range FILTERs remain eligible: every chunk applies the same
+ * concrete s/o (index lookups, not scans), sub-threshold ranges, a store read
+ * through a channel (HTTP: one lock, one cache) - stays sequential; so does a
+ * pattern re-executed per outer row (see {@code PatternMatchBG.solveFirst}). Range FILTERs remain eligible: every chunk applies the same
  * value-bound narrowing internally, and chunks that fall outside the bounds
  * simply produce nothing.
  *
@@ -59,9 +60,13 @@ final class ScanChunks {
         long threshold = Long.getLong("beakgraph.scan.parallel.threshold", 65_536L);
         if (threshold <= 0) return null;
         if (!(bg.getReader() instanceof HDF5Reader reader)) return null;
+        // A channel-backed (HTTP) store serializes every read behind one lock
+        // and one block cache: chunk workers would only contend on it while
+        // thrashing the cache across their disjoint regions (BG-247).
+        if (reader.isChannelBacked()) return null;
         if (!(reader.getDictionary() instanceof PositionalDictionaryReader dict)) return null;
         Node ng = bg.getNamedGraph();
-        if (ng == null || Quad.isUnionGraph(ng)) return null; // union dedup is a serial point
+        if (ng == null || Quad.isUnionGraph(ng) || bg.isGraphSetView()) return null; // union dedup is a serial point
         Node g = Quad.isDefaultGraph(ng) ? Quad.defaultGraphIRI : ng;
 
         Node s = triple.getSubject();

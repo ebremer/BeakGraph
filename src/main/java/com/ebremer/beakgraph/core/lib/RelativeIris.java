@@ -5,6 +5,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.apache.jena.datatypes.TypeMapper;
+import org.apache.jena.graph.Node;
+import org.apache.jena.graph.NodeFactory;
+import org.apache.jena.sparql.core.Quad;
 
 /**
  * Document-relative IRI handling shared by every writer engine and the
@@ -40,6 +44,59 @@ public final class RelativeIris {
     private RelativeIris() {}
 
     /**
+     * Storage form of a node: a sentinel-based IRI becomes its relative
+     * reference ({@link #toStorageForm}), recursing into triple terms so no
+     * sentinel survives however deeply nested; any other node is returned as
+     * the same instance. THE implementation for every engine - the RAM
+     * builder and the disk pipeline used to carry verbatim copies with a
+     * comment asking them to stay identical (BG-432, BG-297).
+     */
+    public static Node relativizeNode(Node n) {
+        if (n != null && n.isTripleTerm()) {
+            return TripleTerms.map(n, RelativeIris::relativizeNode);
+        }
+        if (n != null && n.isLiteral()) {
+            // A document-relative DATATYPE IRIREF ("7"^^<scoreType>) is
+            // resolved against the sentinel by the parser like any IRI; it is
+            // relativized the same way, or the sentinel leaked into the
+            // typedLiterals dictionary and every result (BG-394).
+            String dt = n.getLiteralDatatypeURI();
+            String rel = (dt == null) ? null : toStorageForm(dt);
+            if (rel == null) {
+                return n;
+            }
+            return NodeFactory.createLiteralDT(n.getLiteralLexicalForm(), TypeMapper.getInstance().getSafeTypeByName(rel));
+        }
+        if (n == null || !n.isURI()) {
+            return n;
+        }
+        // Textual relativization against the sentinel: "" / "#f" / "?q" for the
+        // document, "x" for children, "../x" (any number of levels) for parents.
+        // Jena's IRIx.relativize only steps up ONE level and otherwise emits a
+        // path-absolute form, which resolves wrongly against a served URL of a
+        // different depth; the old one-segment sentinel collapsed <../x> and
+        // </x> onto the child form "x" outright.
+        String rel = toStorageForm(n.getURI());
+        return rel == null ? n : NodeFactory.createURI(rel);
+    }
+
+    /** {@link #relativizeNode} on all four positions; the same quad instance when nothing changed. */
+    public static Quad relativizeQuad(Quad q) {
+        Node qg = q.getGraph();
+        Node qs = q.getSubject();
+        Node qp = q.getPredicate();
+        Node qo = q.getObject();
+        Node g = relativizeNode(qg);
+        Node s = relativizeNode(qs);
+        Node p = relativizeNode(qp);
+        Node o = relativizeNode(qo);
+        if (g == qg && s == qs && p == qp && o == qo) {
+            return q;
+        }
+        return new Quad(g, s, p, o);
+    }
+
+    /**
      * The base a source document is parsed against. A single-source build
      * parses against {@link #SENTINEL_BASE}, so {@code <>} is stored as
      * {@code ""}. A merge (several inputs into one store) gives each document
@@ -67,6 +124,27 @@ public final class RelativeIris {
             sb.append(encodePathSegment(rel.getName(i).toString()));
         }
         return sb.toString();
+    }
+
+    /**
+     * The directory the sentinel directory stands for when {@code input} is
+     * parsed against {@code base} (a value of {@link #parseBase}): the
+     * document's own directory for a single-source build, the merge root for
+     * a merge. A reference the parser resolved under the sentinel directory
+     * maps onto a file below this directory (JSON-LD contexts, BG-426).
+     */
+    public static Path sourceRoot(File input, String base) {
+        Path dir = input.toPath().toAbsolutePath().normalize().getParent();
+        if (dir == null || base == null || !base.startsWith(SENTINEL_DIR)) {
+            return dir == null ? Path.of("").toAbsolutePath() : dir;
+        }
+        String rel = base.substring(SENTINEL_DIR.length()); // "%00", or "a/b/x.ttl"
+        int depth = (int) rel.chars().filter(c -> c == '/').count();
+        Path root = dir;
+        for (int i = 0; i < depth && root.getParent() != null; i++) {
+            root = root.getParent();
+        }
+        return root;
     }
 
     /** Deepest directory containing every input (the input's own directory for one input). */

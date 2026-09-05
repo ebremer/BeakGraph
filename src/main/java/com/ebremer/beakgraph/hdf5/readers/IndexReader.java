@@ -22,6 +22,7 @@ public class IndexReader {
     private final Map<Character, BitPackedUnSignedLongBuffer> ids = new HashMap<>();
     private final Map<Character, HDTBitmapDirectory> componentDirectories = new HashMap<>();
     private final char[] positions;
+    private boolean directoryDatasets = false;
     
     public IndexReader(Group index, Index indexType, long formatVersion) {
         this.indexType = indexType;
@@ -46,6 +47,9 @@ public class IndexReader {
 
             bitmaps.put(component, bitmap);
             ids.put(component, idBuffer);
+            if (sb != null && bb != null) {
+                directoryDatasets = true;
+            }
 
             if (directoryUsable && bitmap != null && idBuffer != null && sb != null && bb != null) {
                 componentDirectories.put(component, new HDTBitmapDirectory(sb, bb, bitmap, idBuffer));
@@ -63,6 +67,11 @@ public class IndexReader {
     
     public HDTBitmapDirectory getDirectory(char component) {
         return componentDirectories.get(component);
+    }
+
+    /** True when the group carries rank/select directory datasets (SB and BB per component), whether or not the format version lets them be used. */
+    public boolean hasDirectoryDatasets() {
+        return directoryDatasets;
     }
     
     public BitPackedUnSignedLongBuffer getBitmapBuffer(char component) {

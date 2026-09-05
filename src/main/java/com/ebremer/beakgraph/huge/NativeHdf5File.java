@@ -3,6 +3,9 @@ package com.ebremer.beakgraph.huge;
 import hdf.hdf5lib.H5;
 import hdf.hdf5lib.HDF5Constants;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -36,7 +39,13 @@ import java.util.Deque;
  * JNI), which come from GitHub Packages (authenticated) and require a system
  * HDF5 install; see the profile comments in pom.xml. The two provide identical
  * class names, so they are mutually exclusive on the classpath - this is a
- * dependency swap, not a runtime switch.
+ * dependency swap, not a runtime switch. The two do NOT share an
+ * implementation, though: the FFM binding ships the typed helpers
+ * ({@code H5Awrite_int}, {@code H5Awrite_long}, {@code H5Dwrite_int}, ...) as
+ * throwing "not implemented yet" stubs, so this class uses only the
+ * {@code byte[]} entry points ({@code H5Awrite} / {@code H5Dwrite} with a
+ * {@code byte[]}), which both bindings implement (BG-439;
+ * {@code NativeHdf5PortabilityTest} pins the rule).
  *
  * <p>Reader compatibility (see {@link StreamingHdf5File}): datasets are created
  * with a fixed 1-D dataspace and the library-default CONTIGUOUS layout, then
@@ -201,12 +210,46 @@ public final class NativeHdf5File implements StreamingHdf5File {
         } catch (Throwable t) {
             throw new IOException(unavailableMessage(), t);
         }
+        // Only a path the JNI marshalling can garble (supplementary-plane
+        // characters, or one at the Windows MAX_PATH edge) pays for a listing
+        // of its directory, so a stray created under another name can be
+        // removed again on the mismatch path below.
+        boolean risky = path.toString().codePoints().anyMatch(c -> c > 0xFFFF) || path.toAbsolutePath().toString().length() > 240;
+        Path parent = path.toAbsolutePath().getParent();
+        java.util.Set<Path> before = (risky && parent != null && Files.isDirectory(parent)) ? listQuietly(parent) : null;
+        long fid;
         try {
-            long fid = H5.H5Fcreate(path.toString(), HDF5Constants.H5F_ACC_TRUNC,
+            fid = H5.H5Fcreate(path.toAbsolutePath().toString(), HDF5Constants.H5F_ACC_TRUNC,
                     HDF5Constants.H5P_DEFAULT, HDF5Constants.H5P_DEFAULT);
-            return new NativeHdf5File(fid);
         } catch (Exception e) {
             throw new IOException("H5Fcreate failed for " + path, e);
+        }
+        if (!Files.exists(path)) {
+            try { H5.H5Fclose(fid); } catch (Exception ignored) { }
+            if (before != null) {
+                for (Path stray : listQuietly(parent)) {
+                    if (!before.contains(stray)) {
+                        try { Files.deleteIfExists(stray); } catch (IOException ignored) { }
+                    }
+                }
+            }
+            // The path crosses JNI as modified UTF-8: supplementary-plane
+            // characters (emoji, CJK Ext-B) arrive as CESU-8 surrogate pairs
+            // and the library creates a differently named file, which the
+            // final Files.move then cannot find - the finished store was
+            // orphaned under a mojibake name (BG-419). Report it instead.
+            throw new IOException("The native HDF5 library created " + path + " under a different name "
+                    + "(non-BMP characters in the path, or a path beyond MAX_PATH?); use a path of BMP "
+                    + "characters shorter than 260 characters for the destination and -workdir");
+        }
+        return new NativeHdf5File(fid);
+    }
+
+    private static java.util.Set<Path> listQuietly(Path dir) {
+        try (java.util.stream.Stream<Path> s = Files.list(dir)) {
+            return s.collect(java.util.stream.Collectors.toSet());
+        } catch (IOException e) {
+            return java.util.Set.of();
         }
     }
 
@@ -235,6 +278,21 @@ public final class NativeHdf5File implements StreamingHdf5File {
         try { r.run(); } catch (RuntimeException ignored) {}
     }
 
+    // Attribute values go through H5Awrite(long, long, byte[]) ONLY: the HDF
+    // Group's 2.1.x FFM binding implements that overload (and the byte[]
+    // H5Dwrite) but stubs H5Awrite_int / H5Awrite_long with a throwing
+    // "not implemented yet", so under -Dhdf5.ffm=true every huge build used
+    // to fail at its FIRST attribute - after all the parsing, spilling and
+    // sorting (BG-439). Memory type = file type (I32LE / I64LE) with bytes
+    // laid out little-endian explicitly, so no host-order assumption either.
+    private static byte[] littleEndian(int value) {
+        return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array();
+    }
+
+    private static byte[] littleEndian(long value) {
+        return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
+    }
+
     /** Scalar int attribute: file type I32LE, so jHDF reads an Integer. */
     private static void writeIntAttribute(long objId, String name, int value) throws IOException {
         try {
@@ -243,7 +301,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
                 long attr = H5.H5Acreate(objId, name, HDF5Constants.H5T_STD_I32LE, space,
                         HDF5Constants.H5P_DEFAULT, HDF5Constants.H5P_DEFAULT);
                 try {
-                    H5.H5Awrite_int(attr, HDF5Constants.H5T_NATIVE_INT, new int[]{value});
+                    H5.H5Awrite(attr, HDF5Constants.H5T_STD_I32LE, littleEndian(value));
                 } finally {
                     H5.H5Aclose(attr);
                 }
@@ -263,7 +321,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
                 long attr = H5.H5Acreate(objId, name, HDF5Constants.H5T_STD_I64LE, space,
                         HDF5Constants.H5P_DEFAULT, HDF5Constants.H5P_DEFAULT);
                 try {
-                    H5.H5Awrite_long(attr, HDF5Constants.H5T_NATIVE_INT64, new long[]{value});
+                    H5.H5Awrite(attr, HDF5Constants.H5T_STD_I64LE, littleEndian(value));
                 } finally {
                     H5.H5Aclose(attr);
                 }

@@ -1,6 +1,5 @@
-package com.ebremer.beakgraph.hdf5.writers.hugeUltra;
+package com.ebremer.beakgraph.core.lib;
 
-import com.ebremer.beakgraph.core.lib.NodeComparator;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.expr.NodeValue;
@@ -21,17 +20,23 @@ import org.apache.jena.sparql.expr.NodeValue;
  * </ul>
  *
  * Ordering is EXACTLY the parent's: the override only changes where the
- * Node-to-NodeValue conversion result comes from. One instance per sorter;
- * the map is cleared when it exceeds {@code maxEntries} (a sorter outlives
- * many runs, so an uncapped memo would grow with the whole build's term
- * population).
+ * Node-to-NodeValue conversion result comes from. One instance per sorter or
+ * per sort; the map is cleared when it exceeds {@code maxEntries} (a sorter
+ * outlives many runs, so an uncapped memo would grow with the whole build's
+ * term population).
+ *
+ * <p>Originally wired into the hugeUltra/plaid term sorters only; every
+ * engine's literal sorts now run on one - {@link NodeSorter} (methods 0/2/3
+ * dictionaries and the method 0 quad sorts) and the sequential
+ * {@code SorterProvider} (method 1 term runs) - so no build sorts literals
+ * through the shared global cache any more (BG-249).
  */
-final class CachingNodeComparator extends NodeComparator {
+public final class CachingNodeComparator extends NodeComparator {
 
     private final int maxEntries;
     private final ConcurrentHashMap<Node, NodeValue> memo;
 
-    CachingNodeComparator(int maxEntries) {
+    public CachingNodeComparator(int maxEntries) {
         this.maxEntries = maxEntries;
         this.memo = new ConcurrentHashMap<>(1 << 16);
     }

@@ -319,6 +319,45 @@ class MergeAndFormatsTest {
         assertMerged(p.dest);
     }
 
+    /**
+     * BG-422: -dest names a directory by INTENT, not only when it already
+     * exists - a trailing separator or a name without a store suffix means
+     * "put merged.h5 in there"; a name ending in .h5 is the file, and its
+     * missing parent directories are created.
+     */
+    @Test
+    void mergeDestinationIntentIsHonouredForDirectoriesThatDoNotExistYet() throws Exception {
+        Path src = mergeSourceTree("srcmergeintent");
+        String[][] cases = {
+            {dir.resolve("outA").toString() + File.separator, "outA/merged.h5"},
+            {dir.resolve("outB").toString(), "outB/merged.h5"},
+            {dir.resolve("outC").resolve("store.h5").toString(), "outC/store.h5"},
+            {dir.resolve("outD").resolve("store.HDF5").toString(), "outD/store.HDF5"},
+        };
+        for (String[] c : cases) {
+            Parameters p = new Parameters();
+            com.beust.jcommander.JCommander.newBuilder().addObject(p).build()
+                    .parse("-src", src.toString(), "-dest", c[0], "-merge");
+            assertTrue(p.dest instanceof Parameters.DestinationFile, "the -dest converter keeps the raw argument");
+            BeakGraphCLI cli = new BeakGraphCLI(p);
+            cli.merge();
+            assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), c[0]);
+            File expected = dir.resolve(c[1]).toFile();
+            assertMerged(expected);
+            if (c[1].endsWith("merged.h5")) {
+                assertFalse(new File(c[0].replaceAll("[/\\\\]+$", "")).isFile(), c[0] + " must not be written as a suffix-less file");
+            }
+        }
+        assertTrue(((Parameters.DestinationFile) parseDest(dir.resolve("x").toString() + "/")).trailingSeparator());
+        assertFalse(((Parameters.DestinationFile) parseDest(dir.resolve("x").toString())).trailingSeparator());
+    }
+
+    private static File parseDest(String arg) {
+        Parameters p = new Parameters();
+        com.beust.jcommander.JCommander.newBuilder().addObject(p).build().parse("-dest", arg);
+        return p.dest;
+    }
+
     @Test
     void mergeIntoExistingDirectoryWritesMergedH5() throws Exception {
         Path src = mergeSourceTree("srcmergedir");
