@@ -61,6 +61,20 @@ public class Params {
     public static final String VOIDSTRING = String.format("urn:%s:void", BGURN);
     public static final Node BGVOID = NodeFactory.createURI(VOIDSTRING);
     public static final short GRIDTILESIZE = 512;
+    /** Every BeakGraph-internal graph name starts with this: the VoID statistics, the spatial index, the grid tiles. */
+    public static final String INTERNAL_GRAPH_PREFIX = "urn:" + BGURN + ":";
+
+    /**
+     * Whether {@code g} names one of BeakGraph's own metadata graphs (VoID,
+     * Spatial, or a grid tile {@code urn:x-beakgraph:grid:*}) rather than a
+     * graph the user put in the store. Export and its "has named graphs"
+     * decision used to exclude only VoID and Spatial, so a -spatial store's
+     * thousands of tile graphs were dumped as user data and forced NT/TTL up
+     * to NQ/TRIG.
+     */
+    public static boolean isInternalGraph(Node g) {
+        return g != null && g.isURI() && g.getURI().startsWith(INTERNAL_GRAPH_PREFIX);
+    }
 
     /**
      * Grid-tile graph IRI {@code urn:x-beakgraph:grid:{level}:{x}:{y}}. Built by

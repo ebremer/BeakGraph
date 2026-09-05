@@ -81,8 +81,14 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 (each failure is also logged with its cause; per-file mode continues past failures). `-verify` uses
 the same scheme: `2` means at least one damaged file.
 
-Existing non-empty destination `.h5` files are **skipped** in per-file mode; `-merge` always rebuilds
-its destination. All writers build into a sibling `*.tmp` file and publish with an atomic rename —
+Existing non-empty destination `.h5` files are **skipped** in per-file mode (logged, and counted as
+"Skipped (existing)" in the summary); `-merge` always rebuilds its destination. When `-src` is a
+single file, `-dest` names the output `.h5` itself, or, if it is an existing directory, the directory
+to write `<name>.h5` into. Sources that differ only by RDF extension (`a.ttl`, `a.nt`) map to the
+same `a.h5`: the first in path order is converted and the rest are reported and counted as failed. All writers build into a sibling `*.tmp` file and publish with an atomic rename
+(if the destination cannot be replaced — on Windows a store that a reader has memory-mapped refuses
+the move — the finished build is kept as `<dest>.new` and the error says so; move it into place once
+the reader is closed) —
 a failed or interrupted build never corrupts a previous good store.
 
 ## 5. Supported source formats
@@ -111,6 +117,13 @@ java -jar BeakGraph.jar -src stores/ -export NT                 # every .h5 unde
 * NT/NQ/TTL/TRIG exports stream (any store size); JSON-LD has no streaming writer and
   materializes the dataset in memory - use NQ/TRIG for bulk dumps.
 * Writes are atomic (`.tmp` then rename); an existing export is replaced.
+
+Stores keep document-relative IRIs (`<>`, `<sib.png>`, `<../x>`) in relative form. Pass
+`-base <URL the store is served from>` to resolve them on export; N-Triples / N-Quads cannot carry
+relative IRIs, so exporting such a store as NT/NQ without `-base` fails with a message naming the
+option, while TTL/TriG/JSON-LD write them as stored (with a warning). BeakGraph's own metadata graphs
+(`urn:x-beakgraph:void`, `urn:x-beakgraph:Spatial` and the spatial `urn:x-beakgraph:grid:*` tiles)
+are never exported and never force a triples store up to a quads syntax.
 
 ## 5b. Verifying BeakGraph files
 

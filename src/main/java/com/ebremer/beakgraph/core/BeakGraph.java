@@ -48,6 +48,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     static {
         JenaSystem.init();
         Spatial.init();
+        com.ebremer.halcyon.hilbert.WKTDatatype.register();
     }
 
     public BeakGraph(BGReader reader, URI uri) {

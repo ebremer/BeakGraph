@@ -21,15 +21,11 @@ package com.ebremer.ns;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.ResourceFactory;
 
-public class GEOF {
-
 /**
- * GeoSPARQL 1.1 is an OGC Standard.
- * <p>
- * See <a href="http://www.opengis.net/ont/geosparql">GeoSPARQL 1.1 is an OGC Standard</a>.
- * <p>
- * <a href="http://www.opengis.net/ont/geosparql#>Base URI and namepace</a>.
+ * GeoSPARQL 1.1 simple-features function namespace ({@code geof:}),
+ * <a href="http://www.opengis.net/def/function/geosparql/">http://www.opengis.net/def/function/geosparql/</a>.
  */
+public class GEOF {
     public static final String NS = "http://www.opengis.net/def/function/geosparql/";
     public static final Property sfContains = ResourceFactory.createProperty(NS, "sfContains");
     public static final Property sfCrosses = ResourceFactory.createProperty(NS, "sfCrosses");

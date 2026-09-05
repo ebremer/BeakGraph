@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
@@ -8,10 +9,8 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +36,7 @@ public class HDF5Writer implements BeakGraphWriter {
         // cleanup deleted dest even when the failure - a parse error, say -
         // happened before a single byte was written), and readers never observe
         // a half-written file at the published path.
-        Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
+        Path tmp = AtomicPublish.tempFor(dest);
         try {
             PositionalDictionaryWriterBuilder db = new PositionalDictionaryWriterBuilder();
             db.setSourceRoot(builder.getSourceRoot());
@@ -64,12 +63,7 @@ public class HDF5Writer implements BeakGraphWriter {
                     gpos.add(hdt);
                 }
             }
-            try {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException | RuntimeException ex) {
+        } catch (IOException | RuntimeException | Error ex) {
             // Only the temp file is ever cleaned up; dest is untouched on failure.
             try {
                 Files.deleteIfExists(tmp);
@@ -78,6 +72,9 @@ public class HDF5Writer implements BeakGraphWriter {
             }
             throw ex;
         }
+        // Publish OUTSIDE the build's try/catch: a busy destination must not
+        // delete a finished build (AtomicPublish keeps it as <dest>.new).
+        AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
     }
 

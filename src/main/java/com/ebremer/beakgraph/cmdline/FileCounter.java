@@ -8,6 +8,16 @@ public class FileCounter {
     private final AtomicLong otherFileCount = new AtomicLong(0);    
     private final AtomicLong zeroLengthFileCount = new AtomicLong(0);
     private final AtomicLong failedConversionFileCount = new AtomicLong(0); 
+    private final AtomicLong skippedExistingCount = new AtomicLong(0);
+
+    /** A source whose non-empty destination .h5 already existed (per-file mode leaves it alone). */
+    public void incrementSkippedExistingCount() {
+        skippedExistingCount.incrementAndGet();
+    }
+
+    public long getSkippedExistingCount() {
+        return skippedExistingCount.get();
+    }
 
     public void incrementOtherFileCount() {
         otherFileCount.incrementAndGet();
@@ -75,11 +85,13 @@ public class FileCounter {
         ));
         sb.append(String.format("""
             Zero Length files      : %d
+            Skipped (existing)     : %d
             Failed Conversions     : %d
             Successful Conversions : %d
             ================================
             """,
             getZeroFileCount(),
+            getSkippedExistingCount(),
             getFailedConversionFileCount(),
             getSuccessfulConversionCount()
         ));

@@ -114,4 +114,33 @@ class LocaleIndependentIdentifiersTest {
         assertEquals(String.format(Locale.ROOT, "b%020d", 987654321L), Params.blankNodeLabel(987654321L));
         assertEquals(String.format(Locale.ROOT, "urn:x-beakgraph:grid:%d:%d:%d", 2, 40, 41), Params.gridGraph(2, 40, 41).getURI());
     }
+
+    @Test
+    void diskEngineMintsTheSameGridGraphsAsTheRamEngine() throws Exception {
+        // BG-355: the disk engines' SpatialAugmenter carried its own copy of the
+        // grid-URN format. Both engines now share Params.gridGraph; under the
+        // Arabic-digit locale they must agree name for name.
+        NativeTestSupport.assumeNative();
+        File src = dir.resolve("locale.ttl").toFile();
+        File huge = dir.resolve("locale-huge.h5").toFile();
+        com.ebremer.beakgraph.huge.HugeHDF5Writer.Builder b = com.ebremer.beakgraph.huge.HugeHDF5Writer.Builder().setDestination(huge);
+        b.setSource(src);
+        b.setSpatial(true);
+        b.build().write();
+        java.util.Set<String> ram = new java.util.HashSet<>();
+        for (Node g : nodes("SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), \"urn:x-beakgraph:grid:\")) }", "g")) {
+            ram.add(g.getURI());
+        }
+        java.util.Set<String> disk = new java.util.HashSet<>();
+        try (BeakGraph hb = new BeakGraph(new HDF5Reader(huge))) {
+            try (QueryExecution qe = QueryExecution.dataset(hb.getDataset()).query(QueryFactory.create(
+                    "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } FILTER(STRSTARTS(STR(?g), \"urn:x-beakgraph:grid:\")) }")).build()) {
+                ResultSet rs = qe.execSelect();
+                while (rs.hasNext()) disk.add(rs.next().get("g").asNode().getURI());
+            }
+        }
+        assertFalse(disk.isEmpty());
+        assertEquals(ram, disk, "grid graph names must agree across engines");
+        for (String g : disk) assertTrue(GRID.matcher(g).matches(), g);
+    }
 }

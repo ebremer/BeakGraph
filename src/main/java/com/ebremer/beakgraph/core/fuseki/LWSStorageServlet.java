@@ -709,7 +709,7 @@ public class LWSStorageServlet extends HttpServlet {
                 resp.setHeader("Allow", "GET, HEAD");
                 addStorageDescriptionLink(resp, base);
                 resp.getWriter().write(linksetJson(base + "description",
-                        LWS.MetadataResource.getURI(), base, null, null, null));
+                        LWS.DataResource.getURI(), base, null, null, null));
                 return;
             }
             String baseResourceURI = basePath.isEmpty() ? HTTP_ROOT : HTTP_ROOT + "/" + basePath;

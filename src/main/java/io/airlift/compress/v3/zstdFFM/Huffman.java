@@ -51,6 +51,20 @@ class Huffman
         return tableLog != -1;
     }
 
+    /**
+     * Forgets the loaded table. RFC 8878 3.1.1.3.1.2: a Treeless_Literals_Block
+     * may only reuse the Huffman table of a previous Compressed_Literals_Block
+     * of the SAME frame (or of a dictionary). The decoder is reused across
+     * thousands of fragments (one per thread), and without this a later frame
+     * whose first block is treeless silently decoded against the previous
+     * frame's table instead of being rejected. Called from
+     * ZstdFrameDecompressor.reset() at the start of every frame.
+     */
+    public void reset()
+    {
+        tableLog = -1;
+    }
+
     public int readTable(final MemorySegment inputBase, final long inputAddress, final int size)
     {
         Arrays.fill(ranks, 0);
@@ -73,6 +87,11 @@ class Huffman
                 weights[i] = (byte) (value >>> 4);
                 weights[i + 1] = (byte) (value & 0b1111);
             }
+            // Direct-format weights are raw nibbles 0..15; a weight above the
+            // maximum table log indexed past the 13-entry ranks array.
+            for (int i = 0; i < outputSize; i++) {
+                verify(weights[i] <= MAX_TABLE_LOG, input, "Input is corrupted");
+            }
         }
         else {
             verify(inputSize + 1 <= size, input, "Not enough input bytes");
@@ -80,7 +99,15 @@ class Huffman
             long inputLimit = input + inputSize;
             input += reader.readFseTable(fseTable, inputBase, input, inputLimit, FiniteStateEntropy.MAX_SYMBOL, MAX_FSE_TABLE_LOG);
             outputSize = FiniteStateEntropy.decompress(fseTable, inputBase, input, inputLimit, weights);
+            // The FSE decoder may emit one symbol past its limit on overflow, and
+            // decoded weights are unbounded bytes: both must be checked before
+            // they index ranks[] / weights[outputSize].
+            verify(outputSize <= MAX_SYMBOL, input, "Input is corrupted");
+            for (int i = 0; i < outputSize; i++) {
+                verify((weights[i] & 0xFF) <= MAX_TABLE_LOG, input, "Input is corrupted");
+            }
         }
+        verify(outputSize <= MAX_SYMBOL, input, "Input is corrupted");
 
         int totalWeight = 0;
         for (int i = 0; i < outputSize; i++) {

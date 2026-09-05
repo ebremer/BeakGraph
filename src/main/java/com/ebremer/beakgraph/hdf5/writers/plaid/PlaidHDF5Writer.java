@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.plaid;
 
+import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
@@ -7,12 +8,10 @@ import com.ebremer.beakgraph.hdf5.writers.hugeUltra.UltraSorterProvider;
 import com.ebremer.beakgraph.huge.HugeBuildPipeline;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
@@ -53,7 +52,7 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
         logger.info("Writing BeakGraph (plaid: parallel-ingest disk-based, {} cores) to {}",
                 builder.cores, builder.getDestination());
         Path dest = builder.getDestination().toPath();
-        Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
+        Path tmp = AtomicPublish.tempFor(dest);
         Path workBase = (builder.workDir != null) ? builder.workDir
                 : (dest.toAbsolutePath().getParent() != null ? dest.toAbsolutePath().getParent() : Path.of("."));
         Path workspace = Files.createTempDirectory(workBase, ".bgplaid-");
@@ -70,12 +69,7 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
                 pipeline.setSourceRoot(builder.getSourceRoot());
                 pipeline.run(tmp);
             }
-            try {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException | RuntimeException ex) {
+        } catch (IOException | RuntimeException | Error ex) {
             try {
                 Files.deleteIfExists(tmp);
             } catch (IOException cleanup) {
@@ -86,6 +80,9 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
             pool.shutdown();
             deleteRecursively(workspace);
         }
+        // Publish OUTSIDE the build's try/catch: a busy destination must not
+        // delete a finished build (AtomicPublish keeps it as <dest>.new).
+        AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
     }
 

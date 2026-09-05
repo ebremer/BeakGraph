@@ -59,6 +59,23 @@ public class BGDatasetGraph extends DatasetGraphBase {
         }
     }
 
+    /**
+     * The global filter-function registry plus BeakGraph's geof:sfIntersects
+     * evaluator (the JTS verification stage the spatial index relies on),
+     * scoped to BG executions: an embedder that registers another
+     * implementation globally (jena-geosparql) keeps it for its own datasets,
+     * and BG datasets are not at the mercy of initialization order.
+     */
+    private static final class BGFunctions {
+        static final org.apache.jena.sparql.function.FunctionRegistry INSTANCE = build();
+        private static org.apache.jena.sparql.function.FunctionRegistry build() {
+            org.apache.jena.sparql.function.FunctionRegistry global = org.apache.jena.sparql.function.FunctionRegistry.get();
+            org.apache.jena.sparql.function.FunctionRegistry reg = org.apache.jena.sparql.function.FunctionRegistry.createFrom(global);
+            reg.put(com.ebremer.ns.GEOF.sfIntersects.getURI(), com.ebremer.beakgraph.turbo.Intersects.class);
+            return reg;
+        }
+    }
+
     public BGDatasetGraph(BeakGraph g) {
         this.bg = g;
         wire(context);
@@ -77,6 +94,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
     public static void wire(Context context) {
         QC.setFactory(context, OpExecutorBG.opExecFactoryBG);
         PropertyFunctionRegistry.set(context, BGPropertyFunctions.INSTANCE);
+        org.apache.jena.sparql.function.FunctionRegistry.set(context, BGFunctions.INSTANCE);
         // Re-pin CDT support for each dataset: a later ARQ.setStrictMode() call
         // elsewhere in the JVM flips the global off, and BeakGraph's stored
         // cdt: literals need composite semantics to query correctly.

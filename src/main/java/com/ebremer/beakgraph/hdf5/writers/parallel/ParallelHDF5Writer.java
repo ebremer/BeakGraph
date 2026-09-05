@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.parallel;
 
+import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
@@ -8,10 +9,8 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
@@ -56,7 +55,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
         // like the sequential writer: a failed rebuild must never destroy a
         // previous good artifact at dest, and readers never observe a
         // half-written file at the published path.
-        Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
+        Path tmp = AtomicPublish.tempFor(dest);
         ForkJoinPool pool = new ForkJoinPool(builder.getCores());
         try {
             ParallelPositionalDictionaryWriterBuilder db = new ParallelPositionalDictionaryWriterBuilder();
@@ -96,12 +95,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
                     gpos.add(hdt);
                 }
             }
-            try {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException | RuntimeException ex) {
+        } catch (IOException | RuntimeException | Error ex) {
             // Only the temp file is ever cleaned up; dest is untouched on failure.
             try {
                 Files.deleteIfExists(tmp);
@@ -112,6 +106,9 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
         } finally {
             pool.shutdown();
         }
+        // Publish OUTSIDE the build's try/catch: a busy destination must not
+        // delete a finished build (AtomicPublish keeps it as <dest>.new).
+        AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
     }
 

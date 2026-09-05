@@ -52,6 +52,7 @@ public class HDF5Reader implements BGReader {
 
     static {
         JenaSystem.init();
+        com.ebremer.halcyon.hilbert.WKTDatatype.register();
         Spatial.init();
     }
 

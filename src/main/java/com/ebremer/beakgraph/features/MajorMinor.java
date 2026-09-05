@@ -29,34 +29,15 @@ import org.locationtech.jts.io.WKTReader;
 public class MajorMinor {
     private static final Logger logger = LoggerFactory.getLogger(MajorMinor.class);
 
-    public static void add(Resource f, String wkt) {
-        try {
-            Geometry geom = new WKTReader().read(wkt);
-            if (!(geom instanceof Polygon poly)) return;
-            double[] g = axes(poly);
-            if (g == null) {
-                logger.warn("Skipping centroid/axis features for {}: zero-area geometry", f);
-                return;
-            }
-            // WKT strings: Locale.ROOT so the decimal separator is always '.',
-            // not the default locale's (e.g. ',' on de_DE, which is invalid WKT).
-            f.addProperty(HAL.centroid, f.getModel().createTypedLiteral(centroidWkt(g), GEO.wktLiteral.getURI()));
-            f.addProperty(HAL.majorAxis, f.getModel().createTypedLiteral(majorWkt(g), GEO.wktLiteral.getURI()));
-            f.addProperty(HAL.minorAxis, f.getModel().createTypedLiteral(minorWkt(g), GEO.wktLiteral.getURI()));
-        } catch (ParseException | RuntimeException e) {
-            // JTS throws IllegalArgumentException - not just ParseException - for
-            // structurally invalid geometry (e.g. a two-point ring). One bad
-            // geometry skips ITS features with a warning; it must never escape
-            // into the spatial task and abort the whole build.
-            logger.warn("Skipping centroid/axis features for {}: {}", f, e.toString());
-        }
-    }
 
     public static void add(ArrayList<Quad> quads, Node f, String wkt) {
         try {
             Geometry geom = new WKTReader().read(wkt);
-            if (!(geom instanceof Polygon poly)) return;
-            double[] g = axes(poly);
+            if (!(geom instanceof org.locationtech.jts.geom.Polygonal)) {
+                logger.warn("Skipping centroid/axis features for {}: unsupported geometry type {}", f, geom.getGeometryType());
+                return;
+            }
+            double[] g = axes(geom);
             if (g == null) {
                 logger.warn("Skipping centroid/axis features for {}: zero-area geometry", f);
                 return;
@@ -93,9 +74,17 @@ public class MajorMinor {
      * the shell adds and every hole subtracts regardless of winding order in
      * the source WKT.
      */
-    private static double[] axes(Polygon poly) {
+    /**
+     * Exact area moments of any polygonal geometry: every Polygon part
+     * contributes its shell positively and its holes negatively, so a
+     * MULTIPOLYGON's centroid and axes describe the union of its parts (it
+     * used to be skipped without a word).
+     */
+    private static double[] axes(Geometry geom) {
         double area = 0, sumX = 0, sumY = 0, sumX2 = 0, sumY2 = 0, sumXY = 0;
-        for (int r = -1; r < poly.getNumInteriorRing(); r++) {
+        for (int part = 0; part < geom.getNumGeometries(); part++) {
+          if (!(geom.getGeometryN(part) instanceof Polygon poly)) continue;
+          for (int r = -1; r < poly.getNumInteriorRing(); r++) {
             Coordinate[] ring = (r < 0 ? poly.getExteriorRing() : poly.getInteriorRingN(r)).getCoordinates();
             double a = 0, sx = 0, sy = 0, x2 = 0, y2 = 0, xy = 0;
             for (int i = 0; i < ring.length - 1; i++) {
@@ -116,6 +105,7 @@ public class MajorMinor {
             sumX2 += sign * x2 / 12;
             sumY2 += sign * y2 / 12;
             sumXY += sign * xy / 24;
+          }
         }
         if (!(area > 0) || !Double.isFinite(area)) {
             return null;
@@ -127,8 +117,7 @@ public class MajorMinor {
         double varY = sumY2 / area - cy * cy;
         double cov  = sumXY / area - cx * cy;
         double trace = varX + varY;
-        double det = varX * varY - cov * cov;
-        double disc = Math.sqrt(Math.max(0, trace * trace - 4 * det));
+        double disc = Math.hypot(varX - varY, 2 * cov);   // sqrt(trace^2 - 4 det) without cancellation
         double l0 = Math.max(0, (trace + disc) / 2);
         double l1 = Math.max(0, (trace - disc) / 2);
         double v0x, v0y, v1x, v1y;

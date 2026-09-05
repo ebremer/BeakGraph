@@ -71,6 +71,17 @@ public final class IndexExport {
      * generic writer. The stream is flushed but not closed.
      */
     public static boolean tryWrite(HDF5Reader reader, OutputStream os, boolean quads) throws IOException {
+        return tryWrite(reader, os, quads, java.util.function.UnaryOperator.identity());
+    }
+
+    /**
+     * As {@link #tryWrite(HDF5Reader, OutputStream, boolean)}, mapping every
+     * emitted term through {@code termMap} first (the -export base resolution
+     * of document-relative IRIs, or a guard that rejects them). Applied inside
+     * the per-id memo, so it costs one call per distinct term.
+     */
+    public static boolean tryWrite(HDF5Reader reader, OutputStream os, boolean quads,
+                                   java.util.function.UnaryOperator<Node> termMap) throws IOException {
         if (!Boolean.parseBoolean(System.getProperty("beakgraph.export.fastpath", "true"))) {
             return false;
         }
@@ -83,7 +94,7 @@ public final class IndexExport {
         }
         HITS.incrementAndGet();
         Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8), 1 << 16);
-        Emitter emitter = new Emitter(dict, gspo, w);
+        Emitter emitter = new Emitter(dict, gspo, w, termMap);
         long defaultGi = dict.getGraphs().locate(Quad.defaultGraphIRI);
         long rows = emitter.emitGraph(defaultGi, null);
         if (quads) {
@@ -93,8 +104,8 @@ public final class IndexExport {
                     continue;
                 }
                 Node graphNode = dict.getGraphs().extract(gid);
-                if (Params.BGVOID.equals(graphNode) || Params.SPATIAL.equals(graphNode)) {
-                    continue; // internal metadata graphs never leave the store
+                if (Params.isInternalGraph(graphNode)) {
+                    continue; // internal metadata graphs (VoID, Spatial, grid tiles) never leave the store
                 }
                 rows += emitter.emitGraph(gid, graphNode);
             }
@@ -115,10 +126,12 @@ public final class IndexExport {
         private final Writer w;
 
         private final NodeFormatterNT fmt = new NodeFormatterNT(CharSpace.UTF8);
+        private final java.util.function.UnaryOperator<Node> termMap;
         private final Map<Long, String> predicateText = new HashMap<>();
         private final LongTextMap objectText = new LongTextMap(OBJECT_TEXT_CACHE);
 
-        Emitter(PositionalDictionaryReader dict, IndexReader gspo, Writer w) {
+        Emitter(PositionalDictionaryReader dict, IndexReader gspo, Writer w, java.util.function.UnaryOperator<Node> termMap) {
+            this.termMap = termMap;
             this.entities = dict.getSubjects();
             this.predicates = dict.getPredicates();
             this.objects = dict.getObjects();
@@ -219,7 +232,7 @@ public final class IndexExport {
 
         private String text(Node n) {
             IndentedLineBuffer buff = new IndentedLineBuffer();
-            fmt.format(buff, n);
+            fmt.format(buff, termMap.apply(n));
             return buff.asString();
         }
     }

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
@@ -7,10 +8,8 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.concurrent.ForkJoinPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,7 +65,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
         // Same publish discipline as every other writer: build into a sibling
         // temp file, swap in atomically on success, never disturb a previous
         // good artifact, never expose a half-written file.
-        Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
+        Path tmp = AtomicPublish.tempFor(dest);
         final long total = System.nanoTime();
         ForkJoinPool pool = new ForkJoinPool(builder.getCores());
         try {
@@ -101,12 +100,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 indexes[1].add(hdt);
             }
             logger.info("HDF5 file written in {} ms", (System.nanoTime() - ioStart) / 1_000_000L);
-            try {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException | RuntimeException ex) {
+        } catch (IOException | RuntimeException | Error ex) {
             // Only the temp file is ever cleaned up; dest is untouched on failure.
             try {
                 Files.deleteIfExists(tmp);
@@ -117,6 +111,9 @@ public class UltraHDF5Writer implements BeakGraphWriter {
         } finally {
             pool.shutdown();
         }
+        // Publish OUTSIDE the build's try/catch: a busy destination must not
+        // delete a finished build (AtomicPublish keeps it as <dest>.new).
+        AtomicPublish.publish(tmp, dest);
         logger.info("Write complete in {} ms: {}", (System.nanoTime() - total) / 1_000_000L, builder.getDestination());
     }
 

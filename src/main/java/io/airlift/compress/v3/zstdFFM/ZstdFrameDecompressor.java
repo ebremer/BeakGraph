@@ -218,6 +218,8 @@ class ZstdFrameDecompressor
         previousOffsets[1] = 4;
         previousOffsets[2] = 8;
 
+        huffman.reset();
+
         currentLiteralsLengthTable = null;
         currentOffsetCodesTable = null;
         currentMatchLengthTable = null;
@@ -278,7 +280,7 @@ class ZstdFrameDecompressor
         long inputLimit = inputAddress + blockSize;
         long input = inputAddress;
 
-        verify(blockSize <= MAX_BLOCK_SIZE, input, "Expected match length table to be present");
+        verify(blockSize <= MAX_BLOCK_SIZE, input, "Compressed block size exceeds maximum block size");
         verify(blockSize >= MIN_BLOCK_SIZE, input, "Compressed block size too small");
 
         // decode literals
@@ -645,7 +647,7 @@ class ZstdFrameDecompressor
                 currentOffsetCodesTable = DEFAULT_OFFSET_CODES_TABLE;
                 break;
             case SEQUENCE_ENCODING_REPEAT:
-                verify(currentOffsetCodesTable != null, input, "Expected match length table to be present");
+                verify(currentOffsetCodesTable != null, input, "Expected offset codes table to be present");
                 break;
             case SEQUENCE_ENCODING_COMPRESSED:
                 input += fse.readFseTable(offsetCodesTable, inputBase, input, inputLimit, DEFAULT_MAX_OFFSET_CODE_SYMBOL, OFFSET_TABLE_LOG);
@@ -673,7 +675,7 @@ class ZstdFrameDecompressor
                 currentLiteralsLengthTable = DEFAULT_LITERALS_LENGTH_TABLE;
                 break;
             case SEQUENCE_ENCODING_REPEAT:
-                verify(currentLiteralsLengthTable != null, input, "Expected match length table to be present");
+                verify(currentLiteralsLengthTable != null, input, "Expected literals length table to be present");
                 break;
             case SEQUENCE_ENCODING_COMPRESSED:
                 input += fse.readFseTable(literalsLengthTable, inputBase, input, inputLimit, MAX_LITERALS_LENGTH_SYMBOL, LITERAL_LENGTH_TABLE_LOG);

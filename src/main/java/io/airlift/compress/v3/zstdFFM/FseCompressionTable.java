@@ -144,9 +144,9 @@ class FseCompressionTable
         int step = calculateStep(tableSize);
 
         int position = 0;
-        for (byte symbol = 0; symbol <= maxSymbolValue; symbol++) {
+        for (int symbol = 0; symbol <= maxSymbolValue; symbol++) {
             for (int i = 0; i < normalizedCounters[symbol]; i++) {
-                symbols[position] = symbol;
+                symbols[position] = (byte) symbol;
                 do {
                     position = (position + step) & mask;
                 }

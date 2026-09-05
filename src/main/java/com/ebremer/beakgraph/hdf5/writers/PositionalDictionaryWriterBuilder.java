@@ -51,6 +51,11 @@ import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.WKTReader;
 
 public class PositionalDictionaryWriterBuilder {
+    static {
+        // Deterministic datatype registration before any document is parsed.
+        com.ebremer.halcyon.hilbert.WKTDatatype.register();
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
     private File src;
     private File dest;

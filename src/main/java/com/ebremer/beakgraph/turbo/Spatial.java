@@ -19,7 +19,14 @@ public final class Spatial {
         // remove()d the rdfs:member property function JVM-wide. BG datasets opt out
         // of rdfs:member rewriting via their own dataset-scoped registry instead
         // (see BGDatasetGraph).
-        FunctionRegistry.get().put(GEOF.sfIntersects.getURI(), Intersects.class);
+        // Global registration is a courtesy for plain Jena models: it must not
+        // overwrite an implementation the embedding application registered
+        // (jena-geosparql's CRS-aware one, say). BeakGraph datasets get this
+        // evaluator through their own dataset-scoped registry regardless
+        // (BGDatasetGraph.wire), so BG answers never depend on load order.
+        if (!FunctionRegistry.get().isRegistered(GEOF.sfIntersects.getURI())) {
+            FunctionRegistry.get().put(GEOF.sfIntersects.getURI(), Intersects.class);
+        }
     }
 
     public synchronized static void init() {

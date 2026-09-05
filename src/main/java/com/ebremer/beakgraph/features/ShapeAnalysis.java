@@ -18,22 +18,6 @@ import org.ejml.simple.SimpleMatrix;
 public class ShapeAnalysis {
     private static final GeometryFactory gf = new GeometryFactory();
   
-    public static BufferedImage getTestBI() {
-        int size = 1000;
-        BufferedImage bi = new BufferedImage(size,size, BufferedImage.TYPE_INT_RGB);
-        int offset = 250;
-        int rot = 25;
-        int major = 300;
-        int minor = 300;
-        Graphics2D g = bi.createGraphics();
-        g.setColor(Color.black);
-        g.fillRect(0, 0, size, size);
-        g.setColor(Color.BLUE);
-        Ellipse2D.Double oval = new Ellipse2D.Double(offset, offset, minor, major);
-        g.rotate(Math.toRadians(rot),offset+minor/2,offset+major/2);
-        g.fill(oval);
-        return bi;
-    }
   
     public static int Area(BufferedImage bi) {
         int count = 0;
@@ -91,25 +75,25 @@ public class ShapeAnalysis {
         return m;
     }
   
-    public static double getArea(Polygon p) { return p.getArea(); }
+    public static double getArea(Geometry p) { return p.getArea(); }
   
-    public static double getPerimeter(Polygon p) { return p.getLength(); }
+    public static double getPerimeter(Geometry p) { return p.getLength(); }
   
-    public static double getPerimeterSurfaceRatioFeatureValue(Polygon p) {
+    public static double getPerimeterSurfaceRatioFeatureValue(Geometry p) {
         return getPerimeter(p)/getArea(p);
     }
-    public static double getSphericityFeatureValue(Polygon p) {
+    public static double getSphericityFeatureValue(Geometry p) {
         return 2*Math.sqrt(Math.PI*getArea(p))/getPerimeter(p);
     }
-    public static double getSphericalDisproportionFeatureValue(Polygon p) {
+    public static double getSphericalDisproportionFeatureValue(Geometry p) {
         return 1.0d/getSphericityFeatureValue(p);
     }
   
-    public static double getMeshSurfaceFeatureValue(Polygon p) {
+    public static double getMeshSurfaceFeatureValue(Geometry p) {
         return p.getArea();
     }
   
-    public static double getMaximum2DDiameterFeatureValue(Polygon p) {
+    public static double getMaximum2DDiameterFeatureValue(Geometry p) {
         Geometry ch = p.convexHull();
         Coordinate[] coords = ch.getCoordinates();
         double maxD = 0;
@@ -146,10 +130,12 @@ public class ShapeAnalysis {
         double b = sxy / (n-1);
         double c = syy / (n-1);
         double trace = a + c;
-        double det = a*c - b*b;
-        double disc = Math.sqrt(trace*trace - 4*det);
-        double l1 = (trace + disc)/2;
-        double l2 = (trace - disc)/2;
+        // hypot(a - c, 2b) is sqrt(trace^2 - 4 det) without the catastrophic
+        // cancellation that turned a near-isotropic, large region's discriminant
+        // slightly negative (NaN axes); the eigenvalues are clamped at zero too.
+        double disc = Math.hypot(a - c, 2 * b);
+        double l1 = Math.max(0, (trace + disc) / 2);
+        double l2 = Math.max(0, (trace - disc) / 2);
         return l1 > l2 ? new double[]{l1, l2} : new double[]{l2, l1};
     }
   
@@ -173,62 +159,23 @@ public class ShapeAnalysis {
         return Area(bi);
     }
   
-    /**
-     * Returns major/minor axis unit vectors and signed rotation (radians) of major axis
-     * relative to reference vector (e.g. up = {0, -1}).
-     * @param points
-     * @param refX
-     * @param refY
-     * @return {majorX, majorY, minorX, minorY, rotationRadians}
-     */
-    public static double[] getPrincipalAxes(SimpleMatrix points, double refX, double refY) {
-        int n = points.getNumRows();
-        if (n < 2) return new double[]{0,0,0,0,0};
-        double meanX = 0, meanY = 0;
-        for(int i=0; i<n; i++) {
-            meanX += points.get(i,0);
-            meanY += points.get(i,1);
-        }
-        meanX /= n;
-        meanY /= n;
-        double sxx = 0, sxy=0, syy=0;
-        for(int i=0; i<n; i++) {
-            double dx = points.get(i,0) - meanX;
-            double dy = points.get(i,1) - meanY;
-            sxx += dx*dx;
-            sxy += dx*dy;
-            syy += dy*dy;
-        }
-        double a = sxx / (n-1);
-        double b = sxy / (n-1);
-        double c = syy / (n-1);
-        double trace = a + c;
-        double det = a*c - b*b;
-        double disc = Math.sqrt(trace*trace - 4*det);
-        double l1 = (trace + disc)/2;
-        double l2 = (trace - disc)/2;
-        if (l1 < l2) { double t = l1; l1 = l2; l2 = t; }
-        double majX, majY, minX, minY;
-        if (Math.abs(b) < 1e-12) {
-            if (a > c) { majX=1; majY=0; minX=0; minY=1; }
-            else { majX=0; majY=1; minX=1; minY=0; }
-        } else {
-            majX = b; majY = l1 - a;
-            double n1 = Math.sqrt(majX*majX + majY*majY);
-            majX /= n1; majY /= n1;
-            minX = b; minY = l2 - a;
-            double n2 = Math.sqrt(minX*minX + minY*minY);
-            minX /= n2; minY /= n2;
-        }
-        double majAngle = Math.atan2(majY, majX);
-        double refAngle = Math.atan2(refY, refX);
-        double rotation = majAngle - refAngle;
-        while (rotation > Math.PI) rotation -= 2*Math.PI;
-        while (rotation < -Math.PI) rotation += 2*Math.PI;
-        return new double[]{majX, majY, minX, minY, rotation};
-    }
   
-    public static BufferedImage getBufferedImage(Polygon p) {
+    /** Pixel budget for one geometry's raster; tunable via beakgraph.features.maxRasterPixels. */
+    public static final long MAX_RASTER_PIXELS = Long.getLong("beakgraph.features.maxRasterPixels", 4_000_000L);
+
+    /** A rasterized region and the factor its coordinates were scaled by (1 = unscaled). */
+    public record Raster(BufferedImage image, double scale) {}
+
+    /**
+     * Rasterizes the polygon's region into an image no larger than
+     * {@link #MAX_RASTER_PIXELS}. Whole-slide annotations run to tens of
+     * thousands of pixels a side; an unbounded raster (3.6 GB for 30k x 30k,
+     * plus 16 bytes per lit pixel for the point matrix) took the build down
+     * with an OutOfMemoryError. Over-budget geometry is drawn at a uniform
+     * scale factor, which pixel-derived features undo ({@code PixelSurface /
+     * scale^2}, axis lengths {@code / scale}; Elongation is scale-invariant).
+     */
+    public static Raster getRaster(Geometry p) {
         // Dimensions come from the Envelope, not getEnvelope()'s coordinate array:
         // a degenerate (point/line) envelope has fewer than 3 coordinates (the old
         // c[2] access threw), and a valid polygon thinner than ~0.5 units rounded
@@ -236,10 +183,16 @@ public class ShapeAnalysis {
         // were skipped, including the purely polygon-based ones. Clamping to 1px
         // keeps the raster features defined and the polygon features exact.
         org.locationtech.jts.geom.Envelope env = p.getEnvelopeInternal();
-        int width = Math.max(1, (int) Math.round(env.getWidth()));
-        int height = Math.max(1, (int) Math.round(env.getHeight()));
+        double w = Math.max(1.0, env.getWidth());
+        double h = Math.max(1.0, env.getHeight());
+        double scale = Math.min(1.0, Math.sqrt(MAX_RASTER_PIXELS / (w * h)));
+        int width = Math.max(1, (int) Math.round(w * scale));
+        int height = Math.max(1, (int) Math.round(h * scale));
         AffineTransformation af = new AffineTransformation();
         af.setToTranslation(-env.getMinX(), -env.getMinY());
+        if (scale < 1.0) {
+            af.scale(scale, scale);
+        }
         // transform() returns a translated copy (it does not mutate p, which the caller
         // still uses for its other feature calcs). Draw that copy, shifted so the polygon's
         // bounding-box corner sits at (0,0) and lands inside the width x height image -
@@ -254,6 +207,11 @@ public class ShapeAnalysis {
         // measure the perimeter instead. (createGraphics() defaults to a white foreground, so filled
         // pixels register as lit in Area().)
         g.fill(s);
-        return bi;
+        return new Raster(bi, scale);
+    }
+
+    /** The raster of {@link #getRaster}, without its scale; pixel counts are in raster pixels. */
+    public static BufferedImage getBufferedImage(Geometry p) {
+        return getRaster(p).image();
     }
 }

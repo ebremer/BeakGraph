@@ -846,7 +846,10 @@ These quads are indexed but not counted in `numQuads`.
 
 Enabled per build (`setSpatial(true)`). For every source quad whose **object is a literal of
 datatype `http://www.opengis.net/ont/geosparql#wktLiteral`** (any predicate; call its subject `S`),
-the writer emits derived quads. A CRS prefix (`<uri> WKT…`) is stripped before parsing.
+the writer emits derived quads. A CRS prefix (`<uri> WKT…`) is stripped before parsing and never
+interpreted: all geometries and query constants are assumed to share one Cartesian CRS; the
+`geof:sfIntersects` evaluator reports two literals that both name a CRS and disagree as an evaluation
+error (an unprefixed literal adopts the other operand's CRS).
 
 **(A) Hilbert cell entries — the query contract.** In graph `urn:x-beakgraph:Spatial`:
 

@@ -167,6 +167,7 @@ public class BeakGraphCLI {
     }
 
     public void traverse() {
+        final List<Path> accepted = new ArrayList<>();
         try (ThreadPoolExecutor engine = new ThreadPoolExecutor(params.threads, params.threads, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>())) {
             engine.prestartAllCoreThreads();
             Files.walk(params.src.toPath())
@@ -188,12 +189,33 @@ public class BeakGraphCLI {
                 })
                 .forEach(p -> {
                     fc.incrementRDFFileCount();
-                    if (params.status) {
-                        progressBar.maxHint(fc.getRDFFileCount());
-                        progressBar.stepTo(engine.getCompletedTaskCount());
-                    }
-                    engine.submit(new FileProcessor(p, fc));
+                    synchronized (accepted) { accepted.add(p); }
                 });
+            java.util.Collections.sort(accepted);
+            if (params.dest == null) {
+                // No -dest: every accepted file is a loud failure (it used to be
+                // an NPE swallowed inside the never-inspected Future).
+                for (Path p : accepted) {
+                    fc.incrementFailedConversionFileCount();
+                    logger.error("Failed to convert {}: no -dest given", p);
+                }
+                accepted.clear();
+            }
+            for (var entry : planDestinations(accepted, params.src, params.dest).entrySet()) {
+                java.util.List<Path> sources = entry.getValue();
+                if (sources.size() > 1) {
+                    logger.error("{} sources map to the same destination {}: converting {} only, the others fail: {}",
+                            sources.size(), entry.getKey(), sources.get(0), sources.subList(1, sources.size()));
+                    for (int i = 1; i < sources.size(); i++) {
+                        fc.incrementFailedConversionFileCount();
+                    }
+                }
+                if (params.status) {
+                    progressBar.maxHint(fc.getRDFFileCount());
+                    progressBar.stepTo(engine.getCompletedTaskCount());
+                }
+                engine.submit(new FileProcessor(sources.get(0), entry.getKey(), fc));
+            }
             engine.shutdown();
             while (!engine.isTerminated()) {
                 if (params.status) {
@@ -347,19 +369,14 @@ public class BeakGraphCLI {
             Path tmp = out.resolveSibling(out.getFileName() + ".tmp");
             logger.info("Exporting {} -> {} ({})", h5.getName(), out.getFileName(), fmt);
             try (OutputStream os = openExportStream(tmp)) {
-                writeExport(os, dsg, fmt);
+                writeExport(os, dsg, fmt, h5);
             } catch (Exception ex) {
                 try {
                     Files.deleteIfExists(tmp);
                 } catch (IOException ignored) {}
                 throw ex;
             }
-            try {
-                Files.move(tmp, out, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                Files.move(tmp, out, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
+            com.ebremer.beakgraph.core.AtomicPublish.publish(tmp, out);
             logger.info("Export complete: {}", out);
         }
     }
@@ -369,9 +386,9 @@ public class BeakGraphCLI {
         return params.compress ? new java.util.zip.GZIPOutputStream(os, 1 << 16) : os;
     }
 
-    /** A graph the USER put in the store (not BeakGraph's own metadata graphs). */
+    /** A graph the USER put in the store (not BeakGraph's own metadata graphs: VoID, Spatial, grid tiles). */
     private static boolean isUserGraph(org.apache.jena.graph.Node g) {
-        return !Params.BGVOID.equals(g) && !Params.SPATIAL.equals(g);
+        return !Params.isInternalGraph(g);
     }
 
     private static boolean hasUserNamedGraphs(org.apache.jena.sparql.core.DatasetGraph dsg) {
@@ -390,21 +407,62 @@ public class BeakGraphCLI {
      * nothing was written and the generic writer below runs instead.
      */
     private static boolean tryIndexExport(OutputStream os, org.apache.jena.sparql.core.DatasetGraph dsg,
-            boolean quads) throws IOException {
+            boolean quads, java.util.function.UnaryOperator<org.apache.jena.graph.Node> termMap) throws IOException {
         if (dsg instanceof com.ebremer.beakgraph.core.BGDatasetGraph bgd
                 && bgd.getBeakGraph().getReader() instanceof com.ebremer.beakgraph.hdf5.readers.HDF5Reader reader) {
-            return com.ebremer.beakgraph.hdf5.jena.IndexExport.tryWrite(reader, os, quads);
+            return com.ebremer.beakgraph.hdf5.jena.IndexExport.tryWrite(reader, os, quads, termMap);
         }
         return false;
     }
 
-    private static void writeExport(OutputStream os, org.apache.jena.sparql.core.DatasetGraph dsg, String fmt)
+    /**
+     * How exported terms are mapped. Stores keep document-relative IRIs
+     * ({@code <>}, {@code <sib.png>}, {@code <../x>}) in relative form; they
+     * only have an absolute identity relative to a base. With {@code -base}
+     * every such term is resolved against it (all formats). Without one,
+     * N-Triples / N-Quads cannot carry them at all (IRIs there MUST be
+     * absolute), so the export fails on the first relative IRI with a message
+     * naming the option; Turtle / TriG / JSON-LD accept relative references
+     * syntactically and are written as stored, with one warning that they
+     * will re-resolve against wherever the file ends up.
+     */
+    private java.util.function.UnaryOperator<org.apache.jena.graph.Node> exportTermMap(String fmt, File h5) {
+        if (params.base != null) {
+            com.ebremer.beakgraph.core.fuseki.RelativeIRIResolver resolver =
+                    new com.ebremer.beakgraph.core.fuseki.RelativeIRIResolver(params.base);
+            if (!resolver.isActive()) {
+                throw new IllegalArgumentException("-base is not a usable IRI: " + params.base);
+            }
+            org.apache.jena.sparql.graph.NodeTransform t = resolver.storageToAbsolute();
+            return t::apply;
+        }
+        boolean lineFormat = "NT".equals(fmt) || "NQ".equals(fmt);
+        java.util.concurrent.atomic.AtomicBoolean warned = new java.util.concurrent.atomic.AtomicBoolean();
+        return n -> {
+            if (n != null && n.isURI() && com.ebremer.beakgraph.utils.UTIL.isRelativeIRI(n.getURI())) {
+                if (lineFormat) {
+                    throw new IllegalStateException("Store " + h5.getName() + " holds document-relative IRIs (e.g. <"
+                            + n.getURI() + ">), which " + fmt + " cannot carry: pass -base <the URL the store is served from>"
+                            + " so they are resolved, or export as TTL/TRIG/JSON-LD");
+                }
+                if (warned.compareAndSet(false, true)) {
+                    logger.warn("{} holds document-relative IRIs (e.g. <{}>); without -base they are written as stored and "
+                            + "will resolve against the exported file's own location", h5.getName(), n.getURI());
+                }
+            }
+            return n;
+        };
+    }
+
+    private void writeExport(OutputStream os, org.apache.jena.sparql.core.DatasetGraph dsg, String fmt, File h5)
             throws IOException {
+        java.util.function.UnaryOperator<org.apache.jena.graph.Node> termMap = exportTermMap(fmt, h5);
+        org.apache.jena.sparql.graph.NodeTransform transform = termMap::apply;
         switch (fmt) {
             case "NT", "TTL" -> {
                 // Triple export: by this point the store has no user named
                 // graphs, so the default graph IS the data.
-                if ("NT".equals(fmt) && tryIndexExport(os, dsg, false)) {
+                if ("NT".equals(fmt) && tryIndexExport(os, dsg, false, termMap)) {
                     return;
                 }
                 org.apache.jena.riot.system.StreamRDF stream = org.apache.jena.riot.system.StreamRDFWriter
@@ -414,12 +472,12 @@ public class BeakGraphCLI {
                 stream.start();
                 var it = dsg.getDefaultGraph().find();
                 while (it.hasNext()) {
-                    stream.triple(it.next());
+                    stream.triple(org.apache.jena.sparql.graph.NodeTransformLib.transform(transform, it.next()));
                 }
                 stream.finish();
             }
             case "NQ", "TRIG" -> {
-                if ("NQ".equals(fmt) && tryIndexExport(os, dsg, true)) {
+                if ("NQ".equals(fmt) && tryIndexExport(os, dsg, true, termMap)) {
                     return;
                 }
                 org.apache.jena.riot.system.StreamRDF stream = org.apache.jena.riot.system.StreamRDFWriter
@@ -431,7 +489,7 @@ public class BeakGraphCLI {
                 while (it.hasNext()) {
                     var q = it.next();
                     if (isUserGraph(q.getGraph())) {
-                        stream.quad(q);
+                        stream.quad(org.apache.jena.sparql.graph.NodeTransformLib.transform(transform, q));
                     }
                 }
                 stream.finish();
@@ -445,7 +503,7 @@ public class BeakGraphCLI {
                 while (it.hasNext()) {
                     var q = it.next();
                     if (isUserGraph(q.getGraph())) {
-                        copy.add(q);
+                        copy.add(org.apache.jena.sparql.graph.NodeTransformLib.transform(transform, q));
                     }
                 }
                 org.apache.jena.riot.RDFDataMgr.write(os, copy, org.apache.jena.riot.Lang.JSONLD);
@@ -478,7 +536,8 @@ public class BeakGraphCLI {
      * source-or-sources -> destination conversion. Shared by the per-file
      * processors and -merge so the two can never route differently.
      */
-    private BeakGraphWriter newWriter(File source, List<File> sources, File dest) throws IOException {
+    /** Package-private so tests can substitute a writer (e.g. one that fails with an Error). */
+    BeakGraphWriter newWriter(File source, List<File> sources, File dest) throws IOException {
         switch (effectiveMethod()) {
             case 1 -> {
                 // Disk-based build: same output format, but sorting/indexing
@@ -574,9 +633,11 @@ public class BeakGraphCLI {
     }
 
     public static Path mapToDestinationWithNewExtension(Path srcFile, Path srcDirectory, Path destDirectory, String newExt) {
-        Path normalizedSrcFile = srcFile.normalize();
-        Path normalizedSrcDir = srcDirectory.normalize();
-        Path normalizedDestDir = destDirectory.normalize();
+        // Absolute before normalizing: Path.of(".").normalize() is the EMPTY path,
+        // and no path startsWith the empty path, so "-src ." failed every file.
+        Path normalizedSrcFile = srcFile.toAbsolutePath().normalize();
+        Path normalizedSrcDir = srcDirectory.toAbsolutePath().normalize();
+        Path normalizedDestDir = destDirectory.toAbsolutePath().normalize();
         if (!normalizedSrcFile.startsWith(normalizedSrcDir)) {
             throw new IllegalArgumentException("Source file " + srcFile + " is not located under source directory " + srcDirectory);
         }
@@ -590,12 +651,51 @@ public class BeakGraphCLI {
         return destParent.resolve(newFileName);
     }
 
+    /**
+     * The .h5 a per-file conversion of {@code src} writes. Under a directory
+     * {@code -src} the source tree is mirrored below {@code -dest} with the
+     * extension replaced. For a single-file {@code -src}, {@code -dest} names
+     * the output file itself, or - when it is an existing directory - the
+     * directory to put {@code <name>.h5} in (the -merge convention). Mapping a
+     * single file through the tree rule made {@code -dest out.h5} a DIRECTORY
+     * holding a file named ".h5".
+     */
+    public static Path destinationFor(Path src, File srcRoot, File dest) {
+        if (srcRoot.isFile()) {
+            if (dest.isDirectory()) {
+                String name = src.getFileName().toString();
+                int dot = name.lastIndexOf('.');
+                return dest.toPath().resolve((dot == -1 ? name : name.substring(0, dot)) + ".h5");
+            }
+            return dest.toPath().toAbsolutePath().normalize();
+        }
+        return mapToDestinationWithNewExtension(src, srcRoot.toPath(), dest.toPath(), "h5");
+    }
+
+    /**
+     * Groups the accepted sources by destination and reports every collision
+     * (a.ttl, a.nt and a.rdf all map to a.h5): the extras are counted as
+     * failed conversions and only the first source in path order is built.
+     * Before this, a second source for the same .h5 was silently "skipped as
+     * existing" single-threaded, and with -threads &gt; 1 two writers built the
+     * same file at once.
+     */
+    static java.util.Map<Path, java.util.List<Path>> planDestinations(java.util.List<Path> sources, File srcRoot, File dest) {
+        java.util.Map<Path, java.util.List<Path>> byDest = new java.util.TreeMap<>();
+        for (Path p : sources) {
+            byDest.computeIfAbsent(destinationFor(p, srcRoot, dest), k -> new ArrayList<>()).add(p);
+        }
+        return byDest;
+    }
+
     class FileProcessor implements Callable<Model> {
         private final Path src;
+        private final Path dest;
         private final FileCounter fc;
 
-        public FileProcessor(Path src, FileCounter fc) {
+        public FileProcessor(Path src, Path dest, FileCounter fc) {
             this.src = src;
+            this.dest = dest;
             this.fc = fc;
         }
 
@@ -603,18 +703,25 @@ public class BeakGraphCLI {
         public Model call() {
             // The Future from engine.submit() is never inspected, so anything
             // escaping this method is swallowed silently by FutureTask and the
-            // file still counts as a success. EVERYTHING - including destination
-            // mapping - must be counted and logged inside this catch.
+            // file still counts as a success. EVERYTHING must be counted and
+            // logged inside this catch - Errors included: an OutOfMemoryError
+            // from an in-RAM engine on a big file used to be dropped on the
+            // floor, the file reported as converted and the run exiting 0.
             try {
-                Path dest = mapToDestinationWithNewExtension(src, params.src.toPath(), params.dest.toPath(), "h5");
                 if (dest.toFile().exists() && dest.toFile().length() > 0) {
+                    fc.incrementSkippedExistingCount();
+                    logger.info("Skipping {}: destination {} exists", src, dest);
                     return null;
                 }
                 dest.getParent().toFile().mkdirs();
                 newWriter(src.toFile(), null, dest.toFile()).write();
-            } catch (Exception ex) {
+            } catch (Throwable ex) {
                 fc.incrementFailedConversionFileCount();
                 logger.error("Failed to convert {}", src, ex);
+                if (ex instanceof VirtualMachineError) {
+                    logger.error("The JVM reported {} while converting {}; later results in this run may be unreliable",
+                            ex.getClass().getSimpleName(), src);
+                }
             }
             return null;
         }

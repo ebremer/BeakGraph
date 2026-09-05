@@ -84,6 +84,14 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   recall-safe Hilbert cell-cover index produces candidate geometries and every
   candidate is verified with real JTS geometry, so results are exact. Other
   GeoSPARQL functions are not implemented.
+* Coordinate reference systems are not interpreted: the optional `<crs>` prefix
+  of a `geo:wktLiteral` is stripped on both the index and the verification
+  side, every geometry in a store and every query constant is assumed to share
+  one Cartesian CRS (the intended domain is slide/pixel coordinates), and no
+  axis-order or datum transformation is performed. An unprefixed literal adopts
+  the other operand's CRS; a comparison between two literals that both name a
+  CRS and disagree is an evaluation error (the row is dropped) rather than a
+  silent raw-coordinate comparison.
 * `.h5` files written before the spatial-index redesign carry the old
   corner-based index entries, which the query side no longer reads - rebuild
   them from source for spatial queries (their spatial answers were unsound

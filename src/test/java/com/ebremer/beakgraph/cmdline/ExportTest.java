@@ -286,4 +286,75 @@ class ExportTest {
                         .parse("-src", "x.h5", "-export", "RDFXML"),
                 "unsupported export formats must be rejected");
     }
+
+    // --- BG-145: spatial tile graphs are internal --------------------------
+
+    @Test
+    void spatialStoreExportsAsPlainTriplesWithoutTileGraphs() throws Exception {
+        File src = dir.resolve("spatial.ttl").toFile();
+        Files.writeString(src.toPath(), "@prefix ex: <http://ex.org/> .\n"
+                + "@prefix geo: <http://www.opengis.net/ont/geosparql#> .\n"
+                + "ex:f geo:asWKT \"POLYGON((10 10,1500 10,1500 1500,10 1500,10 10))\"^^geo:wktLiteral .\n"
+                + "ex:f ex:p ex:o .\n", StandardCharsets.UTF_8);
+        File h5 = dir.resolve("spatial.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(h5).setSpatial(true).setFeatures(false).build().write();
+        runExport(h5, "NT", false);
+        Path out = dir.resolve("spatial.nt");
+        assertTrue(Files.exists(out), "a spatial store must still export as NT, not be upgraded to NQ");
+        assertFalse(Files.exists(dir.resolve("spatial.nq")));
+        String text = Files.readString(out);
+        assertFalse(text.contains("x-beakgraph"), "no internal graph or vocabulary must leak: " + text);
+        assertEquals(2, text.lines().filter(l -> !l.isBlank()).count(), text);
+        runExport(h5, "NQ", false);
+        String nq = Files.readString(dir.resolve("spatial.nq"));
+        assertFalse(nq.contains("urn:x-beakgraph:grid:"), "tile graphs are internal: " + nq);
+        assertEquals(2, nq.lines().filter(l -> !l.isBlank()).count(), nq);
+    }
+
+    // --- BG-393: document-relative IRIs need a base ---------------------------
+
+    private File relativeStore(String name) throws Exception {
+        File src = dir.resolve(name + ".ttl").toFile();
+        Files.writeString(src.toPath(), "<> <http://ex.org/thumb> <img.png> .\n<> <http://ex.org/up> <../shared.png> .\n"
+                + "<http://ex.org/abs> <http://ex.org/p> <http://ex.org/q> .\n", StandardCharsets.UTF_8);
+        File h5 = dir.resolve(name + ".h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+        return h5;
+    }
+
+    @Test
+    void ntExportOfRelativeIrisFailsWithoutBaseAndResolvesWithIt() throws Exception {
+        File h5 = relativeStore("rel");
+        Parameters p = new Parameters();
+        p.src = h5;
+        p.export = "NT";
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.export();
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount(),
+                "NT cannot carry relative IRIs: the export must fail, not write <> lines");
+        assertFalse(Files.exists(dir.resolve("rel.nt")), "no partial output");
+
+        p.base = "http://host/data/rel.h5";
+        cli = new BeakGraphCLI(p);
+        cli.export();
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount());
+        String nt = Files.readString(dir.resolve("rel.nt"));
+        assertTrue(nt.contains("<http://host/data/rel.h5> <http://ex.org/thumb> <http://host/data/img.png>"), nt);
+        assertTrue(nt.contains("<http://host/data/rel.h5> <http://ex.org/up> <http://host/shared.png>"), nt);
+        assertTrue(nt.contains("<http://ex.org/abs> <http://ex.org/p> <http://ex.org/q>"), nt);
+        assertFalse(nt.contains("<>"), nt);
+        // The same through the generic (non-index) writer, TTL with a base:
+        p.export = "TTL";
+        new BeakGraphCLI(p).export();
+        Dataset ttl = parse(dir.resolve("rel.ttl"), Lang.TURTLE, false);
+        assertTrue(ttl.getDefaultModel().containsResource(ttl.getDefaultModel().createResource("http://host/data/img.png")));
+    }
+
+    @Test
+    void ttlExportOfRelativeIrisWithoutBaseWritesThemAsStored() throws Exception {
+        File h5 = relativeStore("relttl");
+        runExport(h5, "TTL", false);
+        String ttl = Files.readString(dir.resolve("relttl.ttl"));
+        assertTrue(ttl.contains("<img.png>") || ttl.contains("<>"), ttl);
+    }
 }

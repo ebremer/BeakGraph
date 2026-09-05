@@ -24,7 +24,8 @@ public class Parameters {
             description = "Public base URL clients use to reach -endpoint, e.g. https://data.example.org/. "
                         + "Only needed behind a reverse proxy that does not send Forwarded/X-Forwarded-* "
                         + "headers: by default every response derives its links and IRIs from the request "
-                        + "it answers",
+                        + "it answers. With -export: the base the store's document-relative IRIs "
+                        + "(<>, <sib.png>) are resolved against; required for NT/NQ output of such a store",
             required = false)
     public String base = null;
 

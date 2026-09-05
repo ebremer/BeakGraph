@@ -29,66 +29,7 @@ public class ImageTools {
     // that JTS < 1.19 kept the tokenizer in an instance field and was NOT thread-safe.
     private static final WKTReader WKT_READER = new WKTReader();
 
-    public static void drawPolygonsOnImage(List<Polygon> polygons, BufferedImage image, Color strokeColor, int offX, int offY) {
-        if (polygons == null || polygons.isEmpty() || image == null) {
-            return;
-        }
-        Graphics2D g2d = image.createGraphics();
-        try {
-            if (strokeColor != null) {
-                g2d.setColor(strokeColor);
-                g2d.setStroke(new BasicStroke(1f));
-            }
-            for (Polygon polygon : polygons) {
-                if (polygon == null || polygon.isEmpty()) {
-                    continue;
-                }
-                Shape exterior = coordinateSequenceToShape(polygon.getExteriorRing().getCoordinateSequence(), offX, offY);
-                Path2D.Double path = new Path2D.Double();
-                path.append(exterior, false);
-                for (int h = 0; h < polygon.getNumInteriorRing(); h++) {
-                    Shape hole = coordinateSequenceToShape(polygon.getInteriorRingN(h).getCoordinateSequence(), offX, offY);
-                    path.append(hole, false);
-                }
-                if (strokeColor != null) {
-                    g2d.draw(path);
-                }
-            }
-        } finally {
-            g2d.dispose();
-        }
-    }
 
-    public static void drawWktPolygonsOnImage(List<String> wktList, BufferedImage image, Color strokeColor, int offX, int offY) throws Exception {
-        if (wktList == null || wktList.isEmpty() || image == null) {
-            return;
-        }
-        Graphics2D g2d = image.createGraphics();
-        try {
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-            if (strokeColor != null) {
-                g2d.setColor(strokeColor);
-                g2d.setStroke(new BasicStroke(2f));
-            }
-            for (String wkt : wktList) {
-                List<Polygon> polygons = wktToPolygons(wkt);
-                for (Polygon p : polygons) {
-                    Shape exterior = coordinateSequenceToShape(p.getExteriorRing().getCoordinateSequence(), offX, offY);
-                    Path2D.Double path = new Path2D.Double();
-                    path.append(exterior, false);
-                    for (int h = 0; h < p.getNumInteriorRing(); h++) {
-                        path.append(coordinateSequenceToShape(p.getInteriorRingN(h).getCoordinateSequence(), offX, offY), false);
-                    }
-                    if (strokeColor != null) {
-                        g2d.draw(path);
-                    }
-                }
-            }
-        } finally {
-            g2d.dispose();
-        }
-    }
 
     public static Polygon wktToPolygon(String wkt) throws Exception {
         List<Polygon> polygons = wktToPolygons(wkt);
@@ -116,7 +57,11 @@ public class ImageTools {
         if (wkt == null || wkt.trim().isEmpty()) {
             return Collections.emptyList();
         }
-        Geometry geom = WKT_READER.read(stripCrs(wkt));
+        return toPolygons(WKT_READER.read(stripCrs(wkt)));
+    }
+
+    /** The polygonal parts of an already-parsed geometry (see {@link #wktToPolygons}). */
+    public static List<Polygon> toPolygons(Geometry geom) {
         if (geom.isEmpty()) {
             return Collections.emptyList();
         }
@@ -134,18 +79,4 @@ public class ImageTools {
         return result;
     }
 
-    private static Shape coordinateSequenceToShape(CoordinateSequence seq, int offX, int offY) {
-        Path2D.Double path = new Path2D.Double();
-        if (seq.size() == 0) {
-            return path;
-        }
-        org.locationtech.jts.geom.Coordinate c = seq.getCoordinate(0);
-        path.moveTo(c.x - offX, c.y - offY);
-        for (int i = 1; i < seq.size(); i++) {
-            c = seq.getCoordinate(i);
-            path.lineTo(c.x - offX, c.y - offY);
-        }
-        path.closePath();
-        return path;
-    }
 }

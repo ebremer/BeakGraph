@@ -115,50 +115,55 @@ public class PolygonScaler {
         if (original == null || original.isEmpty()) {
             return null;
         }
-        // Snap/clean here (not only in the String entry) so callers passing raw
-        // JTS parts - e.g. individual MULTIPOLYGON members - get the same
-        // integer-grid treatment.
-        original.apply(new IntSnapFilter());
-        original = snapAndSimplify(original);
-        if (original == null) {
-            logger.warn("Polygon collapsed during integer snapping; skipping spatial indexing");
-            return null;
-        }
+        // The caller's geometry is never modified: snapping and cleanup run on
+        // a private copy (the in-repo writers compute the recall-safe bbox cells
+        // from the raw part first, and external callers reuse their polygons).
+        Polygon work = (Polygon) original.copy();
         List<Polygon> scaledPolygons = new ArrayList<>();
-        Polygon current;
         try {
-            current = fixPolygon(original);
+            // Snap/clean here (not only in the String entry) so callers passing raw
+            // JTS parts - e.g. individual MULTIPOLYGON members - get the same
+            // integer-grid treatment. Everything below runs under one policy: a
+            // geometry that cannot be reduced to a valid polygon is skipped with a
+            // warning and never aborts the build (JTS buffer/fix operations can
+            // throw TopologyException on pathological input).
+            work.apply(new IntSnapFilter());
+            Polygon current = snapAndSimplify(work);
+            if (current == null) {
+                logger.warn("Polygon collapsed to fewer than four points during integer snapping; skipping spatial indexing");
+                return null;
+            }
+            if (!current.isValid()) {
+                return new Polygon[0];
+            }
+            int maxIterations = 20; // Safety limit to prevent infinite loops
+            int iterations = 0;
+            while (iterations < maxIterations) {
+                scaledPolygons.add(current);
+                // Scale geometry down by 0.5 (area becomes 0.25)
+                Geometry scaled = half.transform(current);
+                // Verify the result is still a Polygon
+                if (!(scaled instanceof Polygon)) {
+                    break;
+                }
+                scaled.apply(new IntSnapFilter());
+                current = snapAndSimplify((Polygon) scaled);
+                if (current == null || current.getNumPoints() < 4 || !current.isValid()) {
+                    break;
+                }
+                double area = current.getArea();
+                // Stop if polygon is too small
+                if (area < 4.0) {
+                    break;
+                }
+                iterations++;
+            }
         } catch (RuntimeException ex) {
             // One unfixable geometry must not abort the whole build: skip its
             // spatial indexing - the source quad itself is still stored.
-            logger.warn("Skipping spatial indexing of unfixable polygon: {}", ex.getMessage());
+            logger.warn("Skipping spatial indexing of unrepairable polygon: {}", ex.getMessage());
             return null;
         }
-        if (current == null || !current.isValid()) {
-            return new Polygon[0];
-        }
-        int maxIterations = 20; // Safety limit to prevent infinite loops
-        int iterations = 0;        
-        while (iterations < maxIterations) {
-            scaledPolygons.add(current);
-            // Scale geometry down by 0.5 (area becomes 0.25)
-            Geometry scaled = half.transform(current);            
-            // Verify the result is still a Polygon
-            if (!(scaled instanceof Polygon)) {
-                break;
-            }            
-            scaled.apply(new IntSnapFilter());            
-            current = snapAndSimplify((Polygon) scaled);            
-            if (current == null || current.getNumPoints() < 4 || !current.isValid()) {
-                break;
-            }
-            double area = current.getArea();                          
-            // Stop if polygon is too small
-            if (area < 4.0) {
-                break;
-            }
-            iterations++;
-        }        
         return scaledPolygons.toArray(new Polygon[0]);
     }
 
@@ -175,9 +180,9 @@ public class PolygonScaler {
         String[] wktStrings = new String[polygons.length];        
         for (int i = 0; i < polygons.length; i++) {
             if (polygons[i] != null) {
-                Polygon pp = polygons[i];
-                pp.apply(new IntSnapFilter());
-                wktStrings[i] = wktWriter.write(pp);
+                // Every pyramid level was snapped when it was built; writing does
+                // not touch the caller's geometry.
+                wktStrings[i] = wktWriter.write(polygons[i]);
             } else {
                 wktStrings[i] = "POLYGON EMPTY";
             }
@@ -251,14 +256,27 @@ public class PolygonScaler {
     // GEOMETRY CLEANUP HELPERS
     // ==========================================
 
+    /**
+     * Snaps to the integer grid and drops duplicate/collinear vertices. A
+     * polygon that is valid after that is returned as-is; an invalid one (a
+     * self-intersecting "bowtie" ring, say) is repaired by
+     * {@link #fixPolygon}, which keeps the largest lobe, WITH a warning - the
+     * previous unconditional {@code buffer(0)} silently discarded lobes and
+     * misreported a MultiPolygon result as "collapsed during snapping". Null
+     * only for a genuinely collapsed ring (fewer than four points).
+     */
     private static Polygon snapAndSimplify(Polygon poly) {
         poly.apply(new IntSnapFilter());
         poly = removeDuplicateAndCollinearVertices(poly);
         if (poly == null || poly.getNumPoints() < 4) {
             return null;
         }
-        Geometry cleaned = poly.buffer(0);
-        return (cleaned instanceof Polygon) ? (Polygon) cleaned : null;
+        if (poly.isValid()) {
+            return poly;
+        }
+        logger.warn("Repairing invalid polygon ({} points, envelope {}); the largest valid part is kept, other parts are dropped",
+                poly.getNumPoints(), poly.getEnvelopeInternal());
+        return fixPolygon(poly);
     }
 
     private static class IntSnapFilter implements CoordinateSequenceFilter {

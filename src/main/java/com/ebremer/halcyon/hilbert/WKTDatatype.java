@@ -12,10 +12,20 @@ public class WKTDatatype extends BaseDatatype {
     public static final String URI = "http://www.opengis.net/ont/geosparql#wktLiteral";
     public static final WKTDatatype INSTANCE = new WKTDatatype();
 
-    static {
-        // Self-register on first touch: without this, the parse/equality machinery
-        // below was inert - TypeMapper handed out a generic datatype for
-        // geo:wktLiteral and nothing ever consulted this class.
+
+    /**
+     * Registers the datatype with Jena's TypeMapper (idempotent). Called from
+     * the JVM entry points (BeakGraph, HDF5Reader, the writers' parse), so
+     * registration is deterministic and complete BEFORE any document is
+     * parsed. It used to happen as a side effect of the first reference to
+     * {@link #INSTANCE} - on a spatial worker thread, halfway through a
+     * streaming RIOT parse - so the same run validated some wktLiterals
+     * through this class and others through a generic datatype.
+     */
+    public static void register() {
+        // A class static initializer may run this before anything touched Jena;
+        // the TypeMapper instance only exists after JenaSystem.init().
+        org.apache.jena.sys.JenaSystem.init();
         org.apache.jena.datatypes.TypeMapper.getInstance().registerDatatype(INSTANCE);
     }
 
@@ -73,19 +83,41 @@ public class WKTDatatype extends BaseDatatype {
         return value.toString();
     }
 
+    private static final java.util.regex.Pattern WKT_HEAD = java.util.regex.Pattern.compile(
+            "^(POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION|LINEARRING)\\b.*",
+            java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
     /**
-     * Validate that the string is correct WKT without creating the heavy object.
-     * @param lexicalForm
-     * @return 
+     * A cheap syntactic check, as the docstring always claimed: RIOT calls it
+     * for EVERY wktLiteral when literal checking is on (the Turtle/TriG
+     * default), and the former implementation did a full JTS parse per call
+     * on top of the parses the spatial index itself performs. Optional CRS
+     * prefix, a WKT geometry keyword, balanced parentheses. Structural
+     * validity is established by {@link #parse} where the geometry is needed.
      */
     @Override
     public boolean isValid(String lexicalForm) {
-        try {
-            parse(lexicalForm);
-            return true;
-        } catch (DatatypeFormatException e) {
+        if (lexicalForm == null || lexicalForm.isBlank()) {
             return false;
         }
+        String wkt = lexicalForm.trim();
+        if (wkt.startsWith("<")) {
+            int end = wkt.indexOf('>');
+            if (end < 0) {
+                return false;
+            }
+            wkt = wkt.substring(end + 1).trim();
+        }
+        if (!WKT_HEAD.matcher(wkt).matches()) {
+            return false;
+        }
+        int depth = 0;
+        for (int i = 0; i < wkt.length(); i++) {
+            char c = wkt.charAt(i);
+            if (c == '(') depth++;
+            else if (c == ')' && --depth < 0) return false;
+        }
+        return depth == 0;
     }
     
     // NOTE: no isEqual override. An earlier version compared wktLiterals by JTS

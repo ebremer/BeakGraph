@@ -68,6 +68,11 @@ import org.slf4j.LoggerFactory;
  * @author Erich Bremer
  */
 public final class HugeBuildPipeline implements AutoCloseable {
+    static {
+        // Deterministic datatype registration before any document is parsed.
+        com.ebremer.halcyon.hilbert.WKTDatatype.register();
+    }
+
 
     private static final Logger logger = LoggerFactory.getLogger(HugeBuildPipeline.class);
 
@@ -892,9 +897,13 @@ public final class HugeBuildPipeline implements AutoCloseable {
      * Entities = distinct {G union S union non-literal O union triple-term
      * interior entities} in NodeComparator order: an n-way merge of the sorted
      * streams with consecutive-dedup. The object stream stops at its first
-     * literal - NodeComparator's macro order (bnode &lt; URI &lt; literal &lt;
-     * triple term) makes literals-plus-triple-terms a contiguous suffix, so the
-     * prefix rule is unchanged by triple terms. {@code interior} is null for
+     * literal OR triple term - NodeComparator's macro order (bnode &lt; URI &lt;
+     * literal &lt; triple term) makes literals-plus-triple-terms a contiguous
+     * suffix, and the prefix must end at whichever of the two comes first:
+     * stopping only at a literal let a store with NO top-level literal object
+     * stream its triple terms into the entities file, where the writer (built
+     * without triple-term support) threw, so valid RDF 1.2 that the in-memory
+     * engines built failed on the disk engines. {@code interior} is null for
      * triple-term-free builds.
      */
     private void mergeDistinctEntities(RecordFile<Node> out, RecordFile<TermRow> g,
@@ -997,8 +1006,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
             private Node advance() {
                 if (in.hasNext()) {
                     Node n = in.next();
-                    // Sorted stream: the first literal ends the entity prefix.
-                    return n.isLiteral() ? null : n;
+                    // Sorted stream: the first literal or triple term ends the
+                    // entity prefix (mirrors distinctLiterals, which takes the rest).
+                    return (n.isLiteral() || n.isTripleTerm()) ? null : n;
                 }
                 return null;
             }
