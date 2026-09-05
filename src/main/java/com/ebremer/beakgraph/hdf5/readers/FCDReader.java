@@ -64,9 +64,19 @@ public class FCDReader {
      * Absolute reads only, so concurrent readers never disturb each other.
      */
     private Fragment readFragment(long pos, long entryIndex) {
+        checkOffset(pos, "fragment", entryIndex);
         VByte.DecodeResult lenR = VByte.decodeAt(buffer, pos);
-        int dataLen = (int) lenR.value;
         long p = lenR.nextOffset;
+        // Validate the on-disk length BEFORE allocating from it: a corrupt or
+        // hostile file's 64-bit VByte truncated to int gave new byte[negative]
+        // or a 2 GB allocation from one dictionary lookup, ahead of the bulk
+        // read's own bounds check. The buffer size is the only honest bound.
+        if (lenR.value < 0 || lenR.value > buffer.size() - p) {
+            throw new IllegalStateException("FCD corrupt: fragment length " + lenR.value
+                    + " at stringbuffer offset " + pos + " exceeds the " + buffer.size()
+                    + "-byte buffer (entry " + entryIndex + ")");
+        }
+        int dataLen = (int) lenR.value;
         byte[] data = new byte[dataLen];
         buffer.get(p, data, 0, dataLen); // absolute bulk read
         p += dataLen;
@@ -78,6 +88,14 @@ public class FCDReader {
     /** Number of strings stored (valid {@link #get} indices are {@code 0..n-1}). */
     public long getNumEntries() {
         return numEntries;
+    }
+
+    /** Rejects a block or fragment position outside the string buffer with a corruption error, not a raw IOOBE or OOM. */
+    private void checkOffset(long pos, String what, long entryIndex) {
+        if (pos < 0 || pos >= buffer.size()) {
+            throw new IllegalStateException("FCD corrupt: " + what + " offset " + pos
+                    + " outside the " + buffer.size() + "-byte buffer (entry " + entryIndex + ")");
+        }
     }
 
     public String get(long n) {
@@ -105,7 +123,16 @@ public class FCDReader {
         pos = frag.nextPos();
 
         for (int i = 1; i < entries; i++) {
+            checkOffset(pos, "prefix", firstEntry + i);
             VByte.DecodeResult pl = VByte.decodeAt(buffer, pos);
+            // A shared prefix can only be as long as the previous string;
+            // StringBuilder.setLength would silently NUL-pad a longer value
+            // (or throw on a negative one) instead of flagging the corruption.
+            if (pl.value < 0 || pl.value > current.length()) {
+                throw new IllegalStateException("FCD corrupt: prefix length " + pl.value
+                        + " exceeds the previous string's " + current.length()
+                        + " chars (entry " + (firstEntry + i) + ")");
+            }
             int prefixLen = (int) pl.value;
             pos = pl.nextOffset;
             // Suffix fragment is at index (firstEntry + i).

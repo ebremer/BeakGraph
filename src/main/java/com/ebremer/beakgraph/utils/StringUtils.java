@@ -14,6 +14,32 @@ public final class StringUtils {
     private final ZstdCompressor COMPRESSOR;
     private final ZstdDecompressor DECOMPRESSOR;
     private static final int HEADER_SIZE = 4; // To store uncompressed length
+    /**
+     * Most a zstd frame can expand: one block yields at most 128 KiB from a
+     * 3-byte block header plus one RLE byte. A header claiming more than that
+     * for the compressed bytes present is corrupt (or hostile), and is
+     * rejected before the output buffer is allocated - a 2 GB {@code new byte[]}
+     * from a four-byte on-disk value was otherwise reachable from one lookup.
+     */
+    private static final long MAX_ZSTD_EXPANSION = 131072L / 4;
+
+    /** Validates a declared uncompressed length against what {@code compressedLength} bytes can hold. */
+    private long checkedLength(int uncompressedLength, byte[] compressed, int offset, int compressedLength) {
+        if (uncompressedLength < 0) {
+            throw new IllegalArgumentException("Invalid uncompressed length: " + uncompressedLength);
+        }
+        if (uncompressedLength > compressedLength * MAX_ZSTD_EXPANSION) {
+            throw new IllegalArgumentException("Corrupt compressed fragment: declared length " + uncompressedLength
+                    + " exceeds what " + compressedLength + " compressed bytes can expand to");
+        }
+        // The frame header usually states the size itself; a disagreement is corruption.
+        long declared = DECOMPRESSOR.getDecompressedSize(compressed, offset, compressedLength);
+        if (declared >= 0 && declared != uncompressedLength) {
+            throw new IllegalArgumentException("Corrupt compressed fragment: header says " + uncompressedLength
+                    + " bytes, the zstd frame says " + declared);
+        }
+        return uncompressedLength;
+    }
 
     /**
      * Selects the Zstd implementation via the vendored zstdFFM package (see
@@ -57,11 +83,9 @@ public final class StringUtils {
         if (source == null || source.length < HEADER_SIZE) {
             return "";
         }
-        // Read length header to allocate exactly what we need
+        // Read length header to allocate exactly what we need - after checking it.
         int uncompressedLength = ByteBuffer.wrap(source).getInt();
-        if (uncompressedLength < 0) {
-            throw new IllegalArgumentException("Invalid uncompressed length");
-        }
+        checkedLength(uncompressedLength, source, HEADER_SIZE, source.length - HEADER_SIZE);
         byte[] outputBuffer = new byte[uncompressedLength];
         int actualDecompressedSize = DECOMPRESSOR.decompress(
                 source, HEADER_SIZE, source.length - HEADER_SIZE,
@@ -91,16 +115,13 @@ public final class StringUtils {
             return "";
         }
         
-        if (uncompressedLength < 0) {
-            throw new IllegalArgumentException("Invalid uncompressed length: " + uncompressedLength);
-        }
-
         // 2. Prepare the input (compressed) and output (decompressed) arrays
         // We only read what is remaining in the buffer
         int compressedSize = buffer.remaining();
         byte[] compressedInput = new byte[compressedSize];
         buffer.get(compressedInput);
 
+        checkedLength(uncompressedLength, compressedInput, 0, compressedSize);
         byte[] outputBuffer = new byte[uncompressedLength];
 
         // 3. Decompress
