@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.core.Futures;
 import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
@@ -14,7 +15,6 @@ import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.huge.HugeRecords.IdQuad;
 import com.ebremer.beakgraph.huge.HugeRecords.RowId;
 import com.ebremer.beakgraph.huge.HugeRecords.TermRow;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import com.ebremer.beakgraph.utils.RdfSources;
 import java.io.File;
 import java.io.IOException;
@@ -29,7 +29,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
-import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -540,8 +539,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /** VoID/SD metadata quads over ALL sources (when requested), then the p-column seal. */
     private void finishIngest() throws IOException {
         if (xvoid != null) {
-            // (mirrors the RAM writer; the model's namespace prefixes are
-            // presentation-only and irrelevant to quads)
+            // (mirrors the RAM writer; the prefixes BGVoIDSD sets on the model
+            // are presentation-only and irrelevant to quads)
             for (Iterator<org.apache.jena.rdf.model.Statement> it = xvoid.getModel().listStatements(); it.hasNext(); ) {
                 Triple ff = it.next().asTriple();
                 Quad qqq = canonicalizeNumericObject(Quad.create(Params.BGVOID, ff));
@@ -652,15 +651,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private void drainOne(ArrayDeque<Future<ArrayList<Quad>>> inFlight, File input) throws IOException {
         Future<ArrayList<Quad>> task = inFlight.poll();
         if (task == null) return;
-        ArrayList<Quad> extraQuads;
-        try {
-            extraQuads = task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while collecting spatial results: " + input, ex);
-        } catch (ExecutionException ex) {
-            throw new IOException("Spatial processing failed for " + input, ex.getCause());
-        }
+        ArrayList<Quad> extraQuads = Futures.join(task, "collecting spatial results for " + input);
         for (Quad q : extraQuads) {
             acceptRow(canonicalizeNumericObject(q));
         }

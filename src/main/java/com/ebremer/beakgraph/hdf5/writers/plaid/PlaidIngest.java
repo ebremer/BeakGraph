@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.plaid;
 
+import com.ebremer.beakgraph.core.Futures;
 import com.ebremer.beakgraph.core.lib.RelativeIris;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.huge.HugeBuildPipeline;
@@ -212,15 +213,7 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
                                  ArrayList<Quad> batch, File input) throws IOException {
         Future<ArrayList<Quad>> task = inFlight.poll();
         if (task == null) return;
-        ArrayList<Quad> extraQuads;
-        try {
-            extraQuads = task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while collecting spatial results: " + input, ex);
-        } catch (ExecutionException ex) {
-            throw new IOException("Spatial processing failed for " + input, ex.getCause());
-        }
+        ArrayList<Quad> extraQuads = Futures.join(task, "collecting spatial results for " + input);
         for (Quad q : extraQuads) {
             batch.add(HugeBuildPipeline.canonicalizeNumericObject(q));
         }

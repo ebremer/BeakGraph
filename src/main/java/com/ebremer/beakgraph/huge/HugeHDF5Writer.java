@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.huge;
 
 import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
-import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import java.io.File;
 import java.io.IOException;
@@ -63,95 +62,47 @@ public class HugeHDF5Writer implements BeakGraphWriter {
         // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
         StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
-        // Same publish discipline as HDF5Writer: build into a sibling temp file,
-        // swap in atomically on success, never disturb a previous good artifact.
-        Path tmp = AtomicPublish.tempFor(dest);
-        Path workBase = (builder.workDir != null) ? builder.workDir
-                : (dest.toAbsolutePath().getParent() != null ? dest.toAbsolutePath().getParent() : Path.of("."));
-        Path workspace = Files.createTempDirectory(workBase, ".bghuge-");
+        Path workspace = Files.createTempDirectory(builder.workspaceBase(dest), ".bghuge-");
         // -merge: every source in the list is parsed into this one store
         // (blank nodes stay distinct per document); otherwise the single src.
         List<File> inputs = builder.getSources().isEmpty()
                 ? List.of(builder.getSource())
                 : builder.getSources();
         try {
-            // Prove the installed backend (native, or a replaced provider) can
-            // write a file here before any work is done (BG-135).
-            StreamingHdf5.requireWritable(workspace);
-            StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
-            try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
-                    inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
-                    workspace, builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn,
-                    builder.termSpillBytes)) {
-                pipeline.setSourceRoot(builder.getSourceRoot());
-                pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
-                pipeline.run(tmp);
-            }
-        } catch (IOException | RuntimeException | Error ex) {
-            try {
-                Files.deleteIfExists(tmp);
-            } catch (IOException cleanup) {
-                logger.warn("Failed to remove temp output {}", tmp, cleanup);
-            }
-            throw ex;
+            // AtomicPublish.build: a unique sibling temp file, published only
+            // on success, removed on ANY failure - an OutOfMemoryError included,
+            // the realistic failure of this engine - with dest untouched; the
+            // one publish discipline for every engine (BG-119, BG-140, BG-314).
+            AtomicPublish.build(dest, tmp -> {
+                // Prove the installed backend (native, or a replaced provider) can
+                // write a file here before any work is done (BG-135).
+                StreamingHdf5.requireWritable(workspace);
+                StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
+                try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
+                        inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
+                        workspace, builder.getTermSpillBatch(), builder.getIdSpillBatch(), builder.getMergeFanIn(),
+                        builder.getTermSpillBytes())) {
+                    pipeline.setSourceRoot(builder.getSourceRoot());
+                    pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
+                    pipeline.run(tmp);
+                }
+            });
         } finally {
             Workspaces.deleteTree(workspace, logger);
         }
-        // Publish OUTSIDE the build's try/catch: a busy destination must not
-        // delete a finished build (AtomicPublish keeps it as <dest>.new).
-        AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
     }
 
-    public static class Builder extends AbstractGraphBuilder<Builder> {
+    /**
+     * Sequential-engine defaults ({@link AbstractDiskWriterBuilder}):
+     * {@code 1 << 18} term and {@code 1 << 21} id records per run, fan-in 64,
+     * term byte budget heap / 8 - one batch live per sorter, merges one at a
+     * time.
+     */
+    public static class Builder extends AbstractDiskWriterBuilder<Builder> {
 
-        private Path workDir;
-        private int termSpillBatch = 1 << 18;  // 262144 (term, row) records per column before a run spills
-        private int idSpillBatch = 1 << 21;    // 2M numeric records per run for the id/quad sorts
-        private int mergeFanIn = 64;
-        private long termSpillBytes = SorterProvider.defaultTermSpillBytes(1);
-
-        /**
-         * Directory for the build workspace (spill runs, staged buffers).
-         * Defaults to the destination's directory - the workspace transiently
-         * needs disk on the order of a few times the (uncompressed) source.
-         */
-        public Builder setWorkDirectory(Path dir) {
-            this.workDir = dir;
-            return this;
-        }
-
-        /** Records buffered in RAM per term column before spilling a sorted run. */
-        public Builder setTermSpillBatch(int records) {
-            if (records < 1) throw new IllegalArgumentException("termSpillBatch must be >= 1");
-            this.termSpillBatch = records;
-            return this;
-        }
-
-        /** Records buffered in RAM per numeric (id/quad) sorter before spilling. */
-        public Builder setIdSpillBatch(int records) {
-            if (records < 1) throw new IllegalArgumentException("idSpillBatch must be >= 1");
-            this.idSpillBatch = records;
-            return this;
-        }
-
-        /** Maximum spill runs merged in one pass. */
-        public Builder setMergeFanIn(int fanIn) {
-            if (fanIn < 2) throw new IllegalArgumentException("mergeFanIn must be >= 2");
-            this.mergeFanIn = fanIn;
-            return this;
-        }
-
-        /**
-         * Estimated heap of parsed terms one term sorter buffers before a run
-         * spills, whatever the record count (default: max heap / 8; three
-         * term sorters are live at once). The bound that keeps multi-KB WKT
-         * literals from exhausting the heap (BG-125).
-         */
-        public Builder setTermSpillBytes(long bytes) {
-            if (bytes < 1) throw new IllegalArgumentException("termSpillBytes must be >= 1");
-            this.termSpillBytes = bytes;
-            return this;
+        public Builder() {
+            super(1 << 18, 1 << 21, 64, SorterProvider.defaultTermSpillBytes(1));
         }
 
         @Override

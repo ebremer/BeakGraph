@@ -7,6 +7,15 @@ brought and what a reader must rebuild.
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
 * Jena 6.2.0, jHDF 0.13.0.
+* Alternative writer engines: one publish discipline (AtomicPublish.build)
+  for all six engines, one spill/merge scaffolding for the two -method 4
+  sorters, one index level-emission rule for methods 0/1/2 and one id-space
+  helper for the three dictionary writers; the packed sorters reject an id
+  wider than its declared width; the ultra index pads with word-wise range
+  fills; a remote JSON-LD context is fetched once per process, shared and
+  coalesced across concurrent parses; the ultra ingest no longer shadows the
+  base builder's configuration and refuses build(); the disk builders share
+  a base with documented defaults; docs state what runs outside `-cores`.
 * Default writer engine: the GSPO/GPOS indexes sort and scan dictionary ids
   resolved once per quad instead of re-comparing nodes and re-searching the
   dictionaries (same bytes, much less work); the dictionary build refuses two

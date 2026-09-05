@@ -61,6 +61,18 @@ public class ParallelPositionalDictionaryWriterBuilder extends PositionalDiction
         return this;
     }
 
+    @Override
+    public ParallelPositionalDictionaryWriterBuilder setVoidMode(com.ebremer.beakgraph.core.VoidMode mode) {
+        super.setVoidMode(mode);
+        return this;
+    }
+
+    @Override
+    public ParallelPositionalDictionaryWriterBuilder setVoidDatasetIri(String iri) {
+        super.setVoidDatasetIri(iri);
+        return this;
+    }
+
     /**
      * Same ingest as {@link #build()}, but the collected state feeds the
      * parallel writer. Deliberately NOT an override of build():

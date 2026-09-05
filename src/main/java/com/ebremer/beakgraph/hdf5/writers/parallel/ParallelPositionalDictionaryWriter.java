@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers.parallel;
 
+import com.ebremer.beakgraph.hdf5.writers.DictionaryIds;
+import com.ebremer.beakgraph.core.Futures;
 import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.DictionaryWriter;
@@ -8,18 +10,14 @@ import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 import java.util.function.ToLongFunction;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
@@ -158,51 +156,15 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
      */
     private static long[] encodeTripleTerm(Node tt, DictionaryWriter ents, DictionaryWriter preds,
                                            Dictionary ownSection, long maxEntityId) {
-        org.apache.jena.graph.Triple t = tt.getTriple();
-        long s = ents.locate(t.getSubject());
-        long p = preds.locate(t.getPredicate());
-        Node o = t.getObject();
-        long oid;
-        if (o.isLiteral() || o.isTripleTerm()) {
-            long lid = ownSection.locate(o);
-            oid = (lid > 0) ? lid + maxEntityId : -1;
-        } else {
-            oid = ents.locate(o);
-        }
-        if (s < 1 || p < 1 || oid < 1) {
-            throw new IllegalStateException("Cannot resolve triple-term components (not in dictionaries): "
-                    + tt + " (s=" + s + ", p=" + p + ", o=" + oid + ")");
-        }
-        return new long[]{s, p, oid};
+        return DictionaryIds.encodeTripleTerm(tt, ents::locate, preds::locate, ownSection::locate, maxEntityId);
     }
 
     private static DictionaryWriter joinDictionary(ForkJoinTask<DictionaryWriter> task, String which) throws IOException {
-        try {
-            return task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while building '" + which + "' dictionary", ex);
-        } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof IOException io) throw io;
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to build '" + which + "' dictionary", cause);
-        }
+        return Futures.join(task, "building '" + which + "' dictionary");
     }
 
     private static void joinColumn(ForkJoinTask<?> task, String which) throws IOException {
-        try {
-            task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while populating '" + which + "' id list", ex);
-        } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to populate '" + which + "' id list", cause);
-        }
+        Futures.join(task, "populating '" + which + "' id list");
     }
 
     public Quad[] getQuads() {
@@ -241,35 +203,22 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
     }
 
     public long locateGraph(Node element) {
-        long c = entitiesdict.locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
+        return DictionaryIds.require(entitiesdict.locate(element), "Graph", element);
     }
 
     public long locateSubject(Node element) {
-        long c = entitiesdict.locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
+        return DictionaryIds.require(entitiesdict.locate(element), "Subject", element);
     }
 
     public long locatePredicate(Node element) {
-        long c = predicatesdict.locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
+        return DictionaryIds.require(predicatesdict.locate(element), "Predicate", element);
     }
 
     public long locateObject(Node element) {
-        if (element.isLiteral() || element.isTripleTerm()) {
-            long c = literalsdict.locate(element);
-            if (c > 0) return c + maxEntityId; // Offset by Entity block size
-        } else {
-            long c = entitiesdict.locate(element);
-            if (c > 0) return c;
-        }
-        // Consistent with the other locate* methods: during a write every quad's nodes
-        // are already in the dictionary, so a miss is a build-invariant violation.
-        throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
+        return DictionaryIds.require(
+                DictionaryIds.objectId(element, literalsdict::locate, entitiesdict::locate, maxEntityId), "Object", element);
     }
+
 
     public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);

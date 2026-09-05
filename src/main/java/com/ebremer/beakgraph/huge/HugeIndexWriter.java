@@ -1,8 +1,7 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.hdf5.writers.IndexLevelEmitter;
 import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
-import static com.ebremer.beakgraph.Params.BLOCKSIZE;
-import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.huge.HugeRecords.IdQuad;
 import java.io.IOException;
@@ -19,8 +18,8 @@ import org.slf4j.LoggerFactory;
  * dictionary-encoded quads. Because dictionary ids are rank-assigned in
  * {@code NodeComparator} order, numeric id order equals the term order BGIndex
  * sorts with, and this writer's output is identical to BGIndex's for the same
- * data. The level/padding/dedup logic mirrors BGIndex line for line; keep the
- * two in lockstep.
+ * data. The level/padding/dedup logic IS BGIndex's: both feed the shared
+ * {@link IndexLevelEmitter} (BG-299).
  *
  * @author Erich Bremer
  */
@@ -36,16 +35,6 @@ final class HugeIndexWriter implements AutoCloseable {
     private final char[] positions;
     private final String[] names;
     private final long numGraphs, numSubjects, numPredicates, numObjects;
-
-    private static final class LevelState {
-        long bitsProcessed = 0;
-        long onesSoFar = 0;
-        long onesInCurrentSuperblock = 0;
-        // Same seeding as BGIndex: start at 0, paired with the seeded BB[0]=0,
-        // so BB[k] = ones-before-block-k within its superblock.
-        long lastSuperblockWritten = 0;
-        long lastBlockWritten = 0;
-    }
 
     /**
      * @param totalRows total encoded quads INCLUDING duplicates - BGIndex sizes
@@ -68,9 +57,8 @@ final class HugeIndexWriter implements AutoCloseable {
 
         Path dir = Files.createDirectories(workDir.resolve("index." + indexName));
 
-        long maxCumulativeOnes = totalRows + maxL0Id() + 128L;
-        int sbBits = byteRoundedWidth(maxCumulativeOnes);
-        int bbBits = byteRoundedWidth(SUPERBLOCKSIZE);
+        int sbBits = IndexLevelEmitter.superblockBits(totalRows, maxL0Id());
+        int bbBits = IndexLevelEmitter.blockBits();
 
         B1 = new SpillBitPackedBuffer(dir.resolve("B" + names[1]), 1);
         B2 = new SpillBitPackedBuffer(dir.resolve("B" + names[2]), 1);
@@ -88,9 +76,6 @@ final class HugeIndexWriter implements AutoCloseable {
         BB2 = new SpillBitPackedBuffer(dir.resolve("BB" + names[2]), bbBits);
         BB3 = new SpillBitPackedBuffer(dir.resolve("BB" + names[3]), bbBits);
 
-        // Seed the "ones before the first superblock/block" directory entries to 0.
-        SB1.writeLong(0); SB2.writeLong(0); SB3.writeLong(0);
-        BB1.writeLong(0); BB2.writeLong(0); BB3.writeLong(0);
     }
 
     private long count(char component) {
@@ -124,106 +109,18 @@ final class HugeIndexWriter implements AutoCloseable {
 
     /** Consumes the id-quads, which MUST be sorted in this index's order. */
     void build(Iterator<IdQuad> sorted) throws IOException {
-        LevelState l1 = new LevelState(), l2 = new LevelState(), l3 = new LevelState();
-        IdQuad lastUnique = null;
+        IndexLevelEmitter out = new IndexLevelEmitter(S1, B1, SB1, BB1, S2, B2, SB2, BB2, S3, B3, SB3, BB3);
         long count = 0;
-        long maxL0Id = maxL0Id();
-        long currentL0 = 1;
-
         while (sorted.hasNext()) {
             IdQuad curr = sorted.next();
             if (++count % 1_000_000 == 0) {
                 logger.info("{} processed {} quads...", type.name(), count);
             }
-            // 1. Duplicate check (numeric id equality == term equality)
-            if (lastUnique != null
-                    && component(lastUnique, positions[0]) == component(curr, positions[0])
-                    && component(lastUnique, positions[1]) == component(curr, positions[1])
-                    && component(lastUnique, positions[2]) == component(curr, positions[2])
-                    && component(lastUnique, positions[3]) == component(curr, positions[3])) {
-                continue;
-            }
-
-            boolean changeL0 = (lastUnique == null) || component(lastUnique, positions[0]) != component(curr, positions[0]);
-            boolean changeL1 = (lastUnique == null) || changeL0 || component(lastUnique, positions[1]) != component(curr, positions[1]);
-            boolean changeL2 = (lastUnique == null) || changeL1 || component(lastUnique, positions[2]) != component(curr, positions[2]);
-
-            long thisL0 = component(curr, positions[0]);
-
-            // 2. Pad missing L0 ids with empty lists (see BGIndex)
-            if (changeL0) {
-                long skipped = (lastUnique == null) ? (thisL0 - 1) : (thisL0 - currentL0 - 1);
-                padEmptyL0(skipped, l1, l2, l3);
-                currentL0 = thisL0;
-            }
-
-            // 3. Level 3
-            S3.writeLong(component(curr, positions[3]));
-            int bit3 = changeL2 ? 1 : 0;
-            B3.writeInteger(bit3);
-            advanceLevel(l3, bit3, SB3, BB3);
-
-            // 4. Level 2
-            if (changeL2) {
-                S2.writeLong(component(curr, positions[2]));
-                int bit2 = changeL1 ? 1 : 0;
-                B2.writeInteger(bit2);
-                advanceLevel(l2, bit2, SB2, BB2);
-            }
-
-            // 5. Level 1
-            if (changeL1) {
-                S1.writeLong(component(curr, positions[1]));
-                int bit1 = changeL0 ? 1 : 0;
-                B1.writeInteger(bit1);
-                advanceLevel(l1, bit1, SB1, BB1);
-            }
-
-            lastUnique = curr;
+            out.emit(component(curr, positions[0]), component(curr, positions[1]),
+                    component(curr, positions[2]), component(curr, positions[3]));
         }
-
-        // Pad remaining ids up to the dictionary's maximum
-        long skipped = maxL0Id - currentL0;
-        padEmptyL0(skipped, l1, l2, l3);
-
+        out.finish(maxL0Id());
         completeAll();
-    }
-
-    private void padEmptyL0(long count, LevelState l1, LevelState l2, LevelState l3) {
-        for (long k = 0; k < count; k++) {
-            S1.writeLong(0);
-            B1.writeInteger(1);
-            advanceLevel(l1, 1, SB1, BB1);
-
-            S2.writeLong(0);
-            B2.writeInteger(1);
-            advanceLevel(l2, 1, SB2, BB2);
-
-            S3.writeLong(0);
-            B3.writeInteger(1);
-            advanceLevel(l3, 1, SB3, BB3);
-        }
-    }
-
-    private void advanceLevel(LevelState state, int bitValue, SpillBitPackedBuffer SB, SpillBitPackedBuffer BB) {
-        if (bitValue == 1) {
-            state.onesSoFar++;
-            state.onesInCurrentSuperblock++;
-        }
-        state.bitsProcessed++;
-
-        long currentSuperblock = state.bitsProcessed / SUPERBLOCKSIZE;
-        if (currentSuperblock != state.lastSuperblockWritten) {
-            SB.writeLong(state.onesSoFar);
-            state.lastSuperblockWritten = currentSuperblock;
-            state.onesInCurrentSuperblock = 0;
-        }
-
-        long currentBlock = state.bitsProcessed / BLOCKSIZE;
-        if (currentBlock != state.lastBlockWritten) {
-            BB.writeLong(state.onesInCurrentSuperblock);
-            state.lastBlockWritten = currentBlock;
-        }
     }
 
     private void completeAll() throws IOException {

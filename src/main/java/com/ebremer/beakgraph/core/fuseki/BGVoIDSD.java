@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.apache.jena.vocabulary.XSD;
+import org.apache.jena.vocabulary.RDFS;
 import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.beakgraph.utils.UTIL;
 import java.util.HashSet;
@@ -100,6 +102,17 @@ public class BGVoIDSD {
      */
     public Model getModel() {
         Model m = ModelFactory.createDefaultModel();
+        // Presentation prefixes for anyone serializing this model; they never
+        // reach the store's quads (the writers used to set them, BG-313).
+        m.setNsPrefix("void", VOID.NS);
+        m.setNsPrefix("sd", SD.getURI());
+        m.setNsPrefix("xsd", XSD.getURI());
+        m.setNsPrefix("rdfs", RDFS.getURI());
+        m.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+        m.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+        m.setNsPrefix("dct", "http://purl.org/dc/terms/");
+        m.setNsPrefix("hal", "https://halcyon.is/ns/");
+        m.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
         // Primary dataset resource
         Resource dataset = m.createResource(datasetURI).addProperty(RDF.type, SD.Dataset);
         // Default graph description

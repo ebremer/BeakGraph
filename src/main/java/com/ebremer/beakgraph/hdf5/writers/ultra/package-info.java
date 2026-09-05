@@ -28,9 +28,13 @@
  *     of word popcount prefix sums.</li>
  * </ul>
  *
- * All work runs on one dedicated {@code ForkJoinPool} of {@code -cores}
- * threads, so with {@code -threads N} in the CLI, N conversions run at once,
- * each capped at its own core budget. Given the same parsed quads the emitted
+ * The sort/dedup/statistics/dictionary/index stages run on one dedicated
+ * {@code ForkJoinPool} of {@code -cores} threads, so with {@code -threads N}
+ * in the CLI, N conversions run at once, each with its own core budget for
+ * those stages. Two things run OUTSIDE that pool: each document's parse adds
+ * one Jena AsyncParser producer thread, and with {@code -spatial} the
+ * per-geometry augmentation runs on virtual threads scheduled by the JDK, not
+ * bounded by {@code -cores} (BG-120). Given the same parsed quads the emitted
  * buffers are byte-identical to the sequential writer's; whole files differ
  * only through VoID's per-write random blank-node labels (single source) or
  * per-document blank-node scoping (merged sources).

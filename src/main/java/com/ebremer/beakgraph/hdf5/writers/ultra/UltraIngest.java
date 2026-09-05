@@ -1,13 +1,13 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriter;
+import com.ebremer.beakgraph.core.Futures;
 import java.util.Collections;
-import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
-import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.beakgraph.utils.RdfSources;
 import static com.ebremer.beakgraph.Params.BGVOID;
 import java.io.File;
@@ -26,13 +26,9 @@ import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.Future;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
-import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
-import org.apache.jena.vocabulary.RDFS;
-import org.apache.jena.vocabulary.VOID;
-import org.apache.jena.vocabulary.XSD;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,18 +57,16 @@ import org.slf4j.LoggerFactory;
  * </ul>
  *
  * Extends {@link PositionalDictionaryWriterBuilder} purely to inherit the
- * protected per-quad helpers and stay pinned to their single implementation;
- * {@code parse()}/{@code build()} are never called. All getters the downstream
- * stages use are overridden to expose this class's own collected state.
+ * protected per-quad helpers - the normalization chain, blank-node alignment,
+ * the term guards, statistics - and stay pinned to their single
+ * implementation; the base class's sequential {@code parse()}/{@code build()}
+ * pipeline is not this class's, so {@link #build()} is refused (BG-285). All
+ * getters the downstream stages use are overridden to expose this class's own
+ * collected state. Package-private: {@link UltraHDF5Writer} is the entry point.
  */
-public final class UltraIngest extends PositionalDictionaryWriterBuilder {
+final class UltraIngest extends PositionalDictionaryWriterBuilder {
 
     private static final Logger logger = LoggerFactory.getLogger(UltraIngest.class);
-
-    // Own copies of configuration the base class keeps private
-    private File usrc;
-    private final List<File> usources = new ArrayList<>();
-    private boolean uspatial = false;
 
     // Collected state (replaces the base class's single-threaded collections)
     private final Set<Node> entities = ConcurrentHashMap.newKeySet();
@@ -83,53 +77,22 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
     private final Set<Node> uniqueObjects = ConcurrentHashMap.newKeySet();
     private final Set<String> dataTypes = ConcurrentHashMap.newKeySet();
     private final Stats ustats = new Stats();
-    private com.ebremer.beakgraph.core.VoidMode uVoidMode = com.ebremer.beakgraph.core.VoidMode.NONE;
-    private BGVoIDSD xvoid; // null when uVoidMode == NONE
+    private BGVoIDSD xvoid; // null when the VoID mode is NONE
     private Quad[] quads;
     private long numQuads;
 
     private record DocResult(ArrayList<Quad> main, ArrayList<Quad> extra) {}
 
-    // ------------------------------------------------------------------
-    // configuration (capture what the base class hides)
-    // ------------------------------------------------------------------
-
+    /**
+     * Not a standalone builder: the inherited sequential pipeline would parse
+     * into the base class's hidden state, not this class's (BG-285). Use
+     * {@link UltraHDF5Writer}, or {@link #ingest(ForkJoinPool)} followed by
+     * {@link UltraDictionary}.
+     */
     @Override
-    public UltraIngest setSource(File src) {
-        this.usrc = src;
-        super.setSource(src);
-        return this;
-    }
-
-    @Override
-    public UltraIngest setSources(List<File> files) {
-        this.usources.clear();
-        this.usources.addAll(files);
-        super.setSources(files);
-        return this;
-    }
-
-    @Override
-    public UltraIngest setSpatial(boolean flag) {
-        this.uspatial = flag;
-        super.setSpatial(flag);
-        return this;
-    }
-
-    @Override
-    public UltraIngest setVoidMode(com.ebremer.beakgraph.core.VoidMode mode) {
-        this.uVoidMode = mode;
-        super.setVoidMode(mode);
-        return this;
-    }
-
-    private String uVoidDatasetIri = com.ebremer.beakgraph.Params.VOID_DATASET_IRI;
-
-    @Override
-    public UltraIngest setVoidDatasetIri(String iri) {
-        this.uVoidDatasetIri = iri;
-        super.setVoidDatasetIri(iri);
-        return this;
+    public PositionalDictionaryWriter build() {
+        throw new UnsupportedOperationException(
+                "UltraIngest is not a standalone builder; use UltraHDF5Writer (or ingest(ForkJoinPool) + UltraDictionary)");
     }
 
     // ------------------------------------------------------------------
@@ -176,15 +139,15 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
      * every getter above reflects the complete parsed state.
      */
     public void ingest(ForkJoinPool pool) throws IOException {
-        if (usources.isEmpty() && usrc == null) {
+        if (getSources().isEmpty() && getSource() == null) {
             throw new IllegalStateException("No source set: call setSource() or setSources()");
         }
-        final List<File> inputs = usources.isEmpty() ? List.of(usrc) : List.copyOf(usources);
+        final List<File> inputs = getSources().isEmpty() ? List.of(getSource()) : List.copyOf(getSources());
         final boolean multi = inputs.size() > 1;
-        this.xvoid = BGVoIDSD.forMode(uVoidMode, uVoidDatasetIri);
+        this.xvoid = BGVoIDSD.forMode(getVoidMode(), getVoidDatasetIri());
         final long ingestStart = System.nanoTime();
         logger.info("Ultra ingest: parsing {} source document(s) on {} threads (spatial={})",
-                inputs.size(), pool.getParallelism(), uspatial);
+                inputs.size(), pool.getParallelism(), isSpatial());
 
         // ---- documents, in parallel ----
         List<ForkJoinTask<DocResult>> tasks = new ArrayList<>(inputs.size());
@@ -203,10 +166,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 failure = new IOException("Interrupted while parsing " + inputs.get(i), ex);
                 break;
             } catch (ExecutionException ex) {
-                Throwable cause = ex.getCause();
-                failure = (cause instanceof IOException io)
-                        ? io
-                        : new IOException("Failed to parse " + inputs.get(i), cause);
+                failure = Futures.unwrap(ex.getCause(), "parsing " + inputs.get(i));
                 break;
             }
         }
@@ -222,15 +182,6 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         final ArrayList<Quad> voidQuads = new ArrayList<>();
         if (xvoid != null) {
             Model xxx = xvoid.getModel();
-            xxx.setNsPrefix("void", VOID.NS);
-            xxx.setNsPrefix("sd", SD.getURI());
-            xxx.setNsPrefix("xsd", XSD.getURI());
-            xxx.setNsPrefix("rdfs", RDFS.getURI());
-            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
-            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
-            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
-            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
             xxx.listStatements().forEach(s ->
                     voidQuads.add(canonicalizeNumericObject(Quad.create(BGVOID, s.asTriple()))));
             logger.info("VoID/SD metadata generated: {} statements", voidQuads.size());
@@ -307,13 +258,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
             // the parser thread when the loop throws (BG-100).
             try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor();
                  Stream<Quad> quads = parserBuilder.streamQuads()) {
-                quads
-                    .map(quad -> quad.isDefaultGraph()
-                            ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
-                            : quad)
-                    .map(this::relativize)
-                    .map(quad -> alignBnodes(quad, bmap, counter, labelPrefix))
-                    .map(this::canonicalizeNumericObject)
+                normalizedQuads(quads, bmap, counter, labelPrefix)
                     .forEach(quad -> {
                         main.add(quad);
                         if (main.size() % 100_000 == 0) {
@@ -322,7 +267,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                         if (xvoid != null) {
                             xvoid.add(quad);
                         }
-                        if (uspatial && isGeoLiteral(quad)) {
+                        if (isSpatial() && isGeoLiteral(quad)) {
                             spatialTasks.add(scope.submit(() -> addSpatial(quad)));
                         }
                     });
@@ -331,14 +276,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
             }
             for (Future<ArrayList<Quad>> task : spatialTasks) {
                 ArrayList<Quad> extraQuads;
-                try {
-                    extraQuads = task.get();
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while collecting spatial results: " + input, ex);
-                } catch (ExecutionException ex) {
-                    throw new IOException("Spatial processing failed for " + input, ex.getCause());
-                }
+                extraQuads = Futures.join(task, "collecting spatial results for " + input);
                 for (Quad q : extraQuads) {
                     extra.add(canonicalizeNumericObject(q));
                 }
@@ -352,29 +290,6 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                     main.size(), extra.size(), input, (System.nanoTime() - docStart) / 1_000_000L);
         }
         return new DocResult(main, extra);
-    }
-
-    /** The base AlignBnodes with per-document map, counter, and label format. */
-    private static Quad alignBnodes(Quad quad, HashMap<Node, Node> bmap, long[] counter, String labelPrefix) {
-        Node g = quad.getGraph();
-        Node s = quad.getSubject();
-        Node o = quad.getObject();
-        boolean oTT = o.isTripleTerm();
-        if (!(g.isBlank() || s.isBlank() || o.isBlank() || oTT)) {
-            return quad;
-        }
-        java.util.function.UnaryOperator<Node> align = n -> n.isBlank()
-                ? bmap.computeIfAbsent(n, k -> NodeFactory.createBlankNode(Params.blankNodeLabel(labelPrefix, counter[0]++)))
-                : n;
-        Node g2 = align.apply(g);
-        Node s2 = align.apply(s);
-        // Blank nodes INSIDE a triple term share the quad's document scope, so
-        // they go through the same bmap - the co-reference invariant.
-        Node o2 = oTT ? TripleTerms.map(o, align) : align.apply(o);
-        if (g2 == g && s2 == s && o2 == o) {
-            return quad;
-        }
-        return new Quad(g2, s2, quad.getPredicate(), o2);
     }
 
     /** One parallel pass: node-kind validation plus insertion into every dictionary set. */
@@ -416,10 +331,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while building dictionary sets", ex);
         } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to build dictionary sets", cause);
+            throw Futures.unwrap(ex.getCause(), "building dictionary sets");
         }
     }
 
@@ -528,10 +440,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while computing statistics", ex);
         } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to compute statistics", cause);
+            throw Futures.unwrap(ex.getCause(), "computing statistics");
         }
         for (Stats st : partial) {
             if (st != null) {

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.core.Futures;
 import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.hdf5.Index;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
@@ -7,7 +8,6 @@ import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 import org.apache.jena.sparql.core.Quad;
@@ -191,17 +191,7 @@ final class UltraBGIndex {
             // Small single-word inputs: the JDK dual-pivot sort has lower
             // constant overhead than four radix passes. Signed order equals
             // unsigned order here - keys are at most 63 bits, never negative.
-            try {
-                pool.submit(() -> Arrays.parallelSort(lo)).get();
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted while sorting index keys", ex);
-            } catch (ExecutionException ex) {
-                Throwable cause = ex.getCause();
-                if (cause instanceof RuntimeException re) throw re;
-                if (cause instanceof Error err) throw err;
-                throw new IOException("Failed to sort index keys", cause);
-            }
+            Futures.join(pool.submit(() -> Arrays.parallelSort(lo)), "sorting index keys");
             return new long[][]{lo, null};
         }
         return ParallelRadixSort.sort(lo, hi, totalBits, pool);
@@ -352,11 +342,14 @@ final class UltraBGIndex {
                     boolean ch1 = ch0 || k1 != p1;
                     boolean ch2 = ch1 || k2 != p2;
                     if (ch0) {
+                        // Padding rows: id 0 (the buffers start zeroed, so only
+                        // the bitmap bits need setting) and bit 1, as a word-wise
+                        // range fill instead of one atomic OR per bit (BG-114).
                         long pads = first ? k0 - 1 : k0 - p0 - 1;
-                        for (long k = 0; k < pads; k++) {
-                            S1.set(c1, 0); B1.set(c1); c1++;
-                            S2.set(c2, 0); B2.set(c2); c2++;
-                            S3.set(c3, 0); B3.set(c3); c3++;
+                        if (pads > 0) {
+                            B1.setRange(c1, c1 + pads); c1 += pads;
+                            B2.setRange(c2, c2 + pads); c2 += pads;
+                            B3.setRange(c3, c3 + pads); c3 += pads;
                         }
                     }
                     S3.set(c3, k3);
@@ -375,21 +368,21 @@ final class UltraBGIndex {
                     p0 = k0; p1 = k1; p2 = k2; first = false;
                 }
                 if (to == m) {
+                    // The trailing L0 padding (up to the entity count) used to be
+                    // a serial per-bit tail; it is three range fills now (BG-114).
                     long tail = maxL0Id - p0;
-                    for (long k = 0; k < tail; k++) {
-                        S1.set(c1, 0); B1.set(c1); c1++;
-                        S2.set(c2, 0); B2.set(c2); c2++;
-                        S3.set(c3, 0); B3.set(c3); c3++;
+                    if (tail > 0) {
+                        B1.setRange(c1, c1 + tail);
+                        B2.setRange(c2, c2 + tail);
+                        B3.setRange(c3, c3 + tail);
                     }
                 }
             });
         } else {
             long pads = Math.max(0, maxL0Id - 1);
-            for (long k = 0; k < pads; k++) {
-                S1.set(k, 0); B1.set(k);
-                S2.set(k, 0); B2.set(k);
-                S3.set(k, 0); B3.set(k);
-            }
+            B1.setRange(0, pads);
+            B2.setRange(0, pads);
+            B3.setRange(0, pads);
         }
 
         logger.info("{}: emitted S/B buffers in {} ms", type, (System.nanoTime() - phase) / 1_000_000L);
@@ -475,18 +468,7 @@ final class UltraBGIndex {
     }
 
     private static UltraBGIndex join(ForkJoinTask<UltraBGIndex> task, Index which) throws IOException {
-        try {
-            return task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while building index " + which, ex);
-        } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof IOException io) throw io;
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to build index " + which, cause);
-        }
+        return Futures.join(task, "building index " + which);
     }
 
     void add(WritableGroup hdt) {

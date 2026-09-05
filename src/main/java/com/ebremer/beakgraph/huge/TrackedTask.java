@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.huge;
 
+import java.io.IOException;
+import com.ebremer.beakgraph.core.Futures;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -60,6 +62,11 @@ public final class TrackedTask<T> {
 
     public T get() throws InterruptedException, ExecutionException {
         return future.get();
+    }
+
+    /** As {@link Futures#join}: waits and unwraps the failure ({@code what} is a gerund phrase). */
+    public T join(String what) throws IOException {
+        return Futures.join(future, what);
     }
 
     public boolean isDone() {

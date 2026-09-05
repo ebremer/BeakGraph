@@ -1,9 +1,10 @@
 package com.ebremer.beakgraph.cmdline;
 
+import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.WriterEngines;
 import com.ebremer.beakgraph.core.BeakGraph;
@@ -125,6 +126,58 @@ class JsonLdContextTest {
                 .setDestination(dir.resolve("filectx.h5").toFile()).build().write());
         String chain = chainMessages(ex);
         assertTrue(chain.contains("outside the source tree"), chain);
+    }
+
+    /**
+     * BG-428: one remote context shared by a merge's documents is fetched
+     * once per process, and the concurrent parses of the ultra engine
+     * coalesce on that single fetch instead of each issuing their own.
+     */
+    @Test
+    void aRemoteContextIsFetchedOnceAcrossAMergeAndConcurrentParses() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger fetches = new java.util.concurrent.atomic.AtomicInteger();
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/ctx.jsonld", ex -> {
+            fetches.incrementAndGet();
+            byte[] body = CONTEXT.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            ex.getResponseHeaders().set("Content-Type", "application/ld+json");
+            ex.sendResponseHeaders(200, body.length);
+            try (var os = ex.getResponseBody()) { os.write(body); }
+        });
+        server.start();
+        String iri = "http://127.0.0.1:" + server.getAddress().getPort() + "/ctx.jsonld";
+        String previous = System.getProperty(JsonLdContexts.REMOTE_PROPERTY);
+        try {
+            System.setProperty(JsonLdContexts.REMOTE_PROPERTY, "true");
+            Path src = dir.resolve("shared-remote");
+            List<File> docs = new java.util.ArrayList<>();
+            for (int i = 1; i <= 3; i++) {
+                docs.add(write(src.resolve("d" + i + ".jsonld"), """
+                    {"@context": "%s", "@id": "http://ex.org/item%d", "name": "n%d"}
+                    """.formatted(iri, i, i)).toFile());
+            }
+            JsonLdContexts.clearRemoteCache();
+            File seq = dir.resolve("shared-seq.h5").toFile();
+            HDF5Writer.Builder().setSources(docs).setSourceRoot(src.toFile()).setDestination(seq).build().write();
+            assertEquals(1, fetches.get(), "three documents, one fetch");
+            assertTrue(ask(seq, "ASK { <http://ex.org/item3> <http://ex.org/name> \"n3\" }"));
+
+            JsonLdContexts.clearRemoteCache();
+            File ultra = dir.resolve("shared-ultra.h5").toFile();
+            UltraHDF5Writer.Builder().setSources(docs).setSourceRoot(src.toFile()).setDestination(ultra).setCores(3).build().write();
+            assertEquals(2, fetches.get(), "three concurrent parses coalesce on one fetch");
+            assertTrue(ask(ultra, "ASK { <http://ex.org/item2> <http://ex.org/name> \"n2\" }"));
+
+            File again = dir.resolve("shared-again.h5").toFile();
+            HDF5Writer.Builder().setSources(docs).setSourceRoot(src.toFile()).setDestination(again).build().write();
+            assertEquals(2, fetches.get(), "a later build in the same process reuses the cached context");
+        } finally {
+            server.stop(0);
+            JsonLdContexts.clearRemoteCache();
+            if (previous == null) System.clearProperty(JsonLdContexts.REMOTE_PROPERTY);
+            else System.setProperty(JsonLdContexts.REMOTE_PROPERTY, previous);
+        }
     }
 
     @Test

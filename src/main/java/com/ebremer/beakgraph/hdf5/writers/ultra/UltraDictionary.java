@@ -1,19 +1,19 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.hdf5.writers.DictionaryIds;
+import com.ebremer.beakgraph.core.Futures;
 import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 import org.apache.jena.graph.Node;
@@ -150,22 +150,7 @@ final class UltraDictionary {
      * rank for literals and nested triple terms.
      */
     private static long[] encodeTripleTerm(Node tt, Node[] ents, Node[] preds, Node[] lits) {
-        org.apache.jena.graph.Triple t = tt.getTriple();
-        long s = rankOf(ents, t.getSubject());
-        long p = rankOf(preds, t.getPredicate());
-        Node o = t.getObject();
-        long oid;
-        if (o.isLiteral() || o.isTripleTerm()) {
-            long lid = rankOf(lits, o);
-            oid = (lid > 0) ? lid + ents.length : -1;
-        } else {
-            oid = rankOf(ents, o);
-        }
-        if (s < 1 || p < 1 || oid < 1) {
-            throw new IllegalStateException("Cannot resolve triple-term components (not in dictionaries): "
-                    + tt + " (s=" + s + ", p=" + p + ", o=" + oid + ")");
-        }
-        return new long[]{s, p, oid};
+        return DictionaryIds.encodeTripleTerm(tt, n -> rankOf(ents, n), n -> rankOf(preds, n), n -> rankOf(lits, n), ents.length);
     }
 
     /** 1-based rank of {@code n} in the NodeComparator-sorted array, or -1. */
@@ -225,32 +210,26 @@ final class UltraDictionary {
     }
 
     long locateGraph(Node element) {
-        Long c = map(entityIds).get(element);
-        if (c != null) return c;
-        throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
+        return DictionaryIds.require(idOf(map(entityIds), element), "Graph", element);
     }
 
     long locateSubject(Node element) {
-        Long c = map(entityIds).get(element);
-        if (c != null) return c;
-        throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
+        return DictionaryIds.require(idOf(map(entityIds), element), "Subject", element);
     }
 
     long locatePredicate(Node element) {
-        Long c = map(predicateIds).get(element);
-        if (c != null) return c;
-        throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
+        return DictionaryIds.require(idOf(map(predicateIds), element), "Predicate", element);
     }
 
     long locateObject(Node element) {
-        if (element.isLiteral() || element.isTripleTerm()) {
-            Long c = map(literalIds).get(element);
-            if (c != null) return c + maxEntityId; // literals (and triple terms) sit above the entity id block
-        } else {
-            Long c = map(entityIds).get(element);
-            if (c != null) return c;
-        }
-        throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
+        return DictionaryIds.require(DictionaryIds.objectId(element,
+                n -> idOf(map(literalIds), n), n -> idOf(map(entityIds), n), maxEntityId), "Object", element);
+    }
+
+    /** The map's id, or -1 for a miss (the shared rule reports it). */
+    private static long idOf(ConcurrentHashMap<Node, Long> m, Node element) {
+        Long c = m.get(element);
+        return (c == null) ? -1 : c;
     }
 
     long getNumberOfQuads() { return numQuads; }
@@ -311,17 +290,6 @@ final class UltraDictionary {
     }
 
     private static <T> T join(ForkJoinTask<T> task, String what) throws IOException {
-        try {
-            return task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while trying to " + what, ex);
-        } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof IOException io) throw io;
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to " + what, cause);
-        }
+        return Futures.join(task, what);
     }
 }

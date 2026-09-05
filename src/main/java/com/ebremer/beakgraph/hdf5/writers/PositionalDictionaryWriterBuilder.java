@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import java.util.Map;
+import com.ebremer.beakgraph.core.Futures;
 import java.util.Collections;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
@@ -17,7 +19,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -35,10 +36,7 @@ import org.apache.jena.vocabulary.XSD;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static com.ebremer.beakgraph.Params.BGVOID;
-import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.ns.GEO;
-import org.apache.jena.vocabulary.RDFS;
-import org.apache.jena.vocabulary.VOID;
 
 /**
  * Ingest stage of the in-memory writers: parses the sources into the quad
@@ -62,7 +60,7 @@ public class PositionalDictionaryWriterBuilder {
     /** When non-empty, ALL of these documents are parsed into ONE store (-merge); src is ignored. */
     private final List<File> sources = new ArrayList<>();
     /** Replacement-label counter for AlignBnodes; never resets, so labels stay unique across merged sources. */
-    private long bnodeCounter = 0;
+    private final long[] bnodeCounter = {0};
     private final HashSet<Node> entities = new HashSet<>();   // URIs & BNodes from G, S, O
     private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
     private final HashSet<Node> literals = new HashSet<>();   // Literals from O
@@ -126,6 +124,14 @@ public class PositionalDictionaryWriterBuilder {
     public String getVoidDatasetIri() { return voidDatasetIri; }
     
     public File getDestination() { return dest; }
+
+    // The configuration, readable by the subclasses that drive their own
+    // parse (the ultra ingest used to keep shadow copies of it, BG-313).
+    protected final File getSource() { return src; }
+    protected final List<File> getSources() { return Collections.unmodifiableList(sources); }
+    protected final boolean isSpatial() { return spatial; }
+    protected final boolean isFeatures() { return features; }
+    protected final com.ebremer.beakgraph.core.VoidMode getVoidMode() { return voidMode; }
 
     /**
      * The LIVE quad array (never a copy): the index stage sorts it in place,
@@ -205,36 +211,48 @@ public class PositionalDictionaryWriterBuilder {
     }
 
 
-    // Not synchronized: called only from the sequential streamQuads().forEach pipeline
-    // (one consumer thread), like the other per-quad steps; the concurrent addSpatial
-    // tasks never touch bmap.
-    private Quad AlignBnodes(Quad quad) {
-        Node g = alignNode(quad.getGraph());
-        Node s = alignNode(quad.getSubject());
+    /**
+     * Blank-node alignment, THE implementation for the sequential parse and
+     * the ultra per-document parse (BG-313): every blank node - in the graph,
+     * subject or object position, or inside a triple term, which shares the
+     * quad's document scope so a label keeps co-referring inside and outside
+     * the term - is replaced by its scoped alias {@code <labelPrefix><counter>}
+     * in first-encounter order. Not synchronized: one parse drives one map.
+     */
+    protected static Quad alignBnodes(Quad quad, Map<Node, Node> bmap, long[] counter, String labelPrefix) {
+        Node g = quad.getGraph();
+        Node s = quad.getSubject();
         Node o = quad.getObject();
-        // Blank nodes INSIDE a triple term share the quad's document scope, so
-        // they go through the same bmap - that shared map is exactly what keeps
-        // a label co-referring inside and outside the term (the property whose
-        // absence forced the CDT blank-node rejection policy).
-        o = o.isTripleTerm() ? TripleTerms.map(o, this::alignNode) : alignNode(o);
-        return new Quad(g, s, quad.getPredicate(), o);
+        boolean oTT = o.isTripleTerm();
+        if (!(g.isBlank() || s.isBlank() || o.isBlank() || oTT)) {
+            return quad;
+        }
+        java.util.function.UnaryOperator<Node> align = n -> n.isBlank()
+                ? bmap.computeIfAbsent(n, k -> NodeFactory.createBlankNode(Params.blankNodeLabel(labelPrefix, counter[0]++)))
+                : n;
+        Node g2 = align.apply(g);
+        Node s2 = align.apply(s);
+        Node o2 = oTT ? TripleTerms.map(o, align) : align.apply(o);
+        if (g2 == g && s2 == s && o2 == o) {
+            return quad;
+        }
+        return new Quad(g2, s2, quad.getPredicate(), o2);
     }
 
     /**
-     * Replaces a blank node with its store-scoped {@code b%020d} alias
-     * (first-encounter order, never-reset counter); every other node kind
-     * passes through unchanged.
+     * The per-quad normalization chain both parses apply, in this order:
+     * default-graph sentinel, relativize, blank-node alignment, numeric
+     * canonicalization (BG-313).
      */
-    private Node alignNode(Node n) {
-        if (!n.isBlank()) {
-            return n;
-        }
-        Node neo = bmap.get(n);
-        if (neo == null) {
-            neo = NodeFactory.createBlankNode(Params.blankNodeLabel(bnodeCounter++));
-            bmap.put(n, neo);
-        }
-        return neo;
+    protected final Stream<Quad> normalizedQuads(Stream<Quad> parsed, Map<Node, Node> bmap, long[] counter,
+                                                 String labelPrefix) {
+        return parsed
+                .map(quad -> quad.isDefaultGraph()
+                        ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
+                        : quad)
+                .map(this::relativize)
+                .map(quad -> alignBnodes(quad, bmap, counter, labelPrefix))
+                .map(this::canonicalizeNumericObject);
     }
     
     /**
@@ -590,15 +608,6 @@ public class PositionalDictionaryWriterBuilder {
         // VoID/SD metadata accumulated over ALL sources (only when requested)
         if (xvoid != null) {
             Model xxx = xvoid.getModel();
-            xxx.setNsPrefix("void", VOID.NS);
-            xxx.setNsPrefix("sd", SD.getURI());
-            xxx.setNsPrefix("xsd", XSD.getURI());
-            xxx.setNsPrefix("rdfs", RDFS.getURI());
-            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
-            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
-            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
-            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
             xxx.listStatements().forEach(s -> {
                 Triple ff = s.asTriple();
                 Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
@@ -654,13 +663,7 @@ public class PositionalDictionaryWriterBuilder {
             // full queue for the life of the process (BG-100).
             try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor();
                  Stream<Quad> quads = parserBuilder.streamQuads()) {
-                quads
-                    .map(quad -> quad.isDefaultGraph()
-                            ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
-                            : quad)
-                    .map(this::relativize)
-                    .map(this::AlignBnodes)
-                    .map(this::canonicalizeNumericObject)
+                normalizedQuads(quads, bmap, bnodeCounter, "b")
                     .forEach(quad -> {
                         quadcount.incrementAndGet();
                         if (quadcount.get() % 100_000 == 0) {
@@ -685,14 +688,7 @@ public class PositionalDictionaryWriterBuilder {
             }
             for (Future<ArrayList<Quad>> task : spatialTasks) {
                 ArrayList<Quad> extraQuads;
-                try {
-                    extraQuads = task.get();
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while collecting spatial results: " + input, ex);
-                } catch (ExecutionException ex) {
-                    throw new IOException("Spatial processing failed for " + input, ex.getCause());
-                }
+                extraQuads = Futures.join(task, "collecting spatial results for " + input);
                 extraQuads.forEach(q -> {
                     Quad canon = canonicalizeNumericObject(q);
                     quadslist.add(canon);

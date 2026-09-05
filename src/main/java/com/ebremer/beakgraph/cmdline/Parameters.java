@@ -185,8 +185,10 @@ public class Parameters {
     public int method = 0;
 
     @Parameter(names = "-cores", validateWith = AtLeastOne.class,
-            description = "# of threads each -method 2/3/4/5 conversion may use (with "
-                        + "-threads N, N conversions run at once, each capped at -cores)")
+            description = "# of threads each -method 2/3/4/5 conversion may use for its build stages (with "
+                        + "-threads N, N conversions run at once, each capped at -cores; each document's parser "
+                        + "thread and, with -spatial, the geometry augmentation's virtual threads are extra). "
+                        + "Programmatic builders of methods 4/5 default to all processors instead")
     public int cores = 4;
 
     @Parameter(names = "-export", validateWith = ExportFormatValidator.class,

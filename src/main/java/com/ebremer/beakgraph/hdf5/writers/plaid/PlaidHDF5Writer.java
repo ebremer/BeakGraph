@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph.hdf5.writers.plaid;
 
+import com.ebremer.beakgraph.huge.AbstractDiskWriterBuilder;
 import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
-import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.hdf5.writers.hugeUltra.UltraSorterProvider;
 import com.ebremer.beakgraph.huge.HugeBuildPipeline;
@@ -51,36 +51,32 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
         // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
         com.ebremer.beakgraph.huge.StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
-        Path tmp = AtomicPublish.tempFor(dest);
-        Path workBase = (builder.workDir != null) ? builder.workDir
-                : (dest.toAbsolutePath().getParent() != null ? dest.toAbsolutePath().getParent() : Path.of("."));
-        Path workspace = Files.createTempDirectory(workBase, ".bgplaid-");
+        Path workspace = Files.createTempDirectory(builder.workspaceBase(dest), ".bgplaid-");
         List<File> inputs = builder.getSources().isEmpty()
                 ? List.of(builder.getSource())
                 : builder.getSources();
         ForkJoinPool pool = new ForkJoinPool(builder.cores);
         try {
-            // Prove the installed backend (native, or a replaced provider) can
-            // write a file here before any work is done (BG-135).
-            com.ebremer.beakgraph.huge.StreamingHdf5.requireWritable(workspace);
-            com.ebremer.beakgraph.huge.StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
-            UltraSorterProvider provider = new UltraSorterProvider(
-                    builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn, builder.termSpillBytes,
-                    builder.effectiveMergeConcurrency(), pool);
-            try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
-                    inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(), workspace,
-                    provider, pool, new PlaidIngest(builder.cores))) {
-                pipeline.setSourceRoot(builder.getSourceRoot());
-                pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
-                pipeline.run(tmp);
-            }
-        } catch (IOException | RuntimeException | Error ex) {
-            try {
-                Files.deleteIfExists(tmp);
-            } catch (IOException cleanup) {
-                logger.warn("Failed to remove temp output {}", tmp, cleanup);
-            }
-            throw ex;
+            // AtomicPublish.build: a unique sibling temp file, published only
+            // on success, removed on ANY failure - an OutOfMemoryError included,
+            // the realistic failure of this engine - with dest untouched; the
+            // one publish discipline for every engine (BG-119, BG-140, BG-314).
+            AtomicPublish.build(dest, tmp -> {
+                // Prove the installed backend (native, or a replaced provider) can
+                // write a file here before any work is done (BG-135).
+                com.ebremer.beakgraph.huge.StreamingHdf5.requireWritable(workspace);
+                com.ebremer.beakgraph.huge.StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
+                UltraSorterProvider provider = new UltraSorterProvider(
+                        builder.getTermSpillBatch(), builder.getIdSpillBatch(), builder.getMergeFanIn(), builder.getTermSpillBytes(),
+                        builder.effectiveMergeConcurrency(), pool);
+                try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
+                        inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(), workspace,
+                        provider, pool, new PlaidIngest(builder.cores))) {
+                    pipeline.setSourceRoot(builder.getSourceRoot());
+                    pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
+                    pipeline.run(tmp);
+                }
+            });
         } finally {
             // Stop and DRAIN the pool before touching the workspace: a spill
             // or merge still running would keep its run file open (undeletable
@@ -88,26 +84,24 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
             com.ebremer.beakgraph.huge.Workspaces.drain(pool, logger);
             com.ebremer.beakgraph.huge.Workspaces.deleteTree(workspace, logger);
         }
-        // Publish OUTSIDE the build's try/catch: a busy destination must not
-        // delete a finished build (AtomicPublish keeps it as <dest>.new).
-        AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
     }
 
-    public static class Builder extends AbstractGraphBuilder<Builder> {
+    /**
+     * Disk-engine defaults ({@link AbstractDiskWriterBuilder}): {@code 1 << 19}
+     * term and {@code 1 << 22} id records per run, fan-in 128, term byte
+     * budget heap / 16 (two batches in flight per sorter). Programmatic
+     * {@code cores} default: every available processor (at least 2) - the
+     * disk engines overlap parsing, spilling and merging, so they use what
+     * the machine has; the CLI's {@code -cores} defaults to 4 (BG-276).
+     */
+    public static class Builder extends AbstractDiskWriterBuilder<Builder> {
 
-        private Path workDir;
         private int cores = Math.max(2, Runtime.getRuntime().availableProcessors());
-        private int termSpillBatch = 1 << 19;
-        private int idSpillBatch = 1 << 22;
-        private int mergeFanIn = 128;
-        private long termSpillBytes = com.ebremer.beakgraph.huge.SorterProvider.defaultTermSpillBytes(2);
         private int mergeConcurrency = 0;   // 0 = UltraSorterProvider.defaultMergeConcurrency(mergeFanIn, cores)
 
-        /** Workspace for spill runs; needs disk on the order of a few times the source. */
-        public Builder setWorkDirectory(Path dir) {
-            this.workDir = dir;
-            return this;
+        public Builder() {
+            super(1 << 19, 1 << 22, 128, com.ebremer.beakgraph.huge.SorterProvider.defaultTermSpillBytes(2));
         }
 
         /** Parse workers AND sort/spill/merge workers (two pools of this size). */
@@ -117,27 +111,8 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
             return this;
         }
 
-        public Builder setTermSpillBatch(int records) {
-            if (records < 1) throw new IllegalArgumentException("termSpillBatch must be >= 1");
-            this.termSpillBatch = records;
-            return this;
-        }
-
-        public Builder setIdSpillBatch(int records) {
-            if (records < 1) throw new IllegalArgumentException("idSpillBatch must be >= 1");
-            this.idSpillBatch = records;
-            return this;
-        }
-
-        /**
-         * Maximum spill runs merged in one pass. Each running merge holds
-         * {@code fanIn + 1} open files; a level runs at most
-         * {@link #setMergeConcurrency} merges at a time.
-         */
-        public Builder setMergeFanIn(int fanIn) {
-            if (fanIn < 2) throw new IllegalArgumentException("mergeFanIn must be >= 2");
-            this.mergeFanIn = fanIn;
-            return this;
+        public int getCores() {
+            return cores;
         }
 
         /**
@@ -156,19 +131,6 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
         int effectiveMergeConcurrency() {
             return (mergeConcurrency > 0) ? mergeConcurrency
                     : com.ebremer.beakgraph.hdf5.writers.hugeUltra.UltraSorterProvider.defaultMergeConcurrency(mergeFanIn, cores);
-        }
-
-        /**
-         * Estimated heap of parsed terms one term sorter buffers before a run
-         * spills, whatever the record count (default: max heap / 16 - three
-         * term sorters, each with a batch spilling in the background). The
-         * bound that keeps multi-KB WKT literals from exhausting the heap
-         * (BG-125).
-         */
-        public Builder setTermSpillBytes(long bytes) {
-            if (bytes < 1) throw new IllegalArgumentException("termSpillBytes must be >= 1");
-            this.termSpillBytes = bytes;
-            return this;
         }
 
         @Override

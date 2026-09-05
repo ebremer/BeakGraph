@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.utils;
 
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Cache;
 import com.apicatalog.jsonld.JsonLdError;
 import com.apicatalog.jsonld.JsonLdErrorCode;
 import com.apicatalog.jsonld.JsonLdOptions;
@@ -8,7 +10,6 @@ import com.apicatalog.jsonld.document.JsonDocument;
 import com.apicatalog.jsonld.loader.DocumentLoader;
 import com.apicatalog.jsonld.loader.DocumentLoaderOptions;
 import com.apicatalog.jsonld.loader.HttpLoader;
-import com.apicatalog.jsonld.loader.LRUDocumentCache;
 import com.ebremer.beakgraph.core.lib.RelativeIris;
 import java.io.File;
 import java.io.IOException;
@@ -39,7 +40,11 @@ import java.time.Duration;
  * {@code file:} reference only inside that tree, and refuses remote contexts
  * unless {@value #REMOTE_PROPERTY} is set ({@code -jsonLdRemote} on the
  * command line) - then fetched with a {@value #TIMEOUT_SECONDS}-second
- * timeout and cached per parse. Errors name the reference and the way out.
+ * timeout and cached PROCESS-WIDE: a merge of many documents sharing one
+ * remote context fetches it once, and the concurrent parses of the ultra
+ * and plaid engines coalesce on the first fetch instead of each issuing
+ * their own (the per-parse cache Titanium ships fetched once per document,
+ * BG-428). Errors name the reference and the way out.
  */
 public final class JsonLdContexts {
 
@@ -53,6 +58,41 @@ public final class JsonLdContexts {
     public static boolean remoteAllowed() {
         return Boolean.getBoolean(REMOTE_PROPERTY);
     }
+
+    /** Remote contexts, shared by every parse in the process; a loading miss is computed once per URI. */
+    private static final Cache<URI, Document> REMOTE_CACHE = Caffeine.newBuilder().maximumSize(256).build();
+    private static volatile DocumentLoader remoteFetcher = HttpLoader.defaultInstance();
+
+    /** Test hook: what fetches a remote context on a cache miss. */
+    static void setRemoteFetcher(DocumentLoader fetcher) {
+        remoteFetcher = fetcher;
+    }
+
+    /** Forgets every cached remote context (tests; a long-running process that wants fresh copies). */
+    public static void clearRemoteCache() {
+        REMOTE_CACHE.invalidateAll();
+    }
+
+    private static final class CachedFailure extends RuntimeException {
+        CachedFailure(JsonLdError cause) {
+            super(cause);
+        }
+    }
+
+    /** The process-wide caching loader: concurrent first requests for one URI wait for a single fetch. */
+    private static final DocumentLoader CACHING_REMOTE = (uri, options) -> {
+        try {
+            return REMOTE_CACHE.get(uri, u -> {
+                try {
+                    return remoteFetcher.loadDocument(u, options);
+                } catch (JsonLdError e) {
+                    throw new CachedFailure(e);
+                }
+            });
+        } catch (CachedFailure e) {
+            throw (JsonLdError) e.getCause();
+        }
+    };
 
     /**
      * Fresh options for parsing {@code input} against {@code base} - fresh per
@@ -75,7 +115,7 @@ public final class JsonLdContexts {
 
         SourceTreeLoader(Path root, boolean remoteAllowed) {
             this.root = root.toAbsolutePath().normalize();
-            this.remote = remoteAllowed ? new LRUDocumentCache(HttpLoader.defaultInstance(), 32) : null;
+            this.remote = remoteAllowed ? CACHING_REMOTE : null;
         }
 
         @Override

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.parallel;
 
+import com.ebremer.beakgraph.core.Futures;
 import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
@@ -9,9 +10,7 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 import org.apache.jena.sparql.core.Quad;
@@ -30,9 +29,11 @@ import org.slf4j.LoggerFactory;
  * sequential.
  *
  * <p>All nested parallelism (parallel sorts, parallel streams) forks into the
- * writer's own pool, so a conversion never exceeds its core budget - with
+ * writer's own pool, so the build stages never exceed the core budget - with
  * {@code -threads N} in the CLI, N conversions run concurrently, each capped
- * at its own {@code -cores}.
+ * at its own {@code -cores}. Outside the pool each document's parse uses one
+ * Jena producer thread, and with spatial indexing the per-geometry
+ * augmentation runs on JDK-scheduled virtual threads (BG-120).
  *
  * @author Erich Bremer
  */
@@ -51,80 +52,62 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
     public void write() throws IOException {
         logger.info("Writing BeakGraph to {} (parallel, {} cores)", builder.getDestination(), builder.getCores());
         Path dest = builder.getDestination().toPath();
-        // Build into a sibling temp file and swap it in only on success, exactly
-        // like the sequential writer: a failed rebuild must never destroy a
-        // previous good artifact at dest, and readers never observe a
-        // half-written file at the published path.
-        Path tmp = AtomicPublish.tempFor(dest);
         ForkJoinPool pool = new ForkJoinPool(builder.getCores());
         try {
-            ParallelPositionalDictionaryWriterBuilder db = new ParallelPositionalDictionaryWriterBuilder();
-            db.setVoidMode(builder.getVoidMode());
-            db.setVoidDatasetIri(builder.getVoidDatasetIri());
-            db.setSourceRoot(builder.getSourceRoot());
-            try (ParallelPositionalDictionaryWriter w = db
-                    .setSource(builder.getSource())
-                    .setSources(builder.getSources())
-                    .setDestination(builder.getDestination())
-                    .setName(Params.DICTIONARY)
-                    .setSpatial(builder.getSpatial())
-                    .setFeatures(builder.getFeatures())
-                    .setPool(pool)
-                    .buildParallel()) {
-                Quad[] allQuads = w.getQuads();
-                // Resolve every quad's four dictionary ids once; both index
-                // orderings consume the same tuples. Clone BEFORE either build
-                // starts: each index sorts its array in place, and cloning
-                // concurrently with a sort could capture a torn permutation.
-                ParallelBGIndex.QuadIds[] ids = ParallelBGIndex.resolveIds(w, allQuads, pool);
-                ParallelBGIndex.QuadIds[] idsForGpos = ids.clone();
-                allQuads = null;
-                w.releaseQuads(); // index builds are id-only; let the Quad wrappers go
+            // AtomicPublish.build: a unique sibling temp file, published only
+            // on success, removed on ANY failure - an OutOfMemoryError included,
+            // the realistic failure of this engine - with dest untouched; the
+            // one publish discipline for every engine (BG-119, BG-140, BG-314).
+            AtomicPublish.build(dest, tmp -> {
+                ParallelPositionalDictionaryWriterBuilder db = new ParallelPositionalDictionaryWriterBuilder();
+                db.setVoidMode(builder.getVoidMode());
+                db.setVoidDatasetIri(builder.getVoidDatasetIri());
+                db.setSourceRoot(builder.getSourceRoot());
+                try (ParallelPositionalDictionaryWriter w = db
+                        .setSource(builder.getSource())
+                        .setSources(builder.getSources())
+                        .setVoidMode(builder.getVoidMode())
+                        .setVoidDatasetIri(builder.getVoidDatasetIri())
+                        .setDestination(builder.getDestination())
+                        .setName(Params.DICTIONARY)
+                        .setSpatial(builder.getSpatial())
+                        .setFeatures(builder.getFeatures())
+                        .setPool(pool)
+                        .buildParallel()) {
+                    Quad[] allQuads = w.getQuads();
+                    // Resolve every quad's four dictionary ids once; both index
+                    // orderings consume the same tuples. Clone BEFORE either build
+                    // starts: each index sorts its array in place, and cloning
+                    // concurrently with a sort could capture a torn permutation.
+                    ParallelBGIndex.QuadIds[] ids = ParallelBGIndex.resolveIds(w, allQuads, pool);
+                    ParallelBGIndex.QuadIds[] idsForGpos = ids.clone();
+                    allQuads = null;
+                    w.releaseQuads(); // index builds are id-only; let the Quad wrappers go
 
-                ForkJoinTask<ParallelBGIndex> gspoTask = pool.submit(() -> new ParallelBGIndex(w, Index.GSPO, ids));
-                ForkJoinTask<ParallelBGIndex> gposTask = pool.submit(() -> new ParallelBGIndex(w, Index.GPOS, idsForGpos));
-                ParallelBGIndex gspo = joinIndex(gspoTask, Index.GSPO);
-                ParallelBGIndex gpos = joinIndex(gposTask, Index.GPOS);
+                    ForkJoinTask<ParallelBGIndex> gspoTask = pool.submit(() -> new ParallelBGIndex(w, Index.GSPO, ids));
+                    ForkJoinTask<ParallelBGIndex> gposTask = pool.submit(() -> new ParallelBGIndex(w, Index.GPOS, idsForGpos));
+                    ParallelBGIndex gspo = joinIndex(gspoTask, Index.GSPO);
+                    ParallelBGIndex gpos = joinIndex(gposTask, Index.GPOS);
 
-                logger.info("Creating HDF5 file {}", builder.getDestination());
-                try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
-                    final WritableGroup hdt = hdfFile.putGroup(builder.getName());
-                    hdt.putAttribute(Params.NUM_QUADS, w.getNumberOfQuads());
-                    hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
-                    w.add(hdt);
-                    gspo.add(hdt);
-                    gpos.add(hdt);
+                    logger.info("Creating HDF5 file {}", builder.getDestination());
+                    try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
+                        final WritableGroup hdt = hdfFile.putGroup(builder.getName());
+                        hdt.putAttribute(Params.NUM_QUADS, w.getNumberOfQuads());
+                        hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
+                        w.add(hdt);
+                        gspo.add(hdt);
+                        gpos.add(hdt);
+                    }
                 }
-            }
-        } catch (IOException | RuntimeException | Error ex) {
-            // Only the temp file is ever cleaned up; dest is untouched on failure.
-            try {
-                Files.deleteIfExists(tmp);
-            } catch (IOException cleanup) {
-                logger.warn("Failed to remove temp output {}", tmp, cleanup);
-            }
-            throw ex;
+            });
         } finally {
             pool.shutdown();
         }
-        // Publish OUTSIDE the build's try/catch: a busy destination must not
-        // delete a finished build (AtomicPublish keeps it as <dest>.new).
-        AtomicPublish.publish(tmp, dest);
         logger.info("Write complete: {}", builder.getDestination());
     }
 
     private static ParallelBGIndex joinIndex(ForkJoinTask<ParallelBGIndex> task, Index which) throws IOException {
-        try {
-            return task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while building index " + which, ex);
-        } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to build index " + which, cause);
-        }
+        return Futures.join(task, "building index " + which);
     }
 
     public static class Builder extends AbstractGraphBuilder<Builder> {

@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
 import com.ebremer.beakgraph.Params;
-
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.lang.invoke.MethodHandles;
@@ -52,6 +51,37 @@ final class UltraBitmap {
         }
         long mask = 1L << (63 - (bitIndex & 63));
         WORDS.getAndBitwiseOr(words, (int) (bitIndex >>> 6), mask);
+    }
+
+    /**
+     * Sets every bit in {@code [from, to)}. The two edge words may be shared
+     * with a neighbouring emission chunk and are OR-ed atomically like
+     * {@link #set}; the interior words belong to this range alone (a range is
+     * one chunk's padding rows) and are filled with a plain store - and
+     * since every bit of them is being set, even a racing OR could not change
+     * the outcome. The per-bit atomic loop this replaces made the trailing
+     * L0 padding a serial tail proportional to the entity count (BG-114).
+     */
+    void setRange(long from, long to) {
+        if (from < 0 || to > numBits || from > to) {
+            throw new IndexOutOfBoundsException("Range [" + from + ", " + to + ") out of bounds [0, " + numBits + ")");
+        }
+        if (from == to) {
+            return;
+        }
+        int w0 = (int) (from >>> 6);
+        int w1 = (int) ((to - 1) >>> 6);
+        long firstMask = -1L >>> (from & 63);              // bit (from & 63) .. 63 of the first word
+        long lastMask = -1L << (63 - ((to - 1) & 63));     // bit 0 .. ((to - 1) & 63) of the last word
+        if (w0 == w1) {
+            WORDS.getAndBitwiseOr(words, w0, firstMask & lastMask);
+            return;
+        }
+        WORDS.getAndBitwiseOr(words, w0, firstMask);
+        if (w1 - w0 > 1) {
+            java.util.Arrays.fill(words, w0 + 1, w1, -1L);
+        }
+        WORDS.getAndBitwiseOr(words, w1, lastMask);
     }
 
     long getNumBits() {

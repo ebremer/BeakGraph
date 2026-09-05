@@ -12,9 +12,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Set;
-import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
@@ -142,21 +140,15 @@ public class PositionalDictionaryWriter implements AutoCloseable {
     }
    
     public long locateGraph(Node element) {
-        long c = entitiesdict.locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
+        return DictionaryIds.require(entitiesdict.locate(element), "Graph", element);
     }
    
     public long locateSubject(Node element) {
-        long c = entitiesdict.locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
+        return DictionaryIds.require(entitiesdict.locate(element), "Subject", element);
     }
    
     public long locatePredicate(Node element) {
-        long c = predicatesdict.locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
+        return DictionaryIds.require(predicatesdict.locate(element), "Predicate", element);
     }
    
     /**
@@ -168,38 +160,14 @@ public class PositionalDictionaryWriter implements AutoCloseable {
      * construction), offset into the object space.
      */
     private long[] encodeTripleTerm(Node tt, Dictionary ownSection) {
-        org.apache.jena.graph.Triple t = tt.getTriple();
-        long s = entitiesdict.locate(t.getSubject());
-        long p = predicatesdict.locate(t.getPredicate());
-        Node o = t.getObject();
-        long oid;
-        if (o.isLiteral() || o.isTripleTerm()) {
-            long lid = ownSection.locate(o);
-            oid = (lid > 0) ? lid + maxEntityId : -1;
-        } else {
-            oid = entitiesdict.locate(o);
-        }
-        if (s < 1 || p < 1 || oid < 1) {
-            // Same stance as the locate* methods: during a write every component
-            // is already in its dictionary, so a miss is a build-invariant violation.
-            throw new IllegalStateException("Cannot resolve triple-term components (not in dictionaries): "
-                    + tt + " (s=" + s + ", p=" + p + ", o=" + oid + ")");
-        }
-        return new long[]{s, p, oid};
+        return DictionaryIds.encodeTripleTerm(tt, entitiesdict::locate, predicatesdict::locate, ownSection::locate, maxEntityId);
     }
 
     public long locateObject(Node element) {
-        if (element.isLiteral() || element.isTripleTerm()) {
-            long c = literalsdict.locate(element);
-            if (c > 0) return c + maxEntityId; // Offset by Entity block size
-        } else {
-            long c = entitiesdict.locate(element);
-            if (c > 0) return c;
-        }
-        // Consistent with the other locate* methods: during a write every quad's nodes
-        // are already in the dictionary, so a miss is a build-invariant violation.
-        throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
+        return DictionaryIds.require(
+                DictionaryIds.objectId(element, literalsdict::locate, entitiesdict::locate, maxEntityId), "Object", element);
     }
+
    
     public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);

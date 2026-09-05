@@ -10,8 +10,11 @@
  * <ul>
  * <li>{@link com.ebremer.beakgraph.hdf5.writers.hugeUltra.PackedLongSorter} -
  *     external sorter over 1-2-word unsigned keys: parallel radix-sorted RAM
- *     runs written by background workers (double-buffered so ingestion never
- *     stalls), fixed-width binary spills, concurrent intermediate merges;</li>
+ *     runs written by a background worker - one spill in flight, ingestion
+ *     backpressured on the previous one, and when the shared pool is
+ *     saturated by stage tasks the spill runs on the ingesting thread
+ *     (BG-138) - fixed-width binary spills, concurrent intermediate
+ *     merges;</li>
  * <li>{@link com.ebremer.beakgraph.hdf5.writers.hugeUltra.PackedQuadSorter} /
  *     {@link com.ebremer.beakgraph.hdf5.writers.hugeUltra.PackedRowIdSorter} -
  *     the id-record sorters bit-packed onto it (no objects, no comparators,

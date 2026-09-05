@@ -1,7 +1,8 @@
 package com.ebremer.beakgraph.hdf5.writers.hugeUltra;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.huge.HugeRecords;
 import com.ebremer.beakgraph.huge.HugeRecords.IdQuad;
@@ -154,6 +155,76 @@ class PackedSortersTest {
             String messages = "";
             for (Throwable t = ex; t != null; t = t.getCause()) messages += t.getMessage() + " | ";
             org.junit.jupiter.api.Assertions.assertTrue(messages.contains("truncated"), messages);
+        }
+    }
+
+    /** BG-139: an id past its declared width used to overlap its neighbour's bits silently. */
+    @Test
+    void componentsPastTheirDeclaredWidthAreRejected() throws Exception {
+        try (PackedQuadSorter quads = new PackedQuadSorter(dir, "q", Index.GSPO, 3, 3, 3, 16, 4, pool, pool)) {
+            quads.add(new IdQuad(3, 3, 3, 3));   // exactly the bound fits
+            IllegalStateException ex = assertThrows(IllegalStateException.class, () -> quads.add(new IdQuad(1, 1, 1, 4)));
+            assertTrue(ex.getMessage().contains("exceeds its declared width"), ex.getMessage());
+            assertThrows(IllegalStateException.class, () -> quads.add(new IdQuad(4, 1, 1, 1)));
+            assertThrows(IllegalStateException.class, () -> quads.add(new IdQuad(1, 1, 4, 1)));
+        }
+        try (PackedRowIdSorter rows = new PackedRowIdSorter(dir, "r", 7, 3, 16, 4, pool, pool)) {
+            rows.add(new RowId(7, 3));
+            assertThrows(IllegalStateException.class, () -> rows.add(new RowId(8, 3)));
+            assertThrows(IllegalStateException.class, () -> rows.add(new RowId(7, 4)));
+        }
+    }
+
+    /** Keys at exactly the declared bound sort and decode in the one- and two-word layouts. */
+    @Test
+    void boundaryValuesRoundTripInBothLayouts() throws Exception {
+        // one word: 2 + 2 + 2 + 2 bits
+        try (PackedQuadSorter one = new PackedQuadSorter(dir, "one", Index.GPOS, 3, 3, 3, 4, 4, pool, pool)) {
+            one.add(new IdQuad(3, 3, 3, 3));
+            one.add(new IdQuad(1, 3, 1, 3));
+            List<IdQuad> got = new ArrayList<>();
+            try (var c = one.sorted()) { while (c.hasNext()) got.add(c.next()); }
+            assertEquals(List.of(new IdQuad(1, 3, 1, 3), new IdQuad(3, 3, 3, 3)), got);
+        }
+        // two words: 30 + 30 + 20 + 30 = 110 bits
+        long big = (1L << 30) - 1, mid = (1L << 20) - 1;
+        try (PackedQuadSorter two = new PackedQuadSorter(dir, "two", Index.GSPO, big, mid, big, 4, 4, pool, pool)) {
+            two.add(new IdQuad(big, big, mid, big));
+            two.add(new IdQuad(big, 1, mid, 1));
+            List<IdQuad> got = new ArrayList<>();
+            try (var c = two.sorted()) { while (c.hasNext()) got.add(c.next()); }
+            assertEquals(List.of(new IdQuad(big, 1, mid, 1), new IdQuad(big, big, mid, big)), got);
+        }
+        long row = (1L << 40) - 1;   // 40 + 30 = 70 bits: two words
+        try (PackedRowIdSorter rows = new PackedRowIdSorter(dir, "rows", row, big, 4, 4, pool, pool)) {
+            rows.add(new RowId(row, big));
+            rows.add(new RowId(1, big));
+            List<RowId> got = new ArrayList<>();
+            try (var c = rows.sorted()) { while (c.hasNext()) got.add(c.next()); }
+            assertEquals(List.of(new RowId(1, big), new RowId(row, big)), got);
+        }
+    }
+
+    /** BG-140: an Error thrown by a background spill surfaces unwrapped, never as an IOException. */
+    @Test
+    void anErrorInABackgroundSpillSurfacesUnwrapped() throws Exception {
+        java.util.concurrent.ThreadPoolExecutor broken = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L,
+                java.util.concurrent.TimeUnit.MILLISECONDS, new java.util.concurrent.LinkedBlockingQueue<>()) {
+            @Override
+            public <T> java.util.concurrent.Future<T> submit(java.util.concurrent.Callable<T> task) {
+                return super.submit(() -> { throw new OutOfMemoryError("simulated spill OOM"); });
+            }
+        };
+        try (PackedRowIdSorter rows = new PackedRowIdSorter(dir, "oom", 100, 100, 2, 4, pool, broken)) {
+            rows.add(new RowId(1, 1));
+            rows.add(new RowId(2, 2));   // fills the batch: the (broken) spill is submitted
+            OutOfMemoryError err = assertThrows(OutOfMemoryError.class, () -> {
+                rows.add(new RowId(3, 3));
+                rows.add(new RowId(4, 4));   // the next spill waits for the first: its Error surfaces here
+            });
+            assertEquals("simulated spill OOM", err.getMessage());
+        } finally {
+            broken.shutdownNow();
         }
     }
 
