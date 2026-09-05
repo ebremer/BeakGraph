@@ -2,7 +2,6 @@ package com.ebremer.beakgraph;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
@@ -91,9 +90,11 @@ class QuadFormatIngestionTest {
                 .setSpatial(false).setFeatures(false).build().write();
         try (BeakGraph bg = new BeakGraph(new HDF5Reader(h5))) {
             Dataset ds = bg.getDataset();
-            // The VoID metadata graph is always written; the columnar graph list
-            // must therefore exist too, or enumeration/union/contains disagree
-            // with direct GRAPH queries on the same file.
+            // With -void the VoID metadata graph is written even for an empty
+            // source; the columnar graph list must therefore exist too, or
+            // enumeration/union/contains disagree with direct GRAPH queries on
+            // the same file. (A truly empty store - VoID off - is
+            // EmptyStoreParityTest's subject.)
             int direct = count(ds, "SELECT * WHERE { GRAPH <" + Params.VOIDSTRING + "> { ?s ?p ?o } }");
             assertTrue(direct > 0, "VoID metadata must be present");
             assertEquals(Boolean.TRUE,

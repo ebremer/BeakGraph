@@ -1,14 +1,13 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.AfterAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
@@ -75,6 +74,7 @@ class CriticalFixesRoundTripTest {
 
     @TempDir
     static Path dir;
+    static BeakGraph bg;
     static Dataset ds;
 
     @BeforeAll
@@ -86,7 +86,14 @@ class CriticalFixesRoundTripTest {
                 .setSource(ttl).setDestination(h5)
                 .setSpatial(false).setFeatures(false)
                 .build().write();
-        ds = new BeakGraph(new HDF5Reader(h5)).getDataset();
+        bg = new BeakGraph(new HDF5Reader(h5));
+        ds = bg.getDataset();
+    }
+
+    @AfterAll
+    static void closeReader() {
+        // Release the file: a leaked reader makes @TempDir cleanup flaky on Windows (BG-176).
+        if (bg != null) bg.close();
     }
 
     private static Set<String> resourceURIs(String var, String query) {

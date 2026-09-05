@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.jena.ParallelScan;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
@@ -33,6 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * multiset check) - and workers must stop when the consumer stops (LIMIT).
  * The activation threshold is lowered for this class so a small store chunks.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class ParallelScanTest {
 
     private static final String NS = "http://ex.org/";

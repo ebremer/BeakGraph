@@ -1,9 +1,9 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.cmdline.Parameters;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
@@ -37,6 +37,9 @@ import org.junit.jupiter.api.io.TempDir;
  * form so its relative assets load; BG-38 - an unreadable metadata cache is
  * regenerated instead of served empty.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class SPARQLEndPointDirectoryModeTest {
 
     private static final String TRIG = """

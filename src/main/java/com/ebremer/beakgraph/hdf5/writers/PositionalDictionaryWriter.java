@@ -179,8 +179,8 @@ public class PositionalDictionaryWriter implements AutoCloseable {
         
         // Add columnar ID lists whenever any quads are stored. Gating on the
         // SOURCE quad count (numQuads) left an empty-source file internally
-        // inconsistent: the always-written VoID metadata graph was present in the
-        // indexes, but with no graphs list, containsGraph answered false and ARQ
+        // inconsistent: the VoID metadata graph (when VoidMode != NONE) was
+        // present in the indexes, but with no graphs list, containsGraph answered false and ARQ
         // refused to execute GRAPH queries against rows that are demonstrably there.
         if (graphs.getNumEntries() > 0) {
             graphs.add(dictionary);

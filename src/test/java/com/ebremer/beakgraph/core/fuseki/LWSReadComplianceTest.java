@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
@@ -37,6 +38,9 @@ import org.junit.jupiter.api.io.TempDir;
  * on data resources. Runs a real Jetty server so header semantics are the
  * container's, not a mock's.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class LWSReadComplianceTest {
 
     @TempDir

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.cmdline;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -33,6 +34,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * source tree; remote ones only with {@code -jsonLdRemote}.
  */
 @Timeout(120)
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class JsonLdContextTest {
 
     private static final String CONTEXT = """

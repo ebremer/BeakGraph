@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.cmdline;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import java.io.File;
 import java.io.InputStream;
@@ -25,6 +26,9 @@ import org.junit.jupiter.api.io.TempDir;
  * are excluded), TTL/NT must auto-upgrade to TRIG/NQ when user named graphs
  * exist, and -compress must gzip with the extra .gz extension.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class ExportTest {
 
     @TempDir
@@ -44,6 +48,22 @@ class ExportTest {
         File h5 = dir.resolve(name + ".h5").toFile();
         HDF5Writer.Builder().setSource(src).setDestination(h5).build().write();
         return h5;
+    }
+
+    @FunctionalInterface
+    interface Body {
+        void run() throws Exception;
+    }
+
+    /** Runs {@code body} with the export fast path disabled, restoring the property's previous value (BG-189). */
+    private static void withoutFastPath(Body body) throws Exception {
+        String old = System.setProperty("beakgraph.export.fastpath", "false");
+        try {
+            body.run();
+        } finally {
+            if (old == null) System.clearProperty("beakgraph.export.fastpath");
+            else System.setProperty("beakgraph.export.fastpath", old);
+        }
     }
 
     private void runExport(File src, String format, boolean compress) {
@@ -105,12 +125,7 @@ class ExportTest {
                 "fastpath export must emit base directions:\n" + text);
 
         Files.delete(out);
-        System.setProperty("beakgraph.export.fastpath", "false");
-        try {
-            runExport(h5, "NT", false);
-        } finally {
-            System.clearProperty("beakgraph.export.fastpath");
-        }
+        withoutFastPath(() -> runExport(h5, "NT", false));
         byte[] generic = Files.readAllBytes(out);
         org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, generic,
                 "fastpath must stay byte-identical to the generic writer");
@@ -142,12 +157,7 @@ class ExportTest {
                 "map literal quotes must be NT-escaped:\n" + text);
 
         Files.delete(out);
-        System.setProperty("beakgraph.export.fastpath", "false");
-        try {
-            runExport(h5, "NT", false);
-        } finally {
-            System.clearProperty("beakgraph.export.fastpath");
-        }
+        withoutFastPath(() -> runExport(h5, "NT", false));
         byte[] generic = Files.readAllBytes(out);
         org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, generic,
                 "fastpath must stay byte-identical to the generic writer");
@@ -180,12 +190,7 @@ class ExportTest {
                 "fastpath export must emit triple-term syntax:\n" + text);
 
         Files.delete(out);
-        System.setProperty("beakgraph.export.fastpath", "false");
-        try {
-            runExport(h5, "NT", false);
-        } finally {
-            System.clearProperty("beakgraph.export.fastpath");
-        }
+        withoutFastPath(() -> runExport(h5, "NT", false));
         byte[] generic = Files.readAllBytes(out);
         org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, generic,
                 "fastpath must stay byte-identical to the generic writer");

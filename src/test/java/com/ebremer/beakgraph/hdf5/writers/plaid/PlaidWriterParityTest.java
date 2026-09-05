@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.plaid;
 
+import com.ebremer.beakgraph.StoreParity;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
@@ -9,11 +10,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
-import org.apache.jena.query.QueryExecution;
-import org.apache.jena.query.QueryFactory;
-import org.apache.jena.rdf.model.Model;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -39,27 +35,6 @@ class PlaidWriterParityTest {
     @BeforeAll
     static void requireNativeHdf5() {
         com.ebremer.beakgraph.NativeTestSupport.assumeNative();
-    }
-
-    private static Set<String> graphNames(org.apache.jena.query.Dataset ds) {
-        Set<String> names = new TreeSet<>();
-        ds.asDatasetGraph().listGraphNodes().forEachRemaining(g -> names.add(g.toString()));
-        return names;
-    }
-
-    private static Model graphModel(org.apache.jena.query.Dataset ds, String graphUri) {
-        String q = (graphUri == null)
-                ? "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }"
-                : "CONSTRUCT { ?s ?p ?o } WHERE { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
-        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(q)).build()) {
-            return qe.execConstruct();
-        }
-    }
-
-    private static long count(org.apache.jena.query.Dataset ds, String query) {
-        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(query)).build()) {
-            return qe.execSelect().next().getLiteral("n").getLong();
-        }
     }
 
     @Test
@@ -116,29 +91,27 @@ class PlaidWriterParityTest {
                 .build()
                 .write();
 
+        // The shared harness holds method 5 to the same bar as the other
+        // engines: graph lists, per-graph isomorphism, probes (BG-188).
+        StoreParity.assertStoresEquivalent(seq.toPath(), plaid.toPath(),
+                "SELECT ?s ?o WHERE { ?s <http://ex.org/p2> ?o }",
+                "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g",
+                "SELECT ?o WHERE { <http://ex.org/dup> <http://ex.org/tt> ?o }");
         try (BeakGraph a = new BeakGraph(new HDF5Reader(seq));
              BeakGraph b = new BeakGraph(new HDF5Reader(plaid))) {
             org.apache.jena.query.Dataset da = a.getDataset();
             org.apache.jena.query.Dataset db = b.getDataset();
-            assertEquals(graphNames(da), graphNames(db), "graph lists must match");
-            assertTrue(graphModel(da, null).isIsomorphicWith(graphModel(db, null)),
-                    "default graphs must be isomorphic");
-            for (String g : graphNames(da)) {
-                if (!g.startsWith("http")) continue;
-                assertTrue(graphModel(da, g).isIsomorphicWith(graphModel(db, g)),
-                        "graph <" + g + "> must be isomorphic");
-            }
-            assertEquals(count(da, "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"),
-                         count(db, "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"),
+            assertEquals(StoreParity.count(da, "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"),
+                         StoreParity.count(db, "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"),
                     "default-graph size must match (duplicates collapsed identically)");
-            assertEquals(24, count(db, "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?v }"),
+            assertEquals(24, StoreParity.count(db, "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?v }"),
                     "_:b0 from 24 documents must remain 24 distinct blank nodes");
-            assertEquals(count(da, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/p2> ?o }"),
-                         count(db, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/p2> ?o }"),
+            assertEquals(StoreParity.count(da, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/p2> ?o }"),
+                         StoreParity.count(db, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/p2> ?o }"),
                     "zero-padded spellings must collapse identically");
-            assertEquals(1, count(db, "SELECT (COUNT(*) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/ill> \"abc\"^^<http://www.w3.org/2001/XMLSchema#int> }"));
-            assertEquals(24, count(db, "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/dl> ?o }"));
-            assertEquals(3, count(db, "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/tt> ?o }"));
+            assertEquals(1, StoreParity.count(db, "SELECT (COUNT(*) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/ill> \"abc\"^^<http://www.w3.org/2001/XMLSchema#int> }"));
+            assertEquals(24, StoreParity.count(db, "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/dl> ?o }"));
+            assertEquals(3, StoreParity.count(db, "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/tt> ?o }"));
         }
     }
 
@@ -211,23 +184,13 @@ class PlaidWriterParityTest {
                     .setWorkDirectory(Files.createDirectories(dir.resolve("voidwork-" + mode))).setCores(3)
                     .setTermSpillBatch(64).setIdSpillBatch(128).setMergeFanIn(2)
                     .build().write();
-            com.ebremer.beakgraph.hdf5.writers.parallel.ParallelWriterParityTest.assertVoidParity(seq.toPath(), plaid.toPath(), mode.toString());
+            StoreParity.assertVoidParity(seq.toPath(), plaid.toPath(), mode.toString());
         }
     }
 
     @Test
     void spatialAndFeaturesParity() throws Exception {
-        String trig = """
-            @prefix ex: <http://ex.org/> .
-            @prefix geo: <http://www.opengis.net/ont/geosparql#> .
-
-            ex:geo1 geo:asWKT "POLYGON((0 0, 100 0, 100 100, 0 100, 0 0))"^^geo:wktLiteral .
-            ex:geo2 geo:asWKT "MULTIPOLYGON(((200 200, 300 200, 300 300, 200 200)),((600 600, 700 600, 700 700, 600 600)))"^^geo:wktLiteral .
-            ex:geo3 geo:asWKT "POINT(5000 6000)"^^geo:wktLiteral .
-            ex:geo4 geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/4326> POLYGON((10 10, 60 10, 60 60, 10 60, 10 10))"^^geo:wktLiteral .
-            ex:geo5 geo:asWKT "POLYGON((0 0, 1 0))"^^geo:wktLiteral .
-            ex:geo1 ex:label "region one" .
-            """;
+        String trig = StoreParity.SPATIAL_TRIG;
         File src = dir.resolve("spatial.trig").toFile();
         Files.write(src.toPath(), trig.getBytes(StandardCharsets.UTF_8));
         File seq = dir.resolve("spatial.seq.h5").toFile();
@@ -245,13 +208,13 @@ class PlaidWriterParityTest {
              BeakGraph b = new BeakGraph(new HDF5Reader(plaid))) {
             org.apache.jena.query.Dataset da = a.getDataset();
             org.apache.jena.query.Dataset db = b.getDataset();
-            assertEquals(graphNames(da), graphNames(db), "graph lists (grid tiles included) must match");
-            for (String g : graphNames(da)) {
+            assertEquals(StoreParity.graphNames(da), StoreParity.graphNames(db), "graph lists (grid tiles included) must match");
+            for (String g : StoreParity.graphNames(da)) {
                 if (!g.startsWith("http") && !g.startsWith("urn")) continue;
-                assertTrue(graphModel(da, g).isIsomorphicWith(graphModel(db, g)), "graph <" + g + "> must be isomorphic");
+                assertTrue(StoreParity.graphModel(da, g).isIsomorphicWith(StoreParity.graphModel(db, g)), "graph <" + g + "> must be isomorphic");
             }
-            assertTrue(graphModel(da, null).isIsomorphicWith(graphModel(db, null)), "default graphs (features) must be isomorphic");
-            assertTrue(count(db, "SELECT (COUNT(*) AS ?n) WHERE { GRAPH <urn:x-beakgraph:Spatial> { ?s ?p ?o } }") > 0);
+            assertTrue(StoreParity.graphModel(da, null).isIsomorphicWith(StoreParity.graphModel(db, null)), "default graphs (features) must be isomorphic");
+            assertTrue(StoreParity.count(db, "SELECT (COUNT(*) AS ?n) WHERE { GRAPH <urn:x-beakgraph:Spatial> { ?s ?p ?o } }") > 0);
         }
     }
 

@@ -1,9 +1,9 @@
 package com.ebremer.beakgraph.w3c;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
-
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.WriterEngines;
@@ -191,8 +191,9 @@ class W3CSparql12SuiteTest {
             return;
         }
 
+        assertNotNull(result, "QueryEvaluationTest without mf:result: " + action.getURI());
         File store = storeFor(data, graphData, m);
-        SPARQLResult expected = (result != null) ? ResultSetFactory.result(toPath(result.getURI()).toString()) : null;
+        SPARQLResult expected = ResultSetFactory.result(toPath(result.getURI()).toString());
         try (BeakGraph bg = BG.getBeakGraph(store);
              QueryExecution qe = QueryExecution.dataset(bg.getDataset()).query(query).build()) {
             if (query.isAskType()) {

@@ -1,9 +1,9 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import java.io.File;
@@ -27,6 +27,9 @@ import org.junit.jupiter.api.io.TempDir;
  * CDT hardening over a real store, plus the
  * empty-store regression the SPARQL-CDTs suite exposed.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class CdtHardeningTest {
 
     private static final String PRE =

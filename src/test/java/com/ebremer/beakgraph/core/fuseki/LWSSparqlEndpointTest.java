@@ -1,10 +1,10 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
@@ -55,6 +55,9 @@ import org.junit.jupiter.api.io.TempDir;
  * or by its absolute served URL, in triple patterns, FILTER, VALUES, GRAPH,
  * DESCRIBE and CONSTRUCT, and results come back absolute.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class LWSSparqlEndpointTest {
 
     private static final String TRIG = """

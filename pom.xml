@@ -211,6 +211,8 @@
                          src/test/resources/junit-platform.properties adds the
                          per-method timeout that names the culprit first. -->
                     <forkedProcessTimeoutInSeconds>3600</forkedProcessTimeoutInSeconds>
+                    <!-- One fork, sequential: tests that mutate JVM-global state are
+                         marked @Isolated (see src/test/resources/junit-platform.properties). -->
                 </configuration>
             </plugin>
         </plugins>

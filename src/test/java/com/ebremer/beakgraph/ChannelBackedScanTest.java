@@ -1,9 +1,9 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.HTTPSeekableByteChannel;
 import com.ebremer.beakgraph.hdf5.jena.ParallelScan;
@@ -29,6 +29,9 @@ import org.junit.jupiter.api.io.TempDir;
  * gains nothing there and only contends. The same scan that parallelizes on
  * the local file must stay sequential over the channel - with identical rows.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class ChannelBackedScanTest {
 
     private static final String NS = "http://ex.org/";

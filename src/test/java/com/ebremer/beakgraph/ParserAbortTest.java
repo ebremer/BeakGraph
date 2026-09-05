@@ -1,9 +1,9 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.utils.RdfSources;
 import java.io.File;
 import java.nio.file.Files;
@@ -27,6 +27,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * thread. The queue is shrunk here so a small source reproduces the shape.
  */
 @Timeout(120)
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class ParserAbortTest {
 
     @TempDir

@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.AfterAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
@@ -43,6 +43,7 @@ class LanguageTagRoundTripTest {
 
     @TempDir
     static Path dir;
+    static BeakGraph bg;
     static Dataset ds;
 
     @BeforeAll
@@ -54,7 +55,14 @@ class LanguageTagRoundTripTest {
                 .setSource(ttl).setDestination(h5)
                 .setSpatial(false).setFeatures(false)
                 .build().write();
-        ds = new BeakGraph(new HDF5Reader(h5)).getDataset();
+        bg = new BeakGraph(new HDF5Reader(h5));
+        ds = bg.getDataset();
+    }
+
+    @AfterAll
+    static void closeReader() {
+        // Release the file: a leaked reader makes @TempDir cleanup flaky on Windows (BG-176).
+        if (bg != null) bg.close();
     }
 
     private static int count(String whereBody) {

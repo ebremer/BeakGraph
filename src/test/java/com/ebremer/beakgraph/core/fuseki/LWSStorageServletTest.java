@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.junit.jupiter.api.io.TempDir;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
@@ -80,8 +81,8 @@ class LWSStorageServletTest {
     }
 
     @Test
-    void resolveWithinRejectsTraversalAndAbsolutePaths() throws Exception {
-        Path root = Files.createTempDirectory("lws-test").toRealPath();
+    void resolveWithinRejectsTraversalAndAbsolutePaths(@TempDir Path tmp) throws Exception {
+        Path root = tmp.toRealPath();
         Path base = root.toAbsolutePath().normalize();
 
         // A normal relative path resolves inside the root.
@@ -228,9 +229,11 @@ class LWSStorageServletTest {
     }
 
     @Test
-    void resolveWithinRejectsSymlinkEscape() throws Exception {
-        Path root = Files.createTempDirectory("lws-sym").toRealPath();
-        Path outside = Files.createTempFile("lws-outside", ".txt");   // a real file outside the root
+    void resolveWithinRejectsSymlinkEscape(@TempDir Path tmp) throws Exception {
+        // Both inside the @TempDir (cleaned up by JUnit, BG-187), the file
+        // OUTSIDE the servlet root so the containment check is still exercised.
+        Path root = Files.createDirectories(tmp.resolve("root")).toRealPath();
+        Path outside = Files.writeString(tmp.resolve("outside.txt"), "");
         Path link = root.resolve("escape");
         try {
             Files.createSymbolicLink(link, outside);

@@ -1,7 +1,10 @@
 package com.ebremer.beakgraph.huge;
 
+import java.nio.file.Files;
+import java.nio.ByteBuffer;
+import com.ebremer.beakgraph.utils.UTIL;
+import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
 import java.io.ByteArrayInputStream;
@@ -72,15 +75,33 @@ class DirLangSpillCodecTest {
     @Test
     void streamingDictionaryWriterEncodesBaseDirectionLiterals() throws Exception {
         Node ltr = NodeFactory.createLiteralDirLang("hello", "en", TextDirection.LTR);
+        Node rtl = NodeFactory.createLiteralDirLang("hello", "en", TextDirection.RTL);
         Node plain = NodeFactory.createLiteralLang("hello", "en");
         // NodeComparator order within the language block: (lang, lex, direction),
-        // absent < ltr - so the plain term encodes first.
+        // absent < ltr < rtl - so the plain term encodes first.
+        Path workDir = dir.resolve("dirs");
         try (StreamingDictionaryWriter w = new StreamingDictionaryWriter(
-                dir.resolve("dirs"), "literals", 2, stringStats(),
+                workDir, "literals", 3, stringStats(),
                 DictionarySection.LITERALS,
                 new TreeSet<>(Set.of(RDF.dirLangString.getURI(), RDF.langString.getURI())),
                 new TreeSet<>(Set.of("en")), true, null)) {
-            w.encode(List.of(plain, ltr).iterator());
+            w.encode(List.of(plain, ltr, rtl).iterator());
+            // Read the spilled columns back through the production reader
+            // before close() deletes them: encode() completed the buffers, so
+            // the bytes are on disk (BG-185).
+            Path dictDir = workDir.resolve("dict.literals");
+            int dirWidth = 1 + UTIL.MinBits(2);      // StreamingDictionaryWriter's langDirs width
+            BitPackedUnSignedLongBuffer dirs = new BitPackedUnSignedLongBuffer(null,
+                    ByteBuffer.wrap(Files.readAllBytes(dictDir.resolve("langDirs"))), 3, dirWidth);
+            assertEquals(0L, dirs.get(0), "plain @en has no direction");
+            assertEquals(1L, dirs.get(1), "@en--ltr encodes as 1");
+            assertEquals(2L, dirs.get(2), "@en--rtl encodes as 2");
+            int tagWidth = 1 + UTIL.MinBits(1);      // one language tag
+            BitPackedUnSignedLongBuffer tags = new BitPackedUnSignedLongBuffer(null,
+                    ByteBuffer.wrap(Files.readAllBytes(dictDir.resolve("langTags"))), 3, tagWidth);
+            assertEquals(1L, tags.get(0));
+            assertEquals(1L, tags.get(1));
+            assertEquals(1L, tags.get(2));
         }
     }
 }

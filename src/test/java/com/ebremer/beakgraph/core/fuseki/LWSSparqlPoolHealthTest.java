@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import com.ebremer.beakgraph.pool.BeakGraphKeyedPool;
@@ -39,6 +39,9 @@ import org.junit.jupiter.api.io.TempDir;
  * Jetty server so the failures come from the container, not a mock, and
  * watches the pool: the same reader instance must still be idle afterwards.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class LWSSparqlPoolHealthTest {
 
     private static final int TRIPLES = 60_000;

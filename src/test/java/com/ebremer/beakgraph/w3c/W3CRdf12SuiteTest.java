@@ -1,9 +1,10 @@
 package com.ebremer.beakgraph.w3c;
 
+import java.nio.file.Files;
+import java.io.OutputStream;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
-
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.WriterEngines;
@@ -164,7 +165,9 @@ class W3CRdf12SuiteTest {
         // relative IRIs, which BeakGraph deliberately stores unresolved), then
         // the store must hold an isomorphic dataset.
         Path absolutized = tmp.resolve(id + ".nq");
-        RDFDataMgr.write(java.nio.file.Files.newOutputStream(absolutized), parsed, Lang.NQUADS);
+        try (OutputStream os = Files.newOutputStream(absolutized)) {
+            RDFDataMgr.write(os, parsed, Lang.NQUADS);
+        }
         build(absolutized.toFile(), dest);
         DatasetGraph reference = (expectedOrNull != null) ? expectedOrNull : parsed;
         try (BeakGraph bg = BG.getBeakGraph(dest)) {
