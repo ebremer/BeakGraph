@@ -7,6 +7,12 @@ brought and what a reader must rebuild.
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
 * Jena 6.2.0, jHDF 0.13.0.
+* Vendored zstd: the pure-Java compressor keeps one compression context per
+  window size and reuses it across frames (hash/chain tables, sequence store
+  and entropy workspaces used to be allocated for every compressed dictionary
+  fragment); frames are byte-identical to before, and a compressor instance
+  is now explicitly single-threaded (one per writer, one per reader thread,
+  as before).
 * Housekeeping: the bit-packed buffer's word fetch dispatches on the sealed
   `RandomAccessBytes` implementation (a JVM that had opened small, FFM-mapped
   and remote datasets paid a megamorphic call on every id lookup: +57% on a

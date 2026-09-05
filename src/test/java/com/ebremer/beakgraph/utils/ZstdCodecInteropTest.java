@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
-
 import io.airlift.compress.v3.MalformedInputException;
 import io.airlift.compress.v3.zstdFFM.ZstdJavaCompressor;
 import io.airlift.compress.v3.zstdFFM.ZstdJavaDecompressor;
@@ -63,6 +62,39 @@ class ZstdCodecInteropTest {
                 assertArrayEquals(in, decompressJava(frame, size), "size " + size + (low ? " low-entropy" : " random"));
             }
         }
+    }
+
+    @Test
+    void aReusedCompressorMatchesFreshFramesByteForByte() {
+        // ZstdJavaCompressor reuses one compression context per window size
+        // across frames (BG-171). Every frame it emits must equal the frame a
+        // brand-new compressor emits for the same input, whatever came before:
+        // stale hash-table entries, repeat offsets or a previous frame's Huffman
+        // table would all change the bytes (or, for the Huffman table, produce a
+        // frame the decoder rejects).
+        ZstdJavaCompressor shared = new ZstdJavaCompressor();
+        ZstdJavaDecompressor decoder = new ZstdJavaDecompressor();
+        Random r = new Random(171);
+        int[] sizes = {64, 70, 200_000, 64, 4095, 1 << 17, 65, 300, 131_073, 1000, 1 << 20, 80, 0, 1, 2048, 64};
+        for (int round = 0; round < 6; round++) {
+            for (int size : sizes) {
+                boolean low = r.nextBoolean();
+                byte[] in = random(size, r.nextLong(), low);
+                byte[] fresh = compressJava(in);
+                byte[] out = new byte[shared.maxCompressedLength(in.length)];
+                int n = shared.compress(in, 0, in.length, out, 0, out.length);
+                byte[] reused = Arrays.copyOf(out, n);
+                assertArrayEquals(fresh, reused, "round " + round + " size " + size + (low ? " low-entropy" : " random"));
+                byte[] back = new byte[Math.max(size, 1)];
+                int m = decoder.decompress(reused, 0, reused.length, back, 0, back.length);
+                assertArrayEquals(in, Arrays.copyOf(back, m), "round-trip of the reused frame");
+            }
+        }
+        // The MemorySegment overload shares the same cache.
+        byte[] in = random(50_000, 5, true);
+        java.lang.foreign.MemorySegment out = java.lang.foreign.MemorySegment.ofArray(new byte[shared.maxCompressedLength(in.length)]);
+        int n = shared.compress(java.lang.foreign.MemorySegment.ofArray(in), out);
+        assertArrayEquals(compressJava(in), Arrays.copyOf(out.toArray(java.lang.foreign.ValueLayout.JAVA_BYTE), n), "MemorySegment overload");
     }
 
     @Test

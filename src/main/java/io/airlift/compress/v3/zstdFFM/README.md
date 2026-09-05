@@ -53,6 +53,18 @@ upstreamed to the fork:
   (block-size limit, offset-codes table, literals-length table).
 * `XxHash64` header comment and the FFM 3-byte block-header fallback (already in
   the fork branch, not in upstream).
+* Compression-context reuse (BG-171): `ZstdJavaCompressor` keeps one
+  `CompressionContext` per window log and `ZstdFrameCompressor.compress` takes
+  that cache (a null cache keeps the old allocate-per-frame path); a reused
+  context is `reset(baseAddress)` - repeat offsets back to (1, 4), hash/chain
+  tables cleared and the window restarted (`BlockCompressionState.reset(long)`),
+  both Huffman tables invalidated (`HuffmanCompressionTable.invalidate()`, so a
+  frame never opens with a treeless-literals block) and the sequence store
+  emptied - and `FseCompressionTable.initialize` uses instance scratch arrays
+  instead of allocating two per call (the two TODOs). Output is byte-identical to
+  a fresh context (`ZstdCodecInteropTest.aReusedCompressorMatchesFreshFramesByteForByte`).
+  Consequence: `ZstdJavaCompressor` instances are not thread-safe; BeakGraph
+  holds one `StringUtils` per writer and per reader thread.
 
 ## Re-vendoring
 

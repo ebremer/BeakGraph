@@ -14,16 +14,24 @@
 package io.airlift.compress.v3.zstdFFM;
 
 import java.lang.foreign.MemorySegment;
-
 import static io.airlift.compress.v3.zstdFFM.Constants.MAX_BLOCK_SIZE;
 import static java.lang.Math.addExact;
 import static java.lang.String.format;
 import static java.lang.ref.Reference.reachabilityFence;
 import static java.util.Objects.requireNonNull;
 
+/**
+ * The pure-Java Zstd compressor. An instance keeps one compression context per
+ * window size and reuses it across frames, so compressing many small inputs no
+ * longer allocates the hash/chain tables, sequence store and entropy workspaces
+ * (hundreds of KB) per call; instances are therefore NOT thread-safe - use one per
+ * thread, as BeakGraph's StringUtils does (BeakGraph divergence, see README.md).
+ */
 public class ZstdJavaCompressor
         implements ZstdCompressor
 {
+    private final CompressionContext[] contexts = new CompressionContext[ZstdFrameCompressor.CONTEXT_CACHE_SIZE];
+
     @Override
     public int maxCompressedLength(int uncompressedSize)
     {
@@ -52,7 +60,8 @@ public class ZstdJavaCompressor
                 outputSegment,
                 outputOffset,
                 outputOffset + maxOutputLength,
-                CompressionParameters.DEFAULT_COMPRESSION_LEVEL);
+                CompressionParameters.DEFAULT_COMPRESSION_LEVEL,
+                contexts);
     }
 
     @Override
@@ -72,7 +81,8 @@ public class ZstdJavaCompressor
                     output,
                     outputAddress,
                     outputLimit,
-                    CompressionParameters.DEFAULT_COMPRESSION_LEVEL);
+                    CompressionParameters.DEFAULT_COMPRESSION_LEVEL,
+                    contexts);
         }
         finally {
             reachabilityFence(input);

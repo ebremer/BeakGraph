@@ -20,7 +20,7 @@ class BlockCompressionState
     public final int[] hashTable;
     public final int[] chainTable;
 
-    private final long baseAddress;
+    private long baseAddress;
 
     // starting point of the window with respect to baseAddress
     private int windowBaseOffset;
@@ -52,6 +52,19 @@ class BlockCompressionState
     {
         Arrays.fill(hashTable, 0);
         Arrays.fill(chainTable, 0);
+    }
+
+    /**
+     * Prepares this state for a new frame whose input starts at {@code baseAddress}:
+     * the window restarts at 0 and every stale table entry is cleared, exactly the
+     * state a freshly constructed instance has (BeakGraph divergence: contexts are
+     * reused across frames, see README.md).
+     */
+    public void reset(long baseAddress)
+    {
+        this.baseAddress = baseAddress;
+        this.windowBaseOffset = 0;
+        reset();
     }
 
     public void enforceMaxDistance(long inputLimit, int maxDistance)

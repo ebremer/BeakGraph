@@ -20,6 +20,11 @@ class FseCompressionTable
     private final short[] nextState;
     private final int[] deltaNumberOfBits;
     private final int[] deltaFindState;
+    // Scratch for initialize(): the spread-symbol table and the per-symbol start
+    // positions, sized for the largest table this instance can hold (they used to
+    // be allocated on every call; BeakGraph divergence, see README.md).
+    private final byte[] spreadTable;
+    private final int[] cumulative;
 
     private int log2Size;
 
@@ -28,6 +33,8 @@ class FseCompressionTable
         nextState = new short[1 << maxTableLog];
         deltaNumberOfBits = new int[maxSymbol + 1];
         deltaFindState = new int[maxSymbol + 1];
+        spreadTable = new byte[1 << maxTableLog];
+        cumulative = new int[MAX_SYMBOL + 2];
     }
 
     public static FseCompressionTable newInstance(short[] normalizedCounts, int maxSymbol, int tableLog)
@@ -52,18 +59,20 @@ class FseCompressionTable
     public void initialize(short[] normalizedCounts, int maxSymbol, int tableLog)
     {
         int tableSize = 1 << tableLog;
+        if (tableSize > spreadTable.length) {
+            throw new IllegalArgumentException("Table log " + tableLog + " exceeds this table's capacity");
+        }
 
-        byte[] table = new byte[tableSize]; // TODO: allocate in workspace
+        byte[] table = spreadTable;   // only the first tableSize entries are used, and every one is written below
         int highThreshold = tableSize - 1;
 
-        // TODO: make sure FseCompressionTable has enough size
         log2Size = tableLog;
 
         // For explanations on how to distribute symbol values over the table:
         // http://fastcompression.blogspot.fr/2014/02/fse-distributing-symbol-values.html
 
         // symbol start positions
-        int[] cumulative = new int[MAX_SYMBOL + 2]; // TODO: allocate in workspace
+        int[] cumulative = this.cumulative;   // entries 0..maxSymbol+1 are all assigned below
         cumulative[0] = 0;
         for (int i = 1; i <= maxSymbol + 1; i++) {
             if (normalizedCounts[i - 1] == -1) {  // Low probability symbol

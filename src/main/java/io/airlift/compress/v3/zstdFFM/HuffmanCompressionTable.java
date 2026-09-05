@@ -15,7 +15,6 @@ package io.airlift.compress.v3.zstdFFM;
 
 import java.lang.foreign.MemorySegment;
 import java.util.Arrays;
-
 import static io.airlift.compress.v3.zstdFFM.FfmUtil.JAVA_BYTE;
 import static io.airlift.compress.v3.zstdFFM.Huffman.MAX_FSE_TABLE_LOG;
 import static io.airlift.compress.v3.zstdFFM.Huffman.MAX_SYMBOL;
@@ -238,6 +237,17 @@ final class HuffmanCompressionTable
     /**
      * Can this table encode all symbols with non-zero count?
      */
+    /**
+     * Marks the table as holding no usable code: {@link #isValid} answers false for
+     * every input until {@link #initialize} runs again. A reused context must not
+     * offer the previous frame's table as a treeless-literals candidate - the decoder
+     * starts every frame without one (RFC 8878 3.1.1.3.1.2).
+     */
+    public void invalidate()
+    {
+        this.maxSymbol = -1;
+    }
+
     public boolean isValid(int[] counts, int maxSymbol)
     {
         if (maxSymbol > this.maxSymbol) {

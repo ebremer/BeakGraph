@@ -49,6 +49,15 @@ class HuffmanCompressionContext
         previousTable = previousCandidate;
     }
 
+    /** Frame start for a reused context: neither table is reusable and no borrow is pending. */
+    public void reset()
+    {
+        previousTable.invalidate();
+        temporaryTable.invalidate();
+        previousCandidate = previousTable;
+        temporaryCandidate = temporaryTable;
+    }
+
     public HuffmanCompressionTableWorkspace getCompressionTableWorkspace()
     {
         return compressionTableWorkspace;
