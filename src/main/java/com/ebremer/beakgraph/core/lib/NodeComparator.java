@@ -18,13 +18,23 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Enforces a strict Total Ordering of RDF Nodes.
- * CRITICAL for HDF5 Binary Search:
- * Ensures the sorting order perfectly matches the Monolithic Dictionary ID assignments:
- * 1. Default Graph
- * 2. Blank Nodes
- * 3. URIs
- * 4. Literals (Sorted numerically/temporally/lexicographically by value)
+ * Enforces a strict total ordering of RDF nodes. CRITICAL for the HDF5 binary
+ * searches: dictionary ids ARE comparator ranks, so the sort order must match
+ * the dictionary's id assignment exactly (SPECIFICATIONS.md §6). Five kinds,
+ * in this order:
+ * <ol>
+ *   <li>the default-graph sentinels ({@code null}, {@code urn:x-arq:DefaultGraph},
+ *       {@code urn:x-arq:DefaultGraphNode}), before everything else;</li>
+ *   <li>blank nodes (macro kind 1), by label;</li>
+ *   <li>IRIs (2), by string;</li>
+ *   <li>literals (3), by value - numerically, temporally, lexicographically -
+ *       with an exact-term tie-break so value-equal distinct terms stay distinct;</li>
+ *   <li>RDF 1.2 triple terms (4), structurally: subject, then predicate, then
+ *       object, each through this comparator.</li>
+ * </ol>
+ * Language-tagged literals are compared on the tag as stored; see the note at
+ * {@link #compareExactLiteralTerms} for the tag-formatting precondition.
+ * See SPECIFICATIONS.md §6 (dictionary order).
  */
 public class NodeComparator implements Comparator<Node> {
 
@@ -93,7 +103,7 @@ public class NodeComparator implements Comparator<Node> {
         if (n1isDefault) return -1;
         if (n2isDefault) return 1;
 
-        // 2. Enforce RDF Term Macro-Ordering (BNode < URI < Literal)
+        // 2. Enforce RDF Term Macro-Ordering (BNode < URI < Literal < TripleTerm)
         // This ensures the sorted array perfectly aligns with how IDs are chunked
         int type1 = getMacroType(n1);
         int type2 = getMacroType(n2);
@@ -152,7 +162,17 @@ public class NodeComparator implements Comparator<Node> {
             }
 
             // Language-tagged pairs (rdf:langString / rdf:dirLangString) never go
-            // through compareAlways either: Jena 6.1.0's base-direction support
+            // through compareAlways either. The tag is compared CASE-SENSITIVELY
+            // (String.compareTo), which is only a total order over terms because
+            // Jena canonicalizes every tag at construction: NodeFactory
+            // .createLiteralLang / createLiteralDirLang run LangTagX
+            // .formatLanguageTag, so "EN-us" and "en-US" are the SAME Node and
+            // case-variant spellings never reach this comparator as distinct
+            // terms. Building language-tagged Nodes any other way (LiteralLabel
+            // Factory, Node_Literal directly - writer keys, reader, probe keys)
+            // would break that precondition and with it the dictionary order;
+            // NodeComparatorDirLangTest#jenaTagFormattingStillPresent is the
+            // canary (BG-370). Jena 6.1.0's base-direction support
             // there is incoherent - same-(lex,lang) cross-kind or cross-direction
             // pairs THROW, different-language dirLangString pairs answer 0 for
             // DISTINCT terms, and mixed-kind pairs flip between lang-first and
@@ -260,6 +280,14 @@ public class NodeComparator implements Comparator<Node> {
      * already considers equal, so it cannot disturb the order of any other
      * pair. Simplify when NodeCmp orders dirLangString correctly upstream -
      * NodeComparatorDirLangTest#jenaNodeCmpGapStillPresent is the canary.
+     * <p>
+     * Precondition, here and in the language branch of {@link #compare}: the
+     * language tag is compared case-sensitively, which is a strict total order
+     * over terms only because {@code NodeFactory.createLiteralLang} /
+     * {@code createLiteralDirLang} canonicalize every tag through
+     * {@code LangTagX.formatLanguageTag} at construction, so two spellings of
+     * one tag are one Node. Never build language-tagged Nodes through
+     * {@code LiteralLabelFactory} or {@code Node_Literal} directly (BG-370).
      */
     private static int compareExactLiteralTerms(Node n1, Node n2) {
         int c = NodeCmp.compareRDFTerms(n1, n2);
@@ -400,14 +428,18 @@ public class NodeComparator implements Comparator<Node> {
     }
 
     /**
-     * Maps a Node to an integer rank to enforce BNode < URI < Literal.
+     * Maps a Node to its macro kind: BNode (1) < URI (2) < Literal (3) <
+     * TripleTerm (4) - the order SPECIFICATIONS.md §6 fixes for the dictionary.
+     * An RDF 1.2 triple term ({@code Node_Triple}) ranks after every literal
+     * and is compared structurally in {@link #compare}. Anything else
+     * (a variable, {@code Node.ANY}) is not an RDF term and cannot be ranked.
      */
     private int getMacroType(Node n) {
         if (n.isBlank()) return 1;
         if (n.isURI()) return 2;
         if (n.isLiteral()) return 3;
-        // Should never happen in valid RDF, but safe fallback
-        return 4;
+        if (n.isTripleTerm()) return 4;
+        throw new IllegalArgumentException("Not an RDF term (blank node, IRI, literal or triple term): " + n);
     }
 
     private boolean isDefaultGraph(Node n) {

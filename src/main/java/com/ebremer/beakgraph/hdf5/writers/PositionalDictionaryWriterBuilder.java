@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import java.util.Collections;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
@@ -31,8 +32,6 @@ import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.XSD;
-import org.locationtech.jts.geom.Envelope;
-import org.locationtech.jts.geom.Polygon;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static com.ebremer.beakgraph.Params.BGVOID;
@@ -41,6 +40,16 @@ import com.ebremer.ns.GEO;
 import org.apache.jena.vocabulary.RDFS;
 import org.apache.jena.vocabulary.VOID;
 
+/**
+ * Ingest stage of the in-memory writers: parses the sources into the quad
+ * array, the per-section node sets and the statistics the dictionary and
+ * index stages read. Internal writer API, not a stable public surface: the
+ * ultra engine subclasses it and the parallel engine reuses its parse. The
+ * node-set getters are read-only views; {@link #getQuads()} is the live array
+ * the index stage reorders in place. A builder is single-use - {@link #build()}
+ * a second time is refused rather than accumulating a second parse into the
+ * first one's sets (BG-274, BG-102).
+ */
 public class PositionalDictionaryWriterBuilder {
     static {
         // Deterministic datatype registration before any document is parsed.
@@ -105,18 +114,33 @@ public class PositionalDictionaryWriterBuilder {
         this.voidMode = mode;
         return this;
     }
+
+    private String voidDatasetIri = Params.VOID_DATASET_IRI;
+
+    /** IRI of the sd:Dataset resource the statistics graph describes (BG-109). */
+    public PositionalDictionaryWriterBuilder setVoidDatasetIri(String iri) {
+        this.voidDatasetIri = iri;
+        return this;
+    }
+
+    public String getVoidDatasetIri() { return voidDatasetIri; }
     
     public File getDestination() { return dest; }
-    public Quad[] getQuads() { return quads; }
-   
-    public Set<Node> getEntities() { return entities; }
-    public Set<Node> getPredicates() { return predicates; }
-    public Set<Node> getLiterals() { return literals; }
 
-    // GETTERS FOR THE NEW UNIQUE SETS
-    public Set<Node> getUniqueGraphs() { return uniqueGraphs; }
-    public Set<Node> getUniqueSubjects() { return uniqueSubjects; }
-    public Set<Node> getUniqueObjects() { return uniqueObjects; }
+    /**
+     * The LIVE quad array (never a copy): the index stage sorts it in place,
+     * and the in-memory engines hold exactly one copy of the quads by design.
+     */
+    public Quad[] getQuads() { return quads; }
+
+    // Read-only views: consumers (the dictionary writers, the columnar list
+    // fills, the ultra index) only read them (BG-274).
+    public Set<Node> getEntities() { return Collections.unmodifiableSet(entities); }
+    public Set<Node> getPredicates() { return Collections.unmodifiableSet(predicates); }
+    public Set<Node> getLiterals() { return Collections.unmodifiableSet(literals); }
+    public Set<Node> getUniqueGraphs() { return Collections.unmodifiableSet(uniqueGraphs); }
+    public Set<Node> getUniqueSubjects() { return Collections.unmodifiableSet(uniqueSubjects); }
+    public Set<Node> getUniqueObjects() { return Collections.unmodifiableSet(uniqueObjects); }
     
     public PositionalDictionaryWriterBuilder setSource(File src) {
         this.src = src; return this;
@@ -162,16 +186,10 @@ public class PositionalDictionaryWriterBuilder {
     public long getNumberOfQuads() { return numQuads; }
     public Stats getStats() { return stats; }
     public String getName() { return name; }
-    public Set<String> getDataTypes() { return dataTypes; }
+    public Set<String> getDataTypes() { return Collections.unmodifiableSet(dataTypes); }
     
     public PositionalDictionaryWriterBuilder setName(String name) {
         this.name = name; return this;
-    }
-    
-    public void maxExtent(Polygon poly) {
-        Envelope env = poly.getEnvelopeInternal();
-        MaxX = Math.max(MaxX, (int) env.getMaxX());
-        MaxY = Math.max(MaxY, (int) env.getMaxY());
     }
     
     /**
@@ -404,6 +422,7 @@ public class PositionalDictionaryWriterBuilder {
             entities.add(s);
         }
         if (!predicates.contains(p)) {
+            requirePredicate(p);
             stats.numIRI++;
             predicates.add(p);
         }
@@ -422,6 +441,22 @@ public class PositionalDictionaryWriterBuilder {
                 }
                 entities.add(o);
             }
+        }
+    }
+
+    /**
+     * The predicate-position term-kind guard every ingest path applies
+     * (this builder, the ultra ingest, the disk pipeline): a predicate must be
+     * an IRI (SPECIFICATIONS.md §9.5). Every accepted syntax's parser already
+     * refuses a blank-node or literal predicate (Turtle, N-Triples, N-Quads and
+     * TriG error out; JSON-LD drops the property), so this is defence in depth
+     * for programmatic and future sources - without it a non-IRI predicate
+     * reached the predicates dictionary and failed there with "No writer buffer
+     * for literal datatype", far from its cause (BG-295).
+     */
+    public static void requirePredicate(Node p) {
+        if (!p.isURI()) {
+            throw new IllegalStateException("Unexpected predicate node type (not URI): " + p);
         }
     }
 
@@ -514,6 +549,8 @@ public class PositionalDictionaryWriterBuilder {
         literals.add(tt);
     }
     
+    private boolean parsed = false;
+
     public PositionalDictionaryWriter build() throws IOException {
         parse();
         return new PositionalDictionaryWriter(this);
@@ -533,8 +570,14 @@ public class PositionalDictionaryWriterBuilder {
         if (sources.isEmpty() && src == null) {
             throw new IllegalStateException("No source set: call setSource() or setSources()");
         }
+        if (parsed) {
+            // The node sets, stats and bnode counter accumulate; a second parse
+            // would silently fold two stores' terms into one dictionary (BG-102).
+            throw new IllegalStateException("PositionalDictionaryWriterBuilder is single-use: create a new builder per store");
+        }
+        parsed = true;
         final List<File> inputs = sources.isEmpty() ? List.of(src) : List.copyOf(sources);
-        this.xvoid = BGVoIDSD.forMode(voidMode, "https://ebremer.com/void/");
+        this.xvoid = BGVoIDSD.forMode(voidMode, voidDatasetIri);
         for (File input : inputs) {
             parseSource(input, quadcount);
             // Blank-node labels are document-scoped in RDF: two sources may both
@@ -581,7 +624,19 @@ public class PositionalDictionaryWriterBuilder {
         // RDF/XML, JSON-LD, Turtle; .gz and .zip handled) instead of
         // hardcoding Turtle: this is a quad store, and named graphs can only
         // arrive through a quad-capable syntax.
-        try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
+        // Only OPENING the source is reported as an I/O failure: a parse error
+        // or an ingest guard used to be re-wrapped by an outer catch as "I/O
+        // error while reading RDF source", burying the real message two causes
+        // deep (BG-98).
+        RdfSources.OpenedSource opened;
+        try {
+            opened = RdfSources.open(input);
+        } catch (FileNotFoundException e) {
+            throw new IOException("Source file not found: " + input, e);
+        } catch (IOException e) {
+            throw new IOException("I/O error while reading RDF source: " + input, e);
+        }
+        try (opened) {
             // Parse relative references against a stable sentinel base so they
             // resolve deterministically (not against the process working
             // directory). The relativize() step below strips the sentinel back
@@ -644,10 +699,6 @@ public class PositionalDictionaryWriterBuilder {
                     ProcessQuad(canon);
                 });
             }
-        } catch (FileNotFoundException e) {
-            throw new IOException("Source file not found: " + input, e);
-        } catch (IOException e) {
-            throw new IOException("I/O error while reading RDF source: " + input, e);
         }
     }
 

@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
 import com.ebremer.beakgraph.Params;
-
 import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import static com.ebremer.beakgraph.Params.COMPRESSION_THRESHOLD;
 import com.ebremer.beakgraph.core.lib.VByte;
@@ -68,8 +67,8 @@ final class SpillFCDWriter implements AutoCloseable, DictionarySinks.StringSink 
         boolean shouldCompress = data.length >= COMPRESSION_THRESHOLD;
         byte[] finalData;
         if (shouldCompress) {
-            // Byte-identical to FCDWriter: decode to String, Zstd-compress that.
-            finalData = su.compress(new String(data, StandardCharsets.UTF_8));
+            // Byte-identical to FCDWriter: Zstd-compress the UTF-8 bytes (BG-105).
+            finalData = su.compress(data);
             compressed.writeLong(1);
         } else {
             finalData = data;

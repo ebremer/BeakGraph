@@ -5,9 +5,10 @@ import static com.ebremer.beakgraph.Params.BLOCKSIZE;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 
 /**
- * Accelerated rank/select operations on a bitmap.
- * * HARDENED: Select1 linear scan now robustly handles end-of-buffer edge cases.
- * * @author Erich Bremer
+ * Rank/select directory over a bitmap: superblock and block counters plus the
+ * packed id sequence the bitmap delimits (SPECIFICATIONS.md §8).
+ *
+ * @author Erich Bremer
  */
 public class HDTBitmapDirectory {
 

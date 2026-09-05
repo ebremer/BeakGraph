@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.hdf5.Index;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
@@ -268,8 +269,8 @@ final class UltraBGIndex {
 
         // Identical width sizing to the sequential/parallel index builders.
         long maxCumulativeOnes = originalQuadCount + maxL0Id + 128L;
-        int sbBits = roundUp8(MinBits(maxCumulativeOnes));
-        int bbBits = roundUp8(MinBits(SUPERBLOCKSIZE));
+        int sbBits = byteRoundedWidth(maxCumulativeOnes);
+        int bbBits = byteRoundedWidth(SUPERBLOCKSIZE);
         final int w1 = getBitSize(dict, comps[1]);
         final int w2 = getBitSize(dict, comps[2]);
         final int w3 = getBitSize(dict, comps[3]);
@@ -449,10 +450,6 @@ final class UltraBGIndex {
         return out;
     }
 
-    private static int roundUp8(int bits) {
-        return (int) (Math.ceil(bits / 8.0) * 8);
-    }
-
     private static String levelName(char component) {
         return switch (component) {
             case 'G' -> "g";
@@ -474,9 +471,7 @@ final class UltraBGIndex {
     }
 
     private static int getBitSize(UltraDictionary w, char component) {
-        int needed = MinBits(count(w, component) + 1);
-        if (needed == 0) return 8;
-        return roundUp8(needed);
+        return byteRoundedWidth(count(w, component) + 1);
     }
 
     private static UltraBGIndex join(ForkJoinTask<UltraBGIndex> task, Index which) throws IOException {

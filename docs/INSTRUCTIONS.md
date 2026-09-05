@@ -65,6 +65,7 @@ java -jar BeakGraph.jar -endpoint out/ -port 8888
 | `-force` | off | Per-file mode: rebuild destination `.h5` files that already exist instead of skipping them. |
 | `-void` | off | Generate the VoID/SD statistics graph (`urn:x-beakgraph:void`) with **exact** in-memory counting (RAM grows with distinct terms). Mutually exclusive with `-voidsketch`. |
 | `-voidsketch` | off | Generate the statistics graph with **bounded memory**: exact up to 65,536 distinct nodes per counter, then HyperLogLog estimates (~0.8% error, deterministic). Recommended for `-method 1/4/5`. Mutually exclusive with `-void`. |
+| `-voidbase <iri>` | `urn:x-beakgraph:dataset` | With `-void`/`-voidsketch`: the IRI of the `sd:Dataset` resource the statistics graph describes (programmatic builders: `setVoidDatasetIri`). |
 | `-spatial` | off | Build the Hilbert-curve spatial index for `geo:wktLiteral` geometry (adds the `urn:x-beakgraph:Spatial` graph). |
 | `-features` | off | Also derive 2-D shape features (area, axes, …) for each geometry. Implies work under `-spatial`. |
 | `-jsonLdRemote` | off | Let JSON-LD sources fetch `http(s)` `@context` references (30 s timeout, cached per document). Off by default: a context is loaded from the source tree - a relative reference (`"@context": "context.jsonld"`) resolves next to the document (below `-src` for `-merge`), a `file:` reference must stay inside that tree - and a remote reference fails the file with a message naming it. |
@@ -285,7 +286,8 @@ java -Xmx32g -jar BeakGraph.jar \
   in-memory) or `-voidsketch` (bounded memory via HyperLogLog). Readers use the VoID
   statistics for join reordering when present and fall back to a fixed heuristic when
   absent - for big builds, `-voidsketch` buys statistics-driven query optimization at
-  ~64 KiB per counter instead of holding the dictionary on the heap.
+  ~64 KiB per counter instead of holding the dictionary on the heap. The graph's
+  `sd:Dataset` resource is `urn:x-beakgraph:dataset` unless `-voidbase <iri>` names it.
 * Blank nodes are scoped per source document (labels are not preserved in the output format;
   readers regenerate labels from dictionary ranks).
 * **Native binary** (`mvn -Pcmdlinenative`): it supports the in-memory engines only
@@ -362,6 +364,7 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.export.fastpath` | `true` | `-export NT`/`NQ` streams straight off the GSPO index with per-id text memoization (byte-identical output to the generic writer). `false` falls back to the generic StreamRDF writer. |
 | `beakgraph.export.textcache` | `262144` | Object-text memo entries for the index export (cleared wholesale when full). |
 | `beakgraph.log.dir` | `logs` | Directory of the rolling `beakgraph.log` the shaded jar's log4j configuration writes (50 MB per file, ten kept, gzip-rotated). |
+| `io.airlift.compress.v3.disable-native` | `false` | Zstd codec selection (aircompressor): `true` skips the bundled native libzstd (Linux, macOS) and uses the pure-Java port everywhere, so stores built on different platforms are byte-identical. Reading is unaffected either way. |
 
 JMH benchmarks for the read path live in `benchmarks/` (see its README) - use
 them to validate any tuning against your own store shape.
@@ -389,7 +392,10 @@ the last reader closes).
 * Methods 0/2/3 produce **byte-identical** stores for the same single source on
   the same platform (one format, one jHDF write sequence; the parity tests
   compare the files byte for byte - the only platform-dependent bytes are zstd
-  frames, which the native and pure-Java codecs may encode differently), and
+  frames, which the native and pure-Java codecs may encode differently; pass
+  `-Dio.airlift.compress.v3.disable-native=true` to build with the Java codec
+  on every platform when bytes must match across machines, SPECIFICATIONS.md
+  §5.4), and
   structurally identical stores (same datasets, sizes, attributes) for merges
   and for VoID-enabled builds, where blank-node labels differ; methods 1/4/5
   produce **isomorphic** stores (blank-node labels are rank-derived rather than

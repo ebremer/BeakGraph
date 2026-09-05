@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
@@ -129,9 +130,9 @@ final class UltraDictionary {
 
         // ---- columnar id lists: async, positional-parallel fills ----
         logger.info("Columnar id list population (graphs/subjects/objects) started in the background");
-        int gBits = (int) (Math.ceil(MinBits(getNumberOfGraphs() + 1) / 8.0) * 8);
-        int sBits = (int) (Math.ceil(MinBits(getNumberOfSubjects() + 1) / 8.0) * 8);
-        int oBits = (int) (Math.ceil(MinBits(getNumberOfObjects() + 1) / 8.0) * 8);
+        int gBits = byteRoundedWidth(getNumberOfGraphs() + 1);
+        int sBits = byteRoundedWidth(getNumberOfSubjects() + 1);
+        int oBits = byteRoundedWidth(getNumberOfObjects() + 1);
         graphsTask = pool.submit(() -> populate("graphs", ingest.getUniqueGraphs(), this::locateGraph, gBits, pool));
         subjectsTask = pool.submit(() -> populate("subjects", ingest.getUniqueSubjects(), this::locateSubject, sBits, pool));
         objectsTask = pool.submit(() -> populate("objects", ingest.getUniqueObjects(), this::locateObject, oBits, pool));

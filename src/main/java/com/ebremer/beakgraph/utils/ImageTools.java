@@ -81,7 +81,11 @@ public class ImageTools {
 
     private static void collectPolygons(Geometry g, List<Polygon> out) {
         if (g instanceof Polygon p) {
-            out.add(p);
+            // POLYGON EMPTY as a MULTIPOLYGON / GEOMETRYCOLLECTION member: no
+            // rings, a null envelope - nothing to render or index (BG-375).
+            if (!p.isEmpty()) {
+                out.add(p);
+            }
             return;
         }
         for (int i = 0; i < g.getNumGeometries(); i++) {
@@ -109,7 +113,11 @@ public class ImageTools {
 
     private static void collectSpatialParts(Geometry g, List<Polygon> out, GeometryFactory gf) {
         if (g instanceof Polygon p) {
-            out.add(p);
+            // An empty member's null envelope floors to Long.MIN_VALUE, clamps
+            // to 0 and used to emit a spurious hilbertCell0 = 0 entry (BG-375).
+            if (!p.isEmpty()) {
+                out.add(p);
+            }
             return;
         }
         if (g instanceof GeometryCollection) {

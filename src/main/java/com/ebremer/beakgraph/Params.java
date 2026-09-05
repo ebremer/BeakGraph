@@ -77,6 +77,12 @@ public class Params {
     public static final Node SPATIAL = NodeFactory.createURI(SPATIALSTRING);
     public static final String VOIDSTRING = String.format("urn:%s:void", BGURN);
     public static final Node BGVOID = NodeFactory.createURI(VOIDSTRING);
+    /**
+     * Default IRI of the sd:Dataset resource the VoID/SD statistics graph
+     * describes. The writers' setVoidDatasetIri and the CLI's -voidbase
+     * override it; it used to be the author's domain (BG-109).
+     */
+    public static final String VOID_DATASET_IRI = "urn:x-beakgraph:dataset";
     public static final short GRIDTILESIZE = 512;
     /** Every BeakGraph-internal graph name starts with this: the VoID statistics, the spatial index, the grid tiles. */
     public static final String INTERNAL_GRAPH_PREFIX = "urn:" + BGURN + ":";

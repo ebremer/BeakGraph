@@ -445,7 +445,9 @@ public class BeakGraphCLI {
             };
             String base = com.ebremer.beakgraph.core.BeakGraphFiles.stripExtension(h5.getName());
             Path out = h5.toPath().resolveSibling(base + "." + ext + (params.compress ? ".gz" : ""));
-            Path tmp = out.resolveSibling(out.getFileName() + ".tmp");
+            // A unique temp name: two exports of one store at once must not
+            // truncate each other's work (BG-101).
+            Path tmp = com.ebremer.beakgraph.core.AtomicPublish.tempFor(out);
             logger.info("Exporting {} -> {} ({})", h5.getName(), out.getFileName(), fmt);
             try (OutputStream os = openExportStream(tmp)) {
                 writeExport(os, dsg, fmt, h5);
@@ -627,6 +629,11 @@ public class BeakGraphCLI {
         return com.ebremer.beakgraph.core.VoidMode.NONE;
     }
 
+    /** {@code -voidbase}, or the default sd:Dataset IRI (BG-109). */
+    private String voidDatasetIri() {
+        return (params.voidBase == null || params.voidBase.isBlank()) ? Params.VOID_DATASET_IRI : params.voidBase;
+    }
+
     /**
      * The conversion engine for this run: {@code -method} (0 = in-memory,
      * 1 = disk, 2 = parallel, 3 = ultra, 4 = hugeUltra, 5 = plaid), with the
@@ -681,6 +688,7 @@ public class BeakGraphCLI {
                 HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
+                        .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features);
                 if (source != null) builder.setSource(source);
@@ -701,6 +709,7 @@ public class BeakGraphCLI {
                 ParallelHDF5Writer.Builder builder = ParallelHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
+                        .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setCores(params.cores);
@@ -714,6 +723,7 @@ public class BeakGraphCLI {
                 UltraHDF5Writer.Builder builder = UltraHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
+                        .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setCores(params.cores);
@@ -728,6 +738,7 @@ public class BeakGraphCLI {
                 HugeUltraHDF5Writer.Builder builder = HugeUltraHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
+                        .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setCores(params.cores);
@@ -751,6 +762,7 @@ public class BeakGraphCLI {
                 PlaidHDF5Writer.Builder builder = PlaidHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
+                        .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setCores(params.cores);
@@ -771,6 +783,7 @@ public class BeakGraphCLI {
                 HDF5Writer.Builder builder = HDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
+                        .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features);
                 if (source != null) builder.setSource(source);

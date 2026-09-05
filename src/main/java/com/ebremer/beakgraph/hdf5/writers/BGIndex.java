@@ -2,18 +2,39 @@ package com.ebremer.beakgraph.hdf5.writers;
 
 import static com.ebremer.beakgraph.Params.BLOCKSIZE;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.hdf5.Index;
 import io.jhdf.api.WritableGroup;
 import java.nio.file.Path;
 import java.util.Arrays;
-import org.apache.jena.graph.Node;
+import java.util.Comparator;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * GSPO / GPOS index builder of the default (method 0) writer.
+ * <p>
+ * Quads are indexed by DICTIONARY ID, not by node: {@link #resolveIds} looks
+ * each quad's four ids up exactly once (four binary searches per quad), and
+ * both orderings sort and scan those tuples with long compares and no further
+ * lookups. The earlier version sorted the Quad array with NodeComparator - a
+ * value comparison per node per comparison, through Jena's global NodeValue
+ * cache - and then binary-searched the dictionaries again at every level of
+ * every quad: eight lookups per quad per index (BG-241).
+ * <p>
+ * Sorting by id is exactly the order comparing nodes gives: an id is the
+ * node's 1-based rank under NodeComparator within its section, and the object
+ * id space keeps entities (1..maxEntityId) below literals, matching the
+ * comparator's BNode &lt; URI &lt; Literal &lt; TripleTerm macro-order.
+ * Distinct terms have distinct ids - MultiTypeDictionaryWriter fails the build
+ * when the comparator answers 0 for two of them (BG-104) - so id equality is
+ * node equality and the duplicate and level-change checks below are the
+ * former node checks verbatim: the emitted buffers are byte-identical to the
+ * node-sorted ones, which ParallelWriterParityTest and UltraWriterParityTest
+ * pin against the other in-memory engines.
+ */
 public class BGIndex {
     private static final Logger logger = LoggerFactory.getLogger(BGIndex.class);
 
@@ -22,57 +43,34 @@ public class BGIndex {
     private final BitPackedUnSignedLongBuffer SB1, SB2, SB3;
     private final BitPackedUnSignedLongBuffer BB1, BB2, BB3;
     private final Index type;
-    private final IndexPosition[] positions;
+    /** This ordering's component per level, e.g. GPOS -> ['G','P','O','S']. */
+    private final char[] comps;
 
-    private static class IndexPosition {
-        final char component;
-        final String name;
+    /** One quad's four dictionary ids; immutable, so both index builds share one resolution. */
+    public record QuadIds(long g, long s, long p, long o) {}
 
-        IndexPosition(char component) {
-            this.component = component;
-            this.name = switch (component) {
-                case 'G' -> "g";
-                case 'S' -> "s";
-                case 'P' -> "p";
-                case 'O' -> "o";
-                default -> throw new IllegalStateException("Unknown component: " + component);
-            };
+    /**
+     * Resolves every quad's ids once, sequentially. Hand the array to one
+     * index build and a {@code clone()} to the other: each sorts its array in
+     * place, so clone before either build starts.
+     */
+    public static QuadIds[] resolveIds(PositionalDictionaryWriter w, Quad[] quads) {
+        logger.info("Resolving dictionary ids for {} quads...", quads.length);
+        long start = System.nanoTime();
+        QuadIds[] ids = new QuadIds[quads.length];
+        for (int i = 0; i < quads.length; i++) {
+            Quad q = quads[i];
+            ids[i] = new QuadIds(
+                    w.locateGraph(q.getGraph()),
+                    w.locateSubject(q.getSubject()),
+                    w.locatePredicate(q.getPredicate()),
+                    w.locateObject(q.getObject()));
         }
-
-        Node getNode(Quad quad) {
-            return switch (component) {
-                case 'G' -> quad.getGraph();
-                case 'S' -> quad.getSubject();
-                case 'P' -> quad.getPredicate();
-                case 'O' -> quad.getObject();
-                default -> throw new IllegalStateException();
-            };
-        }
-
-        long locateInDictionary(PositionalDictionaryWriter w, Quad quad) {
-            return switch (component) {
-                case 'G' -> w.locateGraph(quad.getGraph());
-                case 'S' -> w.locateSubject(quad.getSubject());
-                case 'P' -> w.locatePredicate(quad.getPredicate());
-                case 'O' -> w.locateObject(quad.getObject());
-                default -> throw new IllegalStateException();
-            };
-        }
-
-        int getBitSize(PositionalDictionaryWriter w) {
-            int needed = switch (component) {
-                case 'G' -> MinBits(w.getNumberOfGraphs() + 1);
-                case 'S' -> MinBits(w.getNumberOfSubjects() + 1);
-                case 'P' -> MinBits(w.getNumberOfPredicates() + 1);
-                case 'O' -> MinBits(w.getNumberOfObjects() + 1);
-                default -> throw new IllegalStateException();
-            };
-            if (needed == 0) return 8;
-            return (int) (Math.ceil(needed / 8.0) * 8);
-        }
+        logger.info("Resolved ids for {} quads in {} s", quads.length, (System.nanoTime() - start) / 1_000_000_000L);
+        return ids;
     }
 
-    private class LevelState {
+    private static class LevelState {
         long bitsProcessed = 0;
         long onesSoFar = 0;
         long onesInCurrentSuperblock = 0;
@@ -84,52 +82,81 @@ public class BGIndex {
         long lastBlockWritten = 0;
     }
 
-    public BGIndex(HDF5Writer.Builder builder, PositionalDictionaryWriter dictWriter, Index type, Quad[] allQuads) {
+    public BGIndex(PositionalDictionaryWriter dictWriter, Index type, QuadIds[] tuples) {
         logger.info("Creating index {}", type);
         this.type = type;
-        String indexName = type.name();
-        
-        this.positions = new IndexPosition[]{
-            new IndexPosition(indexName.charAt(0)), 
-            new IndexPosition(indexName.charAt(1)), 
-            new IndexPosition(indexName.charAt(2)), 
-            new IndexPosition(indexName.charAt(3)) 
-        };
+        this.comps = type.name().toCharArray();
 
         // Superblock entries store the cumulative count of set bits; the largest such
         // value is the bitmap length. Every level writes at most one row per unique quad
-        // plus one padding row per L0 id, so (allQuads.length + maxL0Id) bounds it. Sizing
+        // plus one padding row per L0 id, so (tuples.length + maxL0Id) bounds it. Sizing
         // from getNumberOfQuads() alone overflowed once the entity space - or the VOID /
         // spatial quads that numQuads does not count - exceeded the quad count, silently
         // corrupting the rank/select directory now used for query navigation.
-        long maxCumulativeOnes = (long) allQuads.length + computeMaxL0Id(dictWriter) + 128L;
-        int sbBits = MinBits(maxCumulativeOnes);
-        sbBits = (int) (Math.ceil(sbBits / 8.0) * 8);
-        int bbBits = MinBits(SUPERBLOCKSIZE);
-        bbBits = (int) (Math.ceil(bbBits / 8.0) * 8);
+        long maxCumulativeOnes = (long) tuples.length + computeMaxL0Id(dictWriter) + 128L;
+        int sbBits = byteRoundedWidth(maxCumulativeOnes);
+        int bbBits = byteRoundedWidth(SUPERBLOCKSIZE);
 
-        B1 = new BitPackedUnSignedLongBuffer(Path.of("B" + positions[1].name), null, 0, 1);
-        B2 = new BitPackedUnSignedLongBuffer(Path.of("B" + positions[2].name), null, 0, 1);
-        B3 = new BitPackedUnSignedLongBuffer(Path.of("B" + positions[3].name), null, 0, 1);
+        String n1 = levelName(comps[1]);
+        String n2 = levelName(comps[2]);
+        String n3 = levelName(comps[3]);
 
-        S1 = new BitPackedUnSignedLongBuffer(Path.of("S" + positions[1].name), null, 0, positions[1].getBitSize(dictWriter));
-        S2 = new BitPackedUnSignedLongBuffer(Path.of("S" + positions[2].name), null, 0, positions[2].getBitSize(dictWriter));
-        S3 = new BitPackedUnSignedLongBuffer(Path.of("S" + positions[3].name), null, 0, positions[3].getBitSize(dictWriter));
+        B1 = new BitPackedUnSignedLongBuffer(Path.of("B" + n1), null, 0, 1);
+        B2 = new BitPackedUnSignedLongBuffer(Path.of("B" + n2), null, 0, 1);
+        B3 = new BitPackedUnSignedLongBuffer(Path.of("B" + n3), null, 0, 1);
 
-        SB1 = new BitPackedUnSignedLongBuffer(Path.of("SB" + positions[1].name), null, 0, sbBits);
-        SB2 = new BitPackedUnSignedLongBuffer(Path.of("SB" + positions[2].name), null, 0, sbBits);
-        SB3 = new BitPackedUnSignedLongBuffer(Path.of("SB" + positions[3].name), null, 0, sbBits);
+        S1 = new BitPackedUnSignedLongBuffer(Path.of("S" + n1), null, 0, getBitSize(dictWriter, comps[1]));
+        S2 = new BitPackedUnSignedLongBuffer(Path.of("S" + n2), null, 0, getBitSize(dictWriter, comps[2]));
+        S3 = new BitPackedUnSignedLongBuffer(Path.of("S" + n3), null, 0, getBitSize(dictWriter, comps[3]));
 
-        BB1 = new BitPackedUnSignedLongBuffer(Path.of("BB" + positions[1].name), null, 0, bbBits);
-        BB2 = new BitPackedUnSignedLongBuffer(Path.of("BB" + positions[2].name), null, 0, bbBits);
-        BB3 = new BitPackedUnSignedLongBuffer(Path.of("BB" + positions[3].name), null, 0, bbBits);
+        SB1 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n1), null, 0, sbBits);
+        SB2 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n2), null, 0, sbBits);
+        SB3 = new BitPackedUnSignedLongBuffer(Path.of("SB" + n3), null, 0, sbBits);
+
+        BB1 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n1), null, 0, bbBits);
+        BB2 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n2), null, 0, bbBits);
+        BB3 = new BitPackedUnSignedLongBuffer(Path.of("BB" + n3), null, 0, bbBits);
 
         // Seed the "ones before the first superblock/block" directory entries to 0.
         SB1.writeLong(0); SB2.writeLong(0); SB3.writeLong(0);
         BB1.writeLong(0); BB2.writeLong(0); BB3.writeLong(0);
 
-        processQuads(dictWriter, allQuads);
+        processTuples(dictWriter, tuples);
         prepareForReading();
+    }
+
+    private static String levelName(char component) {
+        return switch (component) {
+            case 'G' -> "g";
+            case 'S' -> "s";
+            case 'P' -> "p";
+            case 'O' -> "o";
+            default -> throw new IllegalStateException("Unknown component: " + component);
+        };
+    }
+
+    private static long id(QuadIds t, char component) {
+        return switch (component) {
+            case 'G' -> t.g();
+            case 'S' -> t.s();
+            case 'P' -> t.p();
+            case 'O' -> t.o();
+            default -> throw new IllegalStateException("Unknown component: " + component);
+        };
+    }
+
+    private static long count(PositionalDictionaryWriter w, char component) {
+        return switch (component) {
+            case 'G' -> w.getNumberOfGraphs();
+            case 'S' -> w.getNumberOfSubjects();
+            case 'P' -> w.getNumberOfPredicates();
+            case 'O' -> w.getNumberOfObjects();
+            default -> throw new IllegalStateException("Unknown component: " + component);
+        };
+    }
+
+    private static int getBitSize(PositionalDictionaryWriter w, char component) {
+        return byteRoundedWidth(count(w, component) + 1);
     }
 
     /**
@@ -138,52 +165,59 @@ public class BGIndex {
      * also bounds the cumulative set-bit count stored in the superblock directory.
      */
     private long computeMaxL0Id(PositionalDictionaryWriter w) {
-        return switch (type.name().charAt(0)) {
-            case 'G' -> w.getNumberOfGraphs();
-            case 'S' -> w.getNumberOfSubjects();
-            case 'P' -> w.getNumberOfPredicates();
-            case 'O' -> w.getNumberOfObjects();
-            default -> throw new IllegalStateException();
+        return count(w, comps[0]);
+    }
+
+    private Comparator<QuadIds> tupleOrder() {
+        final char c0 = comps[0], c1 = comps[1], c2 = comps[2], c3 = comps[3];
+        return (a, b) -> {
+            int r = Long.compare(id(a, c0), id(b, c0));
+            if (r != 0) return r;
+            r = Long.compare(id(a, c1), id(b, c1));
+            if (r != 0) return r;
+            r = Long.compare(id(a, c2), id(b, c2));
+            if (r != 0) return r;
+            return Long.compare(id(a, c3), id(b, c3));
         };
     }
 
-    private void processQuads(PositionalDictionaryWriter w, Quad[] allQuads) {
+    private void processTuples(PositionalDictionaryWriter w, QuadIds[] tuples) {
         // INFO bracketing: sorting millions of quads takes minutes with no other output.
-        logger.info("Sorting {} quads for {}...", allQuads.length, type.name());
+        logger.info("Sorting {} quads for {}...", tuples.length, type.name());
         long sortStart = System.nanoTime();
-        // A per-sort memoizing comparator: literal objects convert once
-        // instead of on every comparison through Jena's global cache (BG-249).
-        Arrays.parallelSort(allQuads, type.getComparator(NodeSorter.sortComparator(allQuads.length)));
+        Arrays.parallelSort(tuples, tupleOrder());
         logger.info("Sorted {} in {} s", type.name(), (System.nanoTime() - sortStart) / 1_000_000_000L);
 
         LevelState l1 = new LevelState(), l2 = new LevelState(), l3 = new LevelState();
-        Quad lastUnique = null;
+        boolean first = true;
+        long last0 = 0, last1 = 0, last2 = 0, last3 = 0;
         long count = 0;
-        long totalQuads = allQuads.length;
+        long totalQuads = tuples.length;
 
         // Establish the Maximum ID for Level 0 so we know how far to pad at the end
         long maxL0Id = computeMaxL0Id(w);
 
         long currentL0 = 1;
 
-        for (Quad curr : allQuads) {
+        for (QuadIds t : tuples) {
             if (++count % 1_000_000 == 0) {
                 logger.info("{} processed {} / {} quads...", type.name(), count, totalQuads);
             }
+            long k0 = id(t, comps[0]);
+            long k1 = id(t, comps[1]);
+            long k2 = id(t, comps[2]);
+            long k3 = id(t, comps[3]);
+
             // 1. Duplicate Check
-            if (lastUnique != null && 
-                positions[0].getNode(lastUnique).equals(positions[0].getNode(curr)) &&
-                positions[1].getNode(lastUnique).equals(positions[1].getNode(curr)) &&
-                positions[2].getNode(lastUnique).equals(positions[2].getNode(curr)) &&
-                positions[3].getNode(lastUnique).equals(positions[3].getNode(curr))) {
+            if (!first && k0 == last0 && k1 == last1 && k2 == last2 && k3 == last3) {
                 continue;
             }
 
-            boolean changeL0 = (lastUnique == null) || !positions[0].getNode(lastUnique).equals(positions[0].getNode(curr));
-            boolean changeL1 = (lastUnique == null) || changeL0 || !positions[1].getNode(lastUnique).equals(positions[1].getNode(curr));
-            boolean changeL2 = (lastUnique == null) || changeL1 || !positions[2].getNode(lastUnique).equals(positions[2].getNode(curr));
+            boolean changeL0 = first || k0 != last0;
+            boolean changeL1 = first || changeL0 || k1 != last1;
+            boolean changeL2 = first || changeL1 || k2 != last2;
 
-            long thisL0 = positions[0].locateInDictionary(w, curr);
+            long thisL0 = k0;
 
             // Pad Missing L0 IDs with Empty Lists ---
             // Each skipped L0 ID gets a dummy row at every level so all buffers stay
@@ -191,34 +225,38 @@ public class BGIndex {
             // Dummy ID value is 0; since real dictionary IDs are >=1, searches for real
             // predicates/objects inside an empty graph's range always miss.
             if (changeL0) {
-                long skipped = (lastUnique == null) ? (thisL0 - 1) : (thisL0 - currentL0 - 1);
+                long skipped = first ? (thisL0 - 1) : (thisL0 - currentL0 - 1);
                 padEmptyL0(skipped, l1, l2, l3);
                 currentL0 = thisL0;
             }
 
-            // 3. Level 3 (Objects)
-            S3.writeLong(positions[3].locateInDictionary(w, curr));
-            int bit3 = changeL2 ? 1 : 0; 
+            // 3. Level 3
+            S3.writeLong(k3);
+            int bit3 = changeL2 ? 1 : 0;
             B3.writeInteger(bit3);
             advanceLevel(l3, bit3, SB3, BB3);
 
-            // 4. Level 2 (Predicates)
+            // 4. Level 2
             if (changeL2) {
-                S2.writeLong(positions[2].locateInDictionary(w, curr));
-                int bit2 = changeL1 ? 1 : 0; 
+                S2.writeLong(k2);
+                int bit2 = changeL1 ? 1 : 0;
                 B2.writeInteger(bit2);
                 advanceLevel(l2, bit2, SB2, BB2);
             }
 
-            // 5. Level 1 (Subjects)
+            // 5. Level 1
             if (changeL1) {
-                S1.writeLong(positions[1].locateInDictionary(w, curr));
-                int bit1 = changeL0 ? 1 : 0; 
+                S1.writeLong(k1);
+                int bit1 = changeL0 ? 1 : 0;
                 B1.writeInteger(bit1);
                 advanceLevel(l1, bit1, SB1, BB1);
             }
 
-            lastUnique = curr;
+            first = false;
+            last0 = k0;
+            last1 = k1;
+            last2 = k2;
+            last3 = k3;
         }
 
         // Pad remaining IDs up to the Dictionary's maximum limit ---
@@ -226,7 +264,7 @@ public class BGIndex {
         padEmptyL0(skipped, l1, l2, l3);
 
         flushAllBuffers();
-      }
+    }
 
     /**
      * Emit `count` full dummy rows across all three levels. Each dummy row occupies
@@ -263,7 +301,7 @@ public class BGIndex {
         if (currentSuperblock != state.lastSuperblockWritten) {
             SB.writeLong(state.onesSoFar);
             state.lastSuperblockWritten = currentSuperblock;
-            state.onesInCurrentSuperblock = 0; 
+            state.onesInCurrentSuperblock = 0;
         }
 
         long currentBlock = state.bitsProcessed / BLOCKSIZE;
@@ -272,7 +310,7 @@ public class BGIndex {
             state.lastBlockWritten = currentBlock;
             state.onesInCurrentBlock = 0;
         }
-    }    
+    }
 
     private void flushAllBuffers() {
         B1.complete(); B2.complete(); B3.complete();

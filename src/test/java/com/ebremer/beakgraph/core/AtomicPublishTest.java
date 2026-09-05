@@ -1,10 +1,11 @@
 package com.ebremer.beakgraph.core;
 
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import java.io.File;
@@ -105,5 +106,58 @@ class AtomicPublishTest {
         try (var files = Files.list(dir)) { assertTrue(files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp")), "a failed BUILD still removes its temp file"); }
         assertFalse(dir.resolve("bad.h5.new").toFile().exists());
         assertFalse(dest.exists());
+    }
+
+    /** BG-237: an Error (the realistic OOM case) removes the temp file exactly like an exception. */
+    @Test
+    void buildDiscardsTheTempFileOnAnErrorToo() throws Exception {
+        Path dest = dir.resolve("oom.h5");
+        Files.writeString(dest, "previous", StandardCharsets.UTF_8);
+        Path[] seen = new Path[1];
+        OutOfMemoryError err = assertThrows(OutOfMemoryError.class, () -> AtomicPublish.build(dest, tmp -> {
+            seen[0] = tmp;
+            Files.writeString(tmp, "half-written", StandardCharsets.UTF_8);
+            throw new OutOfMemoryError("simulated");
+        }));
+        assertEquals("simulated", err.getMessage(), "the Error propagates unchanged");
+        assertFalse(Files.exists(seen[0]), "the temp file is gone");
+        assertEquals("previous", Files.readString(dest), "dest is untouched");
+        try (var files = Files.list(dir)) { assertTrue(files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp"))); }
+        AtomicPublish.build(dest, tmp -> Files.writeString(tmp, "finished", StandardCharsets.UTF_8));
+        assertEquals("finished", Files.readString(dest), "a successful body is published");
+    }
+
+    /** BG-101: temp names are unique per build, so two builds of one destination cannot clobber each other. */
+    @Test
+    void concurrentBuildsOfOneDestinationDoNotShareATempFile() throws Exception {
+        Path dest = dir.resolve("shared.h5");
+        assertNotEquals(AtomicPublish.tempFor(dest), AtomicPublish.tempFor(dest));
+        File one = dir.resolve("one.ttl").toFile();
+        File two = dir.resolve("two.ttl").toFile();
+        Files.writeString(one.toPath(), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Files.writeString(two.toPath(), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n"
+                + "<http://ex.org/c> <http://ex.org/p> <http://ex.org/d> .\n", StandardCharsets.UTF_8);
+        List<Throwable> failures = new java.util.concurrent.CopyOnWriteArrayList<>();
+        Thread[] threads = new Thread[2];
+        File[] srcs = {one, two};
+        for (int i = 0; i < 2; i++) {
+            File src = srcs[i];
+            threads[i] = new Thread(() -> {
+                try {
+                    HDF5Writer.Builder().setSource(src).setDestination(dest.toFile()).build().write();
+                } catch (Throwable t) {
+                    failures.add(t);
+                }
+            });
+            threads[i].start();
+        }
+        for (Thread t : threads) t.join();
+        assertEquals(List.of(), failures, "both builds publish");
+        int n = count(dest.toFile());
+        assertTrue(n == 1 || n == 2, "the published store is one complete build, not a mix: " + n);
+        try (var files = Files.list(dir)) {
+            assertTrue(files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp") || f.getFileName().toString().endsWith(".new")),
+                    "no temp file or retained build left behind");
+        }
     }
 }

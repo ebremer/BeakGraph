@@ -41,6 +41,41 @@ public final class AtomicPublish {
                 + "-" + Long.toUnsignedString(Thread.currentThread().threadId(), 36) + ".tmp");
     }
 
+    /** A build step that writes the finished store into the temp path it is given. */
+    @FunctionalInterface
+    public interface Build {
+        void run(Path tmp) throws IOException;
+    }
+
+    /**
+     * Builds into a unique sibling temp file and publishes it over {@code dest}
+     * only on success. EVERY other exit - IOException, RuntimeException and
+     * Error (an OutOfMemoryError is the realistic failure of an in-memory
+     * engine) - removes the temp file and leaves {@code dest} untouched; the
+     * throwable propagates unchanged (BG-237). Publishing runs outside that
+     * cleanup, so a busy destination keeps the build as {@code <dest>.new}
+     * (see {@link #publish}).
+     */
+    public static void build(Path dest, Build body) throws IOException {
+        Path tmp = tempFor(dest);
+        try {
+            body.run(tmp);
+        } catch (IOException | RuntimeException | Error ex) {
+            discard(tmp);
+            throw ex;
+        }
+        publish(tmp, dest);
+    }
+
+    /** Removes a failed build's temp file; a failure to do so is logged, never thrown. */
+    public static void discard(Path tmp) {
+        try {
+            Files.deleteIfExists(tmp);
+        } catch (IOException cleanup) {
+            logger.warn("Failed to remove temp output {}", tmp, cleanup);
+        }
+    }
+
     /**
      * Moves {@code tmp} over {@code dest}. On failure the finished file is
      * retained (as {@code <dest>.new}, or as {@code tmp} if even that rename

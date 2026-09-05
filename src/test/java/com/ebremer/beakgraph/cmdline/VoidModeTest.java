@@ -70,6 +70,41 @@ class VoidModeTest {
         assertFalse(new Parameters().voidSketch, "VoID must be OFF by default");
     }
 
+    private static final String SD_DATASET = "http://www.w3.org/ns/sparql-service-description#Dataset";
+
+    private boolean describesDataset(File h5, String iri) throws Exception {
+        try (BeakGraph bg = new BeakGraph(new HDF5Reader(h5))) {
+            try (QueryExecution qe = QueryExecution.dataset(bg.getDataset())
+                    .query(QueryFactory.create("ASK { GRAPH <" + Params.VOIDSTRING + "> { <" + iri + "> a <" + SD_DATASET + "> } }")).build()) {
+                return qe.execAsk();
+            }
+        }
+    }
+
+    /** BG-109: the sd:Dataset IRI is no longer the author's domain; it defaults to a BeakGraph URN and is configurable. */
+    @Test
+    void theDatasetIriDefaultsToTheBeakGraphUrnAndIsConfigurable() throws Exception {
+        File byDefault = build("dflt", VoidMode.EXACT);
+        assertEquals("urn:x-beakgraph:dataset", Params.VOID_DATASET_IRI);
+        assertTrue(describesDataset(byDefault, Params.VOID_DATASET_IRI), "default sd:Dataset IRI");
+        assertFalse(describesDataset(byDefault, "https://ebremer.com/void/"), "the author's domain is gone");
+
+        File src = dir.resolve("custom.ttl").toFile();
+        Files.write(src.toPath(), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n".getBytes(StandardCharsets.UTF_8));
+        File custom = dir.resolve("custom.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(custom).setVoidMode(VoidMode.SKETCH)
+                .setVoidDatasetIri("https://data.example.org/slides").build().write();
+        assertTrue(describesDataset(custom, "https://data.example.org/slides"), "configured sd:Dataset IRI");
+        assertFalse(describesDataset(custom, Params.VOID_DATASET_IRI));
+        assertThrows(IllegalArgumentException.class, () -> HDF5Writer.Builder().setVoidDatasetIri(" "));
+
+        Parameters p = new Parameters();
+        com.beust.jcommander.JCommander.newBuilder().addObject(p).build()
+                .parse("-src", "x", "-void", "-voidbase", "https://data.example.org/slides");
+        assertEquals("https://data.example.org/slides", p.voidBase);
+        assertEquals(null, new Parameters().voidBase, "no -voidbase: the default IRI applies");
+    }
+
     @Test
     void voidAndVoidSketchTogetherAreRefused() {
         Parameters p = new Parameters();

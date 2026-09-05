@@ -9,6 +9,19 @@ import java.util.Arrays;
 /**
  * Utility class for String compression using Zstd.
  * Use as: byte[] compressed = StringUtils.compress("my data");
+ * <p>
+ * The codec behind it is platform-dependent: the vendored zstdFFM package
+ * loads aircompressor's native libzstd where one is bundled (Linux, macOS)
+ * and falls back to its pure-Java port elsewhere (Windows). Both produce
+ * valid frames that either side decodes, but the COMPRESSED BYTES differ
+ * between the two encoders, so stores are byte-identical across machines
+ * only when built with the same codec - {@code -Dio.airlift.compress.v3
+ * .disable-native=true} forces the Java codec everywhere. The two also fail
+ * differently on a corrupt frame (the Java port throws
+ * {@code MalformedInputException}, the native binding
+ * {@code IllegalArgumentException} with libzstd's error name); this class
+ * folds both into one {@code IllegalArgumentException("Corrupt compressed
+ * fragment: ...")} so callers see one contract whatever the codec (BG-167).
  */
 public final class StringUtils {
     private final ZstdCompressor COMPRESSOR;
@@ -39,7 +52,12 @@ public final class StringUtils {
                     + " exceeds what " + compressedLength + " compressed bytes can expand to");
         }
         // The frame header usually states the size itself; a disagreement is corruption.
-        long declared = DECOMPRESSOR.getDecompressedSize(compressed, offset, compressedLength);
+        long declared;
+        try {
+            declared = DECOMPRESSOR.getDecompressedSize(compressed, offset, compressedLength);
+        } catch (RuntimeException e) {
+            throw corrupt(e);
+        }
         if (declared >= 0 && declared != uncompressedLength) {
             throw new IllegalArgumentException("Corrupt compressed fragment: header says " + uncompressedLength
                     + " bytes, the zstd frame says " + declared);
@@ -67,7 +85,19 @@ public final class StringUtils {
         if (source == null || source.isEmpty()) {
             return new byte[0];
         }
-        byte[] inputBytes = source.getBytes(StandardCharsets.UTF_8);
+        return compress(source.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Compresses UTF-8 bytes the caller already holds - the FCD writers'
+     * fragments - with the same 4-byte length header, byte for byte what
+     * {@link #compress(String)} produces for the decoded text; it saves a
+     * decode/re-encode round trip per fragment (BG-105).
+     */
+    public byte[] compress(byte[] inputBytes) {
+        if (inputBytes == null || inputBytes.length == 0) {
+            return new byte[0];
+        }
         int uncompressedLength = inputBytes.length;
         int maxOutputLength = COMPRESSOR.maxCompressedLength(uncompressedLength);
         byte[] outputBuffer = new byte[maxOutputLength + HEADER_SIZE];
@@ -112,12 +142,18 @@ public final class StringUtils {
         if (output.length < uncompressedLength) {
             output = new byte[(int) Math.max(uncompressedLength, Math.min(output.length * 2L, MAX_FRAGMENT_BYTES))];
         }
-        int actualDecompressedSize = DECOMPRESSOR.decompress(
-                source, offset + HEADER_SIZE, length - HEADER_SIZE,
-                output, 0, uncompressedLength
-        );
+        int actualDecompressedSize;
+        try {
+            actualDecompressedSize = DECOMPRESSOR.decompress(
+                    source, offset + HEADER_SIZE, length - HEADER_SIZE,
+                    output, 0, uncompressedLength
+            );
+        } catch (RuntimeException e) {
+            throw corrupt(e);
+        }
         if (actualDecompressedSize != uncompressedLength) {
-            throw new IllegalArgumentException("Decompressed size mismatch");
+            throw new IllegalArgumentException("Corrupt compressed fragment: decompressed size mismatch, header says "
+                    + uncompressedLength + " bytes, the frame yielded " + actualDecompressedSize);
         }
         return new String(output, 0, actualDecompressedSize, StandardCharsets.UTF_8);
     }
@@ -151,16 +187,34 @@ public final class StringUtils {
         byte[] outputBuffer = new byte[uncompressedLength];
 
         // 3. Decompress
-        int actualDecompressedSize = DECOMPRESSOR.decompress(
-                compressedInput, 0, compressedSize,
-                outputBuffer, 0, uncompressedLength
-        );
+        int actualDecompressedSize;
+        try {
+            actualDecompressedSize = DECOMPRESSOR.decompress(
+                    compressedInput, 0, compressedSize,
+                    outputBuffer, 0, uncompressedLength
+            );
+        } catch (RuntimeException e) {
+            throw corrupt(e);
+        }
 
         if (actualDecompressedSize != uncompressedLength) {
-            throw new IllegalArgumentException("Decompressed size mismatch. Expected " + uncompressedLength + " but got " + actualDecompressedSize);
+            throw new IllegalArgumentException("Corrupt compressed fragment: decompressed size mismatch, header says "
+                    + uncompressedLength + " bytes, the frame yielded " + actualDecompressedSize);
         }
 
         return new String(outputBuffer, 0, actualDecompressedSize, StandardCharsets.UTF_8);
     }
-    
+
+    /**
+     * One exception for a frame the codec rejects: the Java port's
+     * {@code MalformedInputException}, the native binding's
+     * {@code IllegalArgumentException} ("Unknown error occurred during
+     * decompression: <libzstd name>") and any other codec failure become the
+     * {@code IllegalArgumentException} the header checks already throw.
+     */
+    private static IllegalArgumentException corrupt(RuntimeException e) {
+        return new IllegalArgumentException("Corrupt compressed fragment: the zstd frame is undecodable ("
+                + e.getClass().getSimpleName() + ": " + e.getMessage() + ")", e);
+    }
+
 }

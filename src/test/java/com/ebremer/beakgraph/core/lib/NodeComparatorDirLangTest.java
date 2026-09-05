@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.core.lib;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -49,6 +48,27 @@ class NodeComparatorDirLangTest {
                 "Jena fixed NodeCmp for base direction - see this test's javadoc");
         assertEquals(0, NodeCmp.compareRDFTerms(ltr, fr),
                 "Jena fixed NodeCmp for dirLangString language tags - see this test's javadoc");
+    }
+
+    /**
+     * BG-370: NodeComparator compares language tags case-sensitively, which
+     * is a total order over terms only because Jena canonicalizes every tag
+     * at construction (NodeFactory.createLiteralLang / createLiteralDirLang
+     * -> LangTagX.formatLanguageTag). When this test fails, that precondition
+     * is gone and the comparator needs a case-insensitive primary key on the
+     * tag (see the comment in NodeComparator's language branch).
+     */
+    @Test
+    void jenaTagFormattingStillPresent() {
+        assertEquals("en-US", NodeFactory.createLiteralLang("x", "EN-us").getLiteralLanguage());
+        assertEquals(NodeFactory.createLiteralLang("x", "en"), NodeFactory.createLiteralLang("x", "EN"));
+        assertEquals(0, NodeComparator.INSTANCE.compare(
+                NodeFactory.createLiteralLang("x", "EN"), NodeFactory.createLiteralLang("x", "en")));
+        assertEquals(NodeFactory.createLiteralDirLang("x", "EN", "ltr"),
+                NodeFactory.createLiteralDirLang("x", "en", "ltr"));
+        assertEquals(0, NodeComparator.INSTANCE.compare(
+                NodeFactory.createLiteralDirLang("x", "EN", "ltr"),
+                NodeFactory.createLiteralDirLang("x", "en", "ltr")));
     }
 
     @Test

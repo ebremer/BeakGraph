@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph.utils;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import org.junit.jupiter.api.Test;
 
 /**
@@ -10,6 +10,22 @@ import org.junit.jupiter.api.Test;
  * that drives relative-IRI storage and resolution.
  */
 class UTILTest {
+
+    /** BG-324: the one byte-rounding rule (SPECIFICATIONS.md "Byte-rounded width"). */
+    @Test
+    void byteRoundedWidthFollowsTheSpecification() {
+        assertEquals(8, UTIL.byteRoundedWidth(0));
+        assertEquals(8, UTIL.byteRoundedWidth(1));
+        assertEquals(8, UTIL.byteRoundedWidth(255));
+        assertEquals(16, UTIL.byteRoundedWidth(256));
+        assertEquals(16, UTIL.byteRoundedWidth(65535));
+        assertEquals(24, UTIL.byteRoundedWidth(65536));
+        assertEquals(40, UTIL.byteRoundedWidth(1L << 32));
+        assertEquals(64, UTIL.byteRoundedWidth(Long.MAX_VALUE));
+        for (long v : new long[]{2, 100, 1000, 1 << 20, 1L << 40}) {
+            assertEquals((int) (Math.ceil(UTIL.MinBits(v) / 8.0) * 8), UTIL.byteRoundedWidth(v), "v=" + v);
+        }
+    }
 
     @Test
     void emptyStringIsRelative() {

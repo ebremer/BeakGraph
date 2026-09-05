@@ -7,6 +7,26 @@ brought and what a reader must rebuild.
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
 * Jena 6.2.0, jHDF 0.13.0.
+* Default writer engine: the GSPO/GPOS indexes sort and scan dictionary ids
+  resolved once per quad instead of re-comparing nodes and re-searching the
+  dictionaries (same bytes, much less work); the dictionary build refuses two
+  entries the comparator cannot separate; a spatial literal's later parts keep
+  their index cells when an earlier part's pyramid fails; a missing language
+  tag fails the build instead of storing "no tag"; the VoID `sd:Dataset` IRI
+  is configurable (`-voidbase`, `setVoidDatasetIri`) and defaults to
+  `urn:x-beakgraph:dataset` instead of the author's domain; a writer snapshots
+  its builder and an ingest builder is single-use; parse and guard failures
+  keep their own message instead of "I/O error while reading RDF source";
+  exports use a unique temp name; predicates are guarded at ingest.
+* Core library and utils: a zip source's document is chosen by name over the
+  whole archive (`__MACOSX/` and dot-file entries skipped, an RDF-named entry
+  preferred, several candidates rejected) instead of taking the first file
+  entry; source streams are buffered and a rejected `.gz` releases its file
+  handle; an empty polygon member no longer indexes as Hilbert cell 0; VByte
+  rejects sequences over nine bytes; a corrupt zstd frame surfaces as one
+  `IllegalArgumentException` whichever codec (native or Java) decoded it, and
+  the docs state that compressed bytes depend on the codec
+  (`io.airlift.compress.v3.disable-native=true` forces the Java one).
 * The reference comparator is a strict total order: numbers of every XSD
   numeric datatype order by exact value (range pushdown widens its bounds to
   ARQ's promoted comparison), dateTime and the g* kinds share one instant

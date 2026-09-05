@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
@@ -103,7 +104,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private final HashMap<Node, Long> predTempIds = new HashMap<>();
     private final ArrayList<Node> predByTempId = new ArrayList<>();
     /** Null when voidMode == NONE (the default): no statistics graph is written. */
-    private final BGVoIDSD xvoid;
+    private BGVoIDSD xvoid;
+    private final com.ebremer.beakgraph.core.VoidMode voidMode;
     /**
      * A pluggable Pass A: parse the sources with whatever concurrency the
      * implementation likes, delivering TRANSFORMED quads (default-graph
@@ -160,6 +162,12 @@ public final class HugeBuildPipeline implements AutoCloseable {
         this.sourceRoot = root;
         return this;
     }
+
+    /** IRI of the sd:Dataset resource the statistics graph describes; call before {@link #run} (BG-109). */
+    public HugeBuildPipeline setVoidDatasetIri(String iri) {
+        this.xvoid = BGVoIDSD.forMode(voidMode, iri);
+        return this;
+    }
     private long rows = 0;
     private long parsedQuads = 0;
 
@@ -203,7 +211,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
         this.sources = List.copyOf(sources);
         this.spatial = spatial;
         this.features = features;
-        this.xvoid = BGVoIDSD.forMode(voidMode, "https://ebremer.com/void/");
+        this.voidMode = voidMode;
+        this.xvoid = BGVoIDSD.forMode(voidMode, com.ebremer.beakgraph.Params.VOID_DATASET_IRI);
         this.workDir = workDir;
         this.provider = provider;
         this.stagePool = stagePool;
@@ -411,9 +420,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
         StreamingDictionaryWriter literalsDict = dicts[2];
 
         // ---- Columnar unique-id lists (same widths as PositionalDictionaryWriter) ----
-        int gBits = (int) (Math.ceil(MinBits(numEntities + 1) / 8.0) * 8);
-        int sBits = (int) (Math.ceil(MinBits(numEntities + 1) / 8.0) * 8);
-        int oBits = (int) (Math.ceil(MinBits(numObjects + 1) / 8.0) * 8);
+        int gBits = byteRoundedWidth(numEntities + 1);
+        int sBits = byteRoundedWidth(numEntities + 1);
+        int oBits = byteRoundedWidth(numObjects + 1);
         SpillBitPackedBuffer graphsList = track(new SpillBitPackedBuffer(workDir.resolve("columnar.graphs"), gBits));
         SpillBitPackedBuffer subjectsList = track(new SpillBitPackedBuffer(workDir.resolve("columnar.subjects"), sBits));
         SpillBitPackedBuffer objectsList = track(new SpillBitPackedBuffer(workDir.resolve("columnar.objects"), oBits));
@@ -672,6 +681,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
         } else {
             countEntityKind(o, "object");
         }
+        com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder.requirePredicate(p);
         stats.numIRI++; // the predicate (RAM counts distinct; only >0 gates buffer allocation)
 
         long row = rows++;

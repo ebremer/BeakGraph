@@ -2,7 +2,6 @@ package com.ebremer.beakgraph;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
@@ -26,7 +25,10 @@ import org.junit.jupiter.api.io.TempDir;
  *       into the scaled WKT pyramid instead of being dropped;</li>
  *   <li>every part of a MULTIPOLYGON must be indexed, not just the first;</li>
  *   <li>POINT geometries must be indexed (via their envelope) instead of being
- *       silently skipped.</li>
+ *       silently skipped;</li>
+ *   <li>an empty member (POLYGON EMPTY inside a MULTIPOLYGON) contributes no
+ *       index entry - its null envelope used to clamp onto Hilbert cell 0
+ *       (BG-375).</li>
  * </ul>
  */
 class SpatialFidelityTest {
@@ -37,6 +39,7 @@ class SpatialFidelityTest {
         ex:donut geo:asWKT "POLYGON((0 0,64 0,64 64,0 64,0 0),(16 16,48 16,48 48,16 48,16 16))"^^geo:wktLiteral .
         ex:multi geo:asWKT "MULTIPOLYGON(((0 0,32 0,32 32,0 32,0 0)),((1000 1000,1032 1000,1032 1032,1000 1032,1000 1000)))"^^geo:wktLiteral .
         ex:pt    geo:asWKT "POINT(500 500)"^^geo:wktLiteral .
+        ex:partlyEmpty geo:asWKT "MULTIPOLYGON(EMPTY, ((2000 2000,2010 2000,2010 2010,2000 2010,2000 2000)))"^^geo:wktLiteral .
         """;
 
     @TempDir
@@ -103,6 +106,37 @@ class SpatialFidelityTest {
             ResultSet rs = qe.execSelect();
             assertTrue(rs.hasNext(), "the second MULTIPOLYGON part must be findable");
             assertEquals("http://ex.org/multi", rs.next().get("f").asResource().getURI());
+        }
+    }
+
+    @Test
+    void anEmptyMemberEmitsNoCellButTheRealPartIsIndexed() {
+        // The empty member's envelope is null: floor(-Infinity) clamped into
+        // the Hilbert domain is 0, which indexed the subject at cell 0 of
+        // scale 0 - a false hit for every query touching the origin.
+        assertEquals(0, count("GRAPH <" + Params.SPATIALSTRING + "> { ex:partlyEmpty hal:hilbertCell0 ?c FILTER(?c = 0) }"),
+            "an empty polygon member must not index as cell 0");
+        String q = "PREFIX ex: <http://ex.org/> " +
+            "PREFIX geo: <http://www.opengis.net/ont/geosparql#> " +
+            "PREFIX geof: <http://www.opengis.net/def/function/geosparql/> " +
+            "SELECT ?f WHERE { ?f geo:asWKT ?w FILTER(geof:sfIntersects(?w, " +
+            "\"POLYGON((2002 2002,2008 2002,2008 2008,2002 2008,2002 2002))\"^^geo:wktLiteral)) }";
+        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(q)).build()) {
+            ResultSet rs = qe.execSelect();
+            assertTrue(rs.hasNext(), "the non-empty member must still be findable");
+            assertEquals("http://ex.org/partlyEmpty", rs.next().get("f").asResource().getURI());
+        }
+        String origin = "PREFIX ex: <http://ex.org/> " +
+            "PREFIX geo: <http://www.opengis.net/ont/geosparql#> " +
+            "PREFIX geof: <http://www.opengis.net/def/function/geosparql/> " +
+            "SELECT ?f WHERE { ?f geo:asWKT ?w FILTER(geof:sfIntersects(?w, " +
+            "\"POLYGON((0 0,1 0,1 1,0 1,0 0))\"^^geo:wktLiteral)) }";
+        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(origin)).build()) {
+            ResultSet rs = qe.execSelect();
+            while (rs.hasNext()) {
+                assertTrue(!"http://ex.org/partlyEmpty".equals(rs.next().get("f").asResource().getURI()),
+                    "the empty member must not answer a query at the origin");
+            }
         }
     }
 

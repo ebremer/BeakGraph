@@ -55,8 +55,20 @@ public final class SpatialAugmenter {
 
     private final boolean features;
 
+    /** The pyramid generator applied to one polygonal part; a hook so a failing part can be simulated (BG-372). */
+    interface PartScaler {
+        Polygon[] scale(Polygon part);
+    }
+
+    private final PartScaler scaler;
+
     public SpatialAugmenter(boolean features) {
+        this(features, PolygonScaler::toPolygons);
+    }
+
+    SpatialAugmenter(boolean features, PartScaler scaler) {
         this.features = features;
+        this.scaler = scaler;
     }
 
     public static boolean isGeoLiteral(Quad quad) {
@@ -101,15 +113,29 @@ public final class SpatialAugmenter {
             if (g.isEmpty()) {
                 return qqq;
             }
-            for (Polygon part : ImageTools.spatialParts(g)) {
+            List<Polygon> parts = ImageTools.spatialParts(g);
+            // The recall-safe Hilbert cells of EVERY part first: they never
+            // depend on a pyramid, so a part whose pyramid step fails cannot
+            // cost a LATER part its cells - one catch around the whole loop
+            // used to drop them, leaving the geometry unfindable by the very
+            // parts that were fine, while logging a mere "Skipping" (BG-372).
+            for (Polygon part : parts) {
                 addSpatialIndexCells(qqq, quad, part);
-                addSpatialScales(qqq, quad, wkt, PolygonScaler.toPolygons(part));
+            }
+            for (int i = 0; i < parts.size(); i++) {
+                try {
+                    addSpatialScales(qqq, quad, wkt, scaler.scale(parts.get(i)));
+                } catch (RuntimeException ex) {
+                    logger.warn("Skipping the scaled pyramid for part {}/{} of {} (its index cells are kept): {} ({})",
+                            i + 1, parts.size(), quad.getSubject(), ex.toString(), abbrevWkt(wkt));
+                }
             }
         } catch (Exception ex) {
             // Expected data condition (pathology exports contain degenerate
             // geometries such as two-point rings): one line per skip, no stack -
-            // a slide can contain thousands of these.
-            logger.warn("Skipping spatial indexing for {}: {} ({})",
+            // a slide can contain thousands of these. Only WKT parsing and the
+            // part walk reach here, before anything was emitted for the literal.
+            logger.warn("Skipping spatial indexing for {} (no cells or pyramid written for this literal): {} ({})",
                     quad.getSubject(), ex.toString(), abbrevWkt(wkt));
         }
         return qqq;
@@ -182,6 +208,11 @@ public final class SpatialAugmenter {
      */
     private void addSpatialIndexCells(ArrayList<Quad> qqq, Quad quad, Polygon part) {
         Envelope env = part.getEnvelopeInternal();
+        if (env.isNull()) {
+            // Belt and braces: spatialParts already drops empty polygons; an
+            // empty part's null envelope would clamp onto cell 0 (BG-375).
+            return;
+        }
         // The Hilbert domain is [0, 2^31), so bboxes are CLAMPED into it - never
         // skipped, never allowed to alias (the curve masks out-of-range bits).
         // Clamping is a monotone projection applied identically on the query

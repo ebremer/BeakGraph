@@ -98,6 +98,11 @@ public class Parameters {
                         + "(-method 1/4/5). Mutually exclusive with -void")
     public boolean voidSketch = false;
 
+    @Parameter(names = {"-voidbase"},
+            description = "With -void / -voidsketch: the IRI of the sd:Dataset resource the statistics graph "
+                        + "describes (default " + com.ebremer.beakgraph.Params.VOID_DATASET_IRI + ")")
+    public String voidBase = null;
+
     @Parameter(names = {"-spatial"}, converter = BooleanConverter.class,
             description = "Build the Hilbert-curve spatial index for geo:wktLiteral geometry "
                         + "(adds the urn:x-beakgraph:Spatial graph and grid-tile graphs)")

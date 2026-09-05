@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-
 import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import java.util.ArrayList;
@@ -41,6 +41,28 @@ class DictionaryNodeEncoderTest {
         @Override public void writeFloat(float value) { values.add((double) value); }
         @Override public void writeDouble(double value) { values.add(value); }
         @Override public long getNumEntries() { return values.size(); }
+    }
+
+    /** BG-369: a tag the section's language dictionary does not know fails the build; it used to be written as "no tag". */
+    @Test
+    void aMissingLanguageTagFailsInsteadOfDegradingToNoTag() {
+        Node en = NodeFactory.createLiteralLang("x", "en");
+        Longs langTags = new Longs();
+        DictionaryNodeEncoder known = new DictionaryNodeEncoder("literals", 1, new Longs(), new Longs(), new Longs(),
+                null, null, null, null, null, new Strings(), langTags, null, Map.of(), Map.of("en", 1L), true, null);
+        known.encode(en);
+        assertEquals(List.of(1L), langTags.values, "a known tag writes its id");
+
+        DictionaryNodeEncoder unknown = new DictionaryNodeEncoder("literals", 1, new Longs(), new Longs(), new Longs(),
+                null, null, null, null, null, new Strings(), new Longs(), null, Map.of(), Map.of("fr", 1L), true, null);
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> unknown.encode(en));
+        assertTrue(ex.getMessage().contains("'en'") && ex.getMessage().contains("missing"), ex.getMessage());
+
+        DictionaryNodeEncoder noTags = new DictionaryNodeEncoder("literals", 1, new Longs(), new Longs(), new Longs(),
+                null, null, null, null, null, new Strings(), null, null, Map.of(), Map.of(), true, null);
+        ex = assertThrows(IllegalStateException.class, () -> noTags.encode(en));
+        assertTrue(ex.getMessage().contains("without language tags"), ex.getMessage());
+        noTags.encode(NodeFactory.createLiteralString("plain"));   // untagged literals still encode
     }
 
     @Test

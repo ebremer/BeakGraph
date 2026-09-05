@@ -1,12 +1,12 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -83,9 +83,9 @@ public class PositionalDictionaryWriter implements AutoCloseable {
 
         // 4. Initialize Bit-Packed Buffers for columnar ID lists
         // Determine required bit-widths based on the dictionary sizes
-        int gBits = (int) (Math.ceil(MinBits(getNumberOfGraphs() + 1) / 8.0) * 8);
-        int sBits = (int) (Math.ceil(MinBits(getNumberOfSubjects() + 1) / 8.0) * 8);
-        int oBits = (int) (Math.ceil(MinBits(getNumberOfObjects() + 1) / 8.0) * 8);
+        int gBits = byteRoundedWidth(getNumberOfGraphs() + 1);
+        int sBits = byteRoundedWidth(getNumberOfSubjects() + 1);
+        int oBits = byteRoundedWidth(getNumberOfObjects() + 1);
 
         this.graphs = new BitPackedUnSignedLongBuffer(Path.of("graphs"), null, 0, gBits);
         this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), null, 0, sBits);

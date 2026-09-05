@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.core;
 
+import com.ebremer.beakgraph.Params;
 import java.io.File;
 import java.util.List;
 
@@ -66,6 +67,26 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
 
     public VoidMode getVoidMode() {
         return voidMode;
+    }
+
+    protected String voidDatasetIri = Params.VOID_DATASET_IRI;
+
+    /**
+     * The IRI of the {@code sd:Dataset} resource the VoID/SD statistics graph
+     * describes (CLI {@code -voidbase}); default {@link Params#VOID_DATASET_IRI}.
+     * Every engine threads it into its statistics collector, so the six stay
+     * isomorphic for one configuration (BG-109).
+     */
+    public T setVoidDatasetIri(String iri) {
+        if (iri == null || iri.isBlank()) {
+            throw new IllegalArgumentException("The VoID dataset IRI must not be blank");
+        }
+        this.voidDatasetIri = iri;
+        return self();
+    }
+
+    public String getVoidDatasetIri() {
+        return voidDatasetIri;
     }
 
     public T setSpatial(boolean flag) {

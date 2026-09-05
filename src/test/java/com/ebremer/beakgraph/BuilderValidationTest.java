@@ -1,9 +1,11 @@
 package com.ebremer.beakgraph;
 
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
+import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriter;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer;
@@ -52,5 +54,35 @@ class BuilderValidationTest {
             assertEquals(List.of("in.ttl"), entries.map(p -> p.getFileName().toString()).toList(),
                     "build() creates no workspace or output");
         }
+    }
+
+    /** BG-102: the ingest builder accumulates state, so a second build() is refused. */
+    @Test
+    void theIngestBuilderIsSingleUse() throws Exception {
+        File src = dir.resolve("once.ttl").toFile();
+        Files.writeString(src.toPath(), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n");
+        PositionalDictionaryWriterBuilder b = new PositionalDictionaryWriterBuilder()
+                .setSource(src).setDestination(dir.resolve("once.h5").toFile()).setName("bg");
+        try (PositionalDictionaryWriter first = b.build()) {
+            assertEquals(3, b.getEntities().size(), "a, b and the default-graph node");
+            assertThrows(UnsupportedOperationException.class, () -> b.getEntities().clear(), "getters are read-only views");
+        }
+        IllegalStateException ex = assertThrows(IllegalStateException.class, b::build);
+        assertTrue(ex.getMessage().contains("single-use"), ex.getMessage());
+    }
+
+    /** BG-102: a writer snapshots its builder; mutating the builder afterwards changes nothing. */
+    @Test
+    void aWriterSnapshotsItsBuilder() throws Exception {
+        File src = dir.resolve("snap.ttl").toFile();
+        Files.writeString(src.toPath(), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n");
+        File dest = dir.resolve("snap.h5").toFile();
+        File elsewhere = dir.resolve("elsewhere.h5").toFile();
+        HDF5Writer.Builder builder = HDF5Writer.Builder().setSource(src).setDestination(dest);
+        HDF5Writer writer = builder.build();
+        builder.setDestination(elsewhere).setSource(dir.resolve("missing.ttl").toFile());
+        writer.write();
+        assertTrue(dest.isFile(), "the writer keeps the destination it was built with");
+        assertFalse(elsewhere.exists());
     }
 }

@@ -10,12 +10,22 @@ import java.nio.ByteBuffer;
 /**
  * Builds the {@link RandomAccessBytes} view of a jHDF contiguous dataset.
  *
- * <p>Datasets that fit a ByteBuffer keep today's exact path - jHDF's own
- * mapped buffer, whose lifetime jHDF manages via {@code HdfFile.close()}.
- * Datasets past the 2 GiB ByteBuffer ceiling (which {@code getBuffer()}
- * cannot serve at all) are FFM-mapped at {@code dataAddress + userBlockSize}
- * - the same file offset jHDF itself would map - through jHDF's OWN open
- * channel, with an automatic arena managing the unmap. Mapping through that
+ * <p>Datasets that fit a ByteBuffer use jHDF's own {@code MappedByteBuffer}
+ * ({@code HdfFileChannel.map} over {@code FileChannel.map}). Note that
+ * {@code HdfFile.close()} closes only the underlying channel; it does NOT
+ * unmap - a mapped ByteBuffer has no explicit release, and jHDF holds no
+ * cleaner for it. Datasets past the 2 GiB ByteBuffer ceiling (which
+ * {@code getBuffer()} cannot serve at all) are FFM-mapped at
+ * {@code dataAddress + userBlockSize} - the same file offset jHDF itself
+ * would map - through jHDF's OWN open channel, with an automatic arena
+ * ({@code Arena.ofAuto()}) managing the unmap. Both paths therefore release
+ * their mapping only once the {@link RandomAccessBytes} view becomes
+ * unreachable and a GC runs: on Windows the store file can stay "in use"
+ * after {@code HDF5Reader.close()} whatever {@code beakgraph.ffm.threshold}
+ * says (the {@code @TempDir} cleanup failures the tests work around). A
+ * deterministic unmap would need a confined or shared Arena closed from
+ * {@code HDF5Reader.close()} for the FFM path and an invokeCleaner-style
+ * release for the ByteBuffer path (BG-353). Mapping through that
  * channel pins the same file the dataset's metadata (address, size, the
  * numEntries / width attributes) came from; re-opening the path mapped
  * whatever the path named at that moment, and index datasets are mapped

@@ -1,7 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
 import com.ebremer.beakgraph.Params;
-
 import static com.ebremer.beakgraph.Params.COMPRESSION_THRESHOLD;
 import com.ebremer.beakgraph.hdf5.DataOutputBuffer;
 import com.ebremer.beakgraph.hdf5.HDF5Buffer;
@@ -48,9 +47,8 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable, DictionarySinks.Str
         byte[] finalData;
 
         if (shouldCompress) {
-            // Compress the UTF-8 bytes
-            String temp = new String(data, StandardCharsets.UTF_8);
-            finalData = su.compress(temp);
+            // Compress the UTF-8 bytes as they are (BG-105).
+            finalData = su.compress(data);
             compressed.writeLong(1);
         } else {
             // Keep as raw UTF-8

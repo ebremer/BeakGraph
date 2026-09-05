@@ -1,10 +1,10 @@
 package com.ebremer.beakgraph.huge;
 
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import static com.ebremer.beakgraph.Params.BLOCKSIZE;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.huge.HugeRecords.IdQuad;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,10 +69,8 @@ final class HugeIndexWriter implements AutoCloseable {
         Path dir = Files.createDirectories(workDir.resolve("index." + indexName));
 
         long maxCumulativeOnes = totalRows + maxL0Id() + 128L;
-        int sbBits = MinBits(maxCumulativeOnes);
-        sbBits = (int) (Math.ceil(sbBits / 8.0) * 8);
-        int bbBits = MinBits(SUPERBLOCKSIZE);
-        bbBits = (int) (Math.ceil(bbBits / 8.0) * 8);
+        int sbBits = byteRoundedWidth(maxCumulativeOnes);
+        int bbBits = byteRoundedWidth(SUPERBLOCKSIZE);
 
         B1 = new SpillBitPackedBuffer(dir.resolve("B" + names[1]), 1);
         B2 = new SpillBitPackedBuffer(dir.resolve("B" + names[2]), 1);
@@ -105,11 +103,9 @@ final class HugeIndexWriter implements AutoCloseable {
         };
     }
 
-    /** Mirror of BGIndex.IndexPosition.getBitSize: byte-rounded MinBits(count+1), 0 -> 8. */
+    /** Same width rule as BGIndex: UTIL.byteRoundedWidth(count + 1). */
     private int bitSize(char component) {
-        int needed = MinBits(count(component) + 1);
-        if (needed == 0) return 8;
-        return (int) (Math.ceil(needed / 8.0) * 8);
+        return byteRoundedWidth(count(component) + 1);
     }
 
     private long maxL0Id() {

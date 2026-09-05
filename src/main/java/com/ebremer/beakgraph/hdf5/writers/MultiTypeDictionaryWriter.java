@@ -1,7 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import java.util.Comparator;
 import com.ebremer.beakgraph.Params;
-
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.EmptyDictionaryWriter;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
@@ -94,6 +94,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             sorted = NodeSorter.parallelSort(builder.getNodes());
             logger.info("Sorted dictionary '{}' in {} s", name, (System.nanoTime() - sortStart) / 1_000_000_000L);
         }
+        requireStrictlyAscending(sorted, name);
 
         // --- STEP 2: Initialize Buffers ---
         // BitPackedUnSignedLongBuffer constructors do not throw; assign finals directly.
@@ -272,6 +273,33 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     
     @Override public long getNumberOfNodes() { return sorted.size(); }
     
+    /**
+     * Ids are ranks, so two terms the comparator cannot separate would share
+     * one id and every index row touching either would be silently wrong -
+     * the dictionaries are the one place a comparator gap (a duplicate in a
+     * caller-supplied sorted list, or a NodeCmp regression like the dirLang
+     * one NodeComparatorDirLangTest guards) can be caught for every engine at
+     * once. One pass of adjacent compares, through the same memoizing
+     * comparator the sort used (BG-104).
+     */
+    private static void requireStrictlyAscending(List<Node> sorted, String name) {
+        if (sorted.size() < 2) {
+            return;
+        }
+        Comparator<Node> order = NodeSorter.sortComparator(sorted.size());
+        for (int i = 1; i < sorted.size(); i++) {
+            int c = order.compare(sorted.get(i - 1), sorted.get(i));
+            if (c == 0) {
+                throw new IllegalStateException("Dictionary '" + name + "': NodeComparator answers 0 for two entries, "
+                        + "which would share one id: " + sorted.get(i - 1) + " vs " + sorted.get(i));
+            }
+            if (c > 0) {
+                throw new IllegalStateException("Dictionary '" + name + "': entries are not in NodeComparator order at "
+                        + i + ": " + sorted.get(i - 1) + " > " + sorted.get(i));
+            }
+        }
+    }
+
     @Override
     public long locate(Node element) {
         int pos = NodeSearch.findPosition(sorted, element);

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import java.util.Collections;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
@@ -122,17 +123,26 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         return this;
     }
 
+    private String uVoidDatasetIri = com.ebremer.beakgraph.Params.VOID_DATASET_IRI;
+
+    @Override
+    public UltraIngest setVoidDatasetIri(String iri) {
+        this.uVoidDatasetIri = iri;
+        super.setVoidDatasetIri(iri);
+        return this;
+    }
+
     // ------------------------------------------------------------------
     // overridden state getters
     // ------------------------------------------------------------------
 
-    @Override public Set<Node> getEntities() { return entities; }
-    @Override public Set<Node> getPredicates() { return predicates; }
-    @Override public Set<Node> getLiterals() { return literals; }
-    @Override public Set<Node> getUniqueGraphs() { return uniqueGraphs; }
-    @Override public Set<Node> getUniqueSubjects() { return uniqueSubjects; }
-    @Override public Set<Node> getUniqueObjects() { return uniqueObjects; }
-    @Override public Set<String> getDataTypes() { return dataTypes; }
+    @Override public Set<Node> getEntities() { return Collections.unmodifiableSet(entities); }
+    @Override public Set<Node> getPredicates() { return Collections.unmodifiableSet(predicates); }
+    @Override public Set<Node> getLiterals() { return Collections.unmodifiableSet(literals); }
+    @Override public Set<Node> getUniqueGraphs() { return Collections.unmodifiableSet(uniqueGraphs); }
+    @Override public Set<Node> getUniqueSubjects() { return Collections.unmodifiableSet(uniqueSubjects); }
+    @Override public Set<Node> getUniqueObjects() { return Collections.unmodifiableSet(uniqueObjects); }
+    @Override public Set<String> getDataTypes() { return Collections.unmodifiableSet(dataTypes); }
     @Override public Stats getStats() { return ustats; }
     @Override public Quad[] getQuads() { return quads; }
     @Override public long getNumberOfQuads() { return numQuads; }
@@ -171,7 +181,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         }
         final List<File> inputs = usources.isEmpty() ? List.of(usrc) : List.copyOf(usources);
         final boolean multi = inputs.size() > 1;
-        this.xvoid = BGVoIDSD.forMode(uVoidMode, "https://ebremer.com/void/");
+        this.xvoid = BGVoIDSD.forMode(uVoidMode, uVoidDatasetIri);
         final long ingestStart = System.nanoTime();
         logger.info("Ultra ingest: parsing {} source document(s) on {} threads (spatial={})",
                 inputs.size(), pool.getParallelism(), uspatial);
@@ -280,7 +290,17 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         // cross-document coordination.
         final String labelPrefix = multi ? ("b" + docIndex + "_") : "b";
         final long docStart = System.nanoTime();
-        try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
+        // Only opening is an "I/O error while reading"; parse and guard
+        // failures keep their own message (BG-98).
+        RdfSources.OpenedSource opened;
+        try {
+            opened = RdfSources.open(input);
+        } catch (FileNotFoundException e) {
+            throw new IOException("Source file not found: " + input, e);
+        } catch (IOException e) {
+            throw new IOException("I/O error while reading RDF source: " + input, e);
+        }
+        try (opened) {
             AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input), input);
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
             // The quad stream closes before the executor: that aborts and joins
@@ -323,10 +343,6 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                     extra.add(canonicalizeNumericObject(q));
                 }
             }
-        } catch (FileNotFoundException e) {
-            throw new IOException("Source file not found: " + input, e);
-        } catch (IOException e) {
-            throw new IOException("I/O error while reading RDF source: " + input, e);
         }
         if (extra.isEmpty()) {
             logger.info("Parsed {} quads from {} in {} ms", main.size(), input,
@@ -378,6 +394,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 if (!s.isBlank() && !s.isURI()) {
                     throw new IllegalStateException("Unexpected subject node type (not URI or blank): " + s);
                 }
+                requirePredicate(p);
                 uniqueGraphs.add(g);
                 uniqueSubjects.add(s);
                 uniqueObjects.add(o);

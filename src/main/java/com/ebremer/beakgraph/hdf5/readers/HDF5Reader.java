@@ -659,6 +659,10 @@ public class HDF5Reader implements BGReader {
     public void close() {
         if (!open) return;
         open = false;
+        // Closes jHDF's channel only: the dataset mappings (jHDF's mapped
+        // ByteBuffers and the FFM auto-arena segments) are released when the
+        // RandomAccessBytes views become unreachable and a GC runs, so the
+        // file can stay "in use" on Windows for a while (DatasetBytes, BG-353).
         hdf.close();
         // The node table advertises AutoCloseable and its two caches hold up to
         // a million weighted Node entries each; a closed reader that stays

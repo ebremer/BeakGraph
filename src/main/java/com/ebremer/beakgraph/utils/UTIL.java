@@ -52,6 +52,18 @@ public class UTIL {
     }
 
     /**
+     * Byte-rounded bit width for values up to {@code maxValue}: {@link #MinBits}
+     * rounded up to a multiple of 8, floor 8 (SPECIFICATIONS.md "Byte-rounded
+     * width"). The ONE implementation behind every writer's columnar id lists
+     * and index S/SB/BB buffers - the same float expression used to be inlined
+     * 22 times across eight writer files (BG-324).
+     */
+    public static int byteRoundedWidth(long maxValue) {
+        int w = MinBits(maxValue);
+        return (w <= 0) ? 8 : ((w + 7) / 8) * 8;
+    }
+
+    /**
      * Broadword selection: the 0-based index (from the MSB) of the k-th set bit
      * (k &gt;= 1) of {@code word}, in O(1) via six popcount narrowing steps. The
      * SINGLE implementation shared by the bit-packed buffer's linear select1 and

@@ -129,9 +129,25 @@ public final class DictionaryNodeEncoder {
             String dt = node.getLiteralDatatypeURI();
             long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
             if (literalsPresent) typedLiterals.writeLong(dtId);
+            String lang = node.getLiteralLanguage();
+            boolean tagged = lang != null && !lang.isEmpty();
             if (langTags != null) {
-                String lang = node.getLiteralLanguage();
-                langTags.writeLong((lang == null || lang.isEmpty()) ? 0L : langLookUp.getOrDefault(lang, 0L));
+                long langId = 0L;
+                if (tagged) {
+                    // A tag missing from the section's language dictionary
+                    // used to be written as 0 ("no tag"), quietly turning
+                    // "x"@en into a plain literal on read (BG-369).
+                    Long id = langLookUp.get(lang);
+                    if (id == null) {
+                        throw new IllegalStateException("Language tag '" + lang + "' of " + node
+                                + " is missing from dictionary '" + name + "' langs (stats/allocation mismatch)");
+                    }
+                    langId = id;
+                }
+                langTags.writeLong(langId);
+            } else if (tagged) {
+                throw new IllegalStateException("Dictionary '" + name + "' was allocated without language tags but "
+                        + node + " carries '" + lang + "' (stats/allocation mismatch)");
             }
             if (langDirs != null) {
                 TextDirection dir = node.getLiteralBaseDirection();

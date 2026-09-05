@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph.hdf5.writers.parallel;
 
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import static com.ebremer.beakgraph.Params.BLOCKSIZE;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import io.jhdf.api.WritableGroup;
@@ -115,10 +115,8 @@ public class ParallelBGIndex {
         // plus one padding row per L0 id, so (tuples.length + maxL0Id) bounds it - the
         // same sizing as the sequential BGIndex.
         long maxCumulativeOnes = (long) tuples.length + computeMaxL0Id(dictWriter) + 128L;
-        int sbBits = MinBits(maxCumulativeOnes);
-        sbBits = (int) (Math.ceil(sbBits / 8.0) * 8);
-        int bbBits = MinBits(SUPERBLOCKSIZE);
-        bbBits = (int) (Math.ceil(bbBits / 8.0) * 8);
+        int sbBits = byteRoundedWidth(maxCumulativeOnes);
+        int bbBits = byteRoundedWidth(SUPERBLOCKSIZE);
 
         String n1 = levelName(comps[1]);
         String n2 = levelName(comps[2]);
@@ -179,9 +177,7 @@ public class ParallelBGIndex {
     }
 
     private static int getBitSize(ParallelPositionalDictionaryWriter w, char component) {
-        int needed = MinBits(count(w, component) + 1);
-        if (needed == 0) return 8;
-        return (int) (Math.ceil(needed / 8.0) * 8);
+        return byteRoundedWidth(count(w, component) + 1);
     }
 
     /**

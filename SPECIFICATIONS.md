@@ -19,9 +19,10 @@ What this document does **not** cover, because it is specified elsewhere:
 All facts below were taken from the 0.18.0 reference implementation and cross-checked against a real
 file built and byte-dumped for the purpose; Appendix A reproduces that worked example. The reference
 implementation ships six build engines (`-method 0…5`); they are alternative *pipelines*, not
-alternative *formats* — methods 0/2/3 produce byte-identical stores and methods 1/4/5 produce
-isomorphic stores (blank-node treatment aside, §7.6). This document specifies the format they all
-target.
+alternative *formats* — methods 0/2/3 produce byte-identical stores (when built with the same zstd
+codec on the same platform: the compressed fragment bytes are encoder-dependent, §5.4) and methods
+1/4/5 produce isomorphic stores (blank-node treatment aside, §7.6). This document specifies the
+format they all target.
 
 ---
 
@@ -206,7 +207,12 @@ Wherever a string fragment is stored compressed (flagged per-entry, §5.5), the 
 
 Any compliant zstd encoder output is acceptable (the reference uses aircompressor; readers use a
 standard zstd decoder and rely on the explicit length header for output sizing, not on the frame's
-optional content-size field).
+optional content-size field). The frame bytes are therefore **encoder-dependent**: the reference
+implementation compresses with aircompressor's native libzstd where one is bundled (Linux, macOS) and
+with its pure-Java port elsewhere (Windows), and the two encode the same input to different (equally
+valid) frames. Two stores are byte-identical only when built with the same codec; the system property
+`io.airlift.compress.v3.disable-native=true` forces the Java codec on every platform when
+reproducible bytes are wanted. Neither encoder writes the optional frame checksum.
 
 ### 5.5 Front-coded string dictionary (FCD)
 
