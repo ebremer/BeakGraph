@@ -4,6 +4,8 @@ import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.io.DatasetBytes;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
 import java.util.Optional;
@@ -20,6 +22,17 @@ public class PositionalDictionaryReader implements GSPODictionary {
     private final MultiTypeDictionaryReader entities;
     private final MultiTypeDictionaryReader predicates;
     private final MultiTypeDictionaryReader literals;
+    /**
+     * Small per-store memo for query-time derivations that depend only on this
+     * dictionary's ids (the FILTER range bounds of a pattern shape, see
+     * {@code RangeBounds}): resolved once, reused across the bindings of a
+     * join step and the chunks of a parallel scan.
+     */
+    private final Cache<Object, Object> queryMemo = Caffeine.newBuilder().maximumSize(256).build();
+
+    public Cache<Object, Object> queryMemo() {
+        return queryMemo;
+    }
     private final long maxEntityId;
     // RDF 1.2 triple terms occupy a CONTIGUOUS SUFFIX of the object id space
     // (they macro-rank after every literal in the literals section). Sentinel

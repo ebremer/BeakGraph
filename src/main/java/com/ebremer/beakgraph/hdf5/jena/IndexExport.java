@@ -135,7 +135,8 @@ public final class IndexExport {
 
         private final NodeFormatterNT fmt = new NodeFormatterNT(CharSpace.UTF8);
         private final java.util.function.UnaryOperator<Node> termMap;
-        private final Map<Long, String> predicateText = new HashMap<>();
+        /** Predicate ids are dense 1..N and the dictionary is small: a plain array, no boxed keys (BG-253). */
+        private String[] predicateText;
         private final LongTextMap objectText = new LongTextMap(OBJECT_TEXT_CACHE);
 
         Emitter(PositionalDictionaryReader dict, IndexReader gspo, Writer w, java.util.function.UnaryOperator<Node> termMap) {
@@ -226,7 +227,19 @@ public final class IndexExport {
         }
 
         private String predicateText(long pid) {
-            return predicateText.computeIfAbsent(pid, id -> text(predicates.extract(id)));
+            if (predicateText == null) {
+                long n = predicates.getNumberOfNodes();
+                predicateText = new String[(int) Math.min(n + 1, 1 << 24)];
+            }
+            if (pid >= 0 && pid < predicateText.length) {
+                String t = predicateText[(int) pid];
+                if (t == null) {
+                    t = text(predicates.extract(pid));
+                    predicateText[(int) pid] = t;
+                }
+                return t;
+            }
+            return text(predicates.extract(pid));
         }
 
         private String objectText(long oid) {
@@ -251,16 +264,39 @@ public final class IndexExport {
      * access-ordered LRU cost more per hit than it saved). Load factor <= 0.5.
      * Single-threaded (one per export).
      */
-    private static final class LongTextMap {
+    static final class LongTextMap {
         private final long[] keys;
         private final String[] vals;
         private final int mask;
         private final int maxEntries;
         private int size;
 
+        /** Most entries the memo keeps: a 2^27-slot table (1 GiB of keys) is already far past any useful memo. */
+        static final int MAX_ENTRIES = 1 << 26;
+
+        /** Entries actually kept for a requested size: clamped to [1024, MAX_ENTRIES]. */
+        static int entriesFor(int maxEntries) {
+            return (int) Math.min(MAX_ENTRIES, Math.max(1024L, maxEntries));
+        }
+
+        /**
+         * Slots for a requested size - a power of two at least twice the entries
+         * kept (load factor <= 0.5), computed in long arithmetic. The int
+         * expression wrapped for -Dbeakgraph.export.textcache >= 2^29, giving a
+         * negative array size or a zero-capacity table whose first get() threw
+         * (BG-75).
+         */
+        static int capacityFor(int maxEntries) {
+            return (int) (Long.highestOneBit(entriesFor(maxEntries) * 2L - 1) << 1);
+        }
+
         LongTextMap(int maxEntries) {
-            this.maxEntries = maxEntries;
-            int capacity = Integer.highestOneBit(Math.max(1024, maxEntries) * 2 - 1) << 1;
+            int entries = entriesFor(maxEntries);
+            if (entries != maxEntries) {
+                logger.warn("beakgraph.export.textcache={} is outside 1024..{}; using {}", maxEntries, MAX_ENTRIES, entries);
+            }
+            this.maxEntries = entries;
+            int capacity = capacityFor(maxEntries);
             this.keys = new long[capacity];
             this.vals = new String[capacity];
             this.mask = capacity - 1;

@@ -145,16 +145,10 @@ public class PatternMatchBG {
     public static class SpatialContext {
         Var geometryVar;
         String searchRegionWKT;
-        int scale;
 
         public SpatialContext(Var v, String wkt) {
-            this(v, wkt, 0);
-        }
-        
-        public SpatialContext(Var v, String wkt, int scale) {
             this.geometryVar = v;
             this.searchRegionWKT = wkt;
-            this.scale = scale;
         }
     }
 
@@ -178,55 +172,32 @@ public class PatternMatchBG {
                 continue;
             }
             
-            int argCount = func.getArgs().size();
-            
-            if (argCount == 2) {
+            // geof:sfIntersects(?geometry, <constant WKT>): exactly two arguments.
+            // A third "scale" argument used to be parsed and then ignored - the
+            // candidate sweep covers every index scale regardless - so a query
+            // that named a pyramid level got the identical answer without a word;
+            // the function now refuses it at build time (BG-318).
+            if (func.getArgs().size() == 2) {
                 Expr arg0 = func.getArgs().get(0);
                 Expr arg1 = func.getArgs().get(1);
-                
+
                 if (arg0.isVariable()) {
                     Var targetVar = arg0.asVar();
                     String wktString = extractWKTString(arg1);
-                    
+
                     if (wktString != null) {
                         return new SpatialContext(targetVar, wktString);
                     }
                 }
-            } else if (argCount == 3) {
-                Expr arg0 = func.getArgs().get(0);
-                Expr arg1 = func.getArgs().get(1);
-                Expr arg2 = func.getArgs().get(2);
-                
-                if (arg0.isVariable()) {
-                    Var targetVar = arg0.asVar();
-                    String wktString = extractWKTString(arg1);
-                    Integer scale = extractScale(arg2);
-                    
-                    if (wktString != null && scale != null) {
-                        return new SpatialContext(targetVar, wktString, scale);
-                    }
-                }
             }
         }
-        
+
         return null;
     }
 
     private static String extractWKTString(Expr expr) {
         if (expr.isConstant()) {
             return expr.getConstant().asNode().getLiteralLexicalForm();
-        }
-        return null;
-    }
-
-    private static Integer extractScale(Expr expr) {
-        if (expr.isConstant()) {
-            try {
-                String lexicalForm = expr.getConstant().asNode().getLiteralLexicalForm();
-                return Integer.valueOf(lexicalForm);
-            } catch (NumberFormatException ex) {
-                return null;
-            }
         }
         return null;
     }

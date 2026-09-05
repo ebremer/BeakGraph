@@ -78,7 +78,9 @@ final class ValueCluster {
         // the value-equal cluster, silently dropping rows at the boundary -
         // the very loss this class exists to prevent (BG-68).
         long n = dict.getNumberOfNodes();
-        while (hi + 1 <= n && valueEqual(dict.extract(hi + 1), value)) hi++;
+        // Ids are 1-based: an insertion point of 0 (an absent section answers -1)
+        // must not probe id 0 - extract() now fails loudly for it (BG-68).
+        while (hi + 1 >= 1 && hi + 1 <= n && valueEqual(dict.extract(hi + 1), value)) hi++;
         while (lo - 1 >= 1 && valueEqual(dict.extract(lo - 1), value)) lo--;
         return new long[]{lo, hi};
     }
@@ -111,7 +113,7 @@ final class ValueCluster {
         long raw = dict.search(probe(v));
         long last = raw >= 0 ? raw : (-raw - 1) - 1;
         long n = dict.getNumberOfNodes();
-        while (last + 1 <= n && sameValue(dict, last + 1, v)) last++;
+        while (last + 1 >= 1 && last + 1 <= n && sameValue(dict, last + 1, v)) last++;
         return last;
     }
 

@@ -148,6 +148,64 @@ class LWSStorageServletTest {
     }
 
     @Test
+    void negotiationHonoursQualityAndWildcards() {
+        java.util.List<String> offered = LWSStorageServlet.CONTAINER_TYPES;
+        assertEquals("text/html", LWSStorageServlet.negotiate(null, offered), "no Accept: the first offered type");
+        assertEquals("text/html", LWSStorageServlet.negotiate("*/*", offered), "curl's default");
+        assertEquals("application/ld+json", LWSStorageServlet.negotiate("text/turtle;q=0.1, application/ld+json", offered));
+        assertEquals("application/json", LWSStorageServlet.negotiate("application/json", offered),
+                "a plain application/json request is answered as application/json, not ld+json");
+        assertEquals("application/ld+json", LWSStorageServlet.negotiate("application/ld+json;profile=user-profile", offered),
+                "parameters other than q are ignored");
+        assertNull(LWSStorageServlet.negotiate("text/turtle;q=0", java.util.List.of("text/turtle")), "q=0 excludes");
+        assertEquals("text/html", LWSStorageServlet.negotiate("text/turtle;q=0, */*", offered), "excluded, then anything else");
+        assertEquals("text/turtle", LWSStorageServlet.negotiate("text/turtle, */*;q=0.1", offered), "Jena's shape: the exact type wins over */*");
+        assertEquals("text/turtle", LWSStorageServlet.negotiate("text/*", java.util.List.of("application/json", "text/turtle")));
+        assertNull(LWSStorageServlet.negotiate("image/png", offered), "nothing acceptable: 406");
+        assertEquals("application/lws+json", LWSStorageServlet.negotiate("application/json;q=0.5, application/lws+json;q=0.9", offered));
+    }
+
+    @Test
+    void contentDispositionEscapesAndEncodes() {
+        assertEquals("attachment; filename=\"a\\\\b\\\"c.txt\"; filename*=UTF-8''a%5Cb%22c.txt",
+                LWSStorageServlet.contentDisposition("a\\b\"c.txt"));
+        assertEquals("attachment; filename=\"_bersicht.pdf\"; filename*=UTF-8''%C3%9Cbersicht.pdf",
+                LWSStorageServlet.contentDisposition("\u00dcbersicht.pdf"));
+        assertEquals("attachment; filename=\"trailing\\\\\"; filename*=UTF-8''trailing%5C",
+                LWSStorageServlet.contentDisposition("trailing\\"));
+        assertEquals("attachment; filename=\"plain file.txt\"; filename*=UTF-8''plain%20file.txt",
+                LWSStorageServlet.contentDisposition("plain file.txt"));
+    }
+
+    @Test
+    void ifNoneMatchIsAWeakListComparison() {
+        String etag = "\"abc\"";
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"abc\""), etag));
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"nope\", \"abc\""), etag), "a list");
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("W/\"abc\""), etag), "a weak validator");
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("*"), etag), "the wildcard");
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"x\"", "\"abc\""), etag), "a repeated field");
+        assertFalse(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"nope\""), etag));
+        assertFalse(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of(""), etag));
+    }
+
+    @Test
+    void aliasIsOnlyTheExactSegment() {
+        assertEquals("", LWSStorageServlet.stripAlias("HalcyonStorage"));
+        assertEquals("x/y", LWSStorageServlet.stripAlias("HalcyonStorage/x/y"));
+        assertEquals("HalcyonStorageArchive/z", LWSStorageServlet.stripAlias("HalcyonStorageArchive/z"), "a name sharing the prefix is not the alias");
+        assertEquals("plain", LWSStorageServlet.stripAlias("plain"));
+    }
+
+    @Test
+    void configuredBaseIsNormalizedPerInstance() {
+        assertNull(LWSStorageServlet.normalizeBase(null));
+        assertNull(LWSStorageServlet.normalizeBase("  "));
+        assertEquals("https://x.example/", LWSStorageServlet.normalizeBase("https://x.example"));
+        assertEquals("https://x.example/", LWSStorageServlet.normalizeBase("https://x.example/"));
+    }
+
+    @Test
     void fileUrisAreNotExposableToClients() {
         org.apache.jena.rdf.model.Model m = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
         assertFalse(LWSStorageServlet.exposableToClient(

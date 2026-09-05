@@ -17,6 +17,46 @@ class LWSMetadataGeneratorTest {
     Path root;
 
     @Test
+    void reservedAndHiddenEntriesAreNotIndexedAndBothWalksAgree() throws Exception {
+        Files.write(root.resolve("good.txt"), new byte[]{1});
+        Files.write(root.resolve("description"), new byte[]{2});     // shadowed by the fixed /description route
+        Files.write(root.resolve("sparql"), new byte[]{3});
+        Files.write(Files.createDirectories(root.resolve("rdf")).resolve("in-rdf.txt"), new byte[]{4});
+        Files.write(Files.createDirectories(root.resolve("HalcyonStorage")).resolve("aliased.txt"), new byte[]{5});
+        Files.write(Files.createDirectories(root.resolve("HalcyonStorageArchive")).resolve("kept.txt"), new byte[]{6});
+        Files.write(Files.createDirectories(root.resolve("sub")).resolve("description"), new byte[]{7}); // only the ROOT names are reserved
+        Files.write(root.resolve(".hidden"), new byte[]{8});
+        Files.write(Files.createDirectories(root.resolve(".git")).resolve("HEAD"), new byte[]{9});
+        Path dosHidden = Files.write(root.resolve("attr-hidden.txt"), new byte[]{10});
+        boolean dosHiddenSet = false;
+        try {
+            Files.setAttribute(dosHidden, "dos:hidden", true);
+            dosHiddenSet = Files.isHidden(dosHidden);
+        } catch (Exception notWindows) {
+            // no DOS attributes here: the dot-name cases cover the rule
+        }
+        Model model = LWSMetadataGenerator.generateLWSModel(root);
+        String base = LWSMetadataGenerator.CANONICAL_BASE;
+        java.util.Set<String> items = model.getResource(base).listProperties(com.ebremer.ns.LWS.items)
+                .mapWith(st -> st.getResource().getURI().substring(base.length() + 1)).toSet();
+        assertTrue(items.contains("good.txt"), items.toString());
+        assertTrue(items.contains("HalcyonStorageArchive"), "a name merely sharing the alias prefix is content: " + items);
+        assertTrue(items.contains("sub"), items.toString());
+        for (String reserved : LWSMetadataGenerator.RESERVED_ROOT_NAMES) {
+            assertFalse(items.contains(reserved), reserved + " is shadowed by a fixed route: " + items);
+        }
+        assertFalse(items.contains(".hidden"), items.toString());
+        assertFalse(items.contains(".git"), items.toString());
+        if (dosHiddenSet) {
+            assertFalse(items.contains("attr-hidden.txt"), "the platform's hidden attribute counts too: " + items);
+        }
+        assertFalse(model.containsResource(model.createResource(base + "/rdf/in-rdf.txt")), "a reserved directory's subtree is skipped");
+        assertTrue(model.containsResource(model.createResource(base + "/sub/description")), "reserved names apply at the root only");
+        assertEquals(LWSMetadataGenerator.treeSignature(root), LWSMetadataGenerator.modelSignature(model),
+                "the signature walk must exclude exactly what the model walk excludes, or the refresher regenerates forever");
+    }
+
+    @Test
     void regenerationDoesNotIndexTheMetadataCacheItself() throws Exception {
         Files.write(root.resolve("data.h5"), new byte[]{1, 2, 3});
         // A previous generation's cache is on disk - the regeneration walk must

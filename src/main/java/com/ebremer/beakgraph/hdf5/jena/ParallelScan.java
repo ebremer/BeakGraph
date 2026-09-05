@@ -148,7 +148,13 @@ public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abo
     private static void runChunk(Shared sh, Supplier<Iterator<BindingNodeId>> chunk) {
         ACTIVE_WORKERS.incrementAndGet();
         try {
+            // A chunk's setup (index selects, the initial advance) is real work:
+            // skip it for a scan that was closed or cancelled before this worker
+            // got its turn, and do not iterate after a setup that outlived the
+            // scan (BG-64). offerEnd in finally keeps the END accounting intact.
+            if (sh.stopped()) return;
             Iterator<BindingNodeId> it = chunk.get();
+            if (sh.stopped()) return;
             BindingNodeId[] buf = new BindingNodeId[BATCH];
             int n = 0;
             while (!sh.stopped() && it.hasNext()) {

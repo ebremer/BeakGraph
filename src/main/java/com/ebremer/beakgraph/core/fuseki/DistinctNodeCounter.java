@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.core.fuseki;
 import com.ebremer.beakgraph.core.lib.HyperLogLog;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.TextDirection;
 
@@ -25,6 +26,8 @@ final class DistinctNodeCounter {
     private final int exactLimit;
     private volatile Set<Node> exact = ConcurrentHashMap.newKeySet();
     private volatile HyperLogLog sketch;
+    /** Insertions that grew the set - a cheap stand-in for CHM.size(), which walks every segment (BG-255). */
+    private final AtomicInteger grown = new AtomicInteger();
 
     DistinctNodeCounter(int exactLimit) {
         this.exactLimit = exactLimit;
@@ -33,8 +36,10 @@ final class DistinctNodeCounter {
     void add(Node n) {
         Set<Node> e = exact;
         if (e != null) {
-            e.add(n);
-            if (e.size() > exactLimit) {
+            // The limit is checked only when the set actually grew, and against a
+            // counter rather than the set's size: this runs once per quad on
+            // every engine's ingest path. EXACT mode (no limit) never checks.
+            if (e.add(n) && exactLimit != Integer.MAX_VALUE && grown.incrementAndGet() > exactLimit) {
                 spill();
             }
             return;

@@ -50,6 +50,23 @@ public class HilbertPolygon {
                                        .stream()
                                        .collect(Collectors.toList());
 
+        // When clamping moved an edge, the candidate cells lie at the domain
+        // border while the polygon lies outside it: the per-cell relevance test
+        // (the unclamped polygon against each clamped cell) rejected every cell
+        // and returned an EMPTY cover for a geometry the writers index at exactly
+        // those border cells (BG-72). Keep the whole clamped cover instead - the
+        // same superset the index holds; the sfIntersects verification removes
+        // the false positives.
+        double cellSize = (double) (1L << scale);
+        Envelope clamped = new Envelope((double) (minX << scale), (double) (maxX << scale) + cellSize,
+                                        (double) (minY << scale), (double) (maxY << scale) + cellSize);
+        boolean clampingMovedAnEdge = Math.floor(env.getMinX()) < 0 || Math.floor(env.getMinY()) < 0
+                || Math.floor(env.getMaxX()) > HilbertSpace.clampToDomain(Long.MAX_VALUE)
+                || Math.floor(env.getMaxY()) > HilbertSpace.clampToDomain(Long.MAX_VALUE);
+        if (clampingMovedAnEdge && !clamped.intersects(env)) {
+            return compact(candidateRanges);
+        }
+
         ArrayList<Range> filteredRanges = new ArrayList<>();
         for (Range r : candidateRanges) {
             if (isRangeRelevant(r, poly, scale)) {

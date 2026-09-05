@@ -2,6 +2,9 @@ package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.BeakGraph;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Arrays;
+import java.util.ArrayList;
 import org.apache.jena.atlas.iterator.Iter;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Var;
@@ -53,40 +56,59 @@ public class BindingBG extends BindingBase {
         return idBinding.containsKey(var) && (parent == null || !parent.contains(var));
     }
 
+    /**
+     * This level's variables, computed once: the binding is immutable, and
+     * Jena's equals / hashCode / DISTINCT call vars() and size() per row,
+     * each of which re-walked the id chain and probed the parent for every
+     * variable (O(k^2) per call, BG-76).
+     */
+    private Var[] ownVars;
+
+    private Var[] ownVars() {
+        Var[] own = ownVars;
+        if (own == null) {
+            List<Var> list = new ArrayList<>(4);
+            Iterator<Var> it = idBinding.iterator();
+            while (it.hasNext()) {
+                Var v = it.next();
+                if (parent == null || !parent.contains(v)) {
+                    list.add(v);
+                }
+            }
+            own = list.toArray(new Var[0]);
+            ownVars = own;
+        }
+        return own;
+    }
+
     @Override
     protected Node get1(Var var) {
-        if (ownVar(var)) {
-            long id = idBinding.get(var);
-            // A var bound to "does not exist" has no node here; return null so
-            // BindingBase falls back to the parent binding.
-            if (NodeId.isDoesNotExist(id)) {
-                return null;
-            }
-            return bGraph.getReader().getNodeTable().getNodeForNodeId(id);
+        // One chain walk; the parent is consulted only for a variable found here.
+        long id = idBinding.get(var);
+        if (id == NodeId.NONE || (parent != null && parent.contains(var))) {
+            return null;
         }
-        return null;
+        // A var bound to "does not exist" has no node here; return null so
+        // BindingBase falls back to the parent binding.
+        if (NodeId.isDoesNotExist(id)) {
+            return null;
+        }
+        return bGraph.getReader().getNodeTable().getNodeForNodeId(id);
     }
 
     @Override
     protected Iterator<Var> vars1() {
-        return Iter.filter(idBinding.iterator(), this::ownVar);
+        return Arrays.asList(ownVars()).iterator();
     }
 
     @Override
     protected int size1() {
-        int n = 0;
-        Iterator<Var> it = idBinding.iterator();
-        while (it.hasNext()) {
-            if (ownVar(it.next())) {
-                n++;
-            }
-        }
-        return n;
+        return ownVars().length;
     }
 
     @Override
     protected boolean isEmpty1() {
-        return size1() == 0;
+        return ownVars().length == 0;
     }
 
     @Override
@@ -114,9 +136,7 @@ public class BindingBG extends BindingBase {
 
     private Binding materialize(Binding newParent) {
         BindingBuilder builder = Binding.builder(newParent);
-        Iterator<Var> it = idBinding.iterator();
-        while (it.hasNext()) {
-            Var v = it.next();
+        for (Var v : ownVars()) {
             if (builder.contains(v)) continue;
             Node n = get1(v);
             if (n != null) {

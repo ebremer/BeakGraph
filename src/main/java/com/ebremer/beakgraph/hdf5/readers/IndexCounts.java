@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdf5.readers;
 
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
+import com.ebremer.beakgraph.hdf5.jena.RangeSelect;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
@@ -49,14 +50,14 @@ public final class IndexCounts {
         IndexReader ir = reader.getIndexReader(index);
         if (ir == null) return -1;
         String order = index.name();
-        long[] l1 = firstLevelRange(ir, order.charAt(1), gi);
+        long[] l1 = RangeSelect.firstLevelRange(ir, order.charAt(1), gi);
         if (l1 == null) return 0;
         // Child positions spanned by parents [start..end]: blocks are contiguous,
         // so the range runs from parent start's first child to the position just
         // before parent (end+1)'s first child - and identically one level down.
-        long[] l2 = childRange(ir, order.charAt(2), l1[0], l1[1]);
+        long[] l2 = RangeSelect.childRange(ir, order.charAt(2), l1[0], l1[1]);
         if (l2 == null) return 0;
-        long[] l3 = childRange(ir, order.charAt(3), l2[0], l2[1]);
+        long[] l3 = RangeSelect.childRange(ir, order.charAt(3), l2[0], l2[1]);
         if (l3 == null) return 0;
         return l3[1] - l3[0] + 1;
     }
@@ -76,7 +77,7 @@ public final class IndexCounts {
         if (gi == UNSUPPORTED) return -1;
         IndexReader ir = reader.getIndexReader(index);
         if (ir == null) return -1;
-        long[] range = firstLevelRange(ir, component, gi);
+        long[] range = RangeSelect.firstLevelRange(ir, component, gi);
         return (range == null) ? 0 : (range[1] - range[0] + 1);
     }
 
@@ -94,41 +95,4 @@ public final class IndexCounts {
         return reader.getDictionary().getGraphs().locate(g);
     }
 
-    /**
-     * The inclusive position range of graph {@code gi}'s block at the index's first
-     * level, or null when the graph has no rows (absent id or padding-only block).
-     */
-    private static long[] firstLevelRange(IndexReader ir, char component, long gi) {
-        if (gi < 1) return null;
-        BitPackedUnSignedLongBuffer bitmap = ir.getBitmapBuffer(component);
-        BitPackedUnSignedLongBuffer ids = ir.getIDBuffer(component);
-        long start = select1(ir.getDirectory(component), bitmap, gi);
-        if (start == -1) return null;
-        long next = select1(ir.getDirectory(component), bitmap, gi + 1);
-        long end = (next == -1) ? ids.getNumEntries() - 1 : next - 1;
-        if (start > end) return null;
-        if (ids.get(start) == 0) return null; // padding row: the graph is empty
-        return new long[]{start, end};
-    }
-
-    /**
-     * The inclusive position range at a child level spanned by parent positions
-     * [{@code parentStart}..{@code parentEnd}]: parent position i's child block
-     * starts at the (i+1)-th set bit (the addressing every BGIterator uses).
-     */
-    private static long[] childRange(IndexReader ir, char component, long parentStart, long parentEnd) {
-        BitPackedUnSignedLongBuffer bitmap = ir.getBitmapBuffer(component);
-        BitPackedUnSignedLongBuffer ids = ir.getIDBuffer(component);
-        long start = select1(ir.getDirectory(component), bitmap, parentStart + 1);
-        if (start == -1) return null;
-        long next = select1(ir.getDirectory(component), bitmap, parentEnd + 2);
-        long end = (next == -1) ? ids.getNumEntries() - 1 : next - 1;
-        if (start > end) return null;
-        return new long[]{start, end};
-    }
-
-    private static long select1(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
-        if (rank < 1) return -1;
-        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
-    }
 }

@@ -43,8 +43,26 @@ public class SimpleNodeTable implements NodeTable {
             .weigher((Node n, Long id) -> weightOf(n))
             .build();
 
+    /** The cache loader, one instance per table (no per-call lambda). */
+    private final java.util.function.Function<Long, Node> extractById;
+
     public SimpleNodeTable(PositionalDictionaryReader dict) {
         this.dict = dict;
+        this.extractById = this::extract;
+    }
+
+    /**
+     * SUBJECT and GRAPH both point to the entity dictionary, OBJECT to the
+     * hybrid entity + literal wrapper.
+     */
+    private Node extract(Long boxed) {
+        long nodeId = boxed;
+        return switch (NodeId.type(nodeId)) {
+            case SUBJECT, GRAPH -> dict.getSubjects().extract(NodeId.id(nodeId));
+            case PREDICATE -> dict.getPredicates().extract(NodeId.id(nodeId));
+            case OBJECT -> dict.getObjects().extract(NodeId.id(nodeId));
+            default -> throw new IllegalStateException("Unresolvable NodeId: " + NodeId.toString(nodeId));
+        };
     }
 
     /**
@@ -129,23 +147,12 @@ public class SimpleNodeTable implements NodeTable {
     public Node getNodeForNodeId(long nodeId) {
         if (nodeId == NodeId.NONE) throw new IllegalArgumentException("getNodeForNodeId: NONE");
 
-        Node cachedNode = nodeId2nodemap.getIfPresent(nodeId);
-        if (cachedNode != null) {
-            return cachedNode;
-        }
-
-        // Because of the monolithic design, SUBJECT and GRAPH both point to the Entity dictionary.
-        // OBJECT points to the hybrid Entity+Literal dictionary wrapper.
-        Node node = switch (NodeId.type(nodeId)) {
-            case SUBJECT, GRAPH -> dict.getSubjects().extract(NodeId.id(nodeId));
-            case PREDICATE -> dict.getPredicates().extract(NodeId.id(nodeId));
-            case OBJECT -> dict.getObjects().extract(NodeId.id(nodeId));
-            default -> throw new IllegalStateException("Unresolvable NodeId: " + NodeId.toString(nodeId));
-        };
-
+        // One boxed key per call, one cache operation: get-with-loader replaces
+        // the getIfPresent + put pair (which boxed twice on a miss). A null
+        // mapping result is not cached, so an unresolvable id stays a miss (BG-253).
+        Node node = nodeId2nodemap.get(nodeId, extractById);
         if (node != null) {
-            nodeId2nodemap.put(nodeId, node);
-            // Deliberately NOT seeding node2nodeIdmap here. A dual-role URI has two valid
+            // The reverse map is deliberately NOT seeded here. A dual-role URI has two valid
             // NodeIds (predicate vs entity id-space); writing the reverse mapping from
             // whichever role was reconstructed first would make getNodeIdForNode flip
             // between roles on successive lookups. Leaving the Node -> NodeId mapping

@@ -76,6 +76,29 @@ class HilbertSpaceFixesTest {
         assertFalse(scaled.isEmpty(), "the scaled cover must not be empty either");
     }
 
+    /** BG-72: a polygon outside the curve's domain clamps onto the border cells and keeps that cover. */
+    @Test
+    void polygonsOutsideTheDomainKeepTheirClampedCover() {
+        ArrayList<Range> negative = HilbertPolygon.Polygon2Hilbert("POLYGON((-10 -10,-5 -10,-5 -5,-10 -5,-10 -10))", 0);
+        long cell00 = HilbertSpace.hc.index(0, 0);
+        assertFalse(negative.isEmpty(), "negative space clamps to the origin cell, it must not vanish");
+        assertTrue(negative.stream().anyMatch(r -> r.low() <= cell00 && cell00 <= r.high()), "the cover holds the clamped cell");
+
+        long max = HilbertSpace.clampToDomain(Long.MAX_VALUE);
+        String beyond = "POLYGON((" + (max + 5L) + " 5," + (max + 10L) + " 5," + (max + 10L) + " 10," + (max + 5L) + " 10," + (max + 5L) + " 5))";
+        ArrayList<Range> far = HilbertPolygon.Polygon2Hilbert(beyond, 0);
+        long edge = HilbertSpace.hc.index(max, 7);
+        assertFalse(far.isEmpty(), "beyond 2^31 clamps to the far edge cells");
+        assertTrue(far.stream().anyMatch(r -> r.low() <= edge && edge <= r.high()), "the cover holds the edge cell");
+
+        // A polygon inside the domain is still filtered per cell (no over-cover).
+        ArrayList<Range> inside = HilbertPolygon.Polygon2Hilbert("POLYGON((100 100,110 100,110 110,100 110,100 100))", 0);
+        long cell = HilbertSpace.hc.index(105, 105);
+        long farCell = HilbertSpace.hc.index(500, 500);
+        assertTrue(inside.stream().anyMatch(r -> r.low() <= cell && cell <= r.high()));
+        assertFalse(inside.stream().anyMatch(r -> r.low() <= farCell && farCell <= r.high()));
+    }
+
     @Test
     void cellInteriorOverlapKeepsTheRange() {
         // Overlaps the interior of cell (5,4) without covering its corner point.

@@ -157,7 +157,7 @@ public final class DistinctTermFastPath {
 
         // Subject position: stream the graph's GSPO subject level - already sorted
         // and duplicate-free, so no dedup state regardless of subject count.
-        long[] range = firstLevelRange(index, 'S', resolveGraphId(dict, target));
+        long[] range = RangeSelect.firstLevelRange(index, 'S', resolveGraphId(dict, target));
         logger.debug("DISTINCT ?s answered from GSPO index: graph={}, {} subjects",
                 target, (range == null) ? 0 : (range[1] - range[0] + 1));
         if (range == null) {
@@ -179,7 +179,7 @@ public final class DistinctTermFastPath {
      * graph by index construction; id 0 is the padding row of an empty graph block.
      */
     private static void collectGraphPredicates(IndexReader gpos, long gi, Set<Long> out) {
-        long[] range = firstLevelRange(gpos, 'P', gi);
+        long[] range = RangeSelect.firstLevelRange(gpos, 'P', gi);
         if (range == null) return;
         BitPackedUnSignedLongBuffer sp = gpos.getIDBuffer('P');
         for (long i = range[0]; i <= range[1]; i++) {
@@ -190,25 +190,6 @@ public final class DistinctTermFastPath {
         }
     }
 
-    /**
-     * The inclusive position range of graph {@code gi}'s block at the index's
-     * first level, or null when the graph has no rows (absent id, or a
-     * padding-only block - the writer pads each empty first-level slot with a
-     * single all-zero dummy row).
-     */
-    private static long[] firstLevelRange(IndexReader ir, char component, long gi) {
-        if (gi < 1) return null;
-        BitPackedUnSignedLongBuffer bitmap = ir.getBitmapBuffer(component);
-        BitPackedUnSignedLongBuffer ids = ir.getIDBuffer(component);
-        HDTBitmapDirectory dir = ir.getDirectory(component);
-        long start = (dir != null) ? dir.select1(gi) : bitmap.select1(gi);
-        if (start == -1) return null;
-        long next = (dir != null) ? dir.select1(gi + 1) : bitmap.select1(gi + 1);
-        long end = (next == -1) ? ids.getNumEntries() - 1 : next - 1;
-        if (start > end) return null;
-        if (ids.get(start) == 0) return null; // padding row: the graph is empty
-        return new long[]{start, end};
-    }
 
     /**
      * Lazily streams one binding per subject id in [start..end] of the GSPO

@@ -130,10 +130,12 @@ public class BGVoIDSD {
 
         private final int exactLimit;
         private final LongAdder numtriples = new LongAdder();
-        private final ConcurrentHashMap<Node, Long> predicateCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Node, LongAdder> predicateCounts = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<Node, DistinctNodeCounter> classInstances = new ConcurrentHashMap<>();
         private final DistinctNodeCounter distinctSubjects;
         private final DistinctNodeCounter distinctObjects;
+        /** Distinct typed subjects: void:entities counts an entity once, however many classes it has (BG-50). */
+        private final DistinctNodeCounter typedEntities;
         // Incremental replacement for what used to be derived from the FULL
         // retained subject set: the running longest common prefix of absolute
         // subject URIs (one string; null = none seen yet, "" = no common prefix).
@@ -143,6 +145,7 @@ public class BGVoIDSD {
             this.exactLimit = exactLimit;
             this.distinctSubjects = new DistinctNodeCounter(exactLimit);
             this.distinctObjects = new DistinctNodeCounter(exactLimit);
+            this.typedEntities = new DistinctNodeCounter(exactLimit);
         }
 
         public void add(Quad quad) {
@@ -150,7 +153,11 @@ public class BGVoIDSD {
             Node sNode = quad.getSubject();
             Node pNode = quad.getPredicate();
             Node oNode = quad.getObject();
-            predicateCounts.merge(pNode, 1L, Long::sum);
+            LongAdder predicateCount = predicateCounts.get(pNode); // get-first: no lambda on the hot path
+            if (predicateCount == null) {
+                predicateCount = predicateCounts.computeIfAbsent(pNode, k -> new LongAdder());
+            }
+            predicateCount.increment();
             distinctSubjects.add(sNode);
             distinctObjects.add(oNode);
             if (sNode.isURI() && !UTIL.isRelativeIRI(sNode.getURI())) {
@@ -159,6 +166,7 @@ public class BGVoIDSD {
             // Classes and instances (rdf:type)
             if (pNode.equals(RDF.type.asNode()) && oNode.isURI() && sNode.isURI()) {
                 classInstances.computeIfAbsent(oNode, c -> new DistinctNodeCounter(exactLimit)).add(sNode);
+                typedEntities.add(sNode);
             }
         }
 
@@ -185,7 +193,8 @@ public class BGVoIDSD {
         }
 
         public void applyTo(Resource graphRes, Model m) {
-            long entities = classInstances.values().stream().mapToLong(DistinctNodeCounter::count).sum();
+            // Summing the per-class counts counted a multi-typed entity once per class.
+            long entities = typedEntities.count();
             graphRes.addProperty(RDF.type, VOID.Dataset)
                     .addLiteral(VOID.triples, numtriples.sum())
                     .addLiteral(VOID.classes, (long) classInstances.size())
@@ -206,7 +215,7 @@ public class BGVoIDSD {
                     graphRes.addProperty(VOID.propertyPartition,
                         graphRes.getModel().createResource()
                             .addProperty(VOID.property, prop)
-                            .addLiteral(VOID.triples, count));
+                            .addLiteral(VOID.triples, count.sum()));
                 }
             });
             // Process Class Partitions

@@ -61,8 +61,10 @@ public class Intersects extends FunctionBase {
 
     @Override
     public void checkBuild(String uri, ExprList args) {
-        if (( args.size() < 2 ) || ( args.size() > 3 )) {
-            throw new QueryBuildException("Function '" + Lib.className(this) + "' takes two or three arguments");
+        // Exactly two: the geometry and the constant region. A third argument
+        // was accepted and silently ignored (BG-318).
+        if (args.size() != 2) {
+            throw new QueryBuildException("Function '" + Lib.className(this) + "' takes two arguments");
         }
     }
 

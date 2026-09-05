@@ -54,6 +54,16 @@ public class LWSMetadataGenerator {
     /** Default file name used to cache generated metadata inside a storage folder. */
     public static final String CACHE_FILE_NAME = "beakgraph.ttl.gz";
 
+    /**
+     * Top-level names the server's fixed routes own: an entry so named in the
+     * storage root can never be reached (the route answers first), so it is
+     * not indexed either - a listing must not advertise what a GET cannot
+     * fetch (BG-413). {@code LWSStorageServlet} and {@code SPARQLEndPoint}
+     * are the routes; the alias is the servlet's legacy path prefix.
+     */
+    public static final Set<String> RESERVED_ROOT_NAMES = Set.of(
+            "description", "description.meta", "sparql", "rdf", "HalcyonStorage");
+
     public static void main(String[] args) {
         if (args.length < 1) {
             System.err.println("Usage: LWSMetadataGenerator <storageRootDir> [outputFile]");
@@ -104,7 +114,7 @@ public class LWSMetadataGenerator {
                 // would become a listed DataResource, making the raw model -
                 // including the owl:sameAs file:/// server paths the servlet exists
                 // to withhold - downloadable by any client.
-                if (isCacheArtifact(file)) {
+                if (isExcluded(rootPath, file, false)) {
                     return FileVisitResult.CONTINUE;
                 }
                 String httpUri = toHttpUri(rootPath, file);
@@ -116,6 +126,9 @@ public class LWSMetadataGenerator {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 if (!dir.equals(rootPath)) {
+                    if (isExcluded(rootPath, dir, true)) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
                     String httpUri = toHttpUri(rootPath, dir);
                     processResource(model, httpUri, dir, attrs, containerType, null, null, modified);
                     linkToParent(model, rootPath, dir, items, totalItems);
@@ -133,8 +146,39 @@ public class LWSMetadataGenerator {
         return CACHE_FILE_NAME.equals(name) || (CACHE_FILE_NAME + ".tmp").equals(name);
     }
 
+    /**
+     * What the storage tree does NOT publish: the cache artifacts, hidden
+     * entries (a dot-name, or the platform's hidden attribute - {@code .git},
+     * {@code .DS_Store}, editor state; BG-221) at any depth, and top-level
+     * entries named like a fixed route ({@link #RESERVED_ROOT_NAMES}). The
+     * model walk and the {@link #treeSignature} walk apply the SAME rule, or
+     * the refresher would see a permanent difference and regenerate forever.
+     */
+    static boolean isExcluded(Path rootPath, Path path, boolean directory) {
+        if (!directory && isCacheArtifact(path)) {
+            return true;
+        }
+        Path fileName = path.getFileName();
+        String name = fileName == null ? "" : fileName.toString();
+        if (name.startsWith(".")) {
+            return true;
+        }
+        try {
+            if (Files.isHidden(path)) {
+                return true;
+            }
+        } catch (IOException ignore) {
+            // unknowable: treat as visible
+        }
+        if (rootPath.relativize(path).getNameCount() == 1 && RESERVED_ROOT_NAMES.contains(name)) {
+            logger.warn("{} is shadowed by a fixed route of the server and is not indexed (rename it to serve it)", path);
+            return true;
+        }
+        return false;
+    }
+
     /** The {@code as:updated} lexical form of a file or directory: its mtime as a UTC ISO instant. */
-    static String updatedLiteral(BasicFileAttributes attrs) {
+    public static String updatedLiteral(BasicFileAttributes attrs) {
         return attrs.lastModifiedTime().toInstant()
                 .atZone(ZoneId.of("UTC"))
                 .format(DateTimeFormatter.ISO_INSTANT);
@@ -164,7 +208,7 @@ public class LWSMetadataGenerator {
         Files.walkFileTree(rootPath, new LenientVisitor() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                if (!isCacheArtifact(file)) {
+                if (!isExcluded(rootPath, file, false)) {
                     signature.add(relative(rootPath, file) + "|" + attrs.size() + "|" + updatedLiteral(attrs));
                 }
                 return FileVisitResult.CONTINUE;
@@ -173,6 +217,9 @@ public class LWSMetadataGenerator {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 if (!dir.equals(rootPath)) {
+                    if (isExcluded(rootPath, dir, true)) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
                     signature.add(relative(rootPath, dir) + "|dir");
                 }
                 return FileVisitResult.CONTINUE;

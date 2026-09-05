@@ -48,7 +48,6 @@ public class SPARQLEndPoint {
     static {
         JenaSystem.init();
         Spatial.init();
-        JenaShaper.init();
     }
 
     private SPARQLEndPoint(Parameters params) throws Exception {
@@ -131,16 +130,15 @@ public class SPARQLEndPoint {
         // localhost base sent every remote client's next/up/linkset links to its
         // own loopback while the server deliberately listens on all interfaces.
         String publicBase = publicBase(params.base);
-        LWSStorageServlet.setBase(publicBase);
         LWSStorageServlet.honourForwardedHeaders(jettyServer);
-        LWSStorageServlet.setStorageRoot(storageRoot);
 
         ServletHolder sparqlPageHolder = new ServletHolder("sparql-page", new SparqlWebPageServlet());
         context.addServlet(sparqlPageHolder, "/sparql");
         context.addServlet(sparqlPageHolder, "/sparql/*");
 
         ServletHolder lwsHolder = new ServletHolder("lws-storage",
-                refresher != null ? new LWSStorageServlet(refresher) : new LWSStorageServlet(lwsModel));
+                refresher != null ? new LWSStorageServlet(refresher, publicBase, storageRoot)
+                                  : new LWSStorageServlet(lwsModel, publicBase, storageRoot));
         context.addServlet(lwsHolder, "/*");
 
         if (singleFile) {
@@ -150,7 +148,7 @@ public class SPARQLEndPoint {
             // Resolution base is the SERVED URL, never the local file URI: resolving
             // stored-relative IRIs against endpointPath.toUri() sent every client
             // file:///<absolute-server-path>/... IRIs - full filesystem disclosure.
-            ServletHolder rdfHolder = new ServletHolder("hdf5-sparql", new HDF5SparqlServlet(ds));
+            ServletHolder rdfHolder = new ServletHolder("hdf5-sparql", new HDF5SparqlServlet(ds, publicBase));
             context.addServlet(rdfHolder, "/rdf");
             context.addServlet(rdfHolder, "/rdf/*");
         }
@@ -312,6 +310,15 @@ public class SPARQLEndPoint {
         return qs != null && (qs.startsWith("query=") || qs.contains("&query="));
     }
 
+    /**
+     * Applies the user-profile JSON-LD frame: a SPARQL response requested with
+     * {@code Accept: application/ld+json;profile=user-profile} is produced by
+     * the endpoint as ordinary JSON-LD (the Accept header is narrowed for it),
+     * buffered here, and framed by {@link JenaShaper} before it is sent.
+     * Buffering is inherent to framing - a frame needs the whole document -
+     * and keeps the JSON-LD writer registry untouched (BG-216); JSON-LD
+     * CONSTRUCT answers are capped by the endpoint anyway.
+     */
     private static class ProfileInterceptorFilter implements Filter {
         @Override
         public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
@@ -319,20 +326,78 @@ public class SPARQLEndPoint {
             String acceptHeader = req.getHeader("Accept");
             boolean isProfileRequested = acceptHeader != null && acceptHeader.contains("application/ld+json")
                     && acceptHeader.contains("profile=user-profile") && targetsSparql(req);
-            if (isProfileRequested) {
-                JenaShaper.USE_PROFILE.set(true);
-                HttpServletRequestWrapper wrapper = new HttpServletRequestWrapper(req) {
-                    @Override public String getHeader(String name) { return "Accept".equalsIgnoreCase(name) ? "application/ld+json" : super.getHeader(name); }
-                    @Override public Enumeration<String> getHeaders(String name) { return "Accept".equalsIgnoreCase(name) ? Collections.enumeration(Collections.singletonList("application/ld+json")) : super.getHeaders(name); }
-                };
-                try { chain.doFilter(wrapper, response); } finally { JenaShaper.USE_PROFILE.remove(); }
+            if (!isProfileRequested) {
+                chain.doFilter(request, response);
                 return;
             }
-            try { chain.doFilter(request, response); } finally { JenaShaper.USE_PROFILE.remove(); }
+            HttpServletRequestWrapper wrapper = new HttpServletRequestWrapper(req) {
+                @Override public String getHeader(String name) { return "Accept".equalsIgnoreCase(name) ? "application/ld+json" : super.getHeader(name); }
+                @Override public Enumeration<String> getHeaders(String name) { return "Accept".equalsIgnoreCase(name) ? Collections.enumeration(Collections.singletonList("application/ld+json")) : super.getHeaders(name); }
+            };
+            HttpServletResponse resp = (HttpServletResponse) response;
+            BufferedResponse buffered = new BufferedResponse(resp);
+            chain.doFilter(wrapper, buffered);
+            byte[] body = buffered.body();
+            String ct = buffered.getContentType();
+            boolean jsonLd = ct != null && ct.toLowerCase(Locale.ROOT).contains("ld+json");
+            if (buffered.getStatus() < 300 && jsonLd && body.length > 0) {
+                body = JenaShaper.frame(body);
+            }
+            if (!resp.isCommitted()) {
+                resp.setContentLength(body.length);
+            }
+            OutputStream out = resp.getOutputStream();
+            out.write(body);
+            out.flush();
         }
 
         @Override public void init(FilterConfig filterConfig) {}
         @Override public void destroy() {}
+    }
+
+    /** Captures the body an endpoint writes so the filter can frame it; status and headers pass straight through. */
+    private static final class BufferedResponse extends HttpServletResponseWrapper {
+        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        private ServletOutputStream stream;
+        private PrintWriter writer;
+
+        BufferedResponse(HttpServletResponse response) {
+            super(response);
+        }
+
+        byte[] body() {
+            if (writer != null) {
+                writer.flush();
+            }
+            return buffer.toByteArray();
+        }
+
+        @Override
+        public ServletOutputStream getOutputStream() {
+            if (stream == null) {
+                stream = new ServletOutputStream() {
+                    @Override public boolean isReady() { return true; }
+                    @Override public void setWriteListener(WriteListener listener) {}
+                    @Override public void write(int b) { buffer.write(b); }
+                    @Override public void write(byte[] b, int off, int len) { buffer.write(b, off, len); }
+                };
+            }
+            return stream;
+        }
+
+        @Override
+        public PrintWriter getWriter() throws IOException {
+            if (writer == null) {
+                String enc = getCharacterEncoding();
+                writer = new PrintWriter(new OutputStreamWriter(getOutputStream(), enc == null ? "UTF-8" : enc));
+            }
+            return writer;
+        }
+
+        @Override public void setContentLength(int len) {}
+        @Override public void setContentLengthLong(long len) {}
+        @Override public void flushBuffer() {}
+        @Override public void resetBuffer() { buffer.reset(); }
     }
 
     private static class SparqlWebPageServlet extends HttpServlet {
@@ -394,9 +459,11 @@ public class SPARQLEndPoint {
     private static class HDF5SparqlServlet extends HttpServlet {
         private static final long serialVersionUID = 1L;
         private final transient Dataset ds;
+        private final String configuredBase;
 
-        HDF5SparqlServlet(Dataset ds) {
+        HDF5SparqlServlet(Dataset ds, String configuredBase) {
             this.ds = ds;
+            this.configuredBase = configuredBase;
         }
 
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -422,7 +489,7 @@ public class SPARQLEndPoint {
             // The resolution base follows the request (or -base): /rdf and
             // /rdf/query both resolve against <live base>/rdf, matching the LWS
             // path, so result IRIs are dereferenceable from wherever the client is.
-            BGSparqlService.execute(ds, queryStr, LWSStorageServlet.liveBase(req) + "rdf",
+            BGSparqlService.execute(ds, queryStr, LWSStorageServlet.liveBase(req, configuredBase) + "rdf",
                     req.getHeader("Accept"), resp, BGSparqlService.extractDatasetDescription(req));
         }
     }

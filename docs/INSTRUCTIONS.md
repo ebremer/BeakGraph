@@ -116,8 +116,21 @@ HTTP range support), containers are listed, and every `.h5` answers SPARQL at it
 (if the write fails the freshly generated model is still served, with a warning). The model is
 kept current afterwards: files added, replaced or removed while the server runs are picked up
 (`beakgraph.lws.refresh.seconds`), and the cache is validated against the directory on every
-start; delete the file to force a full regeneration. In single-file mode a `beakgraph.ttl.gz`
-sitting next to the `.h5` is loaded as the LWS model.
+start; delete the file to force a full regeneration. Hidden entries (a dot-name, or the platform's
+hidden attribute) and top-level entries named like a fixed route (`description`, `sparql`, `rdf`,
+`HalcyonStorage`) are not indexed - the routes would answer first. Container listings report each
+file's live size and modification time; a file replaced since the last scan is picked up on the next
+scan. In single-file mode the LWS surface is empty (every path but `/rdf` and `/sparql` answers 404).
+
+### Deployment and trust model
+
+The endpoint is **unauthenticated and read-only by design**: every route serves GET/HEAD (and query
+POST) only, no SPARQL Update or Graph Store write is registered in either mode, and SPARQL
+`SERVICE` federation is enabled so queries can join against other endpoints. Run it behind
+whatever authenticates and authorises your users (a reverse proxy, the application that embeds
+it); those concerns are deliberately not built in here. Put only data you are willing to serve
+under `-endpoint`: everything not hidden or reserved is listed and downloadable, and every `.h5`
+answers arbitrary read queries (bounded by `-timeout`). The server listens on all interfaces.
 
 ### Document-relative IRIs
 

@@ -44,7 +44,9 @@ java -agentlib:native-image-agent=config-merge-dir=src/main/resources/META-INF/n
 * `-src <file.h5|dir> -export NT|NQ|TTL|TRIG|JSON-LD` dumps stores back to RDF.
 * `-verify <file.h5|dir> [-deep]` integrity-checks stores before publishing them.
 * `-endpoint <file.h5|dir> -port 8888` serves one store, or a whole directory as W3C LWS storage,
-  over SPARQL.
+  over SPARQL. The endpoint is unauthenticated and read-only by design (with `SERVICE` federation
+  on); authentication belongs in the proxy or application in front of it - see
+  [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md), "Deployment and trust model".
 
 ## Benchmarks
 

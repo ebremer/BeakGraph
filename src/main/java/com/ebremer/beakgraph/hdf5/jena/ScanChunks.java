@@ -39,9 +39,14 @@ import org.slf4j.LoggerFactory;
  * Anything else - union graph (serialized dedup), bound/repeated variables,
  * concrete s/o (index lookups, not scans), sub-threshold ranges, a store read
  * through a channel (HTTP: one lock, one cache) - stays sequential; so does a
- * pattern re-executed per outer row (see {@code PatternMatchBG.solveFirst}). Range FILTERs remain eligible: every chunk applies the same
- * value-bound narrowing internally, and chunks that fall outside the bounds
- * simply produce nothing.
+ * pattern re-executed per outer row (see {@code PatternMatchBG.solveFirst}).
+ * Range FILTERs remain eligible, but only bounds on the CHUNKED position prune
+ * chunks (object bounds for the POS route, which narrows each chunk's object
+ * slice by binary search; subject bounds for the SPO route); bounds on the
+ * other positions are applied per row inside every chunk, so such a filtered
+ * scan costs the same total work as the sequential scan, spread across
+ * threads. The bounds themselves are resolved once per store and pattern
+ * shape ({@link RangeBounds}), not once per chunk.
  *
  * <p>Sizing: parallelize when the chunkable position range is at least
  * {@code -Dbeakgraph.scan.parallel.threshold} (default 65536; 0 or negative
@@ -121,19 +126,9 @@ final class ScanChunks {
         return n.isVariable() && (b0 == null || !b0.containsKey(Var.alloc(n)));
     }
 
-    /**
-     * The graph's block at an index's first level, or null when absent/empty
-     * (a padding block's first id is 0 - the writer pads empty slots with one
-     * all-zero dummy row).
-     */
+    /** The graph's block at an index's first level, or null when absent / empty / padding (see RangeSelect). */
     private static long[] levelRange(IndexReader ir, char component, long gi) {
-        BitPackedUnSignedLongBuffer bitmap = ir.getBitmapBuffer(component);
-        long start = RangeSelect.blockStart(ir.getDirectory(component), bitmap, gi);
-        if (start == -1) return null;
-        long end = RangeSelect.blockEnd(ir.getDirectory(component), bitmap, gi, start);
-        if (start > end) return null;
-        if (ir.getIDBuffer(component).get(start) == 0) return null;
-        return new long[]{start, end};
+        return RangeSelect.firstLevelRange(ir, component, gi);
     }
 
     private interface ChunkFactory {

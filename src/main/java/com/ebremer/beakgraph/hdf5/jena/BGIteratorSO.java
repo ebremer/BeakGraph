@@ -58,9 +58,9 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         HDTBitmapDirectory dirP = reader.getDirectory('P');
         HDTBitmapDirectory dirO = reader.getDirectory('O');
 
-        if (filter != null && !filter.isEmpty()) {
-            analyzeFilters(filter, dict, quad);
-        }
+        RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+        minObjId = bounds.minO;
+        maxObjId = bounds.maxO;
 
         // Resolve Graph
         gi = resolveNode(quad.getGraph(), dict.getGraphs(), bnid);
@@ -190,38 +190,6 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
             return -1; // Variable is unbound
         }
         return dictionary.locate(node);
-    }
-
-    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        // Only ordering comparisons become range hints (see FilterBounds); every
-        // other function in the FILTER is evaluated by the enclosing OpFilter.
-        FilterBounds.scan(filter, (var, op, value) -> applyBound(var, op, value, dict, quad));
-    }
-
-    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        if (!var.equals(quad.getObject())) return;
-        // Snap the bound to the edges of the whole value-equal cluster: value-equal
-        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
-        // adjacent distinct ids, and the raw exact-term insertion point can land
-        // inside that cluster, silently dropping qualifying boundary rows.
-        ValueCluster.Bounds c = ValueCluster.of(dict.getObjects(), value);
-        switch (op) {
-            case ">" -> {
-                long target = c.firstGT();
-                if (Long.compareUnsigned(target, minObjId) > 0) minObjId = target;
-            }
-            case ">=" -> {
-                if (Long.compareUnsigned(c.firstGE(), minObjId) > 0) minObjId = c.firstGE();
-            }
-            case "<" -> {
-                long target = c.lastLT();
-                if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-            }
-            case "<=" -> {
-                long target = c.lastLE();
-                if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-            }
-        }
     }
 
     @Override

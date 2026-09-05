@@ -83,9 +83,13 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         this.spNum = Sp.getNumEntries();
         this.soNum = So.getNumEntries();
 
-        if (filter != null && !filter.isEmpty()) {
-            analyzeFilters(filter, dict, quad);
-        }
+        RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+        minSubId = bounds.minS;
+        maxSubId = bounds.maxS;
+        minPid = bounds.minP;
+        maxPid = bounds.maxP;
+        minObjId = bounds.minO;
+        maxObjId = bounds.maxO;
 
         // Resolve the graph the same way the other three iterators behind
         // BGIteratorMaster do: the dispatcher also routes here when the graph
@@ -178,13 +182,13 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // LEVEL 2: Predicate Cursor
         // -----------------------------------------------------------------
         // Start of Predicates for Subject `idxS` is the (idxS + 1)-th '1' in Bp.
-        this.idxP = select1Safe(dirP, Bp, idxS + 1);
+        this.idxP = RangeSelect.blockStart(dirP, Bp, idxS + 1);
 
         // -----------------------------------------------------------------
         // LEVEL 3: Object Cursor
         // -----------------------------------------------------------------
         // Start of Objects for Predicate `idxP` is the (idxP + 1)-th '1' in Bo.
-        this.idxO = select1Safe(dirO, Bo, idxP + 1);
+        this.idxO = RangeSelect.blockStart(dirO, Bo, idxP + 1);
 
         // --- Safety Checks ---
         // If idxP or idxO are -1 (not found), it means the lists are empty or we overshot.
@@ -207,13 +211,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         if (quad.getObject().isVariable()) oVar = Var.alloc(quad.getObject());
 
         advance();
-    }
-
-    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
-        if (rank < 1) return -1; // 1-based rank must be >= 1
-        // Accelerated O(log n) select via the superblock/block directory when present;
-        // fall back to the buffer's linear scan only for indexes written without it.
-        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
     }
 
     /**
@@ -268,7 +265,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             // navigated, not filtered row by row: below the range, seek to the
             // first candidate; above it, nothing later in the block can match.
             if (curOID < minObjId) {
-                long nextBlock = select1Safe(dirO, Bo, idxP + 2);
+                long nextBlock = RangeSelect.blockStart(dirO, Bo, idxP + 2);
                 long blockEnd = (nextBlock == -1 ? soNum : nextBlock) - 1;
                 long pos = So.lowerBound(idxO, blockEnd, minObjId);
                 if (pos == -1) {
@@ -311,7 +308,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // Find start of NEXT predicate block
         // Current Predicate is idxP. Its start was select1(idxP+1).
         // Next Predicate is idxP+1. Its start is select1(idxP+2).
-        long nextPStart = select1Safe(dirO, Bo, idxP + 2);
+        long nextPStart = RangeSelect.blockStart(dirO, Bo, idxP + 2);
         idxO = (nextPStart == -1) ? soNum : nextPStart;
 
         idxP++;
@@ -329,7 +326,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // Find start of NEXT Subject block
         // Current Subject idxS. Start was select1(idxS+1).
         // Next Subject idxS+1. Start is select1(idxS+2).
-        long nextSStartP = select1Safe(dirP, Bp, idxS + 2);
+        long nextSStartP = RangeSelect.blockStart(dirP, Bp, idxS + 2);
 
         if (nextSStartP == -1) {
             idxP = spNum;
@@ -337,7 +334,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         } else {
             idxP = nextSStartP;
             // Now align Object cursor to the new Predicate
-            long nextSStartO = select1Safe(dirO, Bo, idxP + 1);
+            long nextSStartO = RangeSelect.blockStart(dirO, Bo, idxP + 1);
             idxO = (nextSStartO == -1) ? soNum : nextSStartO;
         }
 
@@ -345,50 +342,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
 
         if (idxS <= endS) curSID = Ss.get(idxS);
         if (idxP < spNum) curPID = Sp.get(idxP);
-    }
-
-    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        // Only ordering comparisons become range hints (see FilterBounds); every
-        // other function in the FILTER is evaluated by the enclosing OpFilter.
-        FilterBounds.scan(filter, (var, op, value) -> applyBound(var, op, value, dict, quad));
-    }
-
-    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        int type;
-        if (var.equals(quad.getSubject())) type = 1;
-        else if (var.equals(quad.getPredicate())) type = 2;
-        else if (var.equals(quad.getObject())) type = 3;
-        else return;
-
-        // Snap the bound to the edges of the whole value-equal cluster: value-equal
-        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
-        // adjacent distinct ids, and the raw exact-term insertion point can land
-        // inside that cluster, silently dropping qualifying boundary rows.
-        ValueCluster.Bounds c = switch (type) {
-            case 1 -> ValueCluster.of(dict.getSubjects(), value);
-            case 2 -> ValueCluster.of(dict.getPredicates(), value);
-            default -> ValueCluster.of(dict.getObjects(), value);
-        };
-
-        long min, max;
-        switch (type) {
-            case 1 -> { min = minSubId; max = maxSubId; }
-            case 2 -> { min = minPid; max = maxPid; }
-            default -> { min = minObjId; max = maxObjId; }
-        }
-
-        switch (op) {
-            case ">" -> min = Math.max(min, c.firstGT());
-            case ">=" -> min = Math.max(min, c.firstGE());
-            case "<" -> max = Math.min(max, c.lastLT());
-            case "<=" -> max = Math.min(max, c.lastLE());
-        }
-
-        switch (type) {
-            case 1 -> { minSubId = min; maxSubId = max; }
-            case 2 -> { minPid = min; maxPid = max; }
-            default -> { minObjId = min; maxObjId = max; }
-        }
     }
 
     // Look-ahead: the next deliverable row, or null. Rows whose repeated-variable

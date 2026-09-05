@@ -93,6 +93,22 @@ class VoidSketchTest {
                 "object/predicate namespaces must land in void:vocabulary");
     }
 
+    /** BG-50: void:entities counts a typed entity once, however many classes it has. */
+    @Test
+    void multiTypedEntitiesAreCountedOnce() {
+        BGVoIDSD v = new BGVoIDSD("https://ebremer.com/void/");
+        for (int i = 0; i < 30; i++) {
+            org.apache.jena.graph.Node s = NodeFactory.createURI("http://ex.org/data/s" + i);
+            v.add(new Quad(Quad.defaultGraphIRI, s, RDF.type.asNode(), NodeFactory.createURI("http://ex.org/Article")));
+            v.add(new Quad(Quad.defaultGraphIRI, s, RDF.type.asNode(), NodeFactory.createURI("http://ex.org/Thing")));
+        }
+        Model m = v.getModel();
+        assertEquals(2, one(m, VOID.classes));
+        assertEquals(30, one(m, VOID.entities), "30 entities, not 60");
+        m.listObjectsOfProperty(VOID.classPartition).forEachRemaining(part ->
+                assertEquals(30, part.asResource().getProperty(VOID.entities).getLong(), "each class partition still counts its 30 instances"));
+    }
+
     private static long one(Model m, org.apache.jena.rdf.model.Property p) {
         var it = m.listObjectsOfProperty(p);
         assertTrue(it.hasNext(), "expected a value for " + p);

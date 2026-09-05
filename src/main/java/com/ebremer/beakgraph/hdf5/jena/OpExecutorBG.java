@@ -88,11 +88,6 @@ public class OpExecutorBG extends OpExecutor {
     }
 
     @Override
-    protected QueryIterator execute(OpPropFunc opPropFunc, QueryIterator input) {
-        return super.execute(opPropFunc, input);
-    }
-    
-    @Override
     protected QueryIterator execute(OpFilter opFilter, QueryIterator input) {
         if (!isForBeakGraph) {
             return super.execute(opFilter, input);

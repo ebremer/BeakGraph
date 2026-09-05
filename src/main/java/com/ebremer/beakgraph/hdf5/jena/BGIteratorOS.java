@@ -46,7 +46,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         HDTBitmapDirectory dirO = reader.getDirectory('O');
         HDTBitmapDirectory dirS = reader.getDirectory('S');
 
-        if (filter != null && !filter.isEmpty()) analyzeFilters(filter, dict, quad);
+        RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+        minSubId = bounds.minS;
+        maxSubId = bounds.maxS;
 
         // Resolve Graph
         if (quad.getGraph().isVariable()) {
@@ -135,7 +137,18 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
                 hasNext = true;
             }
         } else {
-            advanceToNextValid();
+            // A subject-range hint (FILTER(?s > <x>)) narrows the block with the
+            // same binary searches the other iterators use: the subject list
+            // under one (G,P,O) group is ascending, so [lo, hi] is exact and
+            // no per-row test is needed. The former linear walk skipped every
+            // row below the minimum one by one and kept walking to the end of
+            // the block after the maximum (BG-258).
+            long lo = (minSubId <= 1) ? sStart : Ss.lowerBound(sStart, sEnd, minSubId);
+            long hi = (maxSubId == Long.MAX_VALUE) ? sEnd : Ss.upperBound(sStart, sEnd, maxSubId);
+            if (lo < 0 || hi < 0 || lo > hi) return;
+            i = lo;
+            j = hi + 1;
+            hasNext = true;
         }
 
         if (hasNext) {
@@ -174,54 +187,6 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         }
     }
 
-    private void advanceToNextValid() {
-        hasNext = false;
-        while (i < j) {
-            long subId = Ss.get(i);
-
-            if (subId < minSubId) {
-                i++;
-                continue;
-            }
-            if (subId > maxSubId) {
-                i++;
-                continue;
-            }
-            hasNext = true;
-            return;
-        }
-    }
-
-    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        // Only ordering comparisons become range hints (see FilterBounds); every
-        // other function in the FILTER is evaluated by the enclosing OpFilter.
-        FilterBounds.scan(filter, (var, op, value) -> applyBound(var, op, value, dict, quad));
-    }
-
-    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        if (!var.equals(quad.getSubject())) return;
-        // Snap the bound to the edges of the whole value-equal cluster (degenerates
-        // to the plain insertion point for non-literal constants); see ValueCluster.
-        ValueCluster.Bounds c = ValueCluster.of(dict.getSubjects(), value);
-        switch (op) {
-            case ">" -> {
-                 long target = c.firstGT();
-                 if (Long.compareUnsigned(target, minSubId) > 0) minSubId = target;
-            }
-            case ">=" -> {
-                 if (Long.compareUnsigned(c.firstGE(), minSubId) > 0) minSubId = c.firstGE();
-            }
-            case "<" -> {
-                 long target = c.lastLT();
-                 if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
-            }
-            case "<=" -> {
-                 long target = c.lastLE();
-                 if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
-            }
-        }
-    }
-
     @Override
     public boolean hasNext() {
         return hasNext;
@@ -237,12 +202,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (oVar != null) result.put(oVar, oId);
         if (sVar != null) result.put(sVar, NodeId.pack(NodeType.SUBJECT, currentSubjectId));
         i++;
-        if (i < j) {
-            if (subBound) hasNext = false;
-            else advanceToNextValid();
-        } else {
-            hasNext = false;
-        }
+        // The range [i, j) is exact (a located subject, or the clamped block),
+        // so the next row is deliverable whenever one remains.
+        hasNext = !subBound && i < j;
         return result;
     }
 }

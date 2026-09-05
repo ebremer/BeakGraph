@@ -46,6 +46,42 @@ class ParallelScanSchedulingTest {
         return n;
     }
 
+    /** BG-64: a chunk whose setup finishes after the scan was closed must not start iterating. */
+    @Test
+    void chunkSetupThatOutlivesTheScanIsNotIterated() throws Exception {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        AtomicInteger constructed = new AtomicInteger();
+        AtomicInteger iterated = new AtomicInteger();
+        List<Supplier<Iterator<BindingNodeId>>> chunks = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            chunks.add(() -> {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                constructed.incrementAndGet();
+                Iterator<BindingNodeId> rows = rows(1000).get();
+                return new Iterator<>() {
+                    @Override public boolean hasNext() { iterated.incrementAndGet(); return rows.hasNext(); }
+                    @Override public BindingNodeId next() { return rows.next(); }
+                };
+            });
+        }
+        ParallelScan scan = new ParallelScan(chunks, new AtomicBoolean());
+        Thread consumer = new Thread(() -> scan.hasNext(), "consumer");
+        consumer.start();
+        Thread.sleep(100);          // the workers are inside chunk.get(), parked on the latch
+        scan.close();               // ... and the scan is closed under them
+        release.countDown();
+        consumer.join(15_000);
+        assertFalse(consumer.isAlive(), "the consumer returns once the scan is closed");
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (constructed.get() < 8 && System.currentTimeMillis() < deadline) Thread.sleep(10);
+        assertEquals(8, constructed.get(), "every worker finishes its setup");
+        assertEquals(0, iterated.get(), "no worker iterates a chunk of a closed scan");
+    }
+
     @AfterEach
     void workersMustDrain() throws InterruptedException {
         long deadline = System.currentTimeMillis() + 15_000;

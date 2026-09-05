@@ -134,7 +134,7 @@ class LocaleInvarianceTest {
         CustomFileTypeDetector detector = new CustomFileTypeDetector();
         assertEquals("text/turtle", detector.probeContentType(Path.of("FILE.TTL")));
         assertEquals("application/ld+json", detector.probeContentType(Path.of("FILE.JSONLD")));
-        assertEquals("application/vnd.hdfgroup.hdf5", detector.probeContentType(Path.of("BIG.H5")));
+        assertEquals("application/x-hdf5", detector.probeContentType(Path.of("BIG.H5")));
         assertEquals("application/n-triples", detector.probeContentType(Path.of("TRIPLES.NT")));
     }
 

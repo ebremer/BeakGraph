@@ -42,17 +42,18 @@ final class FilterBounds {
         void bound(Var var, String op, Node value);
     }
 
-    /** Number of range bounds handed to an iterator - tests pin that a FILTER reached the reader. */
+    /**
+     * Number of range bounds handed to an iterator - tests pin that a FILTER
+     * reached the reader. Counted by {@link RangeBounds#of} on every hand-out,
+     * memoised or freshly resolved, so the count follows the iterators, not
+     * the (once per store and pattern shape) scans.
+     */
     static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
 
-    static void scan(ExprList filter, Sink rawSink) {
+    static void scan(ExprList filter, Sink sink) {
         if (filter == null || filter.isEmpty()) {
             return;
         }
-        Sink sink = (var, op, value) -> {
-            HITS.incrementAndGet();
-            rawSink.bound(var, op, value);
-        };
         for (Expr expr : filter.getList()) {
             if (!(expr instanceof ExprFunction2 func)) {
                 continue;

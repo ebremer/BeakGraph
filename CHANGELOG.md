@@ -76,6 +76,31 @@ brought and what a reader must rebuild.
   `beakgraph.ffm.threshold`) are mapped through jHDF's open channel, so a
   store rebuilt in place while a reader is open stays consistently on the
   old file instead of decoding old metadata against new bytes.
+* Query engine: FILTER range hints are resolved once per store and pattern
+  shape (`RangeBounds`, signed with clamped floors) and shared by every
+  iterator, join input row and parallel-scan chunk, replacing four drifted
+  copies; the object-side iterator binary-searches a subject hint; a chunk
+  of a closed scan skips its setup; the first-level and child block-range
+  rules live in one place; the export's text memo clamps an oversized cache
+  setting and indexes predicate text by id; the node table resolves a miss
+  with one cache operation; a polygon outside the Hilbert domain keeps its
+  clamped cover; the third `geof:sfIntersects` argument is refused instead
+  of ignored; row bindings compute their own variables once.
+* Server: the LWS servlet's public base and storage root are per instance;
+  `Accept` is negotiated by media range and quality (a plain
+  `application/json` request is labelled as such); `If-None-Match` accepts
+  lists, weak validators and `*`; data responses open the file before deriving
+  the validator, are served from that handle, carry `Cache-Control: no-cache`
+  and an RFC 6266/8187 `Content-Disposition`; a stored entry named `*.meta`
+  is reachable and only the exact `HalcyonStorage` segment is an alias;
+  container listings are memoised per metadata snapshot and report live file
+  sizes and times; hidden entries and root entries named like a fixed route
+  are not indexed; `void:entities` counts a multi-typed entity once; the
+  user-profile JSON-LD frame is applied by the response filter instead of a
+  JVM-global writer hook, never fetches a context and never closes the
+  response stream; HDF5 files are typed `application/x-hdf5` and the common
+  RDF, text and image extensions get their media types. INSTRUCTIONS gains
+  "Deployment and trust model".
 * Writers: JSON-LD `@context` references load from the source tree (a
   relative reference next to the document, or below `-src` for `-merge`,
   used to resolve against the sentinel base and fail); remote contexts are

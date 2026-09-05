@@ -61,13 +61,11 @@ class LWSPoolExhaustionTest {
         server = new Server(0);
         ServletContextHandler ctx = new ServletContextHandler();
         ctx.setContextPath("/");
-        ctx.addServlet(new ServletHolder(new LWSStorageServlet(model)), "/*");
+        ctx.addServlet(new ServletHolder(new LWSStorageServlet(model, null, root)), "/*");
         server.setHandler(ctx);
         server.start();
         int port = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
         base = "http://localhost:" + port + "/";
-        LWSStorageServlet.setBase(base);
-        LWSStorageServlet.setStorageRoot(root);
         poolKey = LWSStorageServlet.resolveWithin(root, "busy.h5").toUri();
     }
 

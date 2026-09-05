@@ -49,6 +49,8 @@ class LWSLiveBaseTest {
     static Path dir;
     private static Server server;
     private static int port;
+    private static Path root;
+    private static Model model;
 
     private record Response(int status, Map<String, List<String>> headers, String body) {
         List<String> links() {
@@ -58,7 +60,7 @@ class LWSLiveBaseTest {
 
     @BeforeAll
     static void startServer() throws Exception {
-        Path root = Files.createDirectories(dir.resolve("storage"));
+        root = Files.createDirectories(dir.resolve("storage"));
         for (int i = 0; i < LWSStorageServlet.PAGE_SIZE + 2; i++) {   // enough to paginate
             Files.writeString(root.resolve(String.format("f%02d.txt", i)), "f" + i, StandardCharsets.UTF_8);
         }
@@ -67,27 +69,28 @@ class LWSLiveBaseTest {
         HDF5Writer.Builder().setSource(ttl).setDestination(root.resolve("doc.h5").toFile())
                 .setSpatial(false).setFeatures(false).build().write();
 
-        Model model = LWSMetadataGenerator.generateLWSModel(root);
+        model = LWSMetadataGenerator.generateLWSModel(root);
         server = new Server(0);
         ServletContextHandler ctx = new ServletContextHandler();
         ctx.setContextPath("/");
-        ctx.addServlet(new ServletHolder(new LWSStorageServlet(model)), "/*");
+        ctx.addServlet(new ServletHolder(new LWSStorageServlet(model, null, root)), "/*");
         server.setHandler(ctx);
         LWSStorageServlet.honourForwardedHeaders(server);
         server.start();
         port = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
-        LWSStorageServlet.setBase(null);          // derive per request
-        LWSStorageServlet.setStorageRoot(root);
     }
 
     @AfterAll
     static void stopServer() throws Exception {
-        LWSStorageServlet.setBase(null);
         if (server != null) server.stop();
     }
 
     /** HTTP/1.0 GET over a raw socket: any Host header, no chunking to parse. */
     private static Response get(String path, String... headers) throws IOException {
+        return get(port, path, headers);
+    }
+
+    private static Response get(int port, String path, String... headers) throws IOException {
         try (Socket s = new Socket("localhost", port)) {
             StringBuilder req = new StringBuilder("GET " + path + " HTTP/1.0\r\n");
             boolean hostGiven = false;
@@ -152,12 +155,22 @@ class LWSLiveBaseTest {
 
     @Test
     void configuredBaseOverridesTheRequest() throws Exception {
-        LWSStorageServlet.setBase("https://cfg.example/root");   // normalized to end with '/'
+        // The configured base is per servlet instance (BG-323): a second server
+        // with its own configuration must not touch the first one's.
+        Server configured = new Server(0);
+        ServletContextHandler ctx = new ServletContextHandler();
+        ctx.setContextPath("/");
+        ctx.addServlet(new ServletHolder(new LWSStorageServlet(model, "https://cfg.example/root", root)), "/*");   // normalized to end with '/'
+        configured.setHandler(ctx);
+        configured.start();
         try {
-            assertAllLinksOn(get("/", "Host", "example.test:9999", "Accept", "application/lws+json"),
+            int cfgPort = ((ServerConnector) configured.getConnectors()[0]).getLocalPort();
+            assertAllLinksOn(get(cfgPort, "/", "Host", "example.test:9999", "Accept", "application/lws+json"),
                     "https://cfg.example/root/");
+            assertAllLinksOn(get("/", "Host", "example.test:9999", "Accept", "application/lws+json"),
+                    "http://example.test:9999/");
         } finally {
-            LWSStorageServlet.setBase(null);
+            configured.stop();
         }
     }
 
