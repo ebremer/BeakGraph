@@ -2,8 +2,12 @@ package com.ebremer.beakgraph.pool;
 
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
-import java.io.File;
+import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Objects;
 import org.apache.commons.pool2.BaseKeyedPooledObjectFactory;
 import org.apache.commons.pool2.DestroyMode;
 import org.apache.commons.pool2.PooledObject;
@@ -12,18 +16,59 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * Creates and validates the pooled {@link BeakGraph} readers, keyed by the
+ * store's file URI.
  *
  * @author erich
  */
 public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, BeakGraph> {
     private static final Logger logger = LoggerFactory.getLogger(BeakGraphPoolFactory.class);
-    
+
     public BeakGraphPoolFactory() {}
+
+    /**
+     * The path a pool key names. {@code Path.of(URI)} accepts every form the
+     * keys arrive in: {@code File.toURI()}'s {@code file:///C:/...} and, on
+     * Windows, the authority form {@code file://server/share/x.h5} that
+     * {@code Path.toUri()} produces for a UNC path - which
+     * {@code new File(URI)} rejected outright ("URI has an authority
+     * component"), turning every query against a store on a network share
+     * into a 500.
+     */
+    static Path toPath(URI uri) {
+        return Path.of(uri);
+    }
+
+    /**
+     * What identifies the file behind a pooled reader: its file key (inode /
+     * file id; may be null on some Windows filesystems), size and
+     * modification time as they were when the reader opened it.
+     */
+    record FileSignature(Object fileKey, long size, long modifiedMillis) {
+        static FileSignature of(Path path) throws IOException {
+            BasicFileAttributes a = Files.readAttributes(path, BasicFileAttributes.class);
+            return new FileSignature(a.fileKey(), a.size(), a.lastModifiedTime().toMillis());
+        }
+
+        boolean sameFile(FileSignature live) {
+            return Objects.equals(fileKey, live.fileKey) && size == live.size && modifiedMillis == live.modifiedMillis;
+        }
+    }
+
+    /** A pooled reader plus the signature of the file it opened. */
+    static final class StorePooledObject extends DefaultPooledObject<BeakGraph> {
+        final FileSignature opened;
+
+        StorePooledObject(BeakGraph bg, FileSignature opened) {
+            super(bg);
+            this.opened = opened;
+        }
+    }
 
     @Override
     public BeakGraph create(URI uri) throws Exception {
         logger.trace("Creating BeakGraph {}", uri);
-        HDF5Reader reader = new HDF5Reader(new File(uri));
+        HDF5Reader reader = new HDF5Reader(toPath(uri));
         try {
             return new BeakGraph(reader, uri, null);
         } catch (RuntimeException | Error e) {
@@ -32,26 +77,60 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
             throw e;
         }
     }
-    
+
     @Override
     public PooledObject<BeakGraph> wrap(BeakGraph value) {
-        return new DefaultPooledObject<>(value);
+        FileSignature opened = null;
+        try {
+            opened = FileSignature.of(toPath(value.getURI()));
+        } catch (IOException | RuntimeException e) {
+            // A signature is a replacement detector, not a requirement: without
+            // one the instance is still validated by the data probe below.
+            logger.debug("No file signature for pooled BeakGraph {}", value.getURI(), e);
+        }
+        return new StorePooledObject(value, opened);
     }
 
     /**
-     * Without this override, BaseKeyedPooledObjectFactory.validateObject always
-     * returns true and setTestOnBorrow(true) validates nothing - an instance whose
-     * reader was closed (poisoned) would be re-issued and fail on first use.
-     * The probe additionally touches REAL mapped data, not just the open flag:
-     * a reader whose backing file was replaced or truncated underneath stays
-     * "open" but throws on access, and an isOpen-only check re-issued it to
-     * every borrower forever.
+     * Validation on every borrow ({@code testOnBorrow}). Three things can make
+     * a pooled instance unfit, and each needs its own check:
+     * <ul>
+     *   <li>a CLOSED reader (poisoned by a caller): the open flag;</li>
+     *   <li>a file TRUNCATED or damaged in place: the data probe, which reads
+     *       a real predicate through the mapping and fails on access;</li>
+     *   <li>a file REPLACED underneath - the atomic rename-over pattern the
+     *       docs recommend. The mapping keeps the OLD inode alive, so the probe
+     *       still passes and stale data was served for as long as the store
+     *       kept being queried (idle eviction never reaches a busy instance),
+     *       with a second per-key slot answering from the NEW file in between.
+     *       The file's live signature (file key, size, mtime) is compared with
+     *       the one recorded at open; any difference, or a missing file,
+     *       discards the instance so the next borrow opens the replacement.</li>
+     * </ul>
+     * On Windows a move over a mapped file is refused (access denied) while a
+     * reader maps it, though renaming the mapped file away is allowed; the
+     * restart-free path there is to rename the old store away first, then
+     * move the new one in - the signature check reopens on the next borrow
+     * just the same.
      */
     @Override
     public boolean validateObject(URI uri, PooledObject<BeakGraph> p) {
         BeakGraph bg = p.getObject();
         if (!bg.getReader().isOpen()) {
             return false;
+        }
+        if (p instanceof StorePooledObject sp && sp.opened != null) {
+            try {
+                FileSignature live = FileSignature.of(toPath(uri));
+                if (!sp.opened.sameFile(live)) {
+                    logger.info("Store {} was replaced since this reader opened it (was {}, now {}); discarding",
+                            uri, sp.opened, live);
+                    return false;
+                }
+            } catch (IOException | RuntimeException e) {
+                logger.warn("Store {} is no longer readable ({}); discarding its pooled reader", uri, e.toString());
+                return false;
+            }
         }
         try {
             var predicates = bg.getReader().getDictionary().getPredicates();
@@ -67,9 +146,9 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
 
     @Override
     public void destroyObject(URI uri, PooledObject<BeakGraph> p, DestroyMode mode) throws Exception {
-        logger.trace("destroyObject {}", uri);        
+        logger.trace("destroyObject {}", uri);
         p.getObject().close();
-        super.destroyObject(uri, p, mode);               
-    }  
-    
+        super.destroyObject(uri, p, mode);
+    }
+
 }

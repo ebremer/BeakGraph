@@ -195,6 +195,10 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         StageGenerator orig = StageBuilder.chooseStageGenerator(cxt) ;
         StageGenerator stageGenerator = new StageGeneratorDirectorBG(orig) ;
         StageBuilder.setGenerator(ARQ.getContext(), stageGenerator) ;
+        // The engine that carries BG's per-execution wiring to every dataset
+        // whose default graph is a BeakGraph - including the Model path, which
+        // never sees a BGDatasetGraph context (see QueryEngineBG).
+        QueryEngineBG.register();
     }
 
     /**

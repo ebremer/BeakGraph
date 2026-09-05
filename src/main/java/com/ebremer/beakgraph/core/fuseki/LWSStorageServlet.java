@@ -252,6 +252,15 @@ public class LWSStorageServlet extends HttpServlet {
             // and it goes back to the pool; only an unexplained failure invalidates.
             healthy = ex.isReaderHealthy();
             throw ex;
+        } catch (java.util.NoSuchElementException exhausted) {
+            // The pool has no free reader for this store within its wait: the
+            // store is busy, not broken. Say so and invite a retry instead of
+            // reporting an internal error (bg is null here - nothing to return).
+            logger.warn("No pooled reader available for {} within the pool's wait: {}", h5File, exhausted.getMessage());
+            if (!resp.isCommitted()) {
+                resp.setHeader("Retry-After", "1");
+                resp.sendError(503, "Store busy: all readers in use, retry shortly");
+            }
         } catch (Exception ex) {
             // Reaching here means infrastructure failure (pool, file). Log it,
             // don't echo internals to the client.

@@ -61,6 +61,20 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     public BGDatasetGraph(BeakGraph g) {
         this.bg = g;
+        wire(context);
+    }
+
+    /**
+     * Installs BeakGraph's execution wiring into {@code context}: the BG
+     * OpExecutor factory and the rdfs:member-free property-function registry.
+     * Used for this dataset's own context and, by {@link QueryEngineBG}, for
+     * the per-execution context of any query whose default graph is a
+     * BeakGraph reached some other way (a Model over the graph, a
+     * {@code DatasetGraphOne} wrapper) - those never see a BGDatasetGraph
+     * context and used to fall back to the global registry, where rdfs:member
+     * is rewritten into container membership and answers nothing.
+     */
+    public static void wire(Context context) {
         QC.setFactory(context, OpExecutorBG.opExecFactoryBG);
         PropertyFunctionRegistry.set(context, BGPropertyFunctions.INSTANCE);
         // Re-pin CDT support for each dataset: a later ARQ.setStrictMode() call

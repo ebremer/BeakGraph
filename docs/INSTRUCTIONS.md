@@ -219,12 +219,27 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.fcd.cache.blocks` | `4096` | Decoded front-coded string blocks per FCD section (each block holds `blockSize`, typically 16, strings). |
 | `beakgraph.ffm.threshold` | `2147483647` | Dataset size in bytes above which BeakGraph FFM-maps the region itself instead of using jHDF's ByteBuffer. |
 | `beakgraph.scan.parallel.threshold` | `65536` | Minimum index position range for a scan-shaped first pattern (`?s ?p ?o`, or `?s <p> ?o`) to run as a chunked PARALLEL scan on the shared worker pool. `0` (or negative) disables parallel scanning. Chunks stop on query timeout/cancel and on early close (LIMIT). |
+| `beakgraph.pool.perKey` | `8` | Endpoint reader pool: readers a single store can have in use at once - one is held for the whole of a query's result streaming, so this is the number of concurrent queries per `.h5`. Readers are thread-safe; the cap bounds memory (each instance carries its own caches), not correctness. |
+| `beakgraph.pool.maxTotal` | `256` | Endpoint reader pool: readers across all stores. |
+| `beakgraph.pool.maxWait.seconds` | `5` | Endpoint reader pool: how long a query waits for a free reader before the endpoint answers `503` with `Retry-After`. |
+| `beakgraph.pool.idle.seconds` | `300` | Endpoint reader pool: idle time before an unused reader is closed and its file mapping released. |
 | `beakgraph.lws.refresh.seconds` | `30` | Directory mode (`-endpoint <dir>`): how often the served directory is re-scanned for added, removed or replaced files. The cached `beakgraph.ttl.gz` metadata is validated against the directory at start-up and rewritten after every change. `0` disables the periodic scan; a request for a path that exists on disk but is not yet listed still triggers an immediate re-scan (once per new file). |
 | `beakgraph.export.fastpath` | `true` | `-export NT`/`NQ` streams straight off the GSPO index with per-id text memoization (byte-identical output to the generic writer). `false` falls back to the generic StreamRDF writer. |
 | `beakgraph.export.textcache` | `262144` | Object-text memo entries for the index export (cleared wholesale when full). |
 
 JMH benchmarks for the read path live in `benchmarks/` (see its README) - use
 them to validate any tuning against your own store shape.
+
+### Replacing a store while it is being served
+
+Pooled readers compare the file's identity (file key, size, modification time) with what they
+opened on every borrow, so a store replaced on disk is reopened on the next query without a
+restart. On Linux and macOS the usual atomic `mv store.new.h5 store.h5` is enough. On Windows a
+move over a memory-mapped file is refused (access denied) while a reader maps it, but renaming the
+mapped file away is allowed: `move store.h5 store.old.h5` then `move store.new.h5 store.h5`. Readers
+still mapping the old file are discarded on their next borrow or after `beakgraph.pool.idle.seconds`;
+`store.old.h5` may be deleted at any point (Windows lets the delete proceed and removes the file once
+the last reader closes).
 
 ## 9. Output guarantees
 

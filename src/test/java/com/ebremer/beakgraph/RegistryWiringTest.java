@@ -1,5 +1,9 @@
 package com.ebremer.beakgraph;
 
+import com.ebremer.beakgraph.core.QueryEngineBG;
+import com.ebremer.beakgraph.hdf5.jena.AggregateCountFastPath;
+import org.apache.jena.sparql.core.DatasetGraphFactory;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -172,4 +176,54 @@ class RegistryWiringTest {
                 "POLYGON((0 0,10 0,10 10,0 10,0 0))"),
             "CRS-prefixed wktLiteral must be handled");
     }
+
+    // --- BG-338: the Model path gets the same wiring as the dataset path ----
+
+    private static java.util.List<String> members(Model model) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try (QueryExecution qe = QueryExecutionFactory.create(QueryFactory.create(
+                "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> " +
+                "SELECT ?x WHERE { <http://ex.org/bag> rdfs:member ?x }"), model)) {
+            ResultSet rs = qe.execSelect();
+            while (rs.hasNext()) out.add(rs.next().getResource("x").getURI());
+        }
+        return out;
+    }
+
+    private static long countViaModel(Model model) {
+        try (QueryExecution qe = QueryExecutionFactory.create(QueryFactory.create(
+                "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"), model)) {
+            return qe.execSelect().next().getLiteral("c").getLong();
+        }
+    }
+
+    @Test
+    void modelPathsAnswerRdfsMemberLikeTheDataset() {
+        // ds.getDefaultModel() and a Model over the graph are Jena-wrapped into a
+        // fresh DatasetGraphOne whose context is not the BGDatasetGraph's. With
+        // Jena 6.2 the global container property function happens to answer a
+        // literal rdfs:member triple too, so this is an equivalence check across
+        // the three routes rather than a reproduction of a miss.
+        assertEquals(java.util.List.of("http://ex.org/item"), members(ds.getDefaultModel()));
+        assertEquals(java.util.List.of("http://ex.org/item"), members(ModelFactory.createModelForGraph(bg)));
+    }
+
+    @Test
+    void modelPathsRunOnTheBGExecutor() {
+        // What the Model path really lost: the BG OpExecutor (filter pushdown,
+        // spatial seeding, the DISTINCT/COUNT fast paths) lives in the dataset
+        // context, which a DatasetGraphOne never carries. QueryEngineBG installs
+        // it per execution; the COUNT fast path's hit counter is the witness.
+        for (Model model : new Model[]{ds.getDefaultModel(), ModelFactory.createModelForGraph(bg)}) {
+            long before = AggregateCountFastPath.HITS.get();
+            assertEquals(2, countViaModel(model));
+            assertEquals(1, AggregateCountFastPath.HITS.get() - before,
+                    "the BG COUNT fast path must run for a Model over a BeakGraph");
+        }
+        assertTrue(QueryEngineBG.isBeakGraphDataset(DatasetGraphFactory.wrap(bg)));
+        assertTrue(QueryEngineBG.isBeakGraphDataset(ds.asDatasetGraph()));
+        // Plain Jena models keep Jena's engine (see rdfsMemberStillWorksOnPlainJenaModels).
+        assertFalse(QueryEngineBG.isBeakGraphDataset(DatasetGraphFactory.wrap(ModelFactory.createDefaultModel().getGraph())));
+    }
+
 }

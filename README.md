@@ -68,6 +68,10 @@ try (BeakGraph bg = BG.getBeakGraph(file)) {
 }
 ```
 
+SPARQL runs with BeakGraph's own execution (index-driven joins, filter pushdown, spatial seeding) whether it is
+issued against the dataset or against a Model over the graph (`ds.getDefaultModel()`,
+`ModelFactory.createModelForGraph(bg)`).
+
 BeakGraph is a [Apache Jena](https://jena.apache.org/) Graph implementation backed by [HDF5](https://www.hdfgroup.org/solutions/hdf5/).
 Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/).
 
