@@ -316,20 +316,30 @@ Apply the first matching rule:
    `(language tag, lexical form, direction)` where direction ranks absent (0) < `ltr` (1) <
    `rtl` (2). Language tags compare as code-point strings; store the parser's case-canonicalized
    form (e.g. `en`, `en-US` — language subtag lowercase, region uppercase).
-3. **Both in the same timezone-sensitive temporal value space** — the spaces are dateTime
-   (incl. dateTimeStamp), date, time, gYear, gYearMonth, gMonth, gMonthDay, gDay, duration; a
-   literal is in a space only if it is a *well-formed* instance:
-   * All spaces except duration: compare as instants after **pinning a missing timezone to UTC**
-     (XSD's ±14 h indeterminacy is resolved to UTC; pairs already determinate under XSD order are
-     unaffected). Equal instants (e.g. `…Z` vs `…+00:00`) fall through to §6.4.
+3. **Both in the same timezone-sensitive temporal value space** — the spaces are the *instant*
+   space (dateTime incl. dateTimeStamp, gYear, gYearMonth, gMonth, gMonthDay, gDay — one space, as
+   in ARQ), date, time, and duration; a literal is in a space only if it is a *well-formed*
+   instance:
+   * Instant space: first by kind rank `gDay < gMonth < gMonthDay < gYear < gYearMonth < dateTime`;
+     same kind: compare as instants after **pinning a missing timezone to UTC** (XSD's ±14 h
+     indeterminacy is resolved to UTC; pairs already determinate under XSD order are unaffected).
+     Equal instants (e.g. `…Z` vs `…+00:00`) fall through to §6.4. (Sending a cross-kind pair to
+     rule 5 instead put it on ARQ's lexical fallback — a cycle against the same-kind instant order.)
+   * date, time: compare as instants with the same UTC pinning.
    * duration: compare by total months (years·12+months, signed), then total seconds
      (days·86400+hours·3600+minutes·60+seconds, signed, exact decimal), then §6.4. (So
      `"P1D"` < `"PT24H"` only via the §6.4 tie-break — they are value-equal — and both < `"P1M"`.)
-4. **Everything else — SPARQL value order with fixed cross-space ranks** (this is Jena
+4. **Both numeric** (any XSD numeric datatype) — by **exact value**: `-INF < finite < +INF < NaN`,
+   finite values compared as exact decimals (a float or double converts exactly). *Not* SPARQL's
+   promoted comparison: promoting a decimal to a float is lossy, and mixing that with the exact
+   decimal-vs-decimal order and the §6.3 tie-break was cyclic (`"0.100000000099"^^decimal <
+   "0.10000000010"^^decimal` exactly, both tie with `"0.10000000005"^^float` as floats, and the
+   tie-break puts the float between them). Value-equal terms fall through to §6.4. Range pushdown
+   reconciles this with ARQ's lossy `<` by widening its bounds (§10.4).
+5. **Everything else — SPARQL value order with fixed cross-space ranks** (this is Jena
    `NodeValue.compareAlways` behavior, reproduced here normatively):
    * Classify each literal into a value space. Two literals in the **same** space compare by
-     **value** (numbers numerically across *all* numeric datatypes — int, integer, decimal, long,
-     float, double interleave by magnitude; booleans false < true; strings by code point).
+     **value** (booleans false < true; strings by code point).
      Ill-formed literals (unparseable value for their datatype) and literals of unknown datatypes
      compare within their cluster by **lexical form, then datatype IRI**.
    * Two literals in **different** spaces order by this fixed rank (empirically verified against the
@@ -898,7 +908,12 @@ treat them as informational.
 
 These reader features rely on format invariants already stated; they are listed so a validator knows
 what to exercise: term `locate` via §6 binary search (symmetric with `extract`); `select1`-addressed
-run traversal (§8.5); numeric range pushdown over value-equal clusters (§6.4 adjacency); graph
+run traversal (§8.5); numeric range pushdown over value-equal clusters (§6.4 adjacency) — for a
+numeric constant the id bounds are widened to the constant's *promotion neighbourhood* (the
+midpoints around a float/double constant; `(float) c` / `(double) c` for a decimal or integer
+constant when the section holds float / double rows), because ARQ compares mixed numeric types by
+lossy promotion while the dictionary orders them exactly (§6.2.4), and the cluster is scanned rather
+than skipped for `>` / `<`; graph
 enumeration and membership via the `graphs` list; union-graph scans; HTTP range reading (a
 consequence of the contiguous-dataset profile, §3 — no format work needed).
 

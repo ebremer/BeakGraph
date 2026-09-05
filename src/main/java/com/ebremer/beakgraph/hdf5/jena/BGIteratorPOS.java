@@ -190,21 +190,21 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
         // adjacent distinct ids, and the raw exact-term insertion point can land
         // inside that cluster, silently dropping qualifying boundary rows.
-        long[] c = ValueCluster.of(dict.getObjects(), value);
+        ValueCluster.Bounds c = ValueCluster.of(dict.getObjects(), value);
         switch (op) {
             case ">" -> {
-                 long target = c[1] + 1;
+                 long target = c.firstGT();
                  if (Long.compareUnsigned(target, minObjId) > 0) minObjId = target;
             }
             case ">=" -> {
-                 if (Long.compareUnsigned(c[0], minObjId) > 0) minObjId = c[0];
+                 if (Long.compareUnsigned(c.firstGE(), minObjId) > 0) minObjId = c.firstGE();
             }
             case "<" -> {
-                 long target = c[0] - 1;
+                 long target = c.lastLT();
                  if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
             }
             case "<=" -> {
-                 long target = c[1];
+                 long target = c.lastLE();
                  if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
             }
         }

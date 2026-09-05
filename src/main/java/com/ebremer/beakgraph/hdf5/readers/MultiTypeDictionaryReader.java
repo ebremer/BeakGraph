@@ -239,6 +239,17 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         return false;
     }
 
+    /** The floats dataset exists only when the section stores an xsd:float literal. */
+    @Override
+    public boolean hasFloatLiterals() {
+        return floats != null;
+    }
+
+    @Override
+    public boolean hasDoubleLiterals() {
+        return doubles != null;
+    }
+
     public void setTripleTermResolver(TripleTermResolver resolver) {
         this.tripleTermResolver = resolver;
     }

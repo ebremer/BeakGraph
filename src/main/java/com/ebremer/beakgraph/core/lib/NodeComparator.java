@@ -158,9 +158,32 @@ public class NodeComparator implements Comparator<Node> {
                 // pushdown stays over-inclusive and value-equal terms stay adjacent.
                 int group = temporalGroup(nv1);
                 if (group != 0 && group == temporalGroup(nv2)) {
-                    return group == GROUP_DURATION
-                            ? compareDurationTotal(nv1, nv2, n1, n2)
-                            : compareTemporalTotal(nv1, nv2, n1, n2);
+                    if (group == GROUP_DURATION) {
+                        return compareDurationTotal(nv1, nv2, n1, n2);
+                    }
+                    if (group == GROUP_INSTANT) {
+                        // One ARQ value space holds dateTime and the g* kinds;
+                        // a fixed kind rank keeps cross-kind pairs off the
+                        // lexical fallback compareAlways would give them.
+                        int byKind = Integer.compare(instantKindRank(nv1), instantKindRank(nv2));
+                        if (byKind != 0) {
+                            return byKind;
+                        }
+                    }
+                    return compareTemporalTotal(nv1, nv2, n1, n2);
+                }
+
+                // Numbers of ANY XSD numeric datatype: exact value order. The
+                // SPARQL promotion compareAlways applies to mixed pairs (decimal
+                // vs float as floats) is lossy, and mixing it with the exact
+                // decimal-vs-decimal order and a lexical tie-break was cyclic.
+                // Value-equal terms fall to the exact-term tie-break below.
+                if (nv1.isNumber() && nv2.isNumber()) {
+                    int byNumber = NumericOrder.compare(nv1, nv2);
+                    if (byNumber != 0) {
+                        return byNumber;
+                    }
+                    return compareExactLiteralTerms(n1, n2);
                 }
 
                 // compareAlways provides a strict SPARQL "ORDER BY" ordering by VALUE,
@@ -230,28 +253,41 @@ public class NodeComparator implements Comparator<Node> {
         return lang != null && !lang.isEmpty();
     }
 
+    private static final int GROUP_INSTANT = 1;
     private static final int GROUP_DURATION = 9;
 
     /**
      * Classifies a literal into one of the timezone-sensitive temporal value
-     * spaces (or 0 for everything else). The grouping mirrors Jena's own value
-     * spaces - dateTime and dateTimeStamp share one space, date/time/g* each
-     * have their own - so the special-cased ordering below applies exactly where
-     * compareAlways would have compared by value-or-term, and never across two
-     * spaces that compareAlways ranks by value space. Ill-formed literals answer
-     * false to all predicates and stay on the compareAlways path.
+     * spaces (or 0 for everything else), mirroring Jena's own value spaces:
+     * dateTime, dateTimeStamp and the five g* kinds share ONE space
+     * (ARQ's VSPACE_DATETIME), date and time have their own, duration its own.
+     * The grouping used to give each g* kind a space of its own, which sent a
+     * gYear-vs-dateTime pair to compareAlways; there the shared space made
+     * the pair "not comparable" and fell back to lexical order - mixed with
+     * the instant order of same-kind pairs, a cycle. Within the instant space
+     * a fixed kind rank ({@link #instantKindRank}) orders cross-kind pairs and
+     * same-kind pairs compare as instants. Ill-formed literals answer false
+     * to all predicates and stay on the compareAlways path.
      */
     private static int temporalGroup(NodeValue nv) {
-        if (nv.isDateTime())   return 1;
+        if (nv.isDateTime() || nv.isGYear() || nv.isGYearMonth()
+                || nv.isGMonth() || nv.isGMonthDay() || nv.isGDay()) {
+            return GROUP_INSTANT;
+        }
         if (nv.isDate())       return 2;
         if (nv.isTime())       return 3;
-        if (nv.isGYear())      return 4;
-        if (nv.isGYearMonth()) return 5;
-        if (nv.isGMonth())     return 6;
-        if (nv.isGMonthDay())  return 7;
-        if (nv.isGDay())       return 8;
         if (nv.isDuration())   return GROUP_DURATION;
         return 0;
+    }
+
+    /** gDay < gMonth < gMonthDay < gYear < gYearMonth < dateTime (the rank SPECIFICATIONS.md 6.2 documents). */
+    private static int instantKindRank(NodeValue nv) {
+        if (nv.isGDay())       return 0;
+        if (nv.isGMonth())     return 1;
+        if (nv.isGMonthDay())  return 2;
+        if (nv.isGYear())      return 3;
+        if (nv.isGYearMonth()) return 4;
+        return 5;
     }
 
     /**

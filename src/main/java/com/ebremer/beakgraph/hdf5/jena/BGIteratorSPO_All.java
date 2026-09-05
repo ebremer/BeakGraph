@@ -360,7 +360,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
         // adjacent distinct ids, and the raw exact-term insertion point can land
         // inside that cluster, silently dropping qualifying boundary rows.
-        long[] c = switch (type) {
+        ValueCluster.Bounds c = switch (type) {
             case 1 -> ValueCluster.of(dict.getSubjects(), value);
             case 2 -> ValueCluster.of(dict.getPredicates(), value);
             default -> ValueCluster.of(dict.getObjects(), value);
@@ -374,10 +374,10 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         }
 
         switch (op) {
-            case ">" -> min = Math.max(min, c[1] + 1);
-            case ">=" -> min = Math.max(min, c[0]);
-            case "<" -> max = Math.min(max, c[0] - 1);
-            case "<=" -> max = Math.min(max, c[1]);
+            case ">" -> min = Math.max(min, c.firstGT());
+            case ">=" -> min = Math.max(min, c.firstGE());
+            case "<" -> max = Math.min(max, c.lastLT());
+            case "<=" -> max = Math.min(max, c.lastLE());
         }
 
         switch (type) {

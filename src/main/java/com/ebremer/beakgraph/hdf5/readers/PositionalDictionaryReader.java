@@ -148,6 +148,16 @@ public class PositionalDictionaryReader implements GSPODictionary {
     private Dictionary makeObjectsDictionary() {
         return new Dictionary() {
             @Override
+            public boolean hasFloatLiterals() {
+                return literals != null && literals.hasFloatLiterals();
+            }
+
+            @Override
+            public boolean hasDoubleLiterals() {
+                return literals != null && literals.hasDoubleLiterals();
+            }
+
+            @Override
             public long locate(Node element) {
                 long result = search(element);
                 return (result >= 0) ? result : -1;

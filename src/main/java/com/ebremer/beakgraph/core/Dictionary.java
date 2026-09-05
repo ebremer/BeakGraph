@@ -35,5 +35,16 @@ public interface Dictionary {
     public Node extract(long id);
     public long getNumberOfNodes();
     public Stream<Node> streamNodes();
+
+    /**
+     * Whether this dictionary holds any xsd:float literal. Range pushdown
+     * widens an integer or decimal bound to the float rounding of the
+     * constant only when float rows exist; the conservative default says
+     * they might.
+     */
+    public default boolean hasFloatLiterals() { return true; }
+
+    /** Whether this dictionary holds any xsd:double literal (see {@link #hasFloatLiterals}). */
+    public default boolean hasDoubleLiterals() { return true; }
     
 }

@@ -22,11 +22,17 @@ public final class StringUtils {
      * from a four-byte on-disk value was otherwise reachable from one lookup.
      */
     private static final long MAX_ZSTD_EXPANSION = 131072L / 4;
+    /** Hard cap on one decoded fragment (a single RDF term), tunable via beakgraph.fcd.maxFragmentBytes. */
+    private static final long MAX_FRAGMENT_BYTES = Long.getLong("beakgraph.fcd.maxFragmentBytes", 256L << 20);
 
     /** Validates a declared uncompressed length against what {@code compressedLength} bytes can hold. */
     private long checkedLength(int uncompressedLength, byte[] compressed, int offset, int compressedLength) {
         if (uncompressedLength < 0) {
             throw new IllegalArgumentException("Invalid uncompressed length: " + uncompressedLength);
+        }
+        if (uncompressedLength > MAX_FRAGMENT_BYTES) {
+            throw new IllegalArgumentException("Corrupt compressed fragment: declared length " + uncompressedLength
+                    + " exceeds beakgraph.fcd.maxFragmentBytes (" + MAX_FRAGMENT_BYTES + ")");
         }
         if (uncompressedLength > compressedLength * MAX_ZSTD_EXPANSION) {
             throw new IllegalArgumentException("Corrupt compressed fragment: declared length " + uncompressedLength
@@ -81,7 +87,11 @@ public final class StringUtils {
      */
     public String decompress(byte[] source) {
         if (source == null || source.length < HEADER_SIZE) {
-            return "";
+            // A stored compressed fragment always carries the 4-byte length header
+            // (compress() writes it even for ""); anything shorter is a damaged
+            // store. Answering "" here silently corrupted the front-coded chain.
+            throw new IllegalArgumentException("Corrupt compressed fragment: "
+                    + (source == null ? "null" : source.length + " bytes") + ", shorter than its 4-byte length header");
         }
         // Read length header to allocate exactly what we need - after checking it.
         int uncompressedLength = ByteBuffer.wrap(source).getInt();
@@ -106,7 +116,8 @@ public final class StringUtils {
      */
     public String decompress(ByteBuffer buffer) {
         if (buffer == null || buffer.remaining() < HEADER_SIZE) {
-            return "";
+            throw new IllegalArgumentException("Corrupt compressed fragment: "
+                    + (buffer == null ? "null" : buffer.remaining() + " bytes") + ", shorter than its 4-byte length header");
         }
 
         // 1. Read the uncompressed length header (4 bytes)

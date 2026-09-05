@@ -211,4 +211,36 @@ class TemporalTotalOrderTest {
             return rows;
         }
     }
+
+    // --- BG-434: dateTime and the g* kinds share ONE ARQ value space ---------
+
+    private static Node g(String lex, XSDDatatype dt) { return NodeFactory.createLiteralDT(lex, dt); }
+
+    @Test
+    void crossKindInstantPairsAreTotallyOrdered() {
+        // temporalGroup gave gYear its own group, so a gYear-vs-dateTime pair
+        // went to compareAlways, where ARQ's shared DATETIME space made it
+        // "not comparable" and fell back to LEXICAL order - while same-kind
+        // pairs ordered as instants. Lexically "2020-06-01T…" > "2020" and
+        // "1999-12-31T…" < "2020"; as instants 1999 < 2020 < 2020-06: mixing
+        // the two orders across a third kind cycled.
+        assertTotallyOrdered(List.of(
+                dt("2020-06-01T00:00:00Z"),
+                g("2020", XSDDatatype.XSDgYear),
+                dt("1999-12-31T00:00:00Z"),
+                g("2021", XSDDatatype.XSDgYear),
+                g("2020-06", XSDDatatype.XSDgYearMonth),
+                g("--06", XSDDatatype.XSDgMonth),
+                g("--06-15", XSDDatatype.XSDgMonthDay),
+                g("---15", XSDDatatype.XSDgDay),
+                g("2020", XSDDatatype.XSDgYear).equals(null) ? null : dt("2020-06-01T00:00:00+05:00"),
+                dt("2020-06-01T00:00:00")));
+        // The documented kind rank holds across the space.
+        assertTrue(CMP.compare(g("---15", XSDDatatype.XSDgDay), g("--06", XSDDatatype.XSDgMonth)) < 0);
+        assertTrue(CMP.compare(g("--06", XSDDatatype.XSDgMonth), g("--06-15", XSDDatatype.XSDgMonthDay)) < 0);
+        assertTrue(CMP.compare(g("--06-15", XSDDatatype.XSDgMonthDay), g("2020", XSDDatatype.XSDgYear)) < 0);
+        assertTrue(CMP.compare(g("2020", XSDDatatype.XSDgYear), g("2020-06", XSDDatatype.XSDgYearMonth)) < 0);
+        assertTrue(CMP.compare(g("2020-06", XSDDatatype.XSDgYearMonth), dt("1999-12-31T00:00:00Z")) < 0);
+        assertTrue(CMP.compare(g("2020", XSDDatatype.XSDgYear), g("2021", XSDDatatype.XSDgYear)) < 0, "same kind: by instant");
+    }
 }

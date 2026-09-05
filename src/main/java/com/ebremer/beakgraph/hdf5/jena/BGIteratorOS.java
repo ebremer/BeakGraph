@@ -202,21 +202,21 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (!var.equals(quad.getSubject())) return;
         // Snap the bound to the edges of the whole value-equal cluster (degenerates
         // to the plain insertion point for non-literal constants); see ValueCluster.
-        long[] c = ValueCluster.of(dict.getSubjects(), value);
+        ValueCluster.Bounds c = ValueCluster.of(dict.getSubjects(), value);
         switch (op) {
             case ">" -> {
-                 long target = c[1] + 1;
+                 long target = c.firstGT();
                  if (Long.compareUnsigned(target, minSubId) > 0) minSubId = target;
             }
             case ">=" -> {
-                 if (Long.compareUnsigned(c[0], minSubId) > 0) minSubId = c[0];
+                 if (Long.compareUnsigned(c.firstGE(), minSubId) > 0) minSubId = c.firstGE();
             }
             case "<" -> {
-                 long target = c[0] - 1;
+                 long target = c.lastLT();
                  if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
             }
             case "<=" -> {
-                 long target = c[1];
+                 long target = c.lastLE();
                  if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
             }
         }

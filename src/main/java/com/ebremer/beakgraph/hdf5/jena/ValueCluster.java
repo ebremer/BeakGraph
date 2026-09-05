@@ -1,27 +1,36 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.Dictionary;
+import com.ebremer.beakgraph.core.lib.NumericOrder;
+import java.math.BigDecimal;
+import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.sparql.expr.Expr;
 import org.apache.jena.sparql.expr.NodeValue;
 
 /**
- * Locates the contiguous id range of dictionary entries that compare
- * <em>value-equal</em> to a filter constant.
+ * Turns a range-filter constant into id bounds for the index iterators.
  * <p>
- * The dictionaries order literals by value first (NodeValue.compareAlways) and
- * break value ties on the exact RDF term, so value-equal but term-distinct
- * literals ("5"^^xsd:int, "5"^^xsd:integer, "5.0"^^xsd:double) occupy a run of
- * adjacent ids - and an exact-term binary search can land anywhere inside that
- * run. Range-filter pushdown (FILTER(?o >= 5)) must therefore snap its bound to
- * the edges of the whole cluster: with [lo, hi] from {@link #of},
- * <pre>
- *   &gt;   -&gt; min = hi + 1        &gt;=  -&gt; min = lo
- *   &lt;   -&gt; max = lo - 1        &lt;=  -&gt; max = hi
- * </pre>
- * For a constant with no value-equal entries (including all non-literals) the
- * cluster is empty ({@code hi == lo - 1}, both at the insertion point) and the
- * formulas reduce exactly to the plain insertion-point bounds.
+ * The dictionaries order literals by value first and break value ties on the
+ * exact RDF term, so value-equal but term-distinct literals ("5"^^xsd:int,
+ * "5"^^xsd:integer, "5.0"^^xsd:double) occupy a run of adjacent ids - and an
+ * exact-term binary search can land anywhere inside that run. Range-filter
+ * pushdown must therefore snap its bound to the edges of the whole cluster:
+ * {@link Bounds} gives, per comparison, the first id that may satisfy
+ * {@code >} / {@code >=} and the last that may satisfy {@code <} / {@code <=}.
+ * <p>
+ * For a non-numeric constant the cluster is the run of ARQ-value-equal
+ * entries around it (empty for a constant with no value-equal entries,
+ * including all non-literals, where the bounds reduce to the insertion
+ * point). For a finite NUMERIC constant the dictionary orders by exact value
+ * ({@link NumericOrder}) while ARQ compares mixed datatypes by lossy
+ * promotion, so the candidate interval is widened to the promotion
+ * neighbourhood: every stored value ARQ accepts for {@code ?x >= c} has an
+ * exact value of at least {@code NumericOrder.lowerEdge(c)}, and every one it
+ * accepts for {@code ?x > c} too (the cluster itself is scanned rather than
+ * skipped). The enclosing FILTER removes the extra candidates; recall is
+ * never lost.
  * <p>
  * Growing over ADJACENT ids presumes value-equal entries are adjacent, which
  * holds for the value-ordered spaces but not for composite (cdt) or
@@ -33,11 +42,26 @@ final class ValueCluster {
 
     private ValueCluster() {}
 
+    /** Id bounds for the four ordering comparisons against one constant. */
+    record Bounds(long firstGE, long firstGT, long lastLT, long lastLE) {}
+
+    /** Bounds for {@code value} against {@code dict}. */
+    static Bounds of(Dictionary dict, Node value) {
+        if (value.isLiteral()) {
+            NodeValue nv = nodeValueOrNull(value);
+            if (nv != null && nv.isNumber() && NumericOrder.isFinite(nv)) {
+                return numericBounds(dict, nv);
+            }
+        }
+        long[] c = cluster(dict, value);
+        return new Bounds(c[0], c[1] + 1, c[0] - 1, c[1]);
+    }
+
     /**
      * Returns {@code {lo, hi}}: the inclusive 1-based id range of entries in
      * {@code dict} that are value-equal to {@code value}. Empty when {@code hi < lo}.
      */
-    static long[] of(Dictionary dict, Node value) {
+    static long[] cluster(Dictionary dict, Node value) {
         long raw = dict.search(value);
         boolean found = raw >= 0;
         long pos = found ? raw : (-raw - 1);
@@ -51,6 +75,53 @@ final class ValueCluster {
         while (hi + 1 <= n && valueEqual(extractOrNull(dict, hi + 1), value)) hi++;
         while (lo - 1 >= 1 && valueEqual(extractOrNull(dict, lo - 1), value)) lo--;
         return new long[]{lo, hi};
+    }
+
+    private static Bounds numericBounds(Dictionary dict, NodeValue c) {
+        boolean floats = dict.hasFloatLiterals();
+        boolean doubles = dict.hasDoubleLiterals();
+        long first = firstIdAtLeast(dict, NumericOrder.lowerEdge(c, floats, doubles));
+        long last = lastIdAtMost(dict, NumericOrder.upperEdge(c, floats, doubles));
+        return new Bounds(first, first, last, last);
+    }
+
+    /** A decimal literal with exactly the value {@code v}, as a probe for the dictionary's binary search. */
+    private static Node probe(BigDecimal v) {
+        return NodeFactory.createLiteralDT(v.toPlainString(), XSDDatatype.XSDdecimal);
+    }
+
+    /** First id whose exact numeric value is {@code >= v} (ids are 1-based). */
+    private static long firstIdAtLeast(Dictionary dict, BigDecimal v) {
+        long raw = dict.search(probe(v));
+        long pos = raw >= 0 ? raw : (-raw - 1);
+        // Value-equal terms sort among themselves by lexical form, so the
+        // probe may land inside such a run: back up to its first member.
+        while (pos - 1 >= 1 && sameValue(dict, pos - 1, v)) pos--;
+        return pos;
+    }
+
+    /** Last id whose exact numeric value is {@code <= v}. */
+    private static long lastIdAtMost(Dictionary dict, BigDecimal v) {
+        long raw = dict.search(probe(v));
+        long last = raw >= 0 ? raw : (-raw - 1) - 1;
+        long n = dict.getNumberOfNodes();
+        while (last + 1 <= n && sameValue(dict, last + 1, v)) last++;
+        return last;
+    }
+
+    private static boolean sameValue(Dictionary dict, long id, BigDecimal v) {
+        Node n = extractOrNull(dict, id);
+        if (n == null || !n.isLiteral()) return false;
+        NodeValue nv = nodeValueOrNull(n);
+        return nv != null && nv.isNumber() && NumericOrder.isFinite(nv) && NumericOrder.exact(nv).compareTo(v) == 0;
+    }
+
+    private static NodeValue nodeValueOrNull(Node n) {
+        try {
+            return NodeValue.makeNode(n);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static Node extractOrNull(Dictionary dict, long id) {

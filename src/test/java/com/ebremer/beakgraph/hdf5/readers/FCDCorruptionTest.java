@@ -181,4 +181,14 @@ class FCDCorruptionTest {
         ByteBuffer.wrap(lying).putInt(text.length() + 1);
         assertThrows(IllegalArgumentException.class, () -> su.decompress(lying));
     }
+
+    @Test
+    void truncatedCompressedPayloadIsCorruptionNotEmptyString() {
+        // BG-165: fewer than 4 bytes used to decode as "" and silently corrupt
+        // the front-coded chain (an empty suffix) instead of failing.
+        StringUtils su = new StringUtils();
+        assertThrows(IllegalArgumentException.class, () -> su.decompress(new byte[0]));
+        assertThrows(IllegalArgumentException.class, () -> su.decompress(new byte[]{1, 2, 3}));
+        assertThrows(IllegalArgumentException.class, () -> su.decompress(ByteBuffer.wrap(new byte[]{1, 2})));
+    }
 }
