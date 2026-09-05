@@ -19,6 +19,17 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
     private final Iterator<BindingNodeId> chain;
 
     public BGIteratorMaster(HDF5Reader reader, PositionalDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(reader, dict, bnid, quad, filter, nodeTable, -1);
+    }
+
+    /**
+     * @param graphId the graph's dictionary id when the caller already holds
+     *                it (a walk over the columnar graph list: the union and
+     *                any-graph fan-outs, BG-259) - the quad's graph slot is then
+     *                a placeholder no iterator looks up; -1 to resolve the
+     *                graph from the pattern and binding as usual
+     */
+    public BGIteratorMaster(HDF5Reader reader, PositionalDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long graphId) {
         // THE term classifier (the one-classifier rule's (CHANGELOG.md "Format v5 design notes") fix - one classification, here):
         // - A CONCRETE triple term is a bound term like any other; locate()
         //   answers it (a miss is correctly empty), so no special routing.
@@ -35,7 +46,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
             chain = Collections.emptyIterator();
             return;
         }
-        boolean gBound = !quad.getGraph().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getGraph())));
+        boolean gBound = graphId >= 1 || !quad.getGraph().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getGraph())));
         boolean sBound = !quad.getSubject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getSubject())));
         boolean pBound = !quad.getPredicate().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getPredicate())));
         boolean oBound = !TripleTermMatcher.isPattern(quad.getObject())
@@ -47,7 +58,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                     // G, P, S bound -> Find O (Index: GSPO)
                     IndexReader gspo = reader.getIndexReader(Index.GSPO);
                     if (gspo != null) {
-                         chain = new BGIteratorSO(dict, gspo, bnid, quad, filter, nodeTable);
+                         chain = new BGIteratorSO(dict, gspo, bnid, quad, filter, nodeTable, graphId);
                     } else {
                         throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
                     }
@@ -56,7 +67,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         // G, P, O bound -> Find S (Index: GPOS)
                         IndexReader gpos = reader.getIndexReader(Index.GPOS);
                         if (gpos != null) {
-                            chain = new BGIteratorOS(dict, gpos, bnid, quad, filter, nodeTable);
+                            chain = new BGIteratorOS(dict, gpos, bnid, quad, filter, nodeTable, graphId);
                         } else {
                             throw new IllegalStateException("Required GPOS index is missing from this BeakGraph file");
                         }
@@ -64,7 +75,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         // G, P bound -> Find S, O (Index: GPOS)
                         IndexReader gpos = reader.getIndexReader(Index.GPOS);
                         if (gpos != null) {
-                            chain = new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable);
+                            chain = new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable, graphId);
                         } else {
                             throw new IllegalStateException("Required GPOS index is missing from this BeakGraph file");
                         }
@@ -78,12 +89,12 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                     // predicate of the graph (Index: GPOS). There is no GOSP index,
                     // and the alternative was BGIteratorSPO_All: a walk over every
                     // row of the graph with an object clamp (BG-335).
-                    chain = new BGIteratorObjectFirst(dict, gpos, bnid, quad, filter, nodeTable);
+                    chain = new BGIteratorObjectFirst(dict, gpos, bnid, quad, filter, nodeTable, graphId);
                 } else {
                     // G bound, P variable -> Scan SP (Index: GSPO)
                     IndexReader gspo = reader.getIndexReader(Index.GSPO);
                     if (gspo != null) {
-                        chain = new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable);
+                        chain = new BGIteratorSPO_All(dict, gspo, bnid, quad, filter, nodeTable, graphId);
                     } else {
                         throw new IllegalStateException("Required GSPO index is missing from this BeakGraph file");
                     }

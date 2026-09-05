@@ -13,6 +13,23 @@ import org.apache.jena.graph.NodeFactory;
 public class Params {
     public static final String BG = ".BG";
     public static final String DICTIONARY = "dictionary";
+    // On-disk attribute, section and list names (SPECIFICATIONS.md §3.4, §7):
+    // one definition for the six writers and the readers, so a name cannot
+    // drift between engines and a reader's presence sniff (BG-302).
+    public static final String FORMAT_VERSION_ATTR = "formatVersion";
+    public static final String NUM_QUADS = "numQuads";
+    public static final String NUM_ENTRIES = "numEntries";
+    public static final String WIDTH = "width";
+    public static final String BLOCK_SIZE = "blockSize";
+    public static final String NUM_BLOCKS = "numBlocks";
+    public static final String ENTITIES = "entities";
+    public static final String PREDICATES = "predicates";
+    public static final String LITERALS = "literals";
+    public static final String GRAPHS = "graphs";
+    public static final String SUBJECTS = "subjects";
+    public static final String OBJECTS = "objects";
+    /** Strings per front-coded block (SPECIFICATIONS.md §5.5: always 16). */
+    public static final int FCD_BLOCK_SIZE = 16;
     // HDF5 on-disk format version, written as the "formatVersion" attribute on
     // the .BG group. Bump on any change older readers cannot understand;
     // HDF5Reader rejects files whose version exceeds this. Files written before

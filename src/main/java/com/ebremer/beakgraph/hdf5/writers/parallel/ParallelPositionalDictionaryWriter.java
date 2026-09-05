@@ -6,7 +6,7 @@ import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
@@ -70,20 +70,20 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
                 .setName("entities")
                 .setNodes(builder.getEntities())
                 .setStats(stats)
-                .enable(Types.IRI, Types.BNODE)
+                .section(DictionarySection.ENTITIES)
                 .build());
         ForkJoinTask<DictionaryWriter> predicatesTask = pool.submit(() -> new MultiTypeDictionaryWriter.Builder()
                 .setName("predicates")
                 .setNodes(builder.getPredicates())
                 .setStats(stats)
-                .enable(Types.IRI)
+                .section(DictionarySection.PREDICATES)
                 .build());
         MultiTypeDictionaryWriter.Builder literalsBuilder = new MultiTypeDictionaryWriter.Builder()
                 .setName("literals")
                 .setNodes(builder.getLiterals())
                 .setDataTypes(builder.getDataTypes())
                 .setStats(stats)
-                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING, Types.TRIPLE_TERM);
+                .section(DictionarySection.LITERALS);
 
         if (stats.numTripleTerms > 0) {
             // Triple-term component ids resolve against COMPLETED entities and
@@ -300,10 +300,10 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
 
     // --- Interface Boilerplate / Unsupported Methods ---
 
-    @Override public Object extractGraph(long id) { throw new UnsupportedOperationException(); }
-    @Override public Object extractSubject(long id) { throw new UnsupportedOperationException(); }
-    @Override public Object extractPredicate(long id) { throw new UnsupportedOperationException(); }
-    @Override public Object extractObject(long id) { throw new UnsupportedOperationException(); }
+    @Override public Node extractGraph(long id) { throw new UnsupportedOperationException(); }
+    @Override public Node extractSubject(long id) { throw new UnsupportedOperationException(); }
+    @Override public Node extractPredicate(long id) { throw new UnsupportedOperationException(); }
+    @Override public Node extractObject(long id) { throw new UnsupportedOperationException(); }
     @Override public long getNumberOfNodes() { throw new UnsupportedOperationException(); }
     @Override public List<Node> getNodes() { throw new UnsupportedOperationException(); }
     @Override public Stream<Node> streamSubjects() { throw new UnsupportedOperationException(); }

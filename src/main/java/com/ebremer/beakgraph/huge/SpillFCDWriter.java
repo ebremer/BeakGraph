@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.Params;
+
 import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import static com.ebremer.beakgraph.Params.COMPRESSION_THRESHOLD;
 import com.ebremer.beakgraph.core.lib.VByte;
@@ -128,10 +130,10 @@ final class SpillFCDWriter implements AutoCloseable, DictionarySinks.StringSink 
     void transferTo(StreamingHdf5Group parent) throws IOException {
         complete();
         StreamingHdf5Group strings = parent.putGroup(name);
-        strings.putAttribute("blockSize", blockSize);
+        strings.putAttribute(Params.BLOCK_SIZE, blockSize);
         long validBlocks = (stringsInCurrentBlock == 0 && numEntries > 0) ? numBlocks : numBlocks + 1;
-        strings.putAttribute("numBlocks", (numEntries == 0) ? 0 : validBlocks);
-        strings.putAttribute("numEntries", numEntries);
+        strings.putAttribute(Params.NUM_BLOCKS, (numEntries == 0) ? 0 : validBlocks);
+        strings.putAttribute(Params.NUM_ENTRIES, numEntries);
         strings.putAttribute("compression_threshold", COMPRESSION_THRESHOLD);
         long size = Files.size(stringFile);
         if (size > 0) {

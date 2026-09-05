@@ -37,8 +37,12 @@ import org.apache.jena.sys.JenaSystem;
 import org.apache.jena.util.iterator.ExtendedIterator;
 import org.apache.jena.util.iterator.NullIterator;
 import org.apache.jena.util.iterator.WrappedIterator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class HDF5Reader implements BGReader {
+
+    private static final Logger LOG = LoggerFactory.getLogger(HDF5Reader.class);
 
     private final HdfFile hdf;
     private final Group hdt;
@@ -113,13 +117,13 @@ public class HDF5Reader implements BGReader {
     private HDF5Reader(HdfFile hdf, URI uri) {
         this.hdf = hdf;
         try {
-            this.hdt = (Group) hdf.getChild(Params.BG);
-            if (hdt == null) {
+            if (!(hdf.getChild(Params.BG) instanceof Group bg)) {
                 throw new IllegalStateException(
                         "Not a BeakGraph file (no '" + Params.BG + "' group): " + uri);
             }
+            this.hdt = bg;
             this.formatVersion = readFormatVersion(hdt);
-            this.hasFormatVersionAttribute = hdt.getAttribute("formatVersion") != null;
+            this.hasFormatVersionAttribute = hdt.getAttribute(Params.FORMAT_VERSION_ATTR) != null;
             this.numQuads = readNumQuads(hdt);
             if (formatVersion > Params.FORMAT_VERSION) {
                 throw new IllegalStateException(
@@ -127,7 +131,22 @@ public class HDF5Reader implements BGReader {
                       + " is newer than this build supports (max " + Params.FORMAT_VERSION
                       + "). Upgrade BeakGraph.");
             }
-            Group dictionary = (Group) hdt.getChild(Params.DICTIONARY);
+            if (formatVersion < Params.RANK_DIRECTORY_MIN_VERSION) {
+                // Legal (SPECIFICATIONS §4.1 accepts older files) but a cliff an
+                // operator could not see: without the rank/select directories
+                // every block lookup is a linear scan of the level bitmap (BG-84).
+                LOG.warn("BeakGraph store {} is format v{}: its rank/select directories are ignored and every"
+                        + " index lookup falls back to the linear select1 scan; rebuild it (format v{}) for O(log n) lookups",
+                        uri, formatVersion, Params.FORMAT_VERSION);
+            }
+            Group dictionary = HdfProfile.group(hdt, Params.DICTIONARY);
+            if (dictionary == null) {
+                // A file with the .BG group but no dictionary (a foreign writer's
+                // partial output) used to surface as a bare NullPointerException
+                // from inside the dictionary reader (BG-88).
+                throw new IllegalStateException(
+                        "Not a BeakGraph file (no '" + Params.BG + "/" + Params.DICTIONARY + "' group): " + uri);
+            }
             this.dict = new PositionalDictionaryReader(dictionary);
             // Lower bound: format v4 changed how composite (cdt) literals are
             // ordered, and ids are comparator ranks. A pre-v4 file holding them
@@ -161,7 +180,7 @@ public class HDF5Reader implements BGReader {
      * and turned every lookup into a linear scan (BG-350).
      */
     private static long readFormatVersion(Group hdt) {
-        Attribute a = hdt.getAttribute("formatVersion");
+        Attribute a = hdt.getAttribute(Params.FORMAT_VERSION_ATTR);
         if (a == null) {
             return 1L;
         }
@@ -189,7 +208,7 @@ public class HDF5Reader implements BGReader {
 
     private static long readNumQuads(Group hdt) {
         try {
-            Attribute a = hdt.getAttribute("numQuads");
+            Attribute a = hdt.getAttribute(Params.NUM_QUADS);
             if (a != null && a.getData() instanceof Number n) {
                 return n.longValue();
             }
@@ -211,7 +230,7 @@ public class HDF5Reader implements BGReader {
     
     public IndexReader getIndexReader(Index indexType) {
         return indexCache.computeIfAbsent(indexType, type -> {
-            Group indexGroup = (Group) hdt.getChild(type.name());
+            Group indexGroup = HdfProfile.group(hdt, type.name());
             if (indexGroup == null) {
                 return null; // index not present in this file; the caller falls back
             }
@@ -228,7 +247,8 @@ public class HDF5Reader implements BGReader {
     @Override
     public Iterator<BindingNodeId> read(Node ng, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
         // An EMPTY store (built from an empty source - legal) has no dictionary
-        // or index datasets at all; every pattern answers no solutions rather
+        // sections, and its index groups hold only their seeded directories
+        // (SPECIFICATIONS §7.9); every pattern answers no solutions rather
         // than each downstream layer having to tolerate absent structures.
         // Deliberately keyed on dictionary absence, NOT numQuads: that attribute
         // counts SOURCE quads only, and a -void build of an empty source has
@@ -236,44 +256,109 @@ public class HDF5Reader implements BGReader {
         if (dict.isEmpty()) {
             return Collections.emptyIterator();
         }
+        BindingNodeId binding = orEmpty(bnid);
         // A pattern variable already bound to a node that does not exist in this store
         // (e.g. a VALUES/BIND term not present here) cannot match anything, so the pattern
         // yields no solutions - rather than failing to resolve the missing id.
-        if (boundToMissing(triple.getSubject(), bnid)
-                || boundToMissing(triple.getPredicate(), bnid)
-                || boundToMissing(triple.getObject(), bnid)) {
+        if (boundToMissing(triple, binding)) {
             return Collections.emptyIterator();
         }
+        Triple pattern = substituteCrossSpace(triple, binding, nodeTable);
         if (Quad.isUnionGraph(ng)) {
-            Iterator<Node> named = dict.streamGraphs()
-                .filter(n -> !(n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated)))
-                .iterator();
-            return readUnion(named, bnid, triple, filter, nodeTable);
+            return readUnion(namedGraphIds(), binding, pattern, filter, nodeTable);
         }
         boolean isDefault = ng.equals(Quad.defaultGraphNodeGenerated) || ng.equals(Quad.defaultGraphIRI);
         Node g = isDefault ? this.defaultGraph : ng;
-        // A bound variable's id is used DIRECTLY by the iterators (they consult the
-        // binding before the dictionary) whenever its id-space matches the position;
-        // only a cross-space binding (predicate id used in an entity position or
-        // vice versa) is materialized to its term here so the iterator re-locates it
-        // in the position's own dictionary. The former unconditional substitution
-        // paid an extract() + full binary search per bound variable per input row.
-        Node s = substituteIfCrossSpace(triple.getSubject(), bnid, nodeTable, false);
-        Node p = substituteIfCrossSpace(triple.getPredicate(), bnid, nodeTable, true);
-        Node o = substituteIfCrossSpace(triple.getObject(), bnid, nodeTable, false);
-        Quad quadPattern = new Quad(g, s, p, o);
-        return new BGIteratorMaster(this, dict, bnid, quadPattern, filter, nodeTable);
+        Quad quadPattern = new Quad(g, pattern.getSubject(), pattern.getPredicate(), pattern.getObject());
+        return new BGIteratorMaster(this, dict, binding, quadPattern, filter, nodeTable);
+    }
+
+    @Override
+    public Iterator<BindingNodeId> read(long graphId, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        if (dict.isEmpty() || graphId < 1) {
+            return Collections.emptyIterator();
+        }
+        BindingNodeId binding = orEmpty(bnid);
+        if (boundToMissing(triple, binding)) {
+            return Collections.emptyIterator();
+        }
+        return readGraph(graphId, binding, substituteCrossSpace(triple, binding, nodeTable), filter, nodeTable);
+    }
+
+    @Override
+    public java.util.stream.LongStream graphIds() {
+        return dict.streamGraphIds();
+    }
+
+    /**
+     * The pattern over the graph with dictionary id {@code gid}. The id is
+     * handed to the iterator as resolved; the quad's graph slot is a
+     * placeholder it never looks up.
+     */
+    private Iterator<BindingNodeId> readGraph(long gid, BindingNodeId binding, Triple pattern, ExprList filter, NodeTable nodeTable) {
+        Quad quadPattern = new Quad(Quad.unionGraph, pattern.getSubject(), pattern.getPredicate(), pattern.getObject());
+        return new BGIteratorMaster(this, dict, binding, quadPattern, filter, nodeTable, gid);
+    }
+
+    /**
+     * Ids of the named graphs straight from the columnar graph list: the
+     * union fan-out used to extract every graph's term and hand it back to
+     * read(), whose iterator located it again - the round trip the
+     * variable-graph path in BGIteratorMaster already avoids (BG-259).
+     */
+    private java.util.PrimitiveIterator.OfLong namedGraphIds() {
+        long dg = dict.getGraphs().locate(Quad.defaultGraphIRI);
+        long generated = dict.getGraphs().locate(Quad.defaultGraphNodeGenerated);
+        return dict.streamGraphIds().filter(id -> id != dg && id != generated).iterator();
+    }
+
+    /** A null binding means "no bindings" - every layer below read() already treats it so (BG-340). */
+    private static BindingNodeId orEmpty(BindingNodeId bnid) {
+        return (bnid != null) ? bnid : new BindingNodeId();
+    }
+
+    private static boolean boundToMissing(Triple triple, BindingNodeId binding) {
+        return boundToMissing(triple.getSubject(), binding)
+                || boundToMissing(triple.getPredicate(), binding)
+                || boundToMissing(triple.getObject(), binding);
+    }
+
+    /**
+     * A bound variable's id is used DIRECTLY by the iterators (they consult the
+     * binding before the dictionary) whenever its id-space matches the position;
+     * only a cross-space binding (predicate id used in an entity position or
+     * vice versa) is materialized to its term here so the iterator re-locates it
+     * in the position's own dictionary. The former unconditional substitution
+     * paid an extract() + full binary search per bound variable per input row.
+     */
+    private Triple substituteCrossSpace(Triple triple, BindingNodeId binding, NodeTable nodeTable) {
+        Node s = substituteIfCrossSpace(triple.getSubject(), binding, nodeTable, false);
+        Node p = substituteIfCrossSpace(triple.getPredicate(), binding, nodeTable, true);
+        Node o = substituteIfCrossSpace(triple.getObject(), binding, nodeTable, false);
+        return (s == triple.getSubject() && p == triple.getPredicate() && o == triple.getObject())
+                ? triple : Triple.create(s, p, o);
     }
 
     @Override
     public Iterator<BindingNodeId> readGraphs(java.util.Collection<Node> graphs, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
-        if (dict.isEmpty()
-                || boundToMissing(triple.getSubject(), bnid)
-                || boundToMissing(triple.getPredicate(), bnid)
-                || boundToMissing(triple.getObject(), bnid)) {
+        if (dict.isEmpty()) {
             return Collections.emptyIterator();
         }
-        return readUnion(graphs.iterator(), bnid, triple, filter, nodeTable);
+        BindingNodeId binding = orEmpty(bnid);
+        if (boundToMissing(triple, binding)) {
+            return Collections.emptyIterator();
+        }
+        // Members are terms (a FROM list): each is located once, here; the
+        // union graph member expands to every named graph; an absent member
+        // contributes nothing.
+        java.util.stream.LongStream ids = graphs.stream().flatMapToLong(n -> {
+            if (Quad.isUnionGraph(n)) {
+                return dict.streamGraphIds().filter(id -> id != dict.getGraphs().locate(Quad.defaultGraphIRI));
+            }
+            Node g = Quad.isDefaultGraph(n) ? this.defaultGraph : n;
+            return java.util.stream.LongStream.of(dict.getGraphs().locate(g));
+        }).filter(id -> id >= 1).distinct();
+        return readUnion(ids.iterator(), binding, substituteCrossSpace(triple, binding, nodeTable), filter, nodeTable);
     }
 
     /**
@@ -283,7 +368,7 @@ public class HDF5Reader implements BGReader {
      * deduplicated on the values of the pattern's variables (the concrete
      * positions are identical across graphs by construction).
      */
-    private Iterator<BindingNodeId> readUnion(Iterator<Node> graphs, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+    private Iterator<BindingNodeId> readUnion(java.util.PrimitiveIterator.OfLong graphIds, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
         List<Var> varList = new ArrayList<>(3);
         for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
             if (n.isVariable()) {
@@ -300,7 +385,8 @@ public class HDF5Reader implements BGReader {
         // Lazy per-graph chaining: constructing every graph's iterator up front
         // paid each one's index binary searches before the first row came back
         // (spatial stores hold thousands of tile graphs).
-        Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gn -> read(gn, bnid, triple, filter, nodeTable));
+        Iterator<Long> graphs = graphIds;
+        Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gid -> readGraph(gid, bnid, triple, filter, nodeTable));
         // The dedup set is inherent to union set-semantics (rows arrive per
         // graph, not globally sorted). Up to three variables - every pattern
         // shape before triple-term patterns existed - keeps the historical
@@ -465,10 +551,7 @@ public class HDF5Reader implements BGReader {
 
     /** True when {@code n} is a variable already bound to a node that does not exist here. */
     private static boolean boundToMissing(Node n, BindingNodeId bnid) {
-        if (bnid != null && n.isVariable()) {
-            return NodeId.isDoesNotExist(bnid.get(Var.alloc(n)));
-        }
-        return false;
+        return n.isVariable() && NodeId.isDoesNotExist(bnid.get(Var.alloc(n)));
     }
 
     /**
@@ -559,6 +642,16 @@ public class HDF5Reader implements BGReader {
         if (!open) return;
         open = false;
         hdf.close();
+        // The node table advertises AutoCloseable and its two caches hold up to
+        // a million weighted Node entries each; a closed reader that stays
+        // referenced (a field, a registry) used to keep them all reachable and
+        // kept answering from them (BG-287).
+        try {
+            nodeTable.close();
+        } catch (Exception ignore) {
+            // cache invalidation does not fail
+        }
+        indexCache.clear();
     }
 
     @Override

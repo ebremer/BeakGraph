@@ -43,6 +43,15 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long gId, sId, pId;
 
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
 
@@ -63,7 +72,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         maxObjId = bounds.maxO;
 
         // Resolve Graph
-        gi = resolveNode(quad.getGraph(), dict.getGraphs(), bnid);
+        gi = (presetGi >= 1) ? presetGi : resolveNode(quad.getGraph(), dict.getGraphs(), bnid);
         if (gi < 1) return;
 
         // Resolve Subject

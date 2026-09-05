@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.Params;
+
 import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -29,6 +31,10 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
     private long numEntries = 0;
     private long bytesWritten = 0;
     private boolean completed = false;
+    // Packed bytes are staged and written a chunk at a time: the buffered
+    // stream's write(int) takes its lock per byte (BG-250).
+    private final byte[] stage = new byte[1 << 16];
+    private int staged = 0;
 
     SpillBitPackedBuffer(Path file, int bitWidth) throws IOException {
         // Same width envelope as the RAM buffer: the pack accumulator carries a
@@ -69,8 +75,7 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
         try {
             while (writeAccumulatorCount >= 8) {
                 int shift = writeAccumulatorCount - 8;
-                out.write((byte) (writeAccumulator >>> shift));
-                bytesWritten++;
+                stageByte((byte) (writeAccumulator >>> shift));
                 writeAccumulator &= (1L << shift) - 1;
                 writeAccumulatorCount -= 8;
             }
@@ -79,16 +84,31 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
         }
     }
 
+    private void stageByte(byte b) throws IOException {
+        stage[staged++] = b;
+        bytesWritten++;
+        if (staged == stage.length) {
+            flushStage();
+        }
+    }
+
+    private void flushStage() throws IOException {
+        if (staged > 0) {
+            out.write(stage, 0, staged);
+            staged = 0;
+        }
+    }
+
     /** Flushes the trailing partial byte and closes the temp file for writing. */
     void complete() throws IOException {
         if (completed) return;
         completed = true;
         if (writeAccumulatorCount > 0) {
-            out.write((byte) (writeAccumulator << (8 - writeAccumulatorCount)));
-            bytesWritten++;
+            stageByte((byte) (writeAccumulator << (8 - writeAccumulatorCount)));
             writeAccumulator = 0;
             writeAccumulatorCount = 0;
         }
+        flushStage();
         out.close();
     }
 
@@ -114,8 +134,8 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
         }
         try (StreamingHdf5Dataset ds = group.createByteDataset(name, bytesWritten)) {
             HugeIO.copyFileIntoDataset(file, ds);
-            ds.putAttribute("width", bitWidth);
-            ds.putAttribute("numEntries", numEntries);
+            ds.putAttribute(Params.WIDTH, bitWidth);
+            ds.putAttribute(Params.NUM_ENTRIES, numEntries);
         }
         Files.deleteIfExists(file);
     }

@@ -23,16 +23,18 @@ public class VByte {
      * @throws IOException
      */
     public static int encode(OutputStream out, long value) throws IOException {
-        int c = 0;
         if (value < 0)
             throw new IllegalArgumentException("Value must be non-negative: " + value);
+        // One write per value, not per byte: the dictionary writers' streams
+        // (ByteArrayOutputStream, BufferedOutputStream) lock per call (BG-250).
+        byte[] buf = new byte[10];
+        int c = 0;
         while (value > 0x7F) {
-            out.write((int)(value & 0x7F));
-            c++;
+            buf[c++] = (byte) (value & 0x7F);
             value >>>= 7;
         }
-        out.write((int)(value | 0x80));
-        c++;
+        buf[c++] = (byte) (value | 0x80);
+        out.write(buf, 0, c);
         return c;
     }
 

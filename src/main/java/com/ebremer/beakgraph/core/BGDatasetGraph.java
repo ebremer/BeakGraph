@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.core;
 
+import com.ebremer.beakgraph.hdf5.jena.BGReader;
+
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import java.util.ArrayList;
@@ -210,9 +212,7 @@ public class BGDatasetGraph extends DatasetGraphBase {
             return findInSpecificGraph(g, s, p, o); // read() handles the union semantics
         }
         if (g == null || Node.ANY.equals(g)) {
-            // Lazy per-graph chaining - see findInAnyGraph.
-            return org.apache.jena.atlas.iterator.Iter.flatMap(listGraphNodes(),
-                    gn -> findInSpecificGraph(gn, s, p, o));
+            return findInNamedGraphs(s, p, o);
         }
         if (Quad.isDefaultGraph(g)) {
             // Jena's DatasetGraphBaseFind answers the default graph when it is
@@ -224,27 +224,35 @@ public class BGDatasetGraph extends DatasetGraphBase {
         return findInSpecificGraph(g, s, p, o);
     }
 
+    // Map Node.ANY to Variables for the binding system
+    private static final Var S_VAR = Var.alloc("s");
+    private static final Var P_VAR = Var.alloc("p");
+    private static final Var O_VAR = Var.alloc("o");
+
+    private static Triple pattern(Node s, Node p, Node o) {
+        Node sPattern = (s == null || Node.ANY.equals(s)) ? S_VAR : s;
+        Node pPattern = (p == null || Node.ANY.equals(p)) ? P_VAR : p;
+        Node oPattern = (o == null || Node.ANY.equals(o)) ? O_VAR : o;
+        return Triple.create(sPattern, pPattern, oPattern);
+    }
+
     private Iterator<Quad> findInSpecificGraph(Node g, Node s, Node p, Node o) {
-        // Map Node.ANY to Variables for the binding system
-        Var sVar = Var.alloc("s");
-        Var pVar = Var.alloc("p");
-        Var oVar = Var.alloc("o");
-
-        Node sPattern = (s == null || Node.ANY.equals(s)) ? sVar : s;
-        Node pPattern = (p == null || Node.ANY.equals(p)) ? pVar : p;
-        Node oPattern = (o == null || Node.ANY.equals(o)) ? oVar : o;
-
-        Triple triplePattern = Triple.create(sPattern, pPattern, oPattern);
+        Triple triplePattern = pattern(s, p, o);
         NodeTable nodeTable = bg.getReader().getNodeTable();
-
         // Execute Read against the specific graph
         Iterator<BindingNodeId> it = bg.getReader().read(g, new BindingNodeId(), triplePattern, null, nodeTable);
+        return toQuads(it, g, triplePattern, nodeTable);
+    }
 
-        // Convert Bindings to Quads
+    /** Convert Bindings to Quads of graph {@code g}. */
+    private static Iterator<Quad> toQuads(Iterator<BindingNodeId> it, Node g, Triple triplePattern, NodeTable nodeTable) {
+        Node s = triplePattern.getSubject();
+        Node p = triplePattern.getPredicate();
+        Node o = triplePattern.getObject();
         return WrappedIterator.create(it).mapWith(bnid -> {
-            Node sRes = sPattern.isConcrete() ? s : nodeTable.getNodeForNodeId(bnid.get(sVar));
-            Node pRes = pPattern.isConcrete() ? p : nodeTable.getNodeForNodeId(bnid.get(pVar));
-            Node oRes = oPattern.isConcrete() ? o : nodeTable.getNodeForNodeId(bnid.get(oVar));
+            Node sRes = s.isConcrete() ? s : nodeTable.getNodeForNodeId(bnid.get(S_VAR));
+            Node pRes = p.isConcrete() ? p : nodeTable.getNodeForNodeId(bnid.get(P_VAR));
+            Node oRes = o.isConcrete() ? o : nodeTable.getNodeForNodeId(bnid.get(O_VAR));
             return Quad.create(g, sRes, pRes, oRes);
         });
     }
@@ -253,12 +261,30 @@ public class BGDatasetGraph extends DatasetGraphBase {
         // Lazily chain the default graph and every named graph: constructing
         // each graph's iterator up front paid its index searches before the
         // first quad came back, and spatial stores hold thousands of tile
-        // graphs. Skip default if it appears in the graph list (duplicates).
-        Iterator<Node> graphs = org.apache.jena.atlas.iterator.Iter.concat(
-                List.of(Quad.defaultGraphIRI).iterator(),
-                org.apache.jena.atlas.iterator.Iter.filter(listGraphNodes(),
-                        gn -> !gn.equals(Quad.defaultGraphIRI)));
-        return org.apache.jena.atlas.iterator.Iter.flatMap(graphs, gn -> findInSpecificGraph(gn, s, p, o));
+        // graphs.
+        return org.apache.jena.atlas.iterator.Iter.concat(
+                findInSpecificGraph(Quad.defaultGraphIRI, s, p, o), findInNamedGraphs(s, p, o));
+    }
+
+    /**
+     * Every named graph, driven by the columnar graph list's ids: the id
+     * answers the read and the term is extracted once for the result quads,
+     * instead of extracting the term and having the reader locate it again
+     * (the round trip BGIteratorMaster's variable-graph path avoids, BG-259).
+     */
+    private Iterator<Quad> findInNamedGraphs(Node s, Node p, Node o) {
+        BGReader reader = bg.getReader();
+        Dictionary graphs = reader.getDictionary().getGraphs();
+        Triple triplePattern = pattern(s, p, o);
+        NodeTable nodeTable = reader.getNodeTable();
+        Iterator<Long> ids = reader.graphIds().boxed().iterator();
+        return org.apache.jena.atlas.iterator.Iter.flatMap(ids, gid -> {
+            Node gn = graphs.extract(gid);
+            if (Quad.isDefaultGraph(gn) || Quad.isUnionGraph(gn)) {
+                return org.apache.jena.atlas.iterator.Iter.nullIterator();
+            }
+            return toQuads(reader.read(gid, new BindingNodeId(), triplePattern, null, nodeTable), gn, triplePattern, nodeTable);
+        });
     }
 
     // One mutable prefix map per dataset: the old implementation built a whole

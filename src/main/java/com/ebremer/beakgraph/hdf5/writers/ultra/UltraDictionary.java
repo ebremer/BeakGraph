@@ -3,7 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers.ultra;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
@@ -96,20 +96,20 @@ final class UltraDictionary {
                 .setName("entities")
                 .setSortedNodes(new ArrayList<>(Arrays.asList(ents)))
                 .setStats(ingest.getStats())
-                .enable(Types.IRI, Types.BNODE)
+                .section(DictionarySection.ENTITIES)
                 .build());
         predicatesTask = pool.submit(() -> new MultiTypeDictionaryWriter.Builder()
                 .setName("predicates")
                 .setSortedNodes(new ArrayList<>(Arrays.asList(preds)))
                 .setStats(ingest.getStats())
-                .enable(Types.IRI)
+                .section(DictionarySection.PREDICATES)
                 .build());
         literalsTask = pool.submit(() -> new MultiTypeDictionaryWriter.Builder()
                 .setName("literals")
                 .setSortedNodes(new ArrayList<>(Arrays.asList(lits)))
                 .setDataTypes(ingest.getDataTypes())
                 .setStats(ingest.getStats())
-                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING, Types.TRIPLE_TERM)
+                .section(DictionarySection.LITERALS)
                 // Component ids resolve against the SORTED ARRAYS, not the rank
                 // maps: this task is submitted before those maps are built and
                 // would race them. Binary search over the same arrays yields

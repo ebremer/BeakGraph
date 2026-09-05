@@ -33,16 +33,24 @@ public final class HugeIO {
         }
     }
 
-    /** Unsigned LEB128-style varint (7 bits per byte, high bit = continuation). */
+    /**
+     * Unsigned LEB128-style varint (7 bits per byte, high bit = continuation).
+     * Encoded into a scratch array and written with one call: the buffered
+     * stream behind {@code out} takes its lock per write, and a byte-at-a-time
+     * varint paid it up to ten times per record (BG-250).
+     */
     public static void writeVarLong(DataOutput out, long value) throws IOException {
         if (value < 0) {
             throw new IllegalArgumentException("varint value must be non-negative: " + value);
         }
+        byte[] buf = new byte[10];
+        int n = 0;
         while ((value & ~0x7FL) != 0) {
-            out.writeByte((int) ((value & 0x7F) | 0x80));
+            buf[n++] = (byte) ((value & 0x7F) | 0x80);
             value >>>= 7;
         }
-        out.writeByte((int) value);
+        buf[n++] = (byte) value;
+        out.write(buf, 0, n);
     }
 
     public static long readVarLong(DataInput in) throws IOException {

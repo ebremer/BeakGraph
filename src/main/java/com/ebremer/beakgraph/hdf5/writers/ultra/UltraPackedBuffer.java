@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.Params;
+
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 
@@ -94,8 +96,8 @@ final class UltraPackedBuffer {
     void add(WritableGroup group) {
         if (data.length > 0) {
             WritableDataset ds = group.putDataset(name, data);
-            ds.putAttribute("width", bitWidth);
-            ds.putAttribute("numEntries", numEntries);
+            ds.putAttribute(Params.WIDTH, bitWidth);
+            ds.putAttribute(Params.NUM_ENTRIES, numEntries);
         }
     }
 }

@@ -98,8 +98,8 @@ public class UltraHDF5Writer implements BeakGraphWriter {
             long ioStart = System.nanoTime();
             try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
                 final WritableGroup hdt = hdfFile.putGroup(builder.getName());
-                hdt.putAttribute("numQuads", ingest.getNumberOfQuads());
-                hdt.putAttribute("formatVersion", Params.FORMAT_VERSION);
+                hdt.putAttribute(Params.NUM_QUADS, ingest.getNumberOfQuads());
+                hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
                 dict.add(hdt);
                 indexes[0].add(hdt);
                 indexes[1].add(hdt);

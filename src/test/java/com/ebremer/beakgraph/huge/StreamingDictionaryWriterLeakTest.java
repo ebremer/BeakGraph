@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,7 +33,7 @@ class StreamingDictionaryWriterLeakTest {
         Stats stats = new Stats();
         stats.numIRI = 5;
         assertThrows(IOException.class, () -> new StreamingDictionaryWriter(work, "entities", 5, stats,
-                Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>(), false, null));
+                DictionarySection.ENTITIES, new TreeSet<>(), new TreeSet<>(), false, null));
         Workspaces.deleteTree(work, LoggerFactory.getLogger(StreamingDictionaryWriterLeakTest.class));
         assertTrue(Files.notExists(work), "every stream the constructor opened is closed, so the workspace is removable");
     }

@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.Params;
+
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.lang.invoke.MethodHandles;
@@ -90,8 +92,8 @@ final class UltraBitmap {
         byte[] bytes = toBytes();
         if (bytes.length > 0) {
             WritableDataset ds = group.putDataset(name, bytes);
-            ds.putAttribute("width", 1);
-            ds.putAttribute("numEntries", numBits);
+            ds.putAttribute(Params.WIDTH, 1);
+            ds.putAttribute(Params.NUM_ENTRIES, numBits);
         }
     }
 }

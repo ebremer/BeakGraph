@@ -3,10 +3,8 @@ package com.ebremer.beakgraph.hdf5.readers;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
-import com.ebremer.beakgraph.io.DatasetBytes;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import io.jhdf.api.Group;
-import io.jhdf.api.dataset.ContiguousDataset;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -45,6 +43,14 @@ public class IndexReader {
             BitPackedUnSignedLongBuffer sb = loadBuffer(index, "SB" + suffix);
             BitPackedUnSignedLongBuffer bb = loadBuffer(index, "BB" + suffix);
 
+            // Every level's bitmap and id list have the same length (SPECIFICATIONS
+            // §8.1); a file whose declared counts disagree used to open and then
+            // read one column past its end inside a query (BG-81).
+            if (bitmap != null && idBuffer != null && bitmap.getNumEntries() != idBuffer.getNumEntries()) {
+                throw new IllegalStateException("index " + indexName + ": B" + suffix + " has " + bitmap.getNumEntries()
+                        + " rows but S" + suffix + " has " + idBuffer.getNumEntries()
+                        + " (every level's bitmap and id list have the same length)");
+            }
             bitmaps.put(component, bitmap);
             ids.put(component, idBuffer);
             if (sb != null && bb != null) {
@@ -57,12 +63,8 @@ public class IndexReader {
         }
     }
     
-    private BitPackedUnSignedLongBuffer loadBuffer(Group index, String name) {
-        ContiguousDataset ds = (ContiguousDataset) index.getChild(name);
-        if (ds == null) return null;
-        long num = (Long) ds.getAttribute("numEntries").getData();
-        int width = (Integer) ds.getAttribute("width").getData();
-        return BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), num, width);
+    private static BitPackedUnSignedLongBuffer loadBuffer(Group index, String name) {
+        return HdfProfile.packed(index, name); // null when absent; a profile violation names the dataset
     }
     
     public HDTBitmapDirectory getDirectory(char component) {

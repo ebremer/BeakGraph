@@ -86,25 +86,40 @@ public final class StringUtils {
      * @return 
      */
     public String decompress(byte[] source) {
-        if (source == null || source.length < HEADER_SIZE) {
+        return decompress(source, 0, (source == null) ? 0 : source.length);
+    }
+
+    // Output scratch, grown to the largest fragment seen: this object is held
+    // per thread (FCDReader), so the buffer is never shared (BG-256).
+    private byte[] output = new byte[0];
+
+    /**
+     * Decompresses the {@code length} bytes at {@code offset} of {@code source}
+     * (4-byte length header included) into a String, decoding through a
+     * reused output buffer instead of one allocation per fragment.
+     */
+    public String decompress(byte[] source, int offset, int length) {
+        if (source == null || length < HEADER_SIZE) {
             // A stored compressed fragment always carries the 4-byte length header
             // (compress() writes it even for ""); anything shorter is a damaged
             // store. Answering "" here silently corrupted the front-coded chain.
             throw new IllegalArgumentException("Corrupt compressed fragment: "
-                    + (source == null ? "null" : source.length + " bytes") + ", shorter than its 4-byte length header");
+                    + (source == null ? "null" : length + " bytes") + ", shorter than its 4-byte length header");
         }
-        // Read length header to allocate exactly what we need - after checking it.
-        int uncompressedLength = ByteBuffer.wrap(source).getInt();
-        checkedLength(uncompressedLength, source, HEADER_SIZE, source.length - HEADER_SIZE);
-        byte[] outputBuffer = new byte[uncompressedLength];
+        // Read length header to size the output - after checking it.
+        int uncompressedLength = ByteBuffer.wrap(source, offset, HEADER_SIZE).getInt();
+        checkedLength(uncompressedLength, source, offset + HEADER_SIZE, length - HEADER_SIZE);
+        if (output.length < uncompressedLength) {
+            output = new byte[(int) Math.max(uncompressedLength, Math.min(output.length * 2L, MAX_FRAGMENT_BYTES))];
+        }
         int actualDecompressedSize = DECOMPRESSOR.decompress(
-                source, HEADER_SIZE, source.length - HEADER_SIZE,
-                outputBuffer, 0, uncompressedLength
+                source, offset + HEADER_SIZE, length - HEADER_SIZE,
+                output, 0, uncompressedLength
         );
         if (actualDecompressedSize != uncompressedLength) {
             throw new IllegalArgumentException("Decompressed size mismatch");
         }
-        return new String(outputBuffer, 0, actualDecompressedSize, StandardCharsets.UTF_8);
+        return new String(output, 0, actualDecompressedSize, StandardCharsets.UTF_8);
     }
         
     /**

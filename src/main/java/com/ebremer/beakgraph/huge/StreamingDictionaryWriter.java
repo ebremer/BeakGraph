@@ -1,8 +1,10 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.Params;
+
 import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.writers.DictionaryNodeEncoder;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import java.io.IOException;
@@ -34,7 +36,7 @@ import org.slf4j.LoggerFactory;
 final class StreamingDictionaryWriter implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(StreamingDictionaryWriter.class);
-    private static final int FCD_BLOCK_SIZE = 16;
+    private static final int FCD_BLOCK_SIZE = Params.FCD_BLOCK_SIZE;
 
     private final String name;
     private final long nodeCount;
@@ -70,6 +72,10 @@ final class StreamingDictionaryWriter implements AutoCloseable {
      * @param nodeCount  the exact number of distinct nodes {@link #encode} will
      *                   deliver; fixes the offsets bit width, exactly like the
      *                   RAM writer's {@code builder.getNodes().size()}
+     * @param section    which dictionary section this is; it fixes the routed term kinds
+     * @param section    which dictionary section this is; it fixes the routed term kinds
+     * @param section    which dictionary section this is; it fixes the routed term kinds
+     * @param section    which dictionary section this is; it fixes the routed term kinds
      * @param dataTypes  distinct literal datatype IRIs (natural String order),
      *                   empty for dictionaries without literals
      * @param langSet    distinct language tags among the literals, natural order
@@ -79,9 +85,17 @@ final class StreamingDictionaryWriter implements AutoCloseable {
      *                   literals section of a store containing triple terms
      */
     StreamingDictionaryWriter(Path workDir, String name, long nodeCount, Stats stats,
-                              Set<Types> et, SortedSet<String> dataTypes, SortedSet<String> langSet,
+                              DictionarySection section, SortedSet<String> dataTypes, SortedSet<String> langSet,
                               boolean anyLangDir, HugeTripleTerms ttSupport)
             throws IOException {
+        // The section fixes the routed term kinds (the RAM writer's Builder.section);
+        // triple-term support only makes sense where triple terms are routed, so
+        // the two engines can no longer disagree about a section's contents (BG-90).
+        Set<DataType> et = section.routes();
+        if (ttSupport != null && !et.contains(DataType.TRIPLE_TERM)) {
+            throw new IllegalArgumentException("Dictionary '" + name + "' (" + section
+                    + ") does not hold triple terms; triple-term support belongs to " + DictionarySection.LITERALS);
+        }
         this.ttSupport = ttSupport;
         this.name = name;
         this.nodeCount = nodeCount;
@@ -102,11 +116,11 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             this.nativedatatypes = open(opened, new SpillBitPackedBuffer(dictDir.resolve("datatypes"),
                     1 + MinBits(DataType.values().length)));
 
-            this.integers = (!et.contains(Types.INTEGER) || (stats.numInteger == 0)) ? null
+            this.integers = (!et.contains(DataType.INTEGER) || (stats.numInteger == 0)) ? null
                     : open(opened, new SpillBitPackedBuffer(dictDir.resolve("integers"),
                             (stats.minInteger < 0) ? 32 : (1 + MinBits(stats.maxInteger))));
             int longWidth = 0;
-            if (et.contains(Types.LONG) && stats.numLong > 0) {
+            if (et.contains(DataType.LONG) && stats.numLong > 0) {
                 longWidth = (stats.minLong < 0) ? 64 : (1 + MinBits(stats.maxLong));
                 // Same rounding as the RAM writer: the bit-packed format supports
                 // widths 1..57 and 64 only.
@@ -115,13 +129,13 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             this.longs = (longWidth == 0) ? null
                     : open(opened, new SpillBitPackedBuffer(dictDir.resolve("longs"), longWidth));
 
-            this.doubles = (!et.contains(Types.DOUBLE) || (stats.numDouble == 0)) ? null
+            this.doubles = (!et.contains(DataType.DOUBLE) || (stats.numDouble == 0)) ? null
                     : open(opened, new SpillDataBuffer(dictDir.resolve("doubles")));
-            this.floats = (!et.contains(Types.FLOAT) || (stats.numFloat == 0)) ? null
+            this.floats = (!et.contains(DataType.FLOAT) || (stats.numFloat == 0)) ? null
                     : open(opened, new SpillDataBuffer(dictDir.resolve("floats")));
 
-            this.literalsPresent = et.contains(Types.DOUBLE) || et.contains(Types.FLOAT)
-                    || et.contains(Types.INTEGER) || et.contains(Types.LONG) || et.contains(Types.STRING);
+            this.literalsPresent = et.contains(DataType.DOUBLE) || et.contains(DataType.FLOAT)
+                    || et.contains(DataType.INTEGER) || et.contains(DataType.LONG) || et.contains(DataType.STRING);
             if (literalsPresent) {
                 this.typedLiteralsDictionary = open(opened, new SpillFCDWriter(dictDir, "typedLiteralsDictionary", FCD_BLOCK_SIZE));
                 this.typedLiterals = open(opened, new SpillBitPackedBuffer(dictDir.resolve("typedLiterals"),
@@ -135,9 +149,9 @@ final class StreamingDictionaryWriter implements AutoCloseable {
                 this.typedLiterals = null;
             }
 
-            this.iri = (!et.contains(Types.IRI) || (stats.numIRI == 0)) ? null
+            this.iri = (!et.contains(DataType.IRI) || (stats.numIRI == 0)) ? null
                     : open(opened, new SpillFCDWriter(dictDir, "iri", FCD_BLOCK_SIZE));
-            this.strings = (!et.contains(Types.STRING) || (stats.numStrings == 0)) ? null
+            this.strings = (!et.contains(DataType.STRING) || (stats.numStrings == 0)) ? null
                     : open(opened, new SpillFCDWriter(dictDir, "strings", FCD_BLOCK_SIZE));
 
             if (literalsPresent && !langSet.isEmpty()) {

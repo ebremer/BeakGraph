@@ -9,7 +9,7 @@ import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import com.ebremer.beakgraph.hdf5.Index;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.huge.HugeRecords.IdQuad;
 import com.ebremer.beakgraph.huge.HugeRecords.RowId;
 import com.ebremer.beakgraph.huge.HugeRecords.TermRow;
@@ -376,7 +376,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 () -> {
                     if (numEntities > 0) {
                         dicts[0] = track(new StreamingDictionaryWriter(workDir, "entities", numEntities, stats,
-                                Set.of(Types.IRI, Types.BNODE), new TreeSet<>(), new TreeSet<>(), false, null));
+                                DictionarySection.ENTITIES, new TreeSet<>(), new TreeSet<>(), false, null));
                         try (var s = entFile.read()) {
                             dicts[0].encode(s);
                         }
@@ -385,14 +385,14 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 () -> {
                     if (numPredicates > 0) {
                         dicts[1] = track(new StreamingDictionaryWriter(workDir, "predicates", numPredicates, stats,
-                                Set.of(Types.IRI), new TreeSet<>(), new TreeSet<>(), false, null));
+                                DictionarySection.PREDICATES, new TreeSet<>(), new TreeSet<>(), false, null));
                         dicts[1].encode(Arrays.asList(sortedPreds).iterator());
                     }
                 },
                 () -> {
                     if (numLiterals > 0) {
                         dicts[2] = track(new StreamingDictionaryWriter(workDir, "literals", numLiterals, stats,
-                                Set.of(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING, Types.TRIPLE_TERM),
+                                DictionarySection.LITERALS,
                                 dataTypes, langSet, langDirSeen, ttSupport));
                         try (var s = litFile.read()) {
                             dicts[2].encode(s);
@@ -486,8 +486,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
         logger.info("Writing HDF5 file {}", tmpH5);
         try (StreamingHdf5File hdf = StreamingHdf5.create(tmpH5)) {
             StreamingHdf5Group hdt = hdf.rootGroup().putGroup(Params.BG);
-            hdt.putAttribute("numQuads", parsedQuads);
-            hdt.putAttribute("formatVersion", Params.FORMAT_VERSION);
+            hdt.putAttribute(Params.NUM_QUADS, parsedQuads);
+            hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
             StreamingHdf5Group dictionary = hdt.putGroup(Params.DICTIONARY);
             if (entitiesDict != null) entitiesDict.transferTo(dictionary);
             if (predicatesDict != null) predicatesDict.transferTo(dictionary);

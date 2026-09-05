@@ -53,7 +53,16 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private TripleTermMatcher ttMatcher;
 
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, presetGi);
     }
 
     /**
@@ -66,6 +75,10 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     public static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
 
     BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long sPosLo, long sPosHi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, sPosLo, sPosHi, -1);
+    }
+
+    private BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long sPosLo, long sPosHi, long presetGi) {
         HITS.incrementAndGet();
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
@@ -96,7 +109,9 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // VARIABLE is pre-bound in the BindingNodeId, and locate() on the raw
         // variable node returns -1 - silently yielding nothing for a graph
         // that exists.
-        if (quad.getGraph().isVariable()) {
+        if (presetGi >= 1) {
+            gi = presetGi;
+        } else if (quad.getGraph().isVariable()) {
             long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
             gi = (bound != NodeId.NONE) ? NodeId.id(bound) : -1;
         } else {

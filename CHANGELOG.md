@@ -132,6 +132,25 @@ brought and what a reader must rebuild.
   parent directory's metadata cache; an unreadable cache is regenerated; an
   unreadable entry no longer aborts the metadata scan; `void:vocabulary` is
   derived from predicate and class namespaces (object paths were unbounded).
+* Readers: one profile helper opens every dataset and attribute, so a
+  chunked dataset or a 32-bit `numEntries` is reported by name instead of a
+  cast error, and integer attributes of any width are accepted; a file with
+  `.BG` but no dictionary, an index level whose bitmap and id list differ in
+  length, an FCD group whose block count, offsets or flags do not match its
+  entries, or a triple-term store that disagrees with the datatypes column
+  fails the open; language tags are decoded once at open and must be in
+  Jena's formatted form; a pre-v3 store logs the linear-select fallback it
+  runs under. The union / any-graph fan-outs drive the per-graph reads from
+  the columnar graph ids, the object dictionary of an all-IRI store answers
+  the true insertion point for literal probes (range hints empty the scan
+  instead of walking it), `isGraph` is a binary search over the stored list,
+  a literal search reuses the tier terms' values and builds numeric probe
+  values from the packed numbers, FCD blocks decode without per-entry
+  copies, bit-packed and spill buffers write in chunks, and the last word of
+  a bitmap is read in one piece. The on-disk attribute and section names are
+  constants in `Params`; the writers' `Types` enum is replaced by
+  `DictionarySection`. SPECIFICATIONS §7.9 now describes the empty store's
+  actual layout (index groups with only their seeded directories).
 * Readers: a remote (HTTP) dictionary section no longer builds the sampled
   tier index on its first search - it downloaded the whole section - and the
   tier is built outside the search cache's lock; the decoded front-coded

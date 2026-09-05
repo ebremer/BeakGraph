@@ -39,7 +39,16 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private TripleTermMatcher ttMatcher;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, presetGi);
     }
 
     /**
@@ -49,6 +58,10 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      * subject block belongs to the chunk owning its position.
      */
     BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, -1);
+    }
+
+    private BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi, long presetGi) {
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
 
@@ -80,7 +93,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         }
 
         // 1. Resolve Graph
-        if (quad.getGraph().isVariable()) {
+        if (presetGi >= 1) {
+            gi = presetGi;
+        } else if (quad.getGraph().isVariable()) {
             long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
             if (bound == NodeId.NONE) throw new IllegalStateException("BGIteratorPOS requires Graph to be bound.");
             gi = NodeId.id(bound);

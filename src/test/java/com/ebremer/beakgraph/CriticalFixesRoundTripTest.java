@@ -11,7 +11,7 @@ import org.apache.jena.graph.NodeFactory;
 
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
@@ -170,7 +170,7 @@ class CriticalFixesRoundTripTest {
                 .setNodes(Set.of(decimal))
                 .setStats(stats)
                 .setDataTypes(Set.of(XSD.decimal.getURI()))
-                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING);
+                .section(DictionarySection.LITERALS);
         assertThrows(IllegalStateException.class, builder::build);
     }
 

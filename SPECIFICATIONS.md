@@ -81,9 +81,10 @@ the reference reader bypasses most of the HDF5 data model and reads dataset byte
 1. **Datasets are 1-dimensional arrays of 8-bit signed integers** (Java `byte[]`; HDF5 type class
    integer, size 1). The reader treats every dataset as an opaque byte region; the HDF5 element type
    is never used to interpret values.
-2. **Storage layout MUST be contiguous.** The reader casts every dataset to a contiguous dataset and
-   memory-maps (or range-reads) its byte extent directly from the file at `dataAddress`. Chunked,
-   compact, or filtered (compressed/shuffled) layouts are **not readable**.
+2. **Storage layout MUST be contiguous.** The reader memory-maps (or range-reads) every dataset's byte
+   extent directly from the file at `dataAddress`. Chunked, compact, or filtered (compressed/shuffled)
+   layouts are **not readable**; the reference reader rejects such a dataset at open with a message
+   naming it and this rule.
 3. **No HDF5-level compression or filters.** Compression happens *inside* BeakGraph's own encodings
    (§5.4/§5.5), where it survives raw byte access.
 4. **Attributes are scalars** with exact Java-visible types, and the reader casts them un-defensively:
@@ -98,8 +99,10 @@ the reference reader bypasses most of the HDF5 data model and reads dataset byte
    | `numBlocks` | 64-bit signed int | FCD groups |
    | `compression_threshold` | 32-bit signed int | FCD groups |
 
-   Writing `numEntries` as a 32-bit integer (or `width` as 64-bit) will crash the reference reader
-   with a cast error. Match the widths exactly.
+   The reference reader reads these attributes as numbers of any integer width (a 32-bit `numEntries`
+   or a 64-bit `width` is accepted) and rejects a missing or non-integer attribute at open with a
+   message naming it. A writer SHOULD still match the widths above: they are what the reference
+   writers emit and what other readers may expect.
 5. Group and dataset **names are case-sensitive** and exactly as given in this document.
 6. Anything else in the HDF5 file outside the `.BG` group is ignored by readers.
 
@@ -637,11 +640,16 @@ the default graph's sentinel IRI appears here like any other graph name).
 
 ### 7.9 Empty stores
 
-A store built from an empty source has **no section groups and no columnar lists at all** — readers
-detect "no `entities`, no `predicates`, no `literals`" and answer every pattern with zero rows.
-(An empty *section* — e.g. no literals anywhere — is likewise simply absent.) `numQuads` counts
-source quads only, so it can be 0 even in a non-empty store that holds injected metadata (§10.1);
-never key emptiness on it.
+A store built from an empty source has **no section groups and no columnar lists**: `dictionary/`
+exists but holds no `entities`, `predicates` or `literals` group. The two index groups `GSPO` and
+`GPOS` exist as well, but each holds only its seeded one-entry rank/select directories (`SB<c>` /
+`BB<c>`, §8.4, one entry of value 0 per level) and **no `S<c>` / `B<c>` level datasets** — there
+are no rows to index, and the reference writers never emit an empty dataset. Readers detect
+emptiness as "no `entities`, no `predicates`, no `literals`" and answer every pattern with zero rows
+without consulting the index groups; a reader that does open them MUST treat absent level datasets
+as an index with no rows, not as corruption. (An empty *section* — e.g. no literals anywhere — is
+likewise simply absent.) `numQuads` counts source quads only, so it can be 0 even in a non-empty
+store that holds injected metadata (§10.1); never key emptiness on it.
 
 ---
 
@@ -649,7 +657,8 @@ never key emptiness on it.
 
 Two orderings of the same deduplicated quads. `GSPO` serves patterns with graph+subject bound;
 `GPOS` serves graph+predicate(+object) bound; a graph-variable pattern loops over the `graphs` list
-(§7.8) running one of them per graph. Exactly these two exist — a conformant file MUST contain both.
+(§7.8) running one of them per graph. Exactly these two exist — a conformant file MUST contain both
+(an empty store, §7.9, contains both groups with only their seeded directories inside).
 
 ### 8.1 Conceptual model
 

@@ -92,6 +92,14 @@ public final class RangeBounds {
                 case "<=" -> b[pos + 1] = Math.min(b[pos + 1], c.lastLE());
                 default -> { }
             }
+            if (pos == 4 && value.isLiteral()) {
+                // A literal constant never compares with an IRI or blank node (the
+                // FILTER fails with a type error), so only the literal ids - those
+                // past the entity block - can qualify at the object position: a
+                // "<" bound no longer walks every entity object, and an all-IRI
+                // store answers empty for either direction (BG-351).
+                b[4] = Math.max(b[4], dict.getSubjects().getNumberOfNodes() + 1);
+            }
         });
         return new RangeBounds(b[0], b[1], b[2], b[3], b[4], b[5], hints[0]);
     }

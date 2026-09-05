@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5;
 
+import com.ebremer.beakgraph.Params;
+
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
@@ -68,6 +70,6 @@ public class DataOutputBuffer implements HDF5Buffer, AutoCloseable, DictionarySi
             throw new RuntimeException("CRITICAL ERROR: Attempting to write empty dataset " + path + " but numEntries is " + numEntries);
         }
         WritableDataset ds = group.putDataset(path.toString(), data);
-        ds.putAttribute("numEntries", numEntries);
+        ds.putAttribute(Params.NUM_ENTRIES, numEntries);
     } 
 }

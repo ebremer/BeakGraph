@@ -170,6 +170,13 @@ public class SimpleNodeTable implements NodeTable {
                 nodeId2nodemap.estimatedSize(), node2nodeIdmap.estimatedSize());
     }
 
+    /** Entries the two caches currently hold (pending evictions applied) - tests pin that close() empties them. */
+    public long cachedEntries() {
+        nodeId2nodemap.cleanUp();
+        node2nodeIdmap.cleanUp();
+        return nodeId2nodemap.estimatedSize() + node2nodeIdmap.estimatedSize();
+    }
+
     @Override
     public void close() throws Exception {
         nodeId2nodemap.invalidateAll();

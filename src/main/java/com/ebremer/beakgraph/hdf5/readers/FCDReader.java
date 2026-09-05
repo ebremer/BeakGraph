@@ -1,12 +1,12 @@
 package com.ebremer.beakgraph.hdf5.readers;
 
+import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.io.DatasetBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
 import com.ebremer.beakgraph.utils.StringUtils;
 import io.jhdf.api.Group;
-import io.jhdf.api.dataset.ContiguousDataset;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -67,29 +67,50 @@ public class FCDReader {
     }
 
     public FCDReader(Group strings) {
-        ContiguousDataset stringbuffer = (ContiguousDataset) strings.getChild("stringbuffer");
-        ContiguousDataset off = (ContiguousDataset) strings.getChild("offsets");
-        ContiguousDataset xcompressed = (ContiguousDataset) strings.getChild("compressed");
-        this.buffer = DatasetBytes.of(stringbuffer);
-        this.offsets = DatasetBytes.of(off);
-        this.compressed = BitPackedUnSignedLongBuffer.readView(
-            DatasetBytes.of(xcompressed),
-            (long) xcompressed.getAttribute("numEntries").getData(),
-            (int) xcompressed.getAttribute("width").getData()
-        );
-        this.blockSize = (int) strings.getAttribute("blockSize").getData();
-        this.numEntries = (long) strings.getAttribute("numEntries").getData();
-        this.numBlocks = (long) strings.getAttribute("numBlocks").getData();
+        this.buffer = DatasetBytes.of(HdfProfile.requireContiguous(strings, "stringbuffer"));
+        this.offsets = DatasetBytes.of(HdfProfile.requireContiguous(strings, "offsets"));
+        this.compressed = HdfProfile.requirePacked(strings, "compressed");
+        this.blockSize = HdfProfile.longAttr(strings, Params.BLOCK_SIZE);
+        this.numEntries = HdfProfile.longAttr(strings, Params.NUM_ENTRIES);
+        this.numBlocks = HdfProfile.longAttr(strings, Params.NUM_BLOCKS);
+        // The attributes must describe each other and the datasets: a file
+        // whose blockSize was 0 divided by zero on every lookup, and one whose
+        // offsets or flags were short read past their end - after the open had
+        // reported success (BG-81).
+        String where = "FCD group '" + strings.getPath() + "'";
+        if (blockSize < 1) {
+            throw new IllegalStateException(where + " declares blockSize " + blockSize + " (must be at least 1)");
+        }
+        if (numEntries < 0) {
+            throw new IllegalStateException(where + " declares a negative numEntries " + numEntries);
+        }
+        long expectedBlocks = (numEntries + blockSize - 1) / blockSize;
+        if (numBlocks != expectedBlocks) {
+            throw new IllegalStateException(where + " declares " + numBlocks + " blocks but " + numEntries
+                    + " entries in blocks of " + blockSize + " make " + expectedBlocks);
+        }
+        if (offsets.size() < numBlocks * 8L) {
+            throw new IllegalStateException(where + ": the offsets dataset holds " + offsets.size()
+                    + " bytes, fewer than the " + (numBlocks * 8L) + " its " + numBlocks + " blocks need");
+        }
+        if (compressed.getNumEntries() < numEntries) {
+            throw new IllegalStateException(where + ": the compressed flags cover " + compressed.getNumEntries()
+                    + " of " + numEntries + " entries");
+        }
     }
 
-    /** A decoded fragment plus the absolute position just past it. */
-    private record Fragment(String value, long nextPos) {}
+    // Fragment bytes are read into a per-thread scratch array (grown on
+    // demand) and appended to the running string straight from it: the former
+    // byte[] + String + Fragment per entry cost three copies and four objects
+    // for every string of every decoded block (BG-256).
+    private static final ThreadLocal<byte[]> SCRATCH = ThreadLocal.withInitial(() -> new byte[256]);
 
     /**
-     * Reads the length-prefixed fragment that starts at absolute byte position {@code pos}.
-     * Absolute reads only, so concurrent readers never disturb each other.
+     * Appends the length-prefixed fragment that starts at absolute byte
+     * position {@code pos} to {@code into} and returns the position just past
+     * it. Absolute reads only, so concurrent readers never disturb each other.
      */
-    private Fragment readFragment(long pos, long entryIndex) {
+    private long appendFragment(long pos, long entryIndex, StringBuilder into) {
         checkOffset(pos, "fragment", entryIndex);
         VByte.DecodeResult lenR = VByte.decodeAt(buffer, pos);
         long p = lenR.nextOffset;
@@ -103,12 +124,34 @@ public class FCDReader {
                     + "-byte buffer (entry " + entryIndex + ")");
         }
         int dataLen = (int) lenR.value;
-        byte[] data = new byte[dataLen];
+        byte[] data = SCRATCH.get();
+        if (data.length < dataLen) {
+            data = new byte[Math.max(dataLen, Math.min(data.length * 2, Integer.MAX_VALUE - 8))];
+            SCRATCH.set(data);
+        }
         buffer.get(p, data, 0, dataLen); // absolute bulk read
-        p += dataLen;
-        boolean isCompressed = compressed.get(entryIndex) == 1;
-        String value = isCompressed ? SU.get().decompress(data) : new String(data, StandardCharsets.UTF_8);
-        return new Fragment(value, p);
+        if (compressed.get(entryIndex) == 1) {
+            into.append(SU.get().decompress(data, 0, dataLen));
+        } else {
+            appendUtf8(into, data, dataLen);
+        }
+        return p + dataLen;
+    }
+
+    /** ASCII bytes go straight in as chars; anything else decodes as UTF-8 first. */
+    private static void appendUtf8(StringBuilder into, byte[] data, int len) {
+        int i = 0;
+        while (i < len && data[i] >= 0) {
+            i++;
+        }
+        if (i < len) {
+            into.append(new String(data, 0, len, StandardCharsets.UTF_8));
+            return;
+        }
+        into.ensureCapacity(into.length() + len);
+        for (int k = 0; k < len; k++) {
+            into.append((char) data[k]);
+        }
     }
 
     /** Number of strings stored (valid {@link #get} indices are {@code 0..n-1}). */
@@ -143,10 +186,9 @@ public class FCDReader {
 
         long pos = offsets.getLong(block * 8L);
         // The first string in the block is always stored in full.
-        Fragment frag = readFragment(pos, firstEntry);
-        StringBuilder current = new StringBuilder(frag.value());
-        out[0] = frag.value();
-        pos = frag.nextPos();
+        StringBuilder current = new StringBuilder();
+        pos = appendFragment(pos, firstEntry, current);
+        out[0] = current.toString();
 
         for (int i = 1; i < entries; i++) {
             checkOffset(pos, "prefix", firstEntry + i);
@@ -159,14 +201,10 @@ public class FCDReader {
                         + " exceeds the previous string's " + current.length()
                         + " chars (entry " + (firstEntry + i) + ")");
             }
-            int prefixLen = (int) pl.value;
-            pos = pl.nextOffset;
+            current.setLength((int) pl.value);
             // Suffix fragment is at index (firstEntry + i).
-            Fragment suffix = readFragment(pos, firstEntry + i);
-            current.setLength(prefixLen);
-            current.append(suffix.value());
+            pos = appendFragment(pl.nextOffset, firstEntry + i, current);
             out[i] = current.toString();
-            pos = suffix.nextPos();
         }
         return out;
     }

@@ -32,6 +32,15 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     private long gId, pId, oId;
 
     public BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
         this.parentBinding = bnid;
 
         // GPOS Structure
@@ -51,7 +60,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         maxSubId = bounds.maxS;
 
         // Resolve Graph
-        if (quad.getGraph().isVariable()) {
+        if (presetGi >= 1) {
+            gi = presetGi;
+        } else if (quad.getGraph().isVariable()) {
             long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
             if (bound == NodeId.NONE) return;
             gi = NodeId.id(bound);

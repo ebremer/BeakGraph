@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import com.ebremer.beakgraph.Params;
+
 import static com.ebremer.beakgraph.Params.COMPRESSION_THRESHOLD;
 import com.ebremer.beakgraph.hdf5.DataOutputBuffer;
 import com.ebremer.beakgraph.hdf5.HDF5Buffer;
@@ -114,10 +116,10 @@ public class FCDWriter implements HDF5Buffer, AutoCloseable, DictionarySinks.Str
     @Override
     public void add(WritableGroup group) {
         WritableGroup strings = group.putGroup(path.toString());
-        strings.putAttribute("blockSize", blockSize);
+        strings.putAttribute(Params.BLOCK_SIZE, blockSize);
         long validBlocks = (stringsInCurrentBlock == 0 && numEntries > 0) ? numBlocks : numBlocks + 1;
-        strings.putAttribute("numBlocks", (numEntries == 0) ? 0 : validBlocks);
-        strings.putAttribute("numEntries", numEntries);
+        strings.putAttribute(Params.NUM_BLOCKS, (numEntries == 0) ? 0 : validBlocks);
+        strings.putAttribute(Params.NUM_ENTRIES, numEntries);
         strings.putAttribute("compression_threshold", COMPRESSION_THRESHOLD);        
         strings.putDataset("stringbuffer", baos.toByteArray());
         offsets.add(strings);

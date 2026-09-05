@@ -146,6 +146,12 @@ class RangeBoundsTest {
         RangeBounds b = RangeBounds.resolve(lt, q, dict);
         assertTrue(b.minO >= 0, "lower edges never go below the position's floor: " + b);
         assertTrue(b.maxO < b.minO || b.maxO < 1, "nothing can be below 5 in a store without literals: " + b);
+        // BG-351: the absent literals section answers the insertion point just
+        // past the entity block, so a lower bound empties the scan instead of
+        // walking every object row.
+        ExprList gt = new ExprList(new E_GreaterThan(new ExprVar("o"), NodeValue.makeInteger(5)));
+        long entities = dict.getSubjects().getNumberOfNodes();
+        assertEquals(entities + 1, RangeBounds.resolve(gt, q, dict).minO, "FILTER(?o > 5) starts past the last entity id");
     }
 
     @Test

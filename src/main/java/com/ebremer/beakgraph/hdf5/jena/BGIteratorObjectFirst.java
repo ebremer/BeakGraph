@@ -49,9 +49,21 @@ final class BGIteratorObjectFirst implements Iterator<BindingNodeId> {
 
     BGIteratorObjectFirst(PositionalDictionaryReader dict, IndexReader gpos, BindingNodeId bnid, Quad quad,
                           ExprList filter, NodeTable nodeTable) {
+        this(dict, gpos, bnid, quad, filter, nodeTable, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorObjectFirst(PositionalDictionaryReader dict, IndexReader gpos, BindingNodeId bnid, Quad quad,
+                          ExprList filter, NodeTable nodeTable, long presetGi) {
         HITS.incrementAndGet();
         long gi;
-        if (quad.getGraph().isVariable()) {
+        if (presetGi >= 1) {
+            gi = presetGi;
+        } else if (quad.getGraph().isVariable()) {
             long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
             gi = (bound != NodeId.NONE) ? NodeId.id(bound) : -1;
         } else {
@@ -91,7 +103,7 @@ final class BGIteratorObjectFirst implements Iterator<BindingNodeId> {
             }
             BindingNodeId child = new BindingNodeId(bnid);
             child.put(pVar, NodeId.pack(NodeType.PREDICATE, pid));
-            return new BGIteratorOS(dict, gpos, child, quad, filter, nodeTable);
+            return new BGIteratorOS(dict, gpos, child, quad, filter, nodeTable, gi); // the graph is resolved once, here
         });
     }
 

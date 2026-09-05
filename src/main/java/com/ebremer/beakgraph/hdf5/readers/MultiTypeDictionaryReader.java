@@ -5,12 +5,11 @@ import com.ebremer.beakgraph.core.AbstractDictionary;
 import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.io.DatasetBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
 import io.jhdf.api.Group;
 import io.jhdf.api.dataset.ContiguousDataset;
 import java.util.Arrays;
-import java.util.Optional;
+import java.util.IdentityHashMap;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.apache.jena.cdt.CompositeDatatypeBase;
@@ -18,6 +17,7 @@ import org.apache.jena.datatypes.TypeMapper;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.TextDirection;
 import org.apache.jena.graph.NodeFactory;
+import org.apache.jena.langtagx.LangTagX;
 import org.apache.jena.sparql.expr.NodeValue;
 
 public class MultiTypeDictionaryReader extends AbstractDictionary {
@@ -62,7 +62,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // it is wired once, before any query can run.
     private volatile TripleTermResolver tripleTermResolver;
     private final long numEntries;
-    private final String name;
+    // Language tags decoded once at open: the set is tiny, extract() paid an
+    // FCD lookup per tagged row, and Jena re-formats every tag it is handed
+    // (NodeFactory.createLiteralLang -> LangTagX.formatLanguageTag), so a
+    // stored tag that is not already in formatted form (SPECIFICATIONS.md
+    // §6.2 requires the formatted form) would be silently rewritten on read
+    // into a term whose comparator order differs from the file's (BG-368).
+    private final String[] langTable;
 
     /** Cross-dictionary materialization of a triple term's component ids. */
     public interface TripleTermResolver {
@@ -86,48 +92,109 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
                             n.isLiteral() ? 1 + (n.getLiteralLexicalForm().length() >>> 8) : 1)
                     .build();
 
-    private record TieredIndex(long[] ids, Node[] nodes) {}
-    private static final TieredIndex EMPTY_TIER = new TieredIndex(new long[0], new Node[0]);
+    /**
+     * Sampled ids/terms plus, for the literal tier terms, their NodeValues:
+     * every literal search compares the target against ~log2(tier) of them,
+     * and building the value from the term each time went through Jena's one
+     * global NodeValue cache (a hash of the lexical form per probe; BG-244).
+     */
+    private record TieredIndex(long[] ids, Node[] nodes, IdentityHashMap<Node, NodeValue> values) {}
+    private static final TieredIndex EMPTY_TIER = new TieredIndex(new long[0], new Node[0], new IdentityHashMap<>());
 
     public MultiTypeDictionaryReader(Group d) {
-        this.name = d.getName();
-        ContiguousDataset offsetsDS = (ContiguousDataset) d.getDatasetByPath("offsets");
-        this.numEntries = (Long) offsetsDS.getAttribute("numEntries").getData();
-        this.offsets = BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(offsetsDS), numEntries, (Integer) offsetsDS.getAttribute("width").getData());
+        setName(d.getName());
+        ContiguousDataset offsetsDS = HdfProfile.requireContiguous(d, "offsets");
+        this.numEntries = HdfProfile.longAttr(offsetsDS, Params.NUM_ENTRIES);
+        this.offsets = HdfProfile.requirePacked(d, "offsets");
+        this.datatype = HdfProfile.requirePacked(d, "datatypes");
+        this.typedLiterals = HdfProfile.packed(d, "typedLiterals");
+        this.doubles = HdfProfile.bytes(d, "doubles");
+        this.floats = HdfProfile.bytes(d, "floats");
+        this.integers = HdfProfile.packed(d, "integers");
+        this.longs = HdfProfile.packed(d, "longs");
+        this.tripleTerms = HdfProfile.packed(d, "tripleTerms");
 
-        ContiguousDataset datatypeDS = (ContiguousDataset) d.getDatasetByPath("datatypes");
-        this.datatype = BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(datatypeDS), (Long) datatypeDS.getAttribute("numEntries").getData(), (Integer) datatypeDS.getAttribute("width").getData());
-
-        ContiguousDataset typedLiteralsDS = (ContiguousDataset) d.getChild("typedLiterals");
-        this.typedLiterals = (typedLiteralsDS != null) ? BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(typedLiteralsDS), (Long) typedLiteralsDS.getAttribute("numEntries").getData(), (Integer) typedLiteralsDS.getAttribute("width").getData()) : null;
-
-        this.doubles = getDataSet(d, "doubles").map(DatasetBytes::of).orElse(null);
-        this.floats = getDataSet(d, "floats").map(DatasetBytes::of).orElse(null);
-
-        this.integers = getDataSet(d, "integers").map(ds ->
-            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
-
-        this.longs = getDataSet(d, "longs").map(ds ->
-            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
-
-        this.tripleTerms = getDataSet(d, "tripleTerms").map(ds ->
-            BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
-
-        Group stringsG = (Group) d.getChild("strings");
+        Group stringsG = HdfProfile.group(d, "strings");
         this.strings = (stringsG != null) ? new FCDReader(stringsG) : null;
-
-        Group typedLiteralsDictionaryG = (Group) d.getChild("typedLiteralsDictionary");
+        Group typedLiteralsDictionaryG = HdfProfile.group(d, "typedLiteralsDictionary");
         this.typedLiteralsDictionary = (typedLiteralsDictionaryG != null) ? new FCDReader(typedLiteralsDictionaryG) : null;
-
-        Group iriG = (Group) d.getChild("iri");
+        Group iriG = HdfProfile.group(d, "iri");
         this.iri = (iriG != null) ? new FCDReader(iriG) : null;
-
-        Group langsG = (Group) d.getChild("langs");
+        Group langsG = HdfProfile.group(d, "langs");
         this.langs = (langsG != null) ? new FCDReader(langsG) : null;
-        ContiguousDataset langTagsDS = (ContiguousDataset) d.getChild("langTags");
-        this.langTags = (langTagsDS != null) ? BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(langTagsDS), (Long) langTagsDS.getAttribute("numEntries").getData(), (Integer) langTagsDS.getAttribute("width").getData()) : null;
-        ContiguousDataset langDirsDS = (ContiguousDataset) d.getChild("langDirs");
-        this.langDirs = (langDirsDS != null) ? BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(langDirsDS), (Long) langDirsDS.getAttribute("numEntries").getData(), (Integer) langDirsDS.getAttribute("width").getData()) : null;
+        this.langTags = HdfProfile.packed(d, "langTags");
+        this.langDirs = HdfProfile.packed(d, "langDirs");
+        this.langTable = (langs == null) ? null : readLanguageTags(langs, getName());
+
+        // Parallel columns must cover every row: a shorter one used to be read
+        // past its end inside a query instead of failing the open (BG-81).
+        requireRows("datatypes", datatype.getNumEntries());
+        if (typedLiterals != null) requireRows("typedLiterals", typedLiterals.getNumEntries());
+        if (langTags != null) requireRows("langTags", langTags.getNumEntries());
+        if (langDirs != null) requireRows("langDirs", langDirs.getNumEntries());
+        checkTripleTermSuffix();
+    }
+
+    private void requireRows(String column, long rows) {
+        if (rows < numEntries) {
+            throw new IllegalStateException("Corrupt HDF5: dictionary '" + getName() + "': " + column + " holds "
+                    + rows + " rows but offsets declares " + numEntries + " entries");
+        }
+    }
+
+    /**
+     * The triple-term suffix (SPECIFICATIONS.md §7.4: the section's last
+     * {@code tripleTerms.numEntries / 3} rows) must agree with the datatypes
+     * column. The reader derives {@code firstTripleTermObjectId} from that
+     * count alone, so a store or writer that disagreed would have mis-clamped
+     * every triple-term scan and read component ids for plain literals without
+     * any exception (BG-82).
+     */
+    private void checkTripleTermSuffix() {
+        if (tripleTerms == null) {
+            return;
+        }
+        long n = tripleTerms.getNumEntries();
+        long rows = n / 3;
+        int tt = DataType.TRIPLE_TERM.ordinal();
+        boolean consistent = n % 3 == 0 && rows >= 1 && rows <= numEntries
+                && datatype.get(numEntries - rows) == tt
+                && (rows == numEntries || datatype.get(numEntries - rows - 1) != tt);
+        if (!consistent) {
+            throw new IllegalStateException("Corrupt HDF5: dictionary '" + getName() + "': the tripleTerms store ("
+                    + n + " entries, " + rows + " terms) does not match the TRIPLE_TERM suffix of the datatypes column");
+        }
+    }
+
+    /** The section's language tags, each checked to be a fixed point of Jena's RFC 5646 formatter. */
+    static String[] readLanguageTags(FCDReader langs, String section) {
+        int n = (int) langs.getNumEntries();
+        String[] table = new String[n];
+        for (int i = 0; i < n; i++) {
+            table[i] = requireFormattedTag(langs.get(i), section);
+        }
+        return table;
+    }
+
+    /**
+     * {@code tag} when it is exactly what Jena's formatter produces for it;
+     * otherwise the file is corrupt: its ids were assigned over the raw tag
+     * while the reader's search compares the re-formatted term, so ranks and
+     * comparator order can disagree (SPECIFICATIONS.md §6.2).
+     */
+    static String requireFormattedTag(String tag, String section) {
+        String formatted;
+        try {
+            formatted = LangTagX.formatLanguageTag(tag);
+        } catch (RuntimeException e) {
+            formatted = null;
+        }
+        if (!tag.equals(formatted)) {
+            throw new IllegalStateException("Corrupt HDF5: language tag '" + tag + "' in dictionary '" + section
+                    + "' is not in RFC 5646 formatted form (SPECIFICATIONS.md §6.2 requires "
+                    + (formatted == null ? "a well-formed tag" : "'" + formatted + "'") + ")");
+        }
+        return tag;
     }
 
     private TieredIndex tieredIndex() {
@@ -157,16 +224,20 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         long[] ids = new long[tierSize];
         Node[] nodes = new Node[tierSize];
 
+        IdentityHashMap<Node, NodeValue> values = new IdentityHashMap<>();
         for (int i = 0; i < tierSize; i++) {
             long id = (long) i * TIER_SPACING + 1;
             ids[i] = id;
             nodes[i] = extract(id);
+            if (nodes[i].isLiteral()) {
+                try {
+                    values.put(nodes[i], NodeValue.makeNode(nodes[i]));
+                } catch (RuntimeException unparseable) {
+                    // the comparator's own valueOf fallback handles this term
+                }
+            }
         }
-        return new TieredIndex(ids, nodes);
-    }
-
-    private Optional<ContiguousDataset> getDataSet(Group g, String name) {
-        return (g.getChild(name) != null) ? Optional.of((ContiguousDataset) g.getChild(name)) : Optional.empty();
+        return new TieredIndex(ids, nodes, values);
     }
 
     @Override
@@ -189,9 +260,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
                 // A language tag takes precedence: rdf:langString is reconstructed
                 // as a lang-tagged literal (term-exact per RDF semantics).
                 long langId = (langTags != null) ? langTags.get(idx) : 0;
-                if (langId > 0 && langs != null) {
+                if (langId > 0 && langTable != null) {
                     String lex = strings.get(off);
-                    String lang = langs.get(langId - 1);
+                    if (langId > langTable.length) {
+                        throw new IllegalStateException("Corrupt HDF5: language tag id " + langId + " at ID " + id
+                                + " in dictionary '" + getName() + "' exceeds the " + langTable.length + " stored tags");
+                    }
+                    String lang = langTable[(int) langId - 1];
                     // Base direction (format v4): one extra bit-packed read, only
                     // when the store has directional literals at all. A direction
                     // implies a language tag, so this stays inside the lang branch
@@ -219,7 +294,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
                 TripleTermResolver r = tripleTermResolver;
                 if (r == null || tripleTerms == null) {
                     throw new IllegalStateException("Triple-term row at ID " + id + " in dictionary '"
-                            + name + "' but no component store/resolver is wired");
+                            + getName() + "' but no component store/resolver is wired");
                 }
                 long k = off * 3;
                 yield r.resolve(tripleTerms.get(k), tripleTerms.get(k + 1), tripleTerms.get(k + 2));
@@ -298,25 +373,14 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         // memoize it (by identity - `element` is the same object throughout this
         // search) instead of re-deriving it ~log(n) times. The comparator's
         // ordering semantics are untouched: nodeValue() is the designated hook.
-        NodeComparator cmp = !element.isLiteral() ? NodeComparator.INSTANCE : new NodeComparator() {
-            private NodeValue targetValue;
-            @Override
-            protected NodeValue nodeValue(Node n) {
-                if (n != element) {
-                    return super.nodeValue(n);
-                }
-                if (targetValue == null) {
-                    targetValue = super.nodeValue(n);
-                }
-                return targetValue;
-            }
-        };
+        TieredIndex tier = tieredIndex();
+        ProbeComparator cmp = !element.isLiteral() ? null : new ProbeComparator(element, tier.values());
+        NodeComparator order = (cmp != null) ? cmp : NodeComparator.INSTANCE;
 
         // 1. Tiered Index Lookup to narrow the range
         // This is safe because the tier nodes are actual Node objects compared using your specific Comparator
-        TieredIndex tier = tieredIndex();
         if (tier.nodes().length > 0) {
-            int tierIdx = Arrays.binarySearch(tier.nodes(), element, cmp);
+            int tierIdx = Arrays.binarySearch(tier.nodes(), element, order);
             if (tierIdx >= 0) return tier.ids()[tierIdx];
 
             int insertionPoint = -(tierIdx + 1);
@@ -335,14 +399,79 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             long midId = low + (high - low) / 2;
             Node midNode = extract(midId);
             if (midNode == null) throw new IllegalStateException("Dictionary corruption at ID: " + midId);
+            if (cmp != null) {
+                cmp.probe(midNode, packedValue(midId - 1));
+            }
 
-            int c = cmp.compare(midNode, element);
+            int c = order.compare(midNode, element);
 
             if (c == 0) return midId;
             else if (c < 0) low = midId + 1;
             else high = midId - 1;
         }
         return -low - 1;
+    }
+
+    /**
+     * The NodeValue of row {@code idx} straight from its packed value when the
+     * row is a natively stored number (INTEGER/LONG/FLOAT/DOUBLE), else null.
+     * Numerically identical to {@code NodeValue.makeNode(extract(id))} - the
+     * comparator orders numbers by exact value and breaks ties on the term,
+     * which it still takes from the Node - but without the lexical-form hash
+     * and global-cache round trip a fresh literal pays per probe (BG-244).
+     */
+    private NodeValue packedValue(long idx) {
+        int typeOrdinal = (int) datatype.get(idx);
+        if (typeOrdinal < 0 || typeOrdinal >= DT_VALUES.length) {
+            return null;
+        }
+        return switch (DT_VALUES[typeOrdinal]) {
+            case INTEGER -> NodeValue.makeInteger((int) integers.get(offsets.get(idx)));
+            case LONG -> NodeValue.makeInteger(longs.get(offsets.get(idx)));
+            case FLOAT -> NodeValue.makeFloat(floats.getFloat(offsets.get(idx) * Float.BYTES));
+            case DOUBLE -> NodeValue.makeDouble(doubles.getDouble(offsets.get(idx) * Double.BYTES));
+            default -> null;
+        };
+    }
+
+    /**
+     * NodeComparator for one literal search: the target's value is derived
+     * once (it takes part in every probe), the tier terms' values come from
+     * the memo built with the tier, and the current probe row's value, when
+     * the row is a native number, is the one built from its packed value.
+     * Ordering semantics are untouched - nodeValue() is the designated hook.
+     */
+    private static final class ProbeComparator extends NodeComparator {
+        private final Node target;
+        private final IdentityHashMap<Node, NodeValue> tierValues;
+        private NodeValue targetValue;
+        private Node probeNode;
+        private NodeValue probeValue;
+
+        ProbeComparator(Node target, IdentityHashMap<Node, NodeValue> tierValues) {
+            this.target = target;
+            this.tierValues = tierValues;
+        }
+
+        void probe(Node node, NodeValue value) {
+            this.probeNode = node;
+            this.probeValue = value;
+        }
+
+        @Override
+        protected NodeValue nodeValue(Node n) {
+            if (n == target) {
+                if (targetValue == null) {
+                    targetValue = super.nodeValue(n);
+                }
+                return targetValue;
+            }
+            if (n == probeNode && probeValue != null) {
+                return probeValue;
+            }
+            NodeValue tier = tierValues.get(n);
+            return (tier != null) ? tier : super.nodeValue(n);
+        }
     }
 
     @Override

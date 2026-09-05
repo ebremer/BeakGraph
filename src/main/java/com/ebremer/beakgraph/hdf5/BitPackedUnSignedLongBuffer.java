@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5;
 
+import com.ebremer.beakgraph.Params;
+
 import com.ebremer.beakgraph.io.ByteBufferBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
 import com.ebremer.beakgraph.utils.UTIL;
@@ -35,6 +37,12 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
     private int writeAccumulatorCount;
     private final boolean usesInternalStream;
     private ByteArrayOutputStream internalStream;
+    // Packed bytes are staged here and handed to the stream a chunk at a time:
+    // ByteArrayOutputStream.write(int) is synchronized, and every S/B/SB/BB
+    // entry of every index level paid that lock per byte (BG-250).
+    private static final int STAGE_BYTES = 1 << 16;
+    private byte[] stage;
+    private int staged;
 
     // Reading State (Sequential)
     private long readAccumulator;
@@ -50,6 +58,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         this.bitWidth = bitWidth;
         if (buffer == null) {
             this.internalStream = new ByteArrayOutputStream();
+            this.stage = new byte[STAGE_BYTES];
             this.usesInternalStream = true;
             this.buffer = ByteBuffer.allocate(0);
             this.data = new ByteBufferBytes(this.buffer);
@@ -294,7 +303,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
             byte b = (byte) (writeAccumulator >>> shift);
 
             if (usesInternalStream) {
-                internalStream.write(b);
+                stageByte(b);
             } else {
                 if (!buffer.hasRemaining()) {
                     throw new BufferOverflowException();
@@ -312,7 +321,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
             byte b = (byte) (writeAccumulator << (8 - writeAccumulatorCount));
 
             if (usesInternalStream) {
-                internalStream.write(b);
+                stageByte(b);
             } else {
                 if (buffer.hasRemaining()) {
                     buffer.put(b);
@@ -322,6 +331,21 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
             }
             writeAccumulator = 0;
             writeAccumulatorCount = 0;
+        }
+        flushStage();
+    }
+
+    private void stageByte(byte b) {
+        stage[staged++] = b;
+        if (staged == stage.length) {
+            flushStage();
+        }
+    }
+
+    private void flushStage() {
+        if (staged > 0) {
+            internalStream.write(stage, 0, staged);
+            staged = 0;
         }
     }
 
@@ -407,16 +431,46 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         return (raw << bitOffset) | (nextByte >>> (8 - bitOffset));
     }
 
+    /**
+     * The 64-bit MSB-first word at {@code bitIndex} of a bitmap whose end lies
+     * within the word (bits past {@code numEntries} read as 0). Assembled from
+     * the at most nine bytes that hold it; the former 64 bounds-checked
+     * {@link #get} calls per tail word were paid by every block-end lookup on
+     * the last graphs/subjects of a level and, on a channel-backed store, by
+     * 64 locked channel reads (BG-83).
+     */
     private long getWord64SafeTail(long bitIndex) {
-        long acc = 0;
-        for (int i = 0; i < 64; i++) {
-            acc <<= 1;
-            long entryIdx = bitIndex + i;
-            if (entryIdx < numEntries) {
-                acc |= get(entryIdx);
+        if (bitWidth != 1) {
+            long acc = 0;
+            for (int i = 0; i < 64; i++) {
+                acc <<= 1;
+                long entryIdx = bitIndex + i;
+                if (entryIdx < numEntries) {
+                    acc |= get(entryIdx);
+                }
+            }
+            return acc;
+        }
+        if (bitIndex < 0 || bitIndex >= numEntries) {
+            return 0L;
+        }
+        long byteIndex = bitIndex >>> 3;
+        int bitOffset = (int) (bitIndex & 7);
+        long size = data.size();
+        int avail = (int) Math.min(8, size - byteIndex);
+        long word = 0;
+        for (int k = 0; k < avail; k++) {
+            word = (word << 8) | (data.get(byteIndex + k) & 0xFFL);
+        }
+        word <<= (8 - avail) * 8; // left-align: bit 0 of the word is the MSB
+        if (bitOffset != 0) {
+            word <<= bitOffset;
+            if (byteIndex + 8 < size) {
+                word |= (data.get(byteIndex + 8) & 0xFFL) >>> (8 - bitOffset);
             }
         }
-        return acc;
+        long remaining = numEntries - bitIndex;
+        return (remaining < 64) ? word & (-1L << (64 - remaining)) : word;
     }
 
     public int get() {
@@ -458,8 +512,8 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
 
         if (data.length > 0) {
             WritableDataset ds = group.putDataset(path.toString(), data);
-            ds.putAttribute("width", bitWidth);
-            ds.putAttribute("numEntries", numEntries);
+            ds.putAttribute(Params.WIDTH, bitWidth);
+            ds.putAttribute(Params.NUM_ENTRIES, numEntries);
         }
     }
 

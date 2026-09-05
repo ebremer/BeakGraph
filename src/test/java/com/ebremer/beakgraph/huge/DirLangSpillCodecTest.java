@@ -3,7 +3,7 @@ package com.ebremer.beakgraph.huge;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -77,7 +77,7 @@ class DirLangSpillCodecTest {
         // absent < ltr - so the plain term encodes first.
         try (StreamingDictionaryWriter w = new StreamingDictionaryWriter(
                 dir.resolve("dirs"), "literals", 2, stringStats(),
-                Set.of(Types.STRING, Types.INTEGER, Types.LONG, Types.FLOAT, Types.DOUBLE),
+                DictionarySection.LITERALS,
                 new TreeSet<>(Set.of(RDF.dirLangString.getURI(), RDF.langString.getURI())),
                 new TreeSet<>(Set.of("en")), true, null)) {
             w.encode(List.of(plain, ltr).iterator());

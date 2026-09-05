@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import com.ebremer.beakgraph.Params;
+
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.EmptyDictionaryWriter;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
@@ -9,7 +11,7 @@ import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.lib.NodeSearch;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.FileNotFoundException;
@@ -65,8 +67,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private final HashMap<String, Long> langLookUp = new HashMap<>();
     private String name;
     private final ArrayList<Node> sorted;
-    private Set<Types> et;
-    private int fcdBlockSize = 16;
+    private Set<DataType> et;
+    private int fcdBlockSize = Params.FCD_BLOCK_SIZE;
     private final AtomicLong cc = new AtomicLong();
     private final boolean literalsPresent;
     private boolean closed = false;
@@ -104,12 +106,12 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         // The bit-packed buffer supports widths 1..57 and 64 only, and this width is
         // value-derived: a legal xsd:long in [2^56, 2^62) lands in 58..63. Round up.
         if (longWidth > 57) longWidth = 64;
-        this.integers = (!et.contains(Types.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), null, 0, intWidth);
-        this.longs = (!et.contains(Types.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), null, 0, longWidth);
+        this.integers = (!et.contains(DataType.INTEGER) || (stats.numInteger == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("integers"), null, 0, intWidth);
+        this.longs = (!et.contains(DataType.LONG) || (stats.numLong == 0)) ? null : new BitPackedUnSignedLongBuffer(Path.of("longs"), null, 0, longWidth);
 
         // Triple-term component store: width sized to the largest id any
         // component can carry (the object space: entities + this section).
-        boolean wantTripleTerms = et.contains(Types.TRIPLE_TERM) && stats.numTripleTerms > 0;
+        boolean wantTripleTerms = et.contains(DataType.TRIPLE_TERM) && stats.numTripleTerms > 0;
         if (wantTripleTerms && builder.getTripleTermEncoder() == null) {
             // Encoding would otherwise fail per-node, deep in the sorted walk.
             throw new IllegalStateException(
@@ -133,11 +135,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         BitPackedUnSignedLongBuffer tempLangTags = null;
         BitPackedUnSignedLongBuffer tempLangDirs = null;
         try {
-            this.doubles = (!et.contains(Types.DOUBLE) || (stats.numDouble == 0)) ? null : new DataOutputBuffer(Path.of("doubles"));
-            this.floats  = (!et.contains(Types.FLOAT)  || (stats.numFloat  == 0)) ? null : new DataOutputBuffer(Path.of("floats"));
+            this.doubles = (!et.contains(DataType.DOUBLE) || (stats.numDouble == 0)) ? null : new DataOutputBuffer(Path.of("doubles"));
+            this.floats  = (!et.contains(DataType.FLOAT)  || (stats.numFloat  == 0)) ? null : new DataOutputBuffer(Path.of("floats"));
 
-            if (et.contains(Types.DOUBLE) || et.contains(Types.FLOAT) || et.contains(Types.INTEGER) ||
-                et.contains(Types.LONG) || et.contains(Types.STRING)) {
+            if (et.contains(DataType.DOUBLE) || et.contains(DataType.FLOAT) || et.contains(DataType.INTEGER) ||
+                et.contains(DataType.LONG) || et.contains(DataType.STRING)) {
                 tempLiteralsPresent = true;
                 tempTypedLiteralsDictionary = new FCDWriter(Path.of("typedLiteralsDictionary"), fcdBlockSize);
                 tempTypedLiterals = new BitPackedUnSignedLongBuffer(Path.of("typedLiterals"), null, 0, 1 + MinBits(builder.getTypedLiterals().size()));
@@ -156,8 +158,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                     });
             }
 
-            tempIri     = (!et.contains(Types.IRI)    || (stats.numIRI     == 0)) ? null : new FCDWriter(Path.of("iri"),     fcdBlockSize);
-            tempStrings = (!et.contains(Types.STRING)  || (stats.numStrings == 0)) ? null : new FCDWriter(Path.of("strings"), fcdBlockSize);
+            tempIri     = (!et.contains(DataType.IRI)    || (stats.numIRI     == 0)) ? null : new FCDWriter(Path.of("iri"),     fcdBlockSize);
+            tempStrings = (!et.contains(DataType.STRING)  || (stats.numStrings == 0)) ? null : new FCDWriter(Path.of("strings"), fcdBlockSize);
 
             // Build the language-tag dictionary from the distinct tags present
             // among the literals. Skipped entirely when there are none, so files
@@ -323,11 +325,22 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         private ArrayList<Node> sortedNodes;
         private String name;
         private Stats stats;
-        private Set<Types> et = new HashSet<>();
+        private Set<DataType> et = new HashSet<>();
         private Set<String> typedLiterals = new HashSet<>();
         private TripleTermEncoder tripleTermEncoder;
         private long tripleTermComponentIdBound = 0;
-        public Builder enable(Types... types) { et.addAll(Arrays.asList(types)); return this; }
+        /**
+         * The dictionary section this writer builds: fixes the term kinds it
+         * routes (SPECIFICATIONS.md §7.2) and, unless set, its group name. The
+         * former per-engine enable lists (a second Types enum) were hand-copied in
+         * four places and used a second enum whose ordinals disagreed with
+         * the on-disk {@link DataType} (BG-90).
+         */
+        public Builder section(DictionarySection section) {
+            et.addAll(section.routes());
+            if (name == null) name = section.groupName();
+            return this;
+        }
         public Builder setTripleTermEncoder(TripleTermEncoder e) { this.tripleTermEncoder = e; return this; }
         /** Upper bound on any component id (the object-space size); sizes the tripleTerms store's bit width. */
         public Builder setTripleTermComponentIdBound(long bound) { this.tripleTermComponentIdBound = bound; return this; }
@@ -348,7 +361,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         public ArrayList<Node> getSortedNodes() { return sortedNodes; }
         public int getNodeCount() { return sortedNodes != null ? sortedNodes.size() : nodes.size(); }
         public Stats getStats() { return stats; }
-        public Set<Types> getEnabledTypes() { return et; }
+        public Set<DataType> getEnabledTypes() { return et; }
         public Set<String> getTypedLiterals() { return typedLiterals; }
 
         public DictionaryWriter build() throws IOException {

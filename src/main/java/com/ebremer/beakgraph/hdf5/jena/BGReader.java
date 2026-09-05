@@ -28,6 +28,17 @@ public interface BGReader extends AutoCloseable {
      * {@code urn:x-arq:UnionGraph}; an absent member contributes nothing.
      */
     public Iterator<BindingNodeId> readGraphs(java.util.Collection<Node> graphs, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable);
+
+    /**
+     * The pattern over the graph whose dictionary id is {@code graphId} - an
+     * id from {@link #graphIds()}. A caller walking every graph passes the id
+     * it already holds instead of a term the reader would locate again (the
+     * extract-then-locate round trip, BG-259). An id below 1 answers nothing.
+     */
+    public Iterator<BindingNodeId> read(long graphId, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable);
+
+    /** Ids of the stored graphs (the columnar graph list, ascending), the default graph's included when it holds quads. */
+    public java.util.stream.LongStream graphIds();
     public ExtendedIterator<Triple> graphBaseFind(Node graph, Triple tp);
     public Iterator<Node> listGraphNodes();
     public boolean containsGraph(Node graphNode);
