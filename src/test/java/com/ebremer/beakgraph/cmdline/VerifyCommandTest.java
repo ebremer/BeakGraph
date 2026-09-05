@@ -165,4 +165,78 @@ class VerifyCommandTest {
         assertEquals(1, r.code(), r.output());
         assertTrue(r.output().contains("No BeakGraph"), r.output());
     }
+
+    // --- BG-347: the deep pass must be able to FAIL, and degenerate stores must pass ---
+
+    private static io.jhdf.api.Dataset findDataset(io.jhdf.api.Group group, String pathContains, String name) {
+        for (io.jhdf.api.Node child : group.getChildren().values()) {
+            if (child instanceof io.jhdf.api.Group g) {
+                io.jhdf.api.Dataset found = findDataset(g, pathContains, name);
+                if (found != null) return found;
+            } else if (child instanceof io.jhdf.api.Dataset d && d.getName().equals(name) && d.getPath().contains(pathContains)) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Overwrites the literals dictionary's string bytes in place. The structural
+     * pass never reads them (it maps datasets and enumerates graphs), so it
+     * still passes; the deep pass materializes every triple and must report
+     * the unresolvable terms - either as a materialization shortfall or as a
+     * scan exception. Before this test, a deepScan that agreed with itself by
+     * construction would have gone unnoticed.
+     */
+    @Test
+    void deepPassCatchesCorruptedLiteralBytesThatStructureMisses() throws Exception {
+        Path copy = dir.resolve("corrupt.h5");
+        Files.copy(good.toPath(), copy);
+        long address;
+        long size;
+        try (HdfFile hdf = new HdfFile(copy)) {
+            io.jhdf.api.Dataset target = findDataset((io.jhdf.api.Group) hdf.getChild(".BG"), "/literals/", "stringbuffer");
+            org.junit.jupiter.api.Assertions.assertNotNull(target, "the literals dictionary's string buffer");
+            address = ((io.jhdf.api.dataset.ContiguousDataset) target).getDataAddress();
+            size = target.getSizeInBytes();
+            assertTrue(size > 0);
+        }
+        try (FileChannel fc = FileChannel.open(copy, StandardOpenOption.WRITE)) {
+            byte[] junk = new byte[(int) size];
+            java.util.Arrays.fill(junk, (byte) 0xFF);
+            fc.write(java.nio.ByteBuffer.wrap(junk), address);
+        }
+        Result structural = verify(copy.toFile(), false);
+        assertEquals(0, structural.code(), "the structural pass does not read literal bytes: " + structural.output());
+        Result deep = verify(copy.toFile(), true);
+        assertEquals(2, deep.code(), "the deep pass must catch the damage: " + deep.output());
+        assertTrue(deep.output().contains("materialized") || deep.output().contains("scan:"),
+                "the reason must name the deep-pass check: " + deep.output());
+        assertTrue(deep.output().contains("1 FAILED"), deep.output());
+    }
+
+    @Test
+    void degenerateStoresPassBothPasses() throws Exception {
+        java.util.Map<String, String> sources = new java.util.LinkedHashMap<>();
+        sources.put("empty-none", "");
+        sources.put("empty-exact", "");
+        sources.put("all-iri", "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n<http://ex.org/b> <http://ex.org/p> <http://ex.org/c> .\n");
+        sources.put("single", "<http://ex.org/a> <http://ex.org/p> \"one\" .\n");
+        sources.put("named-only", "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> <http://ex.org/g> .\n");
+        sources.put("triple-term-only", "<http://ex.org/a> <http://ex.org/p> <<( <http://ex.org/x> <http://ex.org/y> <http://ex.org/z> )>> .\n");
+        for (var e : sources.entrySet()) {
+            String name = e.getKey();
+            File src = dir.resolve(name + ".nq").toFile();
+            Files.write(src.toPath(), e.getValue().getBytes(StandardCharsets.UTF_8));
+            File h5 = dir.resolve(name + ".h5").toFile();
+            HDF5Writer.Builder().setSource(src).setDestination(h5).setSpatial(false).setFeatures(false)
+                    .setVoidMode(name.endsWith("exact") ? com.ebremer.beakgraph.core.VoidMode.EXACT : com.ebremer.beakgraph.core.VoidMode.NONE)
+                    .build().write();
+            for (boolean deep : new boolean[]{false, true}) {
+                Result r = verify(h5, deep);
+                assertEquals(0, r.code(), name + (deep ? " deep: " : " structural: ") + r.output());
+                assertTrue(r.output().contains("1 OK, 0 FAILED"), name + ": " + r.output());
+            }
+        }
+    }
 }

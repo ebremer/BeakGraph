@@ -21,7 +21,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Term-fidelity harness (PLAN Phase 1.4): parse -> write -> read -> assert
+ * Term-fidelity harness: parse -> write -> read -> assert
  * DATASET ISOMORPHISM against the source, for every writer engine. Isomorphism
  * is the RDF-correct form of "term set equality": it catches a store that
  * silently rewrites terms (the dirLangString corruption built "successfully"

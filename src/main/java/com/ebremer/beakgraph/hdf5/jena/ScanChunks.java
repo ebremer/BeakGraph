@@ -138,7 +138,11 @@ final class ScanChunks {
     private static ParallelScan build(String kind, long[] range, ChunkFactory factory, ExecutionContext execCxt) {
         long size = range[1] - range[0] + 1;
         int procs = Runtime.getRuntime().availableProcessors();
-        long chunkSize = Math.max(MIN_CHUNK, size / (2L * procs));
+        // -Dbeakgraph.scan.parallel.minchunk lowers the floor so a small store
+        // still splits into several chunks (the two-scan operator shapes and the
+        // cancel path in ParallelScanTest need more than one worker per scan).
+        long minChunk = Long.getLong("beakgraph.scan.parallel.minchunk", MIN_CHUNK);
+        long chunkSize = Math.max(Math.max(1, minChunk), size / (2L * procs));
         int chunks = (int) Math.min(4L * procs, (size + chunkSize - 1) / chunkSize);
         List<Supplier<Iterator<BindingNodeId>>> suppliers = new ArrayList<>(chunks);
         long per = (size + chunks - 1) / chunks;

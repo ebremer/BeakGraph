@@ -59,6 +59,8 @@ public class HugeHDF5Writer implements BeakGraphWriter {
     @Override
     public void write() throws IOException {
         logger.info("Writing BeakGraph (huge/disk-based) to {}", builder.getDestination());
+        // Fail before any parsing or sorting if the native HDF5 library is missing (BG-441).
+        com.ebremer.beakgraph.huge.NativeHdf5File.requireAvailable();
         Path dest = builder.getDestination().toPath();
         // Same publish discipline as HDF5Writer: build into a sibling temp file,
         // swap in atomically on success, never disturb a previous good artifact.

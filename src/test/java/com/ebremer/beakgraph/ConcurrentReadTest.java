@@ -15,6 +15,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.jena.query.Dataset;
 import org.apache.jena.query.QueryExecution;
@@ -69,7 +70,8 @@ class ConcurrentReadTest {
                 }
             }));
         }
-        for (Future<?> f : futures) f.get();
+        // Bounded: a deadlocked reader path must fail this test, not hang the build.
+        for (Future<?> f : futures) f.get(120, TimeUnit.SECONDS);
         pool.shutdownNow();
         if (failure.get() != null) {
             throw new AssertionError("concurrent reads corrupted each other", failure.get());

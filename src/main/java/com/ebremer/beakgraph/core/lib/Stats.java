@@ -41,7 +41,7 @@ public class Stats {
     
     @Override
     public String toString() {
-        return String.format(
+        return String.format(java.util.Locale.ROOT,
             """
             ==================================================================
             Number of Graphs      : %d

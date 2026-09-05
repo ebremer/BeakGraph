@@ -25,6 +25,7 @@ import org.apache.jena.query.QuerySolution;
 import org.apache.jena.query.ResultSet;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.sparql.core.Quad;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
@@ -34,19 +35,20 @@ import org.junit.jupiter.api.io.TempDir;
  * End-to-end parity: the parallel writer must produce a store that reads back
  * (through the UNMODIFIED jHDF-based readers) semantically identical to the
  * sequential writer's - same graphs, isomorphic per-graph content, same query
- * answers through both indexes, and structurally identical HDF5 metadata
- * (same dataset tree, same sizes, same numEntries / width / FCD attributes
- * everywhere). Raw bytes are NOT compared: the VoID generator mints fresh
- * blank-node labels on every write, so bnode dictionary ranks legitimately
- * differ between any two writes - including two sequential ones (same caveat
- * as HugeWriterParityTest).
+ * answers through both indexes, structurally identical HDF5 metadata (same
+ * dataset tree, same sizes, same numEntries / width / FCD attributes
+ * everywhere) and, for single-source builds, BYTE-identical files: methods
+ * 0/2/3 are one format written through one jHDF sequence (SPECIFICATIONS.md).
+ * VoID is off by default (VoidMode.NONE), so no random blank-node labels
+ * enter these builds; the one EXACT-mode case asserts structural parity only,
+ * because the VoID generator mints fresh labels on every write.
  *
  * <p>{@link #idTupleOrderMatchesNodeComparatorOrder()} separately pins the
  * parallel index's core claim - sorting quads by dictionary-id tuple is
  * exactly the sequential writer's NodeComparator quad order - against real
  * parsed data including randomly-labeled VoID bnodes.
  */
-class ParallelWriterParityTest {
+public class ParallelWriterParityTest {
 
     @TempDir
     static Path dir;
@@ -173,6 +175,19 @@ class ParallelWriterParityTest {
         assertEquals(attrsA, attrsB, "attributes of " + path);
     }
 
+
+    /**
+     * Methods 0/2/3 are one format written through one jHDF sequence
+     * (SPECIFICATIONS.md: "byte-identical stores"), so for a single source
+     * the files must match byte for byte - not merely in structure. This is
+     * what catches a different bit layout or FCD block content that the
+     * readers still decode consistently.
+     */
+    private static void assertSameBytes(Path a, Path b) throws Exception {
+        assertArrayEquals(Files.readAllBytes(a), Files.readAllBytes(b),
+                "single-source stores must be byte-identical: " + a.getFileName() + " vs " + b.getFileName());
+    }
+
     // ------------------------------------------------------------------
     // tests
     // ------------------------------------------------------------------
@@ -202,6 +217,12 @@ class ParallelWriterParityTest {
             ex:s0 ex:longstr "%s" .
             ex:s0 ex:uni "h\\u00e9llo \\u00fcrld" .
             ex:s0 ex:ill "abc"^^xsd:int .
+            ex:s0 ex:dl "hello"@en--ltr .
+            ex:s0 ex:dl "hi"@en--rtl .
+            ex:s0 ex:tt <<( ex:a ex:b ex:c )>> .
+            ex:s0 ex:tt2 <<( ex:a ex:b <<( ex:x ex:y "nested" )>> )>> .
+            ex:s0 ex:list "[1, 2]"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .
+            ex:s0 ex:map "{\\"k\\": 1}"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map> .
             <> ex:self <sibling.png> ; ex:up <../up.png> ; ex:up2 <../../up2.png> ; ex:root </root.png> ; ex:frag <#frag> ; ex:query <?q=1> .
             _:b1 ex:p0 _:b2 .
             _:b2 ex:knows ex:s0 .
@@ -220,8 +241,13 @@ class ParallelWriterParityTest {
                 "SELECT ?s WHERE { ?s <http://ex.org/p0> <http://ex.org/o0> }",
                 "SELECT ?s ?o WHERE { GRAPH <http://ex.org/g1> { ?s <http://ex.org/p0> ?o } }",
                 "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/count> ?o }",
-                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }");
+                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/dl> ?o }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/tt> ?o }",
+                "SELECT ?x WHERE { <http://ex.org/s0> <http://ex.org/tt2> <<( <http://ex.org/a> <http://ex.org/b> <<( <http://ex.org/x> <http://ex.org/y> ?x )>> )>> }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/list> ?o }");
         assertSameStructure(seq, par);
+        assertSameBytes(seq, par);
     }
 
     @Test
@@ -244,6 +270,7 @@ class ParallelWriterParityTest {
                 "SELECT ?s ?p ?o WHERE { GRAPH <urn:x-beakgraph:Spatial> { ?s ?p ?o } }",
                 "SELECT ?g WHERE { GRAPH ?g { <http://ex.org/geo1> ?p ?o } }");
         assertSameStructure(seq, par);
+        assertSameBytes(seq, par);
     }
 
     @Test
@@ -272,7 +299,79 @@ class ParallelWriterParityTest {
                 "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g",
                 "SELECT ?s WHERE { GRAPH <http://ex.org/g7> { ?s <http://ex.org/p1> \"str101\" } }");
         assertSameStructure(seq, par);
+        assertSameBytes(seq, par);
     }
+
+    @Test
+    void exactVoidModeKeepsStructuralParityOnly() throws Exception {
+        // The VoID generator mints fresh blank-node labels per write, so with
+        // EXACT statistics the bytes legitimately differ; structure and content
+        // must still agree.
+        String ttl = "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n"
+                   + "<http://ex.org/a> <http://ex.org/q> \"x\" .\n"
+                   + "<http://ex.org/g> { <http://ex.org/a> <http://ex.org/p> <http://ex.org/c> . }\n";
+        File src = dir.resolve("void.trig").toFile();
+        Files.write(src.toPath(), ttl.getBytes(StandardCharsets.UTF_8));
+        File seq = dir.resolve("void.trig.seq.h5").toFile();
+        File par = dir.resolve("void.trig.par.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(seq).setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).build().write();
+        ParallelHDF5Writer.Builder().setSource(src).setDestination(par).setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).setCores(2).build().write();
+        assertStoresEquivalent(seq.toPath(), par.toPath(),
+                "SELECT ?o WHERE { <http://ex.org/a> ?p ?o }",
+                "SELECT (COUNT(*) AS ?n) WHERE { GRAPH <" + Params.VOIDSTRING + "> { ?s ?p ?o } }");
+        assertSameStructure(seq.toPath(), par.toPath());
+    }
+
+    /**
+     * BG-429: JSON-LD (inline context, @list container, @graph, a blank node)
+     * and RDF/XML (parseType Collection, rdf:nodeID) go through the same
+     * parser configuration as Turtle, so their stores are byte-identical too.
+     */
+    @Test
+    void jsonLdAndRdfXmlSourcesAreByteIdentical() throws Exception {
+        writeBoth("mixed.jsonld", JSONLD_FIXTURE, false, false);
+        writeBoth("mixed.rdf", RDFXML_FIXTURE, false, false);
+        for (String name : new String[]{"mixed.jsonld", "mixed.rdf"}) {
+            Path seq = dir.resolve(name + ".seq.h5");
+            Path par = dir.resolve(name + ".par.h5");
+            assertStoresEquivalent(seq, par,
+                    "SELECT ?o WHERE { <http://ex.org/doc> ?p ?o }",
+                    "SELECT ?i WHERE { <http://ex.org/doc> <http://ex.org/items> ?l . ?l <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> ?i }",
+                    "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/tag> ?t }");
+            assertSameStructure(seq, par);
+            assertSameBytes(seq, par);
+        }
+        try (BeakGraph a = new BeakGraph(new HDF5Reader(dir.resolve("mixed.jsonld.seq.h5").toFile()))) {
+            assertEquals(2, select(a.getDataset(), "SELECT ?i WHERE { <http://ex.org/doc> <http://ex.org/items> ?l . ?l <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest>*/<http://www.w3.org/1999/02/22-rdf-syntax-ns#first> ?i }").size(), "the @list container became an RDF list");
+            assertEquals(1, select(a.getDataset(), "SELECT ?o WHERE { GRAPH <http://ex.org/gjson> { <http://ex.org/s> <http://ex.org/p> ?o } }").size(), "the @graph block became a named graph");
+        }
+    }
+
+    public static final String JSONLD_FIXTURE = """
+        {
+          "@context": {"ex": "http://ex.org/", "items": {"@id": "ex:items", "@container": "@list"}},
+          "@graph": [
+            {"@id": "ex:doc", "items": [{"@id": "ex:i1"}, {"@id": "ex:i2"}],
+             "ex:anon": {"ex:tag": "from jsonld"}, "ex:n": {"@value": "7", "@type": "http://www.w3.org/2001/XMLSchema#int"}},
+            {"@id": "ex:gjson", "@graph": [{"@id": "ex:s", "ex:p": {"@id": "ex:o4"}}]}
+          ]
+        }
+        """;
+
+    public static final String RDFXML_FIXTURE = """
+        <?xml version="1.0"?>
+        <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:ex="http://ex.org/">
+          <rdf:Description rdf:about="http://ex.org/doc">
+            <ex:items rdf:parseType="Collection">
+              <rdf:Description rdf:about="http://ex.org/i1"/>
+              <rdf:Description rdf:about="http://ex.org/i2"/>
+            </ex:items>
+            <ex:anon rdf:nodeID="n1"/>
+            <ex:n rdf:datatype="http://www.w3.org/2001/XMLSchema#int">007</ex:n>
+          </rdf:Description>
+          <rdf:Description rdf:nodeID="n1"><ex:tag>from rdfxml</ex:tag></rdf:Description>
+        </rdf:RDF>
+        """;
 
     @Test
     void singleCoreStillWorks() throws Exception {
@@ -287,6 +386,7 @@ class ParallelWriterParityTest {
         assertStoresEquivalent(seq.toPath(), par.toPath(),
                 "SELECT ?o WHERE { <http://ex.org/a> ?p ?o }");
         assertSameStructure(seq.toPath(), par.toPath());
+        assertSameBytes(seq.toPath(), par.toPath());
     }
 
     /**

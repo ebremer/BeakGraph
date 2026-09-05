@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
+import com.ebremer.beakgraph.WriterEngines;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -141,7 +141,7 @@ class W3CSparql12SuiteTest {
             }
             // See the vendored README: the endpoint deliberately runs syntaxARQ
             // (syntaxSPARQL_12 would delete the CDT UNFOLD/FOLD surface).
-            Assumptions.abort("parses under syntaxSPARQL_12 only; BeakGraph's endpoint deliberately runs syntaxARQ (PLAN §4.0 Trap 1)");
+            Assumptions.abort("parses under syntaxSPARQL_12 only; BeakGraph's endpoint deliberately runs syntaxARQ ");
         }
     }
 
@@ -187,7 +187,7 @@ class W3CSparql12SuiteTest {
             query = QueryFactory.create(queryText, queryFile.toUri().toString(), Syntax.syntaxARQ);
         } catch (RuntimeException arqRejects) {
             QueryFactory.create(queryText, queryFile.toUri().toString(), Syntax.syntaxSPARQL_12);
-            Assumptions.abort("parses under syntaxSPARQL_12 only; BeakGraph's endpoint deliberately runs syntaxARQ (PLAN §4.0 Trap 1)");
+            Assumptions.abort("parses under syntaxSPARQL_12 only; BeakGraph's endpoint deliberately runs syntaxARQ ");
             return;
         }
 
@@ -265,7 +265,10 @@ class W3CSparql12SuiteTest {
             RDFDataMgr.write(os, dsg, Lang.NQUADS);
         }
         File dest = tmp.resolve("store-" + Math.abs(key.hashCode()) + ".h5").toFile();
-        HDF5Writer.Builder().setSource(nq.toFile()).setDestination(dest).build().write();
+        // The engine named by -Dbeakgraph.test.engine (method 0 by default).
+        WriterEngines.Engine engine = WriterEngines.selected();
+        engine.assumeAvailable();
+        engine.buildStore(nq.toFile(), dest);
         STORES.put(key, dest);
         return dest;
     }

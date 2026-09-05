@@ -13,7 +13,7 @@ import org.apache.jena.graph.Triple;
  * the abstract syntax forbids cycles, so every recursion here terminates. All
  * ingest hierarchies and per-quad transforms route through these two shapes so
  * the engines cannot drift on how deeply they walk a term (the mirror-topology
- * hazard PLAN Part I §1.6 documents).
+ * hazard CHANGELOG.md "Format v5 design notes" (mirror topology) documents).
  */
 public final class TripleTerms {
 

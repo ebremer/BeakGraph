@@ -74,7 +74,11 @@ class PlaidWriterParityTest {
                 nq.append(switch (k % 3) {
                     case 0 -> "<http://ex.org/o" + (k % 200) + ">";
                     case 1 -> "\"v" + (k % 150) + "\"";
-                    default -> "\"" + (k % 90 - 45) + "\"^^<http://www.w3.org/2001/XMLSchema#int>";
+                    // BG-182: alternate canonical and zero-padded spellings so the
+                    // seq-vs-plaid isomorphism covers numeric canonicalization.
+                    default -> (k % 2 == 0)
+                            ? "\"" + (k % 90 - 45) + "\"^^<http://www.w3.org/2001/XMLSchema#int>"
+                            : "\"0" + (k % 90) + "\"^^<http://www.w3.org/2001/XMLSchema#int>";
                 });
                 if (k % 4 == 0) {
                     nq.append(" <http://ex.org/g").append(k % 5).append('>');
@@ -87,6 +91,10 @@ class PlaidWriterParityTest {
             }
             // The SAME bnode label in every document: 24 distinct nodes.
             nq.append("_:b0 <http://ex.org/bp> \"doc").append(f).append("\" .\n");
+            // Ill-typed, base-direction and triple-term objects in every file.
+            nq.append("<http://ex.org/dup> <http://ex.org/ill> \"abc\"^^<http://www.w3.org/2001/XMLSchema#int> .\n");
+            nq.append("<http://ex.org/dup> <http://ex.org/dl> \"doc").append(f).append("\"@en--ltr .\n");
+            nq.append("<http://ex.org/dup> <http://ex.org/tt> <<( <http://ex.org/a> <http://ex.org/b> <http://ex.org/c").append(f % 3).append("> )>> .\n");
             File file = src.resolve(String.format("part%02d.nq", f)).toFile();
             Files.write(file.toPath(), nq.toString().getBytes(StandardCharsets.UTF_8));
             inputs.add(file);
@@ -123,6 +131,53 @@ class PlaidWriterParityTest {
                     "default-graph size must match (duplicates collapsed identically)");
             assertEquals(24, count(db, "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?v }"),
                     "_:b0 from 24 documents must remain 24 distinct blank nodes");
+            assertEquals(count(da, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/p2> ?o }"),
+                         count(db, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/p2> ?o }"),
+                    "zero-padded spellings must collapse identically");
+            assertEquals(1, count(db, "SELECT (COUNT(*) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/ill> \"abc\"^^<http://www.w3.org/2001/XMLSchema#int> }"));
+            assertEquals(24, count(db, "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/dl> ?o }"));
+            assertEquals(3, count(db, "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/dup> <http://ex.org/tt> ?o }"));
+        }
+    }
+
+    /** BG-182: the SPATIAL graph and the derived features must match the sequential build. */
+    @Test
+    void spatialAndFeaturesParity() throws Exception {
+        String trig = """
+            @prefix ex: <http://ex.org/> .
+            @prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+            ex:geo1 geo:asWKT "POLYGON((0 0, 100 0, 100 100, 0 100, 0 0))"^^geo:wktLiteral .
+            ex:geo2 geo:asWKT "MULTIPOLYGON(((200 200, 300 200, 300 300, 200 200)),((600 600, 700 600, 700 700, 600 600)))"^^geo:wktLiteral .
+            ex:geo3 geo:asWKT "POINT(5000 6000)"^^geo:wktLiteral .
+            ex:geo4 geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/4326> POLYGON((10 10, 60 10, 60 60, 10 60, 10 10))"^^geo:wktLiteral .
+            ex:geo5 geo:asWKT "POLYGON((0 0, 1 0))"^^geo:wktLiteral .
+            ex:geo1 ex:label "region one" .
+            """;
+        File src = dir.resolve("spatial.trig").toFile();
+        Files.write(src.toPath(), trig.getBytes(StandardCharsets.UTF_8));
+        File seq = dir.resolve("spatial.seq.h5").toFile();
+        File plaid = dir.resolve("spatial.plaid.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(seq).setSpatial(true).setFeatures(true).build().write();
+        PlaidHDF5Writer.Builder()
+                .setSpatial(true).setFeatures(true)
+                .setSource(src)
+                .setDestination(plaid)
+                .setWorkDirectory(Files.createDirectories(dir.resolve("spatialwork")))
+                .setCores(2)
+                .build()
+                .write();
+        try (BeakGraph a = new BeakGraph(new HDF5Reader(seq));
+             BeakGraph b = new BeakGraph(new HDF5Reader(plaid))) {
+            org.apache.jena.query.Dataset da = a.getDataset();
+            org.apache.jena.query.Dataset db = b.getDataset();
+            assertEquals(graphNames(da), graphNames(db), "graph lists (grid tiles included) must match");
+            for (String g : graphNames(da)) {
+                if (!g.startsWith("http") && !g.startsWith("urn")) continue;
+                assertTrue(graphModel(da, g).isIsomorphicWith(graphModel(db, g)), "graph <" + g + "> must be isomorphic");
+            }
+            assertTrue(graphModel(da, null).isIsomorphicWith(graphModel(db, null)), "default graphs (features) must be isomorphic");
+            assertTrue(count(db, "SELECT (COUNT(*) AS ?n) WHERE { GRAPH <urn:x-beakgraph:Spatial> { ?s ?p ?o } }") > 0);
         }
     }
 

@@ -15,6 +15,10 @@ cd benchmarks
 mvn package
 ```
 
+`beakgraph.version` in `benchmarks/pom.xml` must equal the root POM's `<version>` (CI
+builds this module against the freshly installed root artifact, so a stale pin fails
+there); `-Dbeakgraph.version=<version>` overrides it for one build.
+
 ## Run
 
 ```bash
@@ -48,8 +52,8 @@ java -jar target/benchmarks.jar QueryBench.chainJoin -prof gc
 # Flame graphs, if async-profiler is installed
 java -jar target/benchmarks.jar QueryBench.predicateScan -prof "async:output=flamegraph"
 
-# JSON results for before/after comparison
-java -jar target/benchmarks.jar -rf json -rff results.json
+# JSON results for before/after comparison (results/local/ is git-ignored)
+java -jar target/benchmarks.jar -rf json -rff results/local/results.json
 ```
 
 For trustworthy numbers: plug in the laptop, close the browser, and prefer `-f 2` (two forks)
@@ -72,7 +76,9 @@ deliberately racy — they only pick probe values).
 
 When working on a read-path optimization:
 
-1. Record a baseline first: `java -jar target/benchmarks.jar <relevant regex> -rf json -rff baseline.json`
+1. Record a baseline first: `java -jar target/benchmarks.jar <relevant regex> -rf json -rff results/local/baseline.json`
+   (`results/local/` is git-ignored; results are not committed - the few reference
+   runs kept under `results/` are named by date, commit and machine, see `results/README.md`)
 2. Make the change in the main project, then `mvn -DskipTests install` at the root and
    `mvn package` here again (the jar embeds BeakGraph classes — rebuilding the benchmarks
    jar is required to pick up main-project changes).

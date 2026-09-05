@@ -1,6 +1,10 @@
 /target/
 /benchmarks/target/
 *.log
+/logs/
+# JMH output: local runs are not committed (reference runs live in benchmarks/results/)
+/benchmarks/*.json
+/benchmarks/results/local/
 .claude/settings.local.json
 *.h5
 

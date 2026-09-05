@@ -26,27 +26,27 @@ automatically.
   is out of scope).
 - **Query syntax tests** run against `Syntax.syntaxARQ` first, because that is
   what BeakGraph's endpoint deliberately executes (switching to
-  `syntaxSPARQL_12` would delete the CDT `UNFOLD`/`FOLD` surface — PLAN §4.0
-  Trap 1). A positive-syntax query that only `syntaxSPARQL_12` accepts aborts
+  `syntaxSPARQL_12` would delete the CDT `UNFOLD`/`FOLD` surface; CHANGELOG.md,
+  "Format v5 design notes"). A positive-syntax query that only `syntaxSPARQL_12` accepts aborts
   with that reason rather than failing: it is a documented consequence of the
   ARQ-grammar choice, re-checked on every Jena upgrade.
 - **Negative-syntax** queries are checked against `syntaxSPARQL_12` (the
-  conformance grammar). Any that Jena 6.1.0 accepts anyway abort as upstream
+  conformance grammar). Any that Jena accepts anyway abort as upstream
   leniencies, mirroring the RDF 1.2 suite's policy.
 
-## Result at Jena 6.1.0 / BeakGraph format v5
+## Result at Jena 6.2.0 / BeakGraph format v5
 
-269 tests: 259 executed with 0 failures, 10 skipped-with-reason:
+269 tests: 266 executed with 0 failures, 3 skipped-with-reason - the three
+update-evaluation entries (read-only store; the suite's update *syntax* tests
+all execute and pass as grammar checks). `W3CSparql12SuiteTest.manifestShapeIsPinned`
+asserts those totals from the manifests.
 
-- 3 × update evaluation (read-only store; the suite's update *syntax* tests all
-  execute and pass as grammar checks).
-- 6 × upstream: Jena's `syntaxSPARQL_12` parser ACCEPTS a negative-syntax query
-  (4 in codepoint-escapes, 2 in syntax).
-- 1 × upstream: Jena REJECTS the positive-syntax GROUP BY scoping query
-  ("Variable used when already in-scope: ?z in (123 AS ?z)" — the SPARQL 1.2
-  scoping relaxation is not yet in Jena's grammar).
+Resolved upstream between Jena 6.1.0 and 6.2.0 (no longer skipped): the six
+negative-syntax queries `syntaxSPARQL_12` used to accept (4 in
+codepoint-escapes, 2 in syntax) and the positive-syntax GROUP BY scoping query
+it used to reject ("Variable used when already in-scope: ?z in (123 AS ?z)").
 
-Zero queries needed `syntaxSPARQL_12` to parse: every positive-syntax and
+Zero queries need `syntaxSPARQL_12` to parse: every positive-syntax and
 evaluation query in the suite parses under `syntaxARQ`, so the endpoint's
-deliberate ARQ-grammar choice (Trap 1) currently costs no conformance at all.
-Re-check the upstream items on every Jena upgrade.
+deliberate ARQ-grammar choice currently costs no conformance at all.
+Re-check on every Jena upgrade.

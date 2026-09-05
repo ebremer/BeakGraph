@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
+import com.ebremer.beakgraph.WriterEngines;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -177,8 +177,11 @@ class W3CRdf12SuiteTest {
 
     // ---- helpers ----
 
+    /** Builds with the engine named by -Dbeakgraph.test.engine (method 0 by default; see WriterEngines.selected). */
     private static void build(File src, File dest) throws Exception {
-        HDF5Writer.Builder().setSource(src).setDestination(dest).build().write();
+        WriterEngines.Engine engine = WriterEngines.selected();
+        engine.assumeAvailable();
+        engine.buildStore(src, dest);
     }
 
     private static DatasetGraph parse(Path file, Lang lang, String base) {

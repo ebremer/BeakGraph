@@ -26,8 +26,6 @@ import java.util.concurrent.Future;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.riot.lang.LabelToNode;
-import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.RDFS;
@@ -268,9 +266,7 @@ public final class UltraIngest extends PositionalDictionaryWriterBuilder {
         final String labelPrefix = multi ? ("b" + docIndex + "_") : "b";
         final long docStart = System.nanoTime();
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase(input));
-            parserBuilder.mutateSources(rdfBuilder ->
-                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input));
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
             try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor()) {
                 parserBuilder.streamQuads()

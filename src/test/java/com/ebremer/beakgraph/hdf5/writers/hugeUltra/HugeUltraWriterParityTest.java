@@ -42,12 +42,17 @@ class HugeUltraWriterParityTest {
     }
 
     private static Path writeBoth(String name, String content) throws Exception {
+        return writeBoth(name, content, false, false);
+    }
+
+    private static Path writeBoth(String name, String content, boolean spatial, boolean features) throws Exception {
         File src = dir.resolve(name).toFile();
         Files.write(src.toPath(), content.getBytes(StandardCharsets.UTF_8));
         File seq = dir.resolve(name + ".seq.h5").toFile();
         File hu = dir.resolve(name + ".hugeultra.h5").toFile();
-        HDF5Writer.Builder().setSource(src).setDestination(seq).build().write();
+        HDF5Writer.Builder().setSource(src).setDestination(seq).setSpatial(spatial).setFeatures(features).build().write();
         HugeUltraHDF5Writer.Builder()
+                .setSpatial(spatial).setFeatures(features)
                 .setSource(src)
                 .setDestination(hu)
                 .setWorkDirectory(Files.createDirectories(dir.resolve("work-" + name)))
@@ -133,6 +138,15 @@ class HugeUltraWriterParityTest {
             ex:s0 ex:flag true .
             ex:s0 ex:when "2024-05-06T07:08:09Z"^^xsd:dateTime .
             ex:s0 ex:ill "abc"^^xsd:int .
+            ex:s0 ex:dl "hello"@en--ltr .
+            ex:s0 ex:dl "hi"@en--rtl .
+            ex:s0 ex:tt <<( ex:a ex:b ex:c )>> .
+            ex:s0 ex:tt2 <<( ex:a ex:b <<( ex:x ex:y "nested" )>> )>> .
+            ex:s0 ex:list "[1, 2]"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .
+            ex:s0 ex:map "{\\"k\\": 1}"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map> .
+            ex:s0 ex:count "042"^^xsd:int .
+            ex:s0 ex:d2 "1.0E1"^^xsd:double .
+            ex:s0 ex:d2 "10.0"^^xsd:double .
             <> ex:self <sibling.png> ; ex:up <../up.png> ; ex:up2 <../../up2.png> ; ex:root </root.png> ; ex:frag <#frag> ; ex:query <?q=1> .
             _:b1 ex:p0 _:b2 .
             _:b2 ex:knows ex:s0 .
@@ -146,7 +160,34 @@ class HugeUltraWriterParityTest {
         assertStoresEquivalent(dir.resolve("hu-mixed.trig.seq.h5"), dir.resolve("hu-mixed.trig.hugeultra.h5"),
                 "SELECT ?p ?o WHERE { <http://ex.org/s0> ?p ?o }",
                 "SELECT ?s WHERE { ?s <http://ex.org/p0> <http://ex.org/o0> }",
-                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }");
+                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/dl> ?o }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/tt> ?o }",
+                "SELECT ?x WHERE { <http://ex.org/s0> <http://ex.org/tt2> <<( <http://ex.org/a> <http://ex.org/b> <<( <http://ex.org/x> <http://ex.org/y> ?x )>> )>> }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/list> ?o }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/count> ?o }",
+                "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/s0> <http://ex.org/d2> ?o }");
+    }
+
+    /** BG-182: the SPATIAL graph and the derived features must match the sequential build. */
+    @Test
+    void spatialAndFeaturesParity() throws Exception {
+        String trig = """
+            @prefix ex: <http://ex.org/> .
+            @prefix geo: <http://www.opengis.net/ont/geosparql#> .
+
+            ex:geo1 geo:asWKT "POLYGON((0 0, 100 0, 100 100, 0 100, 0 0))"^^geo:wktLiteral .
+            ex:geo2 geo:asWKT "MULTIPOLYGON(((200 200, 300 200, 300 300, 200 200)),((600 600, 700 600, 700 700, 600 600)))"^^geo:wktLiteral .
+            ex:geo3 geo:asWKT "POINT(5000 6000)"^^geo:wktLiteral .
+            ex:geo4 geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/4326> POLYGON((10 10, 60 10, 60 60, 10 60, 10 10))"^^geo:wktLiteral .
+            ex:geo5 geo:asWKT "POLYGON((0 0, 1 0))"^^geo:wktLiteral .
+            ex:geo1 ex:label "region one" .
+            """;
+        writeBoth("hu-spatial.trig", trig, true, true);
+        assertStoresEquivalent(dir.resolve("hu-spatial.trig.seq.h5"), dir.resolve("hu-spatial.trig.hugeultra.h5"),
+                "SELECT ?s ?p ?o WHERE { GRAPH <urn:x-beakgraph:Spatial> { ?s ?p ?o } }",
+                "SELECT ?g WHERE { GRAPH ?g { <http://ex.org/geo1> ?p ?o } }",
+                "SELECT ?p ?o WHERE { <http://ex.org/geo1> ?p ?o }");
     }
 
     @Test

@@ -19,7 +19,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
     private final Iterator<BindingNodeId> chain;
 
     public BGIteratorMaster(HDF5Reader reader, PositionalDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        // THE term classifier (PLAN §4.0 Trap 2's fix - one classification, here):
+        // THE term classifier (the one-classifier rule's (CHANGELOG.md "Format v5 design notes") fix - one classification, here):
         // - A CONCRETE triple term is a bound term like any other; locate()
         //   answers it (a miss is correctly empty), so no special routing.
         // - A VAR-CONTAINING triple term in the object position is

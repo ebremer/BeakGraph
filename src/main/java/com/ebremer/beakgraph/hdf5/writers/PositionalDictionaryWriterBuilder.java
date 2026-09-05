@@ -28,8 +28,6 @@ import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 import com.ebremer.beakgraph.core.lib.RelativeIris;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.riot.lang.LabelToNode;
-import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.RDF;
@@ -693,7 +691,7 @@ public class PositionalDictionaryWriterBuilder {
     /**
      * Records a triple term and, recursively, every component into the
      * dictionary sets. Interiors get DICTIONARY entries, not role-list
-     * membership (PLAN Part IV §IV.7): an IRI appearing only inside a triple
+     * membership (CHANGELOG.md "Format v5 design notes"): an IRI appearing only inside a triple
      * term is an entity, but it is not a subject/object for the
      * uniqueSubjects/uniqueObjects role lists. The triple term itself joins the
      * literals section (it is macro-ranked after every literal, so the section
@@ -823,9 +821,7 @@ public class PositionalDictionaryWriterBuilder {
             // directory). The relativize() step below strips the sentinel back
             // off; the relative form is resolved at query time against the URL
             // the .h5 file is served from.
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase(input));
-            parserBuilder.mutateSources(rdfBuilder ->
-                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input));
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
             // A per-task virtual-thread executor (final API since JDK 21). Its
             // try-with-resources close() blocks until every submitted spatial task finishes,

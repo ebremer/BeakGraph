@@ -28,6 +28,7 @@ import jakarta.servlet.http.*;
 import java.io.*;
 import java.nio.file.*;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Enumeration;
 import java.util.zip.GZIPInputStream;
 
@@ -73,11 +74,19 @@ public class SPARQLEndPoint {
                         LWSMetadataGenerator.CACHE_FILE_NAME, endpointPath);
                 try {
                     lwsModel = LWSMetadataGenerator.generateLWSModel(endpointPath);
-                    LWSMetadataGenerator.writeModelToGZ(lwsModel, ttlGzFile);
-                    logger.info("Generated and cached LWS metadata to {}", ttlGzFile);
                 } catch (Exception ex) {
                     logger.error("Failed to generate LWS metadata for " + endpointPath, ex);
                     lwsModel = ModelFactory.createDefaultModel();
+                }
+                try {
+                    LWSMetadataGenerator.writeModelToGZ(lwsModel, ttlGzFile);
+                    logger.info("Generated and cached LWS metadata to {}", ttlGzFile);
+                } catch (Exception ex) {
+                    // A read-only served directory: serve the freshly generated
+                    // model anyway (it used to be discarded for an EMPTY one,
+                    // so every LWS path answered 404 with only a log line).
+                    logger.warn("Serving the generated LWS metadata without caching it: cannot write {} ({})",
+                            ttlGzFile, ex.toString());
                 }
             }
             // The tree changes underneath a running server (files copied in,
@@ -201,7 +210,7 @@ public class SPARQLEndPoint {
         } catch (java.net.URISyntaxException e) {
             throw new IllegalArgumentException("-base is not a valid URL: " + configured, e);
         }
-        String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase();
+        String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
         if (!(scheme.equals("http") || scheme.equals("https")) || u.getHost() == null) {
             throw new IllegalArgumentException("-base must be an absolute http(s) URL such as https://data.example.org/ (got " + configured + ")");
         }
@@ -355,7 +364,7 @@ public class SPARQLEndPoint {
             // /rdf/query both resolve against <live base>/rdf, matching the LWS
             // path, so result IRIs are dereferenceable from wherever the client is.
             BGSparqlService.execute(ds, queryStr, LWSStorageServlet.liveBase(req) + "rdf",
-                    req.getHeader("Accept"), resp);
+                    req.getHeader("Accept"), resp, BGSparqlService.extractDatasetDescription(req));
         }
     }
 }

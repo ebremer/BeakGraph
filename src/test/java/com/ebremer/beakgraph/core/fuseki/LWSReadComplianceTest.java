@@ -44,7 +44,7 @@ class LWSReadComplianceTest {
 
     private static Server server;
     private static String base;
-    private static final HttpClient http = HttpClient.newHttpClient();
+    private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
     private static final int FILES = 45;
     /** Enough members to span 3+ pages at any PAGE_SIZE the guard admits. */
     private static final int BIGSUB_FILES = LWSStorageServlet.PAGE_SIZE * 2 + 2;
@@ -89,7 +89,7 @@ class LWSReadComplianceTest {
     }
 
     private static HttpResponse<String> get(String path, String... headers) throws Exception {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path));
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60));
         for (int i = 0; i < headers.length; i += 2) {
             b.header(headers[i], headers[i + 1]);
         }
@@ -300,7 +300,7 @@ class LWSReadComplianceTest {
 
     @Test
     void headReturnsHeadersWithoutBody() throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(base))
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base)).timeout(java.time.Duration.ofSeconds(60))
                 .method("HEAD", HttpRequest.BodyPublishers.noBody())
                 .header("Accept", "application/lws+json").build();
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());

@@ -61,7 +61,7 @@ public class BeakGraphCLI {
         }
         this.params = params;
         this.fc = new FileCounter();
-        String os = System.getProperty("os.name").toLowerCase();
+        String os = System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT);
         ProgressBarStyle style = os.contains("win") ? ProgressBarStyle.ASCII : ProgressBarStyle.COLORFUL_UNICODE_BLOCK;
         // -merge is one big conversion (and -export its own flow), not a stream
         // of per-file tasks; the per-file progress bar would only render empty.
@@ -313,7 +313,7 @@ public class BeakGraphCLI {
         if (params.src.isDirectory()) {
             try (var walk = Files.walk(params.src.toPath())) {
                 walk.filter(p -> p.toFile().isFile()
-                                && p.getFileName().toString().toLowerCase().endsWith(".h5")
+                                && p.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".h5")
                                 && p.toFile().length() > 0)
                     .sorted()
                     .forEach(p -> inputs.add(p.toFile()));
@@ -362,7 +362,7 @@ public class BeakGraphCLI {
                 default -> "jsonld";
             };
             String base = h5.getName();
-            if (base.toLowerCase().endsWith(".h5")) {
+            if (base.toLowerCase(java.util.Locale.ROOT).endsWith(".h5")) {
                 base = base.substring(0, base.length() - 3);
             }
             Path out = h5.toPath().resolveSibling(base + "." + ext + (params.compress ? ".gz" : ""));
@@ -524,11 +524,17 @@ public class BeakGraphCLI {
 
     /**
      * The conversion engine for this run: {@code -method} (0 = in-memory,
-     * 1 = disk, 2 = parallel, 3 = ultra), with the legacy {@code -huge} flag
-     * acting as "-method 1" when no explicit -method was given.
+     * 1 = disk, 2 = parallel, 3 = ultra, 4 = hugeUltra, 5 = plaid), with the
+     * legacy {@code -huge} flag acting as "-method 1" when no explicit
+     * -method was given.
      */
     private int effectiveMethod() {
         return (params.method == 0 && params.huge) ? 1 : params.method;
+    }
+
+    /** True inside a GraalVM native image (the runtime sets this property; tests may set it too). */
+    static boolean inNativeImage() {
+        return System.getProperty("org.graalvm.nativeimage.imagecode") != null;
     }
 
     /**
@@ -538,7 +544,15 @@ public class BeakGraphCLI {
      */
     /** Package-private so tests can substitute a writer (e.g. one that fails with an Error). */
     BeakGraphWriter newWriter(File source, List<File> sources, File dest) throws IOException {
-        switch (effectiveMethod()) {
+        int method = effectiveMethod();
+        if ((method == 1 || method == 4 || method == 5) && inNativeImage()) {
+            // The GraalVM binary carries no JNI metadata for hdf.hdf5lib and no
+            // natives: the disk engines would fail only after the parse and
+            // sort stages. Say so before any work is done (BG-442).
+            throw new IOException("-method " + method + " (disk-based, native HDF5) is not available in the "
+                    + "native binary; use -method 0/2/3 here, or run the jar with java for the disk engines");
+        }
+        switch (method) {
             case 1 -> {
                 // Disk-based build: same output format, but sorting/indexing
                 // spill to a workspace instead of the heap. Needs the native

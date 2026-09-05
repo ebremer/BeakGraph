@@ -52,7 +52,7 @@ public class PositionalDictionaryReader implements GSPODictionary {
             BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds), (Long) ds.getAttribute("numEntries").getData(), (Integer) ds.getAttribute("width").getData())).orElse(null);
         this.objectsDict = makeObjectsDictionary();
 
-        // Wire the cross-dictionary triple-term resolver (PLAN Part IV §IV.4):
+        // Wire the cross-dictionary triple-term resolver (CHANGELOG.md "Format v5 design notes"):
         // a term's s/p ids live in the entities/predicates sections, and its o
         // id resolves through the object space - which recurses right back
         // through this resolver for nested triple terms.

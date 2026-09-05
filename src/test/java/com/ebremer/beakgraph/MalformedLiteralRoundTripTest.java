@@ -71,8 +71,12 @@ class MalformedLiteralRoundTripTest {
     }
 
     private static Set<String> subjects(String objectTerm) {
+        return subjects(ds, objectTerm);
+    }
+
+    private static Set<String> subjects(Dataset d, String objectTerm) {
         Set<String> uris = new HashSet<>();
-        try (QueryExecution qe = QueryExecution.dataset(ds)
+        try (QueryExecution qe = QueryExecution.dataset(d)
                 .query(QueryFactory.create(PREFIX + "SELECT ?s WHERE { ?s ex:v " + objectTerm + " }")).build()) {
             ResultSet rs = qe.execSelect();
             while (rs.hasNext()) {
@@ -118,5 +122,34 @@ class MalformedLiteralRoundTripTest {
         Literal d = value("ex:d");
         assertEquals("5", d.getLexicalForm());
         assertEquals(XSD.xint.getURI(), d.getDatatypeURI());
+    }
+
+    static java.util.stream.Stream<WriterEngines.Engine> engines() {
+        return WriterEngines.all();
+    }
+
+    /** BG-182: ill-typed literals survive term-exactly on every engine, not only method 0. */
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("engines")
+    void everyEngineKeepsIllTypedLiteralsTermExact(WriterEngines.Engine engine) throws Exception {
+        engine.assumeAvailable();
+        File src = dir.resolve(engine.name() + ".ttl").toFile();
+        File h5 = dir.resolve(engine.name() + ".h5").toFile();
+        Files.write(src.toPath(), TTL.getBytes(StandardCharsets.UTF_8));
+        engine.buildStore(src, h5);
+        try (BeakGraph b = new BeakGraph(new HDF5Reader(h5))) {
+            Dataset d = b.getDataset();
+            assertEquals(Set.of("http://ex.org/a"), subjects(d, "\"abc\"^^xsd:int"));
+            assertEquals(Set.of("http://ex.org/b"), subjects(d, "\"not-a-date\"^^xsd:date"));
+            assertEquals(Set.of("http://ex.org/e"), subjects(d, "\"9z9\"^^xsd:long"));
+            assertEquals(Set.of("http://ex.org/c"), subjects(d, "5"));
+            assertEquals(Set.of("http://ex.org/d"), subjects(d, "\"5\"^^xsd:int"));
+            try (QueryExecution qe = QueryExecution.dataset(d)
+                    .query(QueryFactory.create(PREFIX + "SELECT ?v WHERE { ex:a ex:v ?v }")).build()) {
+                Literal a = qe.execSelect().next().getLiteral("v");
+                assertEquals("abc", a.getLexicalForm());
+                assertEquals(XSD.xint.getURI(), a.getDatatypeURI());
+            }
+        }
     }
 }

@@ -33,7 +33,9 @@ import org.junit.jupiter.api.io.TempDir;
  * the RAM writer's - same graphs, isomorphic per-graph content (blank node
  * labels legitimately differ), same query answers through both indexes, and
  * structurally identical HDF5 metadata (same dataset tree, same numEntries /
- * width / FCD attributes everywhere).
+ * width / FCD attributes everywhere). The mixed fixture carries every term
+ * kind the disk pipeline handles specially: base-direction literals, nested
+ * triple terms and composite (cdt:) literals (BG-126).
  */
 class HugeWriterParityTest {
 
@@ -201,6 +203,12 @@ class HugeWriterParityTest {
             ex:s0 ex:longstr "%s" .
             ex:s0 ex:uni "h\\u00e9llo \\u00fcrld" .
             ex:s0 ex:ill "abc"^^xsd:int .
+            ex:s0 ex:dl "hello"@en--ltr .
+            ex:s0 ex:dl "hi"@en--rtl .
+            ex:s0 ex:tt <<( ex:a ex:b ex:c )>> .
+            ex:s0 ex:tt2 <<( ex:a ex:b <<( ex:x ex:y "nested" )>> )>> .
+            ex:s0 ex:list "[1, 2]"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .
+            ex:s0 ex:map "{\\"k\\": 1}"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map> .
             <> ex:self <sibling.png> ; ex:up <../up.png> ; ex:up2 <../../up2.png> ; ex:root </root.png> ; ex:frag <#frag> ; ex:query <?q=1> .
             _:b1 ex:p0 _:b2 .
             _:b2 ex:knows ex:s0 .
@@ -219,7 +227,11 @@ class HugeWriterParityTest {
                 "SELECT ?s WHERE { ?s <http://ex.org/p0> <http://ex.org/o0> }",
                 "SELECT ?s ?o WHERE { GRAPH <http://ex.org/g1> { ?s <http://ex.org/p0> ?o } }",
                 "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/count> ?o }",
-                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }");
+                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/dl> ?o }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/tt> ?o }",
+                "SELECT ?x WHERE { <http://ex.org/s0> <http://ex.org/tt2> <<( <http://ex.org/a> <http://ex.org/b> <<( <http://ex.org/x> <http://ex.org/y> ?x )>> )>> }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/list> ?o }");
         assertSameStructure(ram, huge);
     }
 
@@ -271,5 +283,39 @@ class HugeWriterParityTest {
                 "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g",
                 "SELECT ?s WHERE { GRAPH <http://ex.org/g7> { ?s <http://ex.org/p1> \"str101\" } }");
         assertSameStructure(ram, huge);
+    }
+
+    /**
+     * BG-126: per-document blank-node scoping must reach INSIDE triple terms
+     * (HugeBuildPipeline.scopeNode recurses): two documents that both say
+     * {@code _:b0} outside and inside a term stay two nodes, each co-referring
+     * with itself, and the merge agrees with the sequential writer's.
+     */
+    @Test
+    void mergeScopesBlankNodesPerDocumentInsideTripleTerms() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("ttmerge"));
+        for (int i = 1; i <= 2; i++) {
+            Files.write(src.resolve("d" + i + ".ttl"), ("@prefix : <http://ex.org/> .\n"
+                    + "_:b0 :p <<( _:b0 :q :r )>> .\n_:b0 :label \"doc" + i + "\" .\n")
+                    .getBytes(StandardCharsets.UTF_8));
+        }
+        java.util.List<File> inputs = java.util.List.of(src.resolve("d1.ttl").toFile(), src.resolve("d2.ttl").toFile());
+        File ram = dir.resolve("ttmerge.ram.h5").toFile();
+        File huge = dir.resolve("ttmerge.huge.h5").toFile();
+        HDF5Writer.Builder().setSources(inputs).setDestination(ram).build().write();
+        HugeHDF5Writer.Builder().setSources(inputs).setDestination(huge)
+                .setTermSpillBatch(4).setIdSpillBatch(4).setMergeFanIn(2).build().write();
+        String pre = "PREFIX : <http://ex.org/> ";
+        assertStoresEquivalent(ram.toPath(), huge.toPath(),
+                pre + "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b :label ?l }",
+                pre + "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b :p <<( ?b :q :r )>> }",
+                pre + "SELECT ?l WHERE { ?b :label ?l . ?b :p <<( ?b :q :r )>> }");
+        try (BeakGraph bg = new BeakGraph(new HDF5Reader(huge))) {
+            assertEquals(java.util.List.of("n=\"2\"^^xsd:integer|"), select(bg.getDataset(),
+                    pre + "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b :p <<( ?b :q :r )>> }"),
+                    "each document's _:b0 co-refers with the one inside its own term");
+            assertEquals(java.util.List.of("n=\"2\"^^xsd:integer|"), select(bg.getDataset(),
+                    pre + "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b :label ?l }"));
+        }
     }
 }

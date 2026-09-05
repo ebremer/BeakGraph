@@ -72,7 +72,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
 
         // 3. Build the Isolated Literal Dictionary (O native literals + RDF 1.2
         // triple terms, which macro-rank after every literal and so form a
-        // contiguous suffix of this section - PLAN Part IV §IV.2).
+        // contiguous suffix of this section - CHANGELOG.md "Format v5 design notes").
         literalsdict = new MultiTypeDictionaryWriter.Builder()
             .setName("literals")
             .setNodes(builder.getLiterals())

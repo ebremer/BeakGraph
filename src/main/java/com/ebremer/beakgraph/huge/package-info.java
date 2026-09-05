@@ -24,7 +24,7 @@
  *       supports chunk-at-a-time writing. Which jar supplies {@code hdf.hdf5lib}
  *       is a build-time choice: the JavaCPP preset with bundled natives by
  *       default, or the HDF Group's Java 25 FFM bindings with
- *       {@code -Dhdf5.ffm} (see the {@code hdf5-backend-*} profiles in
+ *       {@code -Dhdf5.ffm=true} (see the {@code hdf5-backend-*} profiles in
  *       pom.xml). When jHDF (https://github.com/jamesmudd/jhdf) gains
  *       chunked/streaming writes, a jHDF backend can be installed with
  *       {@link com.ebremer.beakgraph.huge.StreamingHdf5#setProvider} without

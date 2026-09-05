@@ -48,7 +48,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
 
     // Triple-term pattern in the object position: this scan-shaped iterator
     // formerly dropped the constraint entirely (a var-containing triple term is
-    // not isConcrete()) and returned every row - PLAN §4.0 Trap 2. Candidates
+    // not isConcrete()) and returned every row - the one-classifier rule, CHANGELOG.md "Format v5 design notes". Candidates
     // now unify per row in computeNext; null for every other shape.
     private TripleTermMatcher ttMatcher;
 

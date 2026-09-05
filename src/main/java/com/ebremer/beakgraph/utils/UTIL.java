@@ -33,7 +33,7 @@ public class UTIL {
             ha[0] = (byte) b;
             String s = new String(ha, StandardCharsets.UTF_8);
             int ye = offset+dup.position();
-            sb.append(String.format("%d : %8s -- %s ==> [%s]", ye, Integer.toBinaryString(b), Integer.toHexString(b), s));
+            sb.append(String.format(java.util.Locale.ROOT, "%d : %8s -- %s ==> [%s]", ye, Integer.toBinaryString(b), Integer.toHexString(b), s));
             if (dup.hasRemaining()) sb.append('\n');
         }
         return sb.toString();

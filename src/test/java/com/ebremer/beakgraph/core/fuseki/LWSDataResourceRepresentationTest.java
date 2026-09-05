@@ -57,7 +57,7 @@ class LWSDataResourceRepresentationTest {
     private static Server server;
     private static String base;
     private static byte[] blob;
-    private static final HttpClient http = HttpClient.newHttpClient();
+    private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
 
     @BeforeAll
     static void startServer() throws Exception {
@@ -87,7 +87,7 @@ class LWSDataResourceRepresentationTest {
     }
 
     private static HttpResponse<byte[]> get(String path, String accept) throws Exception {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path));
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60));
         if (accept != null) b.header("Accept", accept);
         return http.send(b.GET().build(), HttpResponse.BodyHandlers.ofByteArray());
     }

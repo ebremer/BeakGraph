@@ -180,7 +180,11 @@ public class BGDatasetGraph extends DatasetGraphBase {
                     gn -> findInSpecificGraph(gn, s, p, o));
         }
         if (Quad.isDefaultGraph(g)) {
-            return Collections.emptyIterator();
+            // Jena's DatasetGraphBaseFind answers the default graph when it is
+            // named explicitly (only the wildcard excludes it); match that so a
+            // dynamic-dataset or Model view built over this dataset agrees with
+            // an in-memory one (BG-183).
+            return findInSpecificGraph(Quad.defaultGraphIRI, s, p, o);
         }
         return findInSpecificGraph(g, s, p, o);
     }

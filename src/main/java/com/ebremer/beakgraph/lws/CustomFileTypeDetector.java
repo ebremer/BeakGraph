@@ -22,7 +22,7 @@ public class CustomFileTypeDetector extends FileTypeDetector {
         String name = path.getFileName().toString();
         int dot = name.lastIndexOf('.');
         if (dot == -1) return null;
-        String ext = name.substring(dot + 1).toLowerCase();
+        String ext = name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
         return TYPE_MAP.get(ext);
     }
 }

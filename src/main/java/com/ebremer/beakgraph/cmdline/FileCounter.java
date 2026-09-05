@@ -72,7 +72,7 @@ public class FileCounter {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("""
+        sb.append(String.format(java.util.Locale.ROOT, """
             ================================            
             Directories            : %d            
             RDF files              : %d
@@ -83,7 +83,7 @@ public class FileCounter {
             getRDFFileCount(),
             getOtherFileCount()
         ));
-        sb.append(String.format("""
+        sb.append(String.format(java.util.Locale.ROOT, """
             Zero Length files      : %d
             Skipped (existing)     : %d
             Failed Conversions     : %d

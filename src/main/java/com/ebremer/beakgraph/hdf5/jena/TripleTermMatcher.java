@@ -10,7 +10,7 @@ import org.apache.jena.sparql.core.Var;
  * Id-level unification of a variable-containing triple-term PATTERN
  * ({@code <<( ?a :b ?c )>>} in a pattern's object position) against stored
  * triple terms, straight off the {@code tripleTerms} component store - no Node
- * materialization for non-matching candidates (PLAN Part IV §IV.5: the
+ * materialization for non-matching candidates (CHANGELOG.md "Format v5 design notes": the
  * TDB2-SolverRX idea, executed below the Node layer).
  *
  * <p>Compiled once per iterator. Concrete components locate ONCE - a missing
@@ -18,7 +18,7 @@ import org.apache.jena.sparql.core.Var;
  * answers null and the iterator answers empty. Variable components bind packed
  * ids in their position's id-space (SUBJECT / PREDICATE / OBJECT). Embedded
  * bindings land in CHAINED {@link BindingNodeId} layers, so the 4-slot layer
- * struct is never widened (PLAN §4.1). Repeated variables - within the
+ * struct is never widened (CHANGELOG.md "Format v5 design notes" (no widened structs)). Repeated variables - within the
  * pattern, or against the surrounding row and its parent chain - are enforced
  * through {@code putCompatible}, including the cross-space predicate/entity
  * case.
@@ -54,7 +54,7 @@ final class TripleTermMatcher {
      * A triple-term PATTERN: a triple term containing at least one variable at
      * any depth. ({@code isConcrete()} on a Node_Triple delegates to its
      * triple, so this is exactly "has embedded variables".) The single
-     * classification predicate every routing site uses - PLAN §4.0 Trap 2's
+     * classification predicate every routing site uses - the one-classifier rule's (CHANGELOG.md "Format v5 design notes")
      * fix is that no iterator answers this question differently.
      */
     static boolean isPattern(Node n) {

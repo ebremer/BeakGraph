@@ -22,6 +22,7 @@ import org.apache.jena.query.QueryFactory;
 import org.apache.jena.query.QuerySolution;
 import org.apache.jena.query.ResultSet;
 import org.apache.jena.rdf.model.Model;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
@@ -30,14 +31,13 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * End-to-end parity of the ultra writer against the sequential writer, read
  * back through the UNMODIFIED jHDF-based readers: same graph lists, isomorphic
- * per-graph content, same query answers through both indexes, and - for
- * single-source builds, where the ultra ingest reuses the sequential blank
- * node labels verbatim - structurally identical HDF5 metadata (same dataset
- * tree, sizes, and attributes). Raw bytes are never compared: the VoID
- * generator mints fresh random blank-node labels on every write, so bytes
- * legitimately differ between ANY two writes (same caveat as the parallel and
- * huge parity tests). Multi-source merges use per-document blank-node labels,
- * so the merge test asserts semantic equivalence only.
+ * per-graph content, same query answers through both indexes, structurally
+ * identical HDF5 metadata and - for single-source builds, where the ultra
+ * ingest reuses the sequential blank node labels verbatim - BYTE-identical
+ * files (methods 0/2/3 are one format written through one jHDF sequence,
+ * SPECIFICATIONS.md). VoID is off by default, so no random labels enter these
+ * builds. Multi-source merges use per-document blank-node labels, so the
+ * merge test asserts semantic equivalence only.
  */
 class UltraWriterParityTest {
 
@@ -158,6 +158,19 @@ class UltraWriterParityTest {
         assertEquals(attrsA, attrsB, "attributes of " + path);
     }
 
+
+    /**
+     * Methods 0/2/3 are one format written through one jHDF sequence
+     * (SPECIFICATIONS.md: "byte-identical stores"), so for a single source
+     * the files must match byte for byte - not merely in structure. This is
+     * what catches a different bit layout or FCD block content that the
+     * readers still decode consistently.
+     */
+    private static void assertSameBytes(Path a, Path b) throws Exception {
+        assertArrayEquals(Files.readAllBytes(a), Files.readAllBytes(b),
+                "single-source stores must be byte-identical: " + a.getFileName() + " vs " + b.getFileName());
+    }
+
     // ------------------------------------------------------------------
     // tests
     // ------------------------------------------------------------------
@@ -187,6 +200,12 @@ class UltraWriterParityTest {
             ex:s0 ex:longstr "%s" .
             ex:s0 ex:uni "h\\u00e9llo \\u00fcrld" .
             ex:s0 ex:ill "abc"^^xsd:int .
+            ex:s0 ex:dl "hello"@en--ltr .
+            ex:s0 ex:dl "hi"@en--rtl .
+            ex:s0 ex:tt <<( ex:a ex:b ex:c )>> .
+            ex:s0 ex:tt2 <<( ex:a ex:b <<( ex:x ex:y "nested" )>> )>> .
+            ex:s0 ex:list "[1, 2]"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .
+            ex:s0 ex:map "{\\"k\\": 1}"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map> .
             <> ex:self <sibling.png> ; ex:up <../up.png> ; ex:up2 <../../up2.png> ; ex:root </root.png> ; ex:frag <#frag> ; ex:query <?q=1> .
             _:b1 ex:p0 _:b2 .
             _:b2 ex:knows ex:s0 .
@@ -205,8 +224,13 @@ class UltraWriterParityTest {
                 "SELECT ?s WHERE { ?s <http://ex.org/p0> <http://ex.org/o0> }",
                 "SELECT ?s ?o WHERE { GRAPH <http://ex.org/g1> { ?s <http://ex.org/p0> ?o } }",
                 "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/count> ?o }",
-                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }");
+                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/dl> ?o }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/tt> ?o }",
+                "SELECT ?x WHERE { <http://ex.org/s0> <http://ex.org/tt2> <<( <http://ex.org/a> <http://ex.org/b> <<( <http://ex.org/x> <http://ex.org/y> ?x )>> )>> }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/list> ?o }");
         assertSameStructure(seq, ult);
+        assertSameBytes(seq, ult);
     }
 
     @Test
@@ -229,6 +253,7 @@ class UltraWriterParityTest {
                 "SELECT ?s ?p ?o WHERE { GRAPH <urn:x-beakgraph:Spatial> { ?s ?p ?o } }",
                 "SELECT ?g WHERE { GRAPH ?g { <http://ex.org/geo1> ?p ?o } }");
         assertSameStructure(seq, ult);
+        assertSameBytes(seq, ult);
     }
 
     @Test
@@ -257,6 +282,23 @@ class UltraWriterParityTest {
                 "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g",
                 "SELECT ?s WHERE { GRAPH <http://ex.org/g7> { ?s <http://ex.org/p1> \"str101\" } }");
         assertSameStructure(seq, ult);
+        assertSameBytes(seq, ult);
+    }
+
+    /** BG-429: JSON-LD and RDF/XML sources are byte-identical across the engines too. */
+    @Test
+    void jsonLdAndRdfXmlSourcesAreByteIdentical() throws Exception {
+        writeBoth("mixed.jsonld", com.ebremer.beakgraph.hdf5.writers.parallel.ParallelWriterParityTest.JSONLD_FIXTURE, false, false);
+        writeBoth("mixed.rdf", com.ebremer.beakgraph.hdf5.writers.parallel.ParallelWriterParityTest.RDFXML_FIXTURE, false, false);
+        for (String name : new String[]{"mixed.jsonld", "mixed.rdf"}) {
+            Path seq = dir.resolve(name + ".seq.h5");
+            Path ult = dir.resolve(name + ".ultra.h5");
+            assertStoresEquivalent(seq, ult,
+                    "SELECT ?o WHERE { <http://ex.org/doc> ?p ?o }",
+                    "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/tag> ?t }");
+            assertSameStructure(seq, ult);
+            assertSameBytes(seq, ult);
+        }
     }
 
     @Test
@@ -272,6 +314,7 @@ class UltraWriterParityTest {
         assertStoresEquivalent(seq.toPath(), ult.toPath(),
                 "SELECT ?o WHERE { <http://ex.org/a> ?p ?o }");
         assertSameStructure(seq.toPath(), ult.toPath());
+        assertSameBytes(seq.toPath(), ult.toPath());
     }
 
     /**

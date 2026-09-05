@@ -49,7 +49,7 @@ class LWSSparqlPoolHealthTest {
     private static int port;
     private static String base;
     private static URI poolKey;
-    private static final HttpClient http = HttpClient.newHttpClient();
+    private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
     private static final BeakGraphKeyedPool pool = BeakGraphPool.getPool();
 
     @BeforeAll
@@ -91,7 +91,7 @@ class LWSSparqlPoolHealthTest {
     }
 
     private static HttpResponse<String> get(String sparql) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(queryUrl(sparql)))
+        HttpRequest req = HttpRequest.newBuilder(URI.create(queryUrl(sparql))).timeout(java.time.Duration.ofSeconds(60))
                 .header("Accept", "application/sparql-results+json").GET().build();
         return http.send(req, HttpResponse.BodyHandlers.ofString());
     }

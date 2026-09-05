@@ -78,8 +78,12 @@ class NumericCanonicalizationTest {
     }
 
     private static Set<String> subjects(String objectTerm) {
+        return subjects(ds, objectTerm);
+    }
+
+    private static Set<String> subjects(Dataset d, String objectTerm) {
         Set<String> uris = new HashSet<>();
-        try (QueryExecution qe = QueryExecution.dataset(ds)
+        try (QueryExecution qe = QueryExecution.dataset(d)
                 .query(QueryFactory.create(PREFIX + "SELECT ?s WHERE { ?s ex:v " + objectTerm + " }")).build()) {
             ResultSet rs = qe.execSelect();
             while (rs.hasNext()) {
@@ -126,5 +130,35 @@ class NumericCanonicalizationTest {
             while (rs.hasNext()) values.add(rs.next().getLiteral("v").getLexicalForm());
         }
         assertEquals(Set.of("1", "7", "2.5", "10.0", "2"), values);
+    }
+
+    static java.util.stream.Stream<WriterEngines.Engine> engines() {
+        return WriterEngines.all();
+    }
+
+    /** BG-182: the canonicalization policy holds on every engine, not only method 0. */
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("engines")
+    void everyEngineCanonicalizesByValue(WriterEngines.Engine engine) throws Exception {
+        engine.assumeAvailable();
+        File src = dir.resolve(engine.name() + ".ttl").toFile();
+        File h5 = dir.resolve(engine.name() + ".h5").toFile();
+        Files.write(src.toPath(), TTL.getBytes(StandardCharsets.UTF_8));
+        engine.buildStore(src, h5);
+        try (BeakGraph b = new BeakGraph(new HDF5Reader(h5))) {
+            Dataset d = b.getDataset();
+            assertEquals(Set.of("http://ex.org/a", "http://ex.org/b"), subjects(d, "\"1\"^^xsd:int"));
+            assertEquals(Set.of("http://ex.org/c", "http://ex.org/d"), subjects(d, "\"7\"^^xsd:long"));
+            assertEquals(Set.of("http://ex.org/e", "http://ex.org/f"), subjects(d, "\"2.5\"^^xsd:float"));
+            assertEquals(Set.of("http://ex.org/g", "http://ex.org/h"), subjects(d, "\"10.0\"^^xsd:double"));
+            assertEquals(Set.of(), subjects(d, "\"01\"^^xsd:int"));
+            Set<String> values = new HashSet<>();
+            try (QueryExecution qe = QueryExecution.dataset(d)
+                    .query(QueryFactory.create(PREFIX + "SELECT DISTINCT ?v WHERE { ?s ex:v ?v }")).build()) {
+                ResultSet rs = qe.execSelect();
+                while (rs.hasNext()) values.add(rs.next().getLiteral("v").getLexicalForm());
+            }
+            assertEquals(Set.of("1", "7", "2.5", "10.0", "2"), values, "one canonical term per value");
+        }
     }
 }

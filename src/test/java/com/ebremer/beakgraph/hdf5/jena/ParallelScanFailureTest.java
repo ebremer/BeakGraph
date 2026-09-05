@@ -113,6 +113,31 @@ class ParallelScanFailureTest {
         }
     }
 
+    /**
+     * BG-217 (d): the engine's cancel signal flips while every worker is parked
+     * on a full queue. The consumer must see QueryCancelledException on its
+     * next hasNext() and the workers must exit within a few ticks.
+     */
+    @Test
+    void cancelSignalWhileWorkersAreParkedOnAFullQueue() throws Exception {
+        AtomicBoolean cancel = new AtomicBoolean();
+        List<Supplier<Iterator<BindingNodeId>>> chunks = new java.util.ArrayList<>();
+        for (int i = 0; i < 8; i++) chunks.add(rows(256 * 64));   // 64 batches each: far more than the queue holds
+        ParallelScan scan = new ParallelScan(chunks, cancel);
+        assertTrue(scan.hasNext());
+        scan.next();
+        Thread.sleep(200);   // workers fill the queue and park on it
+        assertTrue(ParallelScan.ACTIVE_WORKERS.get() > 0, "workers must be running");
+        cancel.set(true);
+        assertThrows(org.apache.jena.query.QueryCancelledException.class, () -> {
+            while (scan.hasNext()) scan.next();
+        }, "a cancelled scan must not complete normally");
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (ParallelScan.ACTIVE_WORKERS.get() != 0 && System.currentTimeMillis() < deadline) Thread.sleep(10);
+        assertEquals(0, ParallelScan.ACTIVE_WORKERS.get(), "parked workers must notice the cancel within a few ticks");
+        assertFalse(scan.hasNext(), "after the cancel the scan stays ended");
+    }
+
     @Test
     void closingUnderTheConsumerStillEndsCleanly() {
         ParallelScan scan = new ParallelScan(List.of(rows(100_000), rows(100_000)), new AtomicBoolean());

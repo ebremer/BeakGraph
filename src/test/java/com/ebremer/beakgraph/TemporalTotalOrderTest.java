@@ -59,7 +59,62 @@ class TemporalTotalOrderTest {
 
     @Test
     void comparatorIsTotalOverMixedLiteralSpaces() {
+        List<Node> nodes = mixedPool();
+        assertTotallyOrdered(nodes);
+
+        // The property that actually broke: sort, then find EVERY element again.
+        Node[] sorted = nodes.toArray(Node[]::new);
+        Arrays.sort(sorted, CMP);
+        for (Node n : nodes) {
+            assertTrue(Arrays.binarySearch(sorted, n, CMP) >= 0,
+                    "binary search must find every sorted element, missed: " + n);
+        }
+    }
+
+    /** BG-437: a total order sorts the same whatever the input order. */
+    @Test
+    void shuffledSortsAgreeAcrossSeeds() {
+        List<Node> pool = mixedPool();
+        List<Node> canonical = new ArrayList<>(pool);
+        canonical.sort(CMP);
+        for (int seed = 0; seed < 12; seed++) {
+            List<Node> shuffled = new ArrayList<>(pool);
+            java.util.Collections.shuffle(shuffled, new java.util.Random(seed));
+            shuffled.sort(CMP);
+            assertEquals(canonical, shuffled, "seed " + seed + ": sort result depends on input order");
+        }
+    }
+
+    /**
+     * BG-437 candidates: the two comparator regions that were actually cyclic
+     * (g* kinds overlapping the year of dateTimes that straddle the +/-14h
+     * window; numerics within float rounding distance of each other) are
+     * present in the pool, so the transitivity sweep can see them.
+     */
+    private static List<Node> mixedPool() {
         List<Node> nodes = new ArrayList<>();
+        nodes.add(g("2020", XSDDatatype.XSDgYear));
+        nodes.add(g("2020Z", XSDDatatype.XSDgYear));
+        nodes.add(g("2020-12Z", XSDDatatype.XSDgYearMonth));
+        nodes.add(g("2020-12", XSDDatatype.XSDgYearMonth));
+        nodes.add(g("2021-01-01", XSDDatatype.XSDdate));
+        nodes.add(dt("2020-01-01T00:30:00+01:00"));
+        nodes.add(dt("2019-12-31T23:45:00Z"));
+        nodes.add(dt("2021-01-01T05:00:00+14:00"));
+        nodes.add(dt("2020-12-31T20:00:00Z"));
+        nodes.add(dt("2020-12-31T23:59:59"));
+        for (String[] n : new String[][]{
+                {"16777219", "integer"}, {"16777217", "integer"}, {"1.677722E7", "float"}, {"1.6777216E7", "float"},
+                {"1.67772195E7", "double"}, {"0.10", "decimal"}, {"0.1", "float"}, {"0.100000001", "double"},
+                {"0.1000000015", "decimal"}, {"0.10000000149011612", "decimal"}}) {
+            XSDDatatype t = switch (n[1]) {
+                case "integer" -> XSDDatatype.XSDinteger;
+                case "float" -> XSDDatatype.XSDfloat;
+                case "double" -> XSDDatatype.XSDdouble;
+                default -> XSDDatatype.XSDdecimal;
+            };
+            nodes.add(NodeFactory.createLiteralDT(n[0], t));
+        }
         // dateTimes: naive, UTC, and offsets all within each other's +/-14h windows
         for (int i = 0; i < 8; i++) {
             nodes.add(dt(String.format("2020-01-0%dT0%d:00:00", 1 + i % 3, i)));
@@ -94,15 +149,55 @@ class TemporalTotalOrderTest {
         // Jena 6 removed createLiteral(String); createLiteralString is the
         // equivalent (a plain literal IS an xsd:string in RDF 1.1).
         nodes.add(NodeFactory.createLiteralString("plain"));
+        return nodes;
+    }
 
-        assertTotallyOrdered(nodes);
-
-        // The property that actually broke: sort, then find EVERY element again.
-        Node[] sorted = nodes.toArray(Node[]::new);
-        Arrays.sort(sorted, CMP);
-        for (Node n : nodes) {
-            assertTrue(Arrays.binarySearch(sorted, n, CMP) >= 0,
-                    "binary search must find every sorted element, missed: " + n);
+    /**
+     * BG-437 end to end: the formerly cyclic literals in one store. Every row
+     * round-trips, and every stored object term is found again by exact
+     * lookup (floats and doubles are canonicalized at write time, so the
+     * store's own spelling is used; the term-exact kinds are also looked up
+     * by their source spelling).
+     */
+    @Test
+    void cyclicRegionLiteralsRoundTripAndAreFoundAgain() throws Exception {
+        String[] lits = {
+            "\"2020\"^^xsd:gYear", "\"2020Z\"^^xsd:gYear", "\"2020-12Z\"^^xsd:gYearMonth", "\"2020-12\"^^xsd:gYearMonth",
+            "\"2020-01-01T00:30:00+01:00\"^^xsd:dateTime", "\"2019-12-31T23:45:00Z\"^^xsd:dateTime",
+            "\"2021-01-01T05:00:00+14:00\"^^xsd:dateTime", "\"2020-12-31T20:00:00Z\"^^xsd:dateTime",
+            "\"16777219\"^^xsd:integer", "\"16777217\"^^xsd:integer", "\"1.677722E7\"^^xsd:float", "\"1.6777216E7\"^^xsd:float",
+            "\"1.67772195E7\"^^xsd:double", "\"0.10\"^^xsd:decimal", "\"0.1\"^^xsd:float", "\"0.100000001\"^^xsd:double",
+            "\"0.1000000015\"^^xsd:decimal", "\"P1Y\"^^xsd:duration", "\"P400D\"^^xsd:duration", "\"42\"^^xsd:integer",
+        };
+        StringBuilder ttl = new StringBuilder("@prefix ex: <http://ex.org/> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n");
+        for (int i = 0; i < lits.length; i++) {
+            ttl.append("ex:s").append(i).append(" ex:v ").append(lits[i]).append(" .\n");
+        }
+        File src = dir.resolve("cyclic.ttl").toFile();
+        File h5 = dir.resolve("cyclic.ttl.h5").toFile();
+        Files.write(src.toPath(), ttl.toString().getBytes(StandardCharsets.UTF_8));
+        HDF5Writer.Builder().setSource(src).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+        String pre = "PREFIX ex: <http://ex.org/> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> ";
+        try (BeakGraph bg = new BeakGraph(new HDF5Reader(h5))) {
+            Dataset ds = bg.getDataset();
+            assertEquals(lits.length, countRows(ds, pre + "SELECT ?s ?o WHERE { ?s ex:v ?o }"));
+            int looked = 0;
+            try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(pre + "SELECT ?s ?o WHERE { ?s ex:v ?o }")).build()) {
+                ResultSet rs = qe.execSelect();
+                while (rs.hasNext()) {
+                    org.apache.jena.query.QuerySolution qs = rs.next();
+                    String term = org.apache.jena.sparql.util.FmtUtils.stringForNode(qs.get("o").asNode());
+                    assertEquals(1, countRows(ds, pre + "SELECT ?s WHERE { ?s ex:v " + term + " }"), "stored term not found again: " + term);
+                    looked++;
+                }
+            }
+            assertEquals(lits.length, looked);
+            for (String lit : lits) {
+                if (lit.contains("xsd:float") || lit.contains("xsd:double")) continue;   // canonicalized spellings
+                assertEquals(1, countRows(ds, pre + "SELECT ?s WHERE { ?s ex:v " + lit + " }"), "source spelling not found: " + lit);
+            }
+            // Range filters over the mixed pool agree with the value order Jena uses.
+            assertEquals(4, countRows(ds, pre + "SELECT ?s WHERE { ?s ex:v ?o FILTER(?o > 16777216 && ?o < 16777300) }"));
         }
     }
 

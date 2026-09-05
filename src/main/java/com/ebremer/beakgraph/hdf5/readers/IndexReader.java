@@ -36,7 +36,7 @@ public class IndexReader {
         boolean directoryUsable = formatVersion >= Params.RANK_DIRECTORY_MIN_VERSION;
         for (int i = 1; i < 4; i++) {
             char component = positions[i];
-            String suffix = String.valueOf(component).toLowerCase();
+            String suffix = String.valueOf(component).toLowerCase(java.util.Locale.ROOT);
 
             BitPackedUnSignedLongBuffer bitmap = loadBuffer(index, "B" + suffix);
             BitPackedUnSignedLongBuffer idBuffer = loadBuffer(index, "S" + suffix);

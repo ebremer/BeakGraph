@@ -62,7 +62,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     // ordinal into offsets and spills component references through ttSupport;
     // the resolved fixed-stride store arrives afterwards via
     // setTripleTermsBuffer (component ids only exist once the dictionary
-    // files are complete - PLAN Part IV §IV.8).
+    // files are complete - CHANGELOG.md "Format v5 design notes").
     private final HugeTripleTerms ttSupport;
     private SpillBitPackedBuffer tripleTerms;
     private final HashMap<String, Long> dataTypesLookUp = new HashMap<>();

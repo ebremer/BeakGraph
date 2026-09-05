@@ -31,7 +31,7 @@ import java.util.Deque;
  * imports {@code hdf5.dll} without shipping it, so on Windows the bundled
  * natives are only usable next to a system {@code hdf5.dll}; Linux and macOS
  * jars are self-contained. Building
- * with {@code -Dhdf5.ffm} swaps in the HDF Group's own
+ * with {@code -Dhdf5.ffm=true} swaps in the HDF Group's own
  * {@code org.hdfgroup:hdf5-java-ffm} bindings (HDF5 2.1.x, Java 25 FFM, no
  * JNI), which come from GitHub Packages (authenticated) and require a system
  * HDF5 install; see the profile comments in pom.xml. The two provide identical
@@ -65,7 +65,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
      * property; a system install whose {@code hdf5_java} library sits on
      * {@code java.library.path}; the natives bundled in the JavaCPP preset
      * (extracted through {@code org.bytedeco.javacpp.Loader}, reached
-     * reflectively so the {@code -Dhdf5.ffm} profile compiles without it);
+     * reflectively so the {@code -Dhdf5.ffm=true} profile compiles without it);
      * and finally the stock loader's own error. The bundled glue is
      * test-loaded before it is trusted: on Windows the preset's glue imports
      * a {@code hdf5.dll} the jar does not carry.
@@ -167,17 +167,39 @@ public final class NativeHdf5File implements StreamingHdf5File {
         return unavailableCause;
     }
 
+    /**
+     * Fails fast when the native library cannot be loaded. The disk-based
+     * writers call this BEFORE parsing: the library used to be first touched
+     * when the output file was created, after every parse, spill and sort
+     * stage had already run (BG-441).
+     *
+     * @throws IOException naming the platform, what was tried and why it failed
+     */
+    public static void requireAvailable() throws IOException {
+        try {
+            loadNatives();
+            H5.H5open();
+        } catch (Throwable t) {
+            throw new IOException(unavailableMessage(), t);
+        }
+    }
+
+    private static String unavailableMessage() {
+        return "Native HDF5 library unavailable on " + System.getProperty("os.name") + "/"
+              + System.getProperty("os.arch") + " (needed by the disk-based writers, -method 1/4/5; sought: "
+              + nativeSource + "). The bundled natives cover linux-x86_64 and macos-x86_64 (windows-x86_64 needs "
+              + "an HDF5 1.14 install's bin directory, hdf5.dll and hdf5_java.dll, on PATH); no arm64 natives "
+              + "are bundled - install HDF5 and put " + System.mapLibraryName(GLUE) + " on java.library.path, "
+              + "or set -D" + PROP_LIBRARY_PATH + "=<path to " + System.mapLibraryName(GLUE) + ">."
+              + (bundledFailure != null ? " Bundled natives: " + bundledFailure : "");
+    }
+
     /** Creates a new HDF5 file at {@code path}, truncating any existing file. */
     public static NativeHdf5File create(Path path) throws IOException {
         try {
             loadNatives();
         } catch (Throwable t) {
-            throw new IOException(
-                "Native HDF5 library unavailable (needed by the disk-based writers, -method 1/4/5). "
-              + "Bundled natives load on Linux and macOS; on Windows put an HDF5 1.14 install's bin directory "
-              + "(hdf5.dll and hdf5_java.dll) on PATH, or set -D" + PROP_LIBRARY_PATH + "=<path to "
-              + System.mapLibraryName(GLUE) + ">."
-              + (bundledFailure != null ? " Bundled natives: " + bundledFailure : ""), t);
+            throw new IOException(unavailableMessage(), t);
         }
         try {
             long fid = H5.H5Fcreate(path.toString(), HDF5Constants.H5F_ACC_TRUNC,

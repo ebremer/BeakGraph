@@ -63,7 +63,13 @@ misreading *newer* files; it is not consulted to locate data.
 
 Integer byte order is **big-endian everywhere**. Text is **UTF-8** on disk; "string length" in
 prefix coding means **UTF-16 code units** (§5.5.3 — this is a deliberate Java-ism that must be
-reproduced).
+reproduced). **String comparison** throughout the term order (§6) is likewise **UTF-16
+code-unit order** — Java `String.compareTo` — *not* Unicode code-point order. The two differ only
+when a supplementary character (stored as a surrogate pair, `D800`–`DFFF`) is compared against a
+BMP character in `U+E000`–`U+FFFF` at the first differing position: code-unit order puts the
+supplementary character first (`<http://ex/😀>` < `<http://ex/！>`), code-point order last. Ids are
+ranks in this order, so an implementation that compared by code point would assign different ids
+than the reference and could not read its stores.
 
 ---
 
@@ -108,7 +114,7 @@ written with the native HDF5 library. Both stay inside this profile.
 /                          HDF5 root
 └── .BG                    group ("the store")
     ├── @numQuads          int64   — count of SOURCE quads only (§9.6)
-    ├── @formatVersion     int32   — 4
+    ├── @formatVersion     int32   — 5
     ├── dictionary/        group   (§7)
     │   ├── entities/      group   — multi-type section (may be absent, §7.9)
     │   ├── predicates/    group   — multi-type section
@@ -293,8 +299,8 @@ To compare nodes `a`, `b`:
    them as plain terms (§6.4) — `…DefaultGraph` < `…DefaultGraphNode`.
 2. **Macro kind:** blank node (1) < IRI (2) < literal (3) < triple term (4). Different kinds order
    by kind.
-3. **Two blank nodes:** by label, as Unicode code-point string comparison (`"b10" < "b2"`).
-4. **Two IRIs:** by IRI string, code-point comparison. *Relative* IRIs (§9.2) compare by their
+3. **Two blank nodes:** by label, as UTF-16 code-unit string comparison (§2; `"b10" < "b2"`).
+4. **Two IRIs:** by IRI string, UTF-16 code-unit comparison. *Relative* IRIs (§9.2) compare by their
    stored relative form (so `""` sorts before any `http://…`, and `"sib.png"` after).
 5. **Two triple terms:** STRUCTURALLY, by recursing this whole comparator through the components —
    subject, then predicate, then object (nested terms recurse; RDF 1.2 forbids cyclic terms, so
@@ -309,13 +315,14 @@ Apply the first matching rule:
 
 1. **Both composite (`cdt:List`/`cdt:Map`)** — datatype IRI compared exactly as
    `http://w3id.org/awslabs/neptune/SPARQL-CDTs/List` <
-   `http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map`, then **lexical form** (code-point string
-   compare). Composite values are *never* parsed for ordering — CDT has no canonical form, so term
+   `http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map`, then **lexical form** (UTF-16 code-unit
+   string compare, §2). Composite values are *never* parsed for ordering — CDT has no canonical form, so term
    identity is lexical identity.
 2. **Both language-tagged** (`rdf:langString` or `rdf:dirLangString`) — by
    `(language tag, lexical form, direction)` where direction ranks absent (0) < `ltr` (1) <
-   `rtl` (2). Language tags compare as code-point strings; store the parser's case-canonicalized
-   form (e.g. `en`, `en-US` — language subtag lowercase, region uppercase).
+   `rtl` (2). Language tags and lexical forms compare as UTF-16 code-unit strings (§2); store the
+   RFC 5646-formatted tag Jena's `NodeFactory` produces (e.g. `en`, `en-US` — language subtag
+   lowercase, region uppercase; see RDF_1.2-compliance.md, "Language tag case").
 3. **Both in the same timezone-sensitive temporal value space** — the spaces are the *instant*
    space (dateTime incl. dateTimeStamp, gYear, gYearMonth, gMonth, gMonthDay, gDay — one space, as
    in ARQ), date, time, and duration; a literal is in a space only if it is a *well-formed*
@@ -339,7 +346,7 @@ Apply the first matching rule:
 5. **Everything else — SPARQL value order with fixed cross-space ranks** (this is Jena
    `NodeValue.compareAlways` behavior, reproduced here normatively):
    * Classify each literal into a value space. Two literals in the **same** space compare by
-     **value** (booleans false < true; strings by code point).
+     **value** (booleans false < true; strings in UTF-16 code-unit order, §2).
      Ill-formed literals (unparseable value for their datatype) and literals of unknown datatypes
      compare within their cluster by **lexical form, then datatype IRI**.
    * Two literals in **different** spaces order by this fixed rank (empirically verified against the
@@ -350,12 +357,19 @@ Apply the first matching rule:
      < language-tagged (rdf:langString / rdf:dirLangString)
      < numeric (all numeric XSD datatypes, one space)
      < xsd:boolean
-     < xsd:gDay < xsd:gMonth < xsd:gMonthDay < xsd:gYear < xsd:gYearMonth
-     < xsd:dateTime (and dateTimeStamp) < xsd:date < xsd:time
+     < the instant space (xsd:dateTime, dateTimeStamp, gYear, gYearMonth, gMonth, gMonthDay, gDay)
+     < xsd:date < xsd:time
      < xsd:duration (incl. yearMonth/dayTime)
      < cdt:List < cdt:Map
      < unknown datatypes and ill-formed literals
      ```
+
+     The instant space is ONE rank here: two well-formed instants never reach this rule (rule 3
+     orders them by kind rank, then as instants), so `"2021"^^xsd:gYear` sorts before every
+     dateTime, and `"2020Z"^^xsd:gYear` before `"2020-12-31T20:00:00Z"^^xsd:dateTime` — by kind,
+     not by lexical form. (ARQ itself has no such rank: it keeps the g* kinds and dateTime in one
+     value space and answers "not comparable" for cross-kind pairs, which is why rule 3 exists.)
+     Ill-formed instants are not in the space and fall into the last cluster.
    * If the value comparison answers "equal" (value-equal but possibly term-distinct, e.g.
      `"1"^^xsd:int` vs `"1"^^xsd:integer` vs `"1.0"^^xsd:double`), fall through to §6.4. This is
      what makes value-equal terms **adjacent but distinct** — the property ValueCluster (§10.4)
@@ -366,8 +380,8 @@ Apply the first matching rule:
 The final tie-break on two literals (used wherever a rule above answers "equal" but the terms may
 differ) is:
 
-1. lexical form (code-point compare);
-2. datatype IRI (code-point compare);
+1. lexical form (UTF-16 code-unit compare, §2);
+2. datatype IRI (UTF-16 code-unit compare);
 3. language tag (empty for none);
 4. base direction: absent < `ltr` < `rtl`.
 
@@ -879,12 +893,18 @@ share a whole cell at every scale; false positives are eliminated at query time 
 intersection against the **original** WKT literal — which is therefore load-bearing and must be
 stored verbatim (it is, as ordinary data).
 
-**(B/C) Multi-resolution pyramid (viewer support, not queried by the engine).** Per pyramid level
-`s` (0…14): the geometry is repeatedly half-scaled (`×0.5` per level, integer-snapped, cleaned,
-stopping at area < 4.0 or 20 levels), and each level's WKT is written as
-`S <https://halcyon.is/ns/asWKT{s}> "<wkt>"^^geo:wktLiteral` into graph `urn:x-beakgraph:Spatial`
-**and** into every grid-tile graph `urn:x-beakgraph:grid:{s}:{x}:{y}` whose 512×512 tile (in
-level-`s` coordinates, `x = floor(coord/512)`) the level-`s` polygon intersects.
+**(B/C) Multi-resolution pyramid (viewer support, not queried by the engine).** Computed **per
+polygonal part**, exactly as (A): each polygon of a multi/collection separately, non-areal members
+(points, lines) via their 0.5-expanded envelope box. Each part is repeatedly half-scaled (`×0.5`
+per level, integer-snapped, cleaned, stopping at area < 4.0 or 20 levels), and every part's
+level-`s` WKT is written as `S <https://halcyon.is/ns/asWKT{s}> "<POLYGON wkt>"^^geo:wktLiteral`
+into graph `urn:x-beakgraph:Spatial` **and** into every grid-tile graph
+`urn:x-beakgraph:grid:{s}:{x}:{y}` whose 512×512 tile (in level-`s` coordinates,
+`x = floor(coord/512)`) that part's level-`s` polygon intersects. Consequently `hal:asWKT{s}` is
+**multi-valued** for multi-part geometries (one `POLYGON` per surviving part — never a
+`MULTIPOLYGON`), a `POINT` or `LINESTRING` appears as a small `POLYGON` box, and a part whose
+pyramid ends early (area < 4.0, or cleaning failure) contributes no value at that level while its
+siblings still do; consumers must aggregate all values per `(S, s)`.
 
 **(D) Shape features** (separately enabled): derived scalar features in the **default graph** —
 pyradiomics-style predicates under `https://halcyon.is/ns/pyr/shape2d/` (`MeshSurface`,
@@ -1042,9 +1062,12 @@ Sp: 8 9 1 2 3 4 5 6 7 10 0 7 0 7 0 0 0 0 0
 So run for (G1, S7=ex:s1, P6=ex:num): 18 19 20 21 22 23 24   ← ascending literal object ids
 ```
 
-Total L3 rows = 23 unique quads + 7 dummy rows = 30. The cross-space literal rank order of §6.2.4
-was verified by sorting a 29-literal stress set with the reference comparator; the observed
-sequence is the one given there.
+Total L3 rows = 23 unique quads + 7 dummy rows = 30. The cross-space literal rank order of §6.2
+rule 5 was verified by sorting a 29-literal stress set with the reference comparator; its g* and
+dateTime members interleave by kind rank (rule 3) — `"2021"^^xsd:gYear` before
+`"2020-12-31T23:59:59Z"^^xsd:dateTime`, `"2020-12Z"^^xsd:gYearMonth` before both — which
+`TemporalTotalOrderTest` pins; their lexical forms happen to sort the same way in this set, so
+the anchor alone cannot tell the two apart.
 
 ---
 

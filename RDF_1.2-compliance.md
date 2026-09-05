@@ -13,8 +13,8 @@
 - RDF 1.2 triple terms are stored term-exactly as of format v5 (see the RDF 1.2 section); other non-1.1 node kinds are still rejected with an exception.
 
 ### Literals
-- Every literal carries its datatype IRI, per RDF 1.1 (simple literals are `xsd:string`; identification inherited from Jena 5).
-- `rdf:langString` is fully supported: the `langs`/`langTags` datasets store language tags separately and literals reconstruct term-exact (`MultiTypeDictionaryWriter` / `MultiTypeDictionaryReader`). Tag normalization policy is inherited from Jena's parsers and applied consistently on both write and query paths.
+- Every literal carries its datatype IRI, per RDF 1.1 (simple literals are `xsd:string`; identification inherited from Jena 6).
+- `rdf:langString` is fully supported: the `langs`/`langTags` datasets store language tags separately and literals reconstruct term-exact (`MultiTypeDictionaryWriter` / `MultiTypeDictionaryReader`). Language-tag case is settled by Jena's `NodeFactory` at Node construction (see "Language tag case" below), on every path BeakGraph uses, so a lang-tagged literal reconstructs term-exact modulo the RFC 5646 formatting of its tag.
 - Ill-typed literals (e.g. `"abc"^^xsd:int`) are valid RDF 1.1 terms and are preserved term-exactly through the strings path instead of being rejected or "repaired".
 - Unicode: UTF-8 storage throughout; the front-coded dictionary never splits UTF-16 surrogate pairs (`FCDWriter.commonPrefixLength`).
 
@@ -27,7 +27,7 @@
 - Union-graph queries apply RDF-correct set semantics (explicit row dedup in `HDF5Reader.readUnion`).
 
 ### Syntax and query semantics
-- Parsing/serialization and SPARQL 1.1 semantics are delegated to Jena 5.x (RIOT/ARQ); BeakGraph sits below as storage.
+- Parsing/serialization and SPARQL 1.1 semantics are delegated to Jena 6.x (RIOT/ARQ); BeakGraph sits below as storage.
 - The value-ordered dictionary preserves term identity: `NodeComparator` breaks value-equal ties on the exact RDF term (`"1"^^xsd:int` vs `"1"^^xsd:integer` keep distinct ids), and provides a self-consistent total order for timezone-sensitive temporal value spaces that agrees with XSD order wherever XSD order is determinate.
 
 ## Deviations
@@ -64,14 +64,16 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
 > **Evidence:**
 > - The vendored W3C RDF 1.2 test suites (rdf-turtle, rdf-n-triples, rdf-n-quads, rdf-trig;
 >   `W3CRdf12SuiteTest`, suites at commit `d3e844a`) run as a pure conformance oracle: **301
->   tests — 213 executed, 0 failures** (every eval and positive-syntax input, triple terms
+>   tests — 215 executed, 0 failures** (every eval and positive-syntax input, triple terms
 >   included, round-trips through a real store isomorphically); 82 c14n tests skipped as out of
->   scope (canonical serialization is a serializer property, not storage), 6 skipped as upstream
->   Jena 6.1.0 lenient-parse divergences (listed in `src/test/resources/w3c/rdf12/README.md`).
+>   scope (canonical serialization is a serializer property, not storage), 4 skipped as upstream
+>   Jena 6.2.0 lenient-parse divergences (listed in `src/test/resources/w3c/rdf12/README.md`;
+>   `W3CRdf12SuiteTest.knownUpstreamLeniencesStillHold` pins that list).
 > - The vendored W3C SPARQL 1.2 test suites (`W3CSparql12SuiteTest`, same commit): **269 tests —
->   259 executed, 0 failures**, query-evaluation entries executed over real BeakGraph stores; 10
->   skipped-with-reason (3 update-evaluation — the store is read-only; 7 upstream Jena grammar
->   divergences, listed in `src/test/resources/w3c/sparql12/README.md`).
+>   266 executed, 0 failures**, query-evaluation entries executed over real BeakGraph stores; 3
+>   skipped-with-reason (update evaluation — the store is read-only). The 7 grammar divergences
+>   of Jena 6.1.0 were resolved upstream in 6.2.0.
+> - Both suites run on every writer engine (`-Dbeakgraph.test.engine`; verified on all six).
 
 - **Triple terms** (`<<( s p o )>>`, and the reifier/annotation sugar that expands to them):
   **stored and matched term-exactly as of format v5**, across all six writer engines. Storage is
@@ -82,7 +84,9 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
   (including the fastpath, byte-identical), `-verify -deep`, and the SPARQL 1.2 surface
   (`TRIPLE`/`SUBJECT`/`PREDICATE`/`OBJECT`/`isTRIPLE`, patterns with embedded variables unified at
   the id level) are all covered by `RDF12TripleTermTest`, `TermFidelityTest`, `ExportTest`,
-  `VerifyCommandTest`, and the two W3C suites. Stores without triple terms are byte-identical in
+  `VerifyCommandTest`, and the two W3C suites. `TermFidelityTest` runs its triple-term fixture on
+  all six engines; the W3C suites and `RDF12TripleTermTest` build through the engine named by
+  `-Dbeakgraph.test.engine` (method 0 by default; CI's Linux leg re-runs them on methods 1 and 3). Stores without triple terms are byte-identical in
   shape to v4 output; v5 files are rejected by older builds via the format-version gate.
 - **Base-direction literals** (`"x"@en--ltr`, `rdf:dirLangString`): **stored and matched
   term-exactly** as of format v4 — a `langDirs` column (0=none, 1=ltr, 2=rtl) beside the existing
@@ -95,8 +99,19 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
   (the file is internally consistent; it is just not what the source said). Rebuilding an affected
   source under a guarded or v4 build produces the correct terms — a diff against the old store is
   the detection mechanism.
-- **Language tag case**: Jena 6 normalizes language tags case-insensitively per RDF 1.2
-  (`"chat"@FR` ≡ `"chat"@fr`); BeakGraph inherits this on both the write and query paths.
+- **Language tag case**: RDF 1.2 makes language tags case-insensitive for identity. The mechanism
+  is Jena's `NodeFactory.createLiteralLang` / `createLiteralDirLang`, which format every tag to
+  RFC 5646 case (`LangTagX.formatLanguageTag`: `en`, `en-US`, `zh-Hant`; tags that are not
+  well-formed BCP 47 fall back to a basic lower/upper-casing) at Node construction — on every path
+  BeakGraph uses: RIOT for every syntax (independent of the parser's checking mode), ARQ query
+  parsing, `STRLANG`, the disk engines' spill codec (`NodeCodec`) and
+  `MultiTypeDictionaryReader.extract`. `Node.equals` and `NodeComparator` are then
+  case-SENSITIVE on that formatted form, so `"chat"@FR` and `"chat"@fr` become one Node, one
+  dictionary entry, findable by either spelling. Consequence: the stored, exported and `LANG()`
+  spelling is the formatted form (`"x"@EN-us` → `"x"@en-US`) — term-preserving under RDF 1.2 but
+  not byte-preserving. The invariant holds only for Nodes built through `NodeFactory`;
+  `LiteralLabelFactory.createLang` bypasses the formatting and must not be used to build lookup
+  keys (`LanguageTagRoundTripTest.mixedCaseTagsAreOneTermSpelledByJena` pins this).
 - **Composite (cdt:) literals** (`cdt:List` / `cdt:Map`; SPARQL-CDT is an Unofficial Draft spec):
   stored term-exactly via the strings path and queryable with Jena's 16 `cdt:` functions, the
   `FOLD` aggregate, and the `UNFOLD` operator (locked in by `CdtLockInTest`). Three policies:
@@ -125,7 +140,7 @@ regardless. Policy: anything the format cannot represent fails the build loudly.
 | Generalized RDF | Rejected loudly |
 | RDF 1.2 triple terms | Stored term-exactly (format v5, `tripleTerms` component store), all engines; SPARQL 1.2 patterns answered |
 | RDF 1.2 base-direction literals | Stored term-exactly (format v4, `langDirs`); ≤ 0.17.0 stored them silently corrupted — rebuild |
-| RDF 1.2 conformance level | **Full** (RDF suites: 213 executed, 0 failures; SPARQL 1.2 suites: 259 executed, 0 failures) |
+| RDF 1.2 conformance level | **Full** (RDF suites: 215 executed, 0 failures; SPARQL 1.2 suites: 266 executed, 0 failures; Jena 6.2.0) |
 | SPARQL-CDT composite literals | Stored term-exact; lexical dictionary order (≤ 0.17.0 stores need rebuild); embedded blank nodes rejected |
 | Numeric literal term identity | **Deviation** — canonicalized at ingest |
 | Absolute-IRI requirement | **Deviation** — relative IRIs stored, resolved at serving time |

@@ -13,8 +13,8 @@ immutable store.
 |---|---|
 | Java 25+ | The build targets current JDKs. |
 | Maven 3.9+ | Standard build. |
-| Native HDF5 library | **Only** for the disk-based writers (`-method 1`, `4` and `5`). On Linux and macOS the JavaCPP artifacts bundle it and it loads automatically. On Windows the JavaCPP artifact's JNI glue needs a `hdf5.dll` it does not ship: install HDF5 1.14 and put its `bin` directory (`hdf5.dll`, `hdf5_java.dll`) on `PATH`, or set `-Dhdf.hdf5lib.H5.hdf5lib=<path to hdf5_java.dll>`. A system install on the library path is preferred over the bundled natives wherever one exists. The in-memory writers (`-method 0/2/3`) use pure-Java jHDF and need nothing native. |
-| Disk workspace | For `-method 1/4`: free space on the order of a few times the uncompressed source (see §7). |
+| Native HDF5 library | **Only** for the disk-based writers (`-method 1`, `4` and `5`); a missing library is reported before any parsing starts. The in-memory writers (`-method 0/2/3`) use pure-Java jHDF and need nothing native. Platform matrix: the default JavaCPP preset (`org.bytedeco:hdf5-platform` 1.14.3-1.5.10) bundles natives for **linux-x86_64 and macos-x86_64** (they load automatically) and **windows-x86_64** (its JNI glue needs a `hdf5.dll` it does not ship: install HDF5 1.14 and put its `bin` directory, `hdf5.dll` + `hdf5_java.dll`, on `PATH`, or set `-Dhdf.hdf5lib.H5.hdf5lib=<path to hdf5_java.dll>`). **No preset published so far carries arm64 natives**: on Apple Silicon or aarch64 Linux either run an x86_64 JDK (Rosetta), or install HDF5 yourself and use the HDF Group's FFM bindings (`mvn -Dhdf5.ffm=true ...`, published for linux-x86_64, windows-x86_64, macos-x86_64 and macos-aarch64 - nothing for linux-aarch64 / windows-aarch64; the build refuses to guess a classifier for an unrecognised platform). A system install on the library path is always preferred over the bundled natives. |
+| Disk workspace | For `-method 1/4/5`: free space on the order of a few times the uncompressed source (see §7). |
 
 ## 2. Building
 
@@ -47,6 +47,9 @@ java -jar BeakGraph.jar -src data/ -dest all.h5 -merge
 
 # Serve a store as a SPARQL endpoint on port 8888
 java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
+
+# Serve a whole directory of stores as W3C LWS storage (writes <dir>/beakgraph.ttl.gz)
+java -jar BeakGraph.jar -endpoint out/ -port 8888
 ```
 
 ## 4. Command-line reference
@@ -55,25 +58,26 @@ java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 |---|---|---|
 | `-src <path>` | — | Source file **or** directory tree. Directories are walked recursively; every supported RDF file (see §5) is converted. |
 | `-dest <path>` | — | Destination file or directory. Required with `-src`. In per-file mode the source tree structure is mirrored with `.h5` extensions. |
-| `-method <0-4>` | `0` | Conversion engine — see §6. |
-| `-cores <n>` | `4` | Threads used **inside** one conversion by `-method 2`, `3`, and `4`. |
+| `-method <0-5>` | `0` | Conversion engine — see §6. |
+| `-cores <n>` | `4` | Threads used **inside** one conversion by `-method 2`, `3`, `4` and `5`. |
 | `-threads <n>` | `1` | Number of conversions run **at once** (per-file mode). Each conversion gets its own `-cores` budget — total CPU ≈ `threads × cores`. |
 | `-merge` | off | Merge **all** sources under `-src` into ONE store at `-dest` (if `-dest` is an existing directory, writes `<dest>/merged.h5`). Blank nodes stay distinct per source document, and so do relative references: each document's `<>` and relative links are stored relative to `-src` (`<>` in `a/x.ttl` becomes `a/x.ttl`, its `<img.png>` becomes `a/img.png`), so the merged store serves them below its own URL as the source tree was laid out. Works with every `-method`. |
 | `-void` | off | Generate the VoID/SD statistics graph (`urn:x-beakgraph:void`) with **exact** in-memory counting (RAM grows with distinct terms). Mutually exclusive with `-voidsketch`. |
 | `-voidsketch` | off | Generate the statistics graph with **bounded memory**: exact up to 65,536 distinct nodes per counter, then HyperLogLog estimates (~0.8% error, deterministic). Recommended for `-method 1/4/5`. Mutually exclusive with `-void`. |
 | `-spatial` | off | Build the Hilbert-curve spatial index for `geo:wktLiteral` geometry (adds the `urn:x-beakgraph:Spatial` graph). |
 | `-features` | off | Also derive 2-D shape features (area, axes, …) for each geometry. Implies work under `-spatial`. |
-| `-workdir <dir>` | dest dir | Spill workspace for `-method 1` and `-method 4`. Put this on your fastest disk. |
+| `-workdir <dir>` | dest dir | Spill workspace for the disk-based writers (`-method 1`, `4` and `5`). Put this on your fastest disk. |
 | `-huge` | off | Legacy shorthand for `-method 1`. An explicit `-method` takes precedence. |
 | `-export <fmt>` | — | **Export mode**: dump the BeakGraph(s) at `-src` back to RDF instead of converting. Formats: `NT`, `NQ`, `JSON-LD`, `TTL`, `TRIG` (case-insensitive). Output lands next to each `.h5` with the same name and the format's extension. See §5a. |
 | `-compress` | off | gzip the `-export` output (adds `.gz` to the file name). |
 | `-verify <path>` | — | **Verify mode**: integrity-check the BeakGraph file at `<path>`, or every `.h5`/`.hdf5` under it when `<path>` is a directory (recursive). One `OK`/`FAIL` line per file plus a summary; exit code `2` if any file is damaged. See §5b. |
 | `-deep` | off | With `-verify`: additionally materialize every triple of every graph and reconcile against the index-derived counts (reads the bulk of each file). |
 | `-status` | off | Progress bar (per-file mode) and end-of-run counters. |
-| `-endpoint <file.h5>` | — | Serve the store as a SPARQL endpoint instead of converting. |
+| `-endpoint <file.h5 \| dir>` | — | Serve instead of converting: a single store as a SPARQL endpoint at `/rdf`, or a **directory** as W3C LWS storage (see "Serving a directory" below). |
 | `-port <n>` | `8888` | HTTP port for `-endpoint`. |
 | `-base <url>` | derived per request | Public base URL for the links and IRIs `-endpoint` advertises, e.g. `https://data.example.org/`. By default each response uses the scheme, host and port the client reached the server on (`Forwarded` / `X-Forwarded-*` headers from a reverse proxy are honoured); set this only behind a proxy that does not forward the original host. |
-| `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for `-endpoint`; a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. Note: queries that expand large composite (`cdt:`) literals with `UNFOLD`, or compare them by value, parse the whole literal in RAM (~1 µs per element) and can hit this limit — raise it for CDT-heavy workloads. |
+| (protocol) | — | `-endpoint` honours the SPARQL 1.1 Protocol dataset parameters `default-graph-uri` and `named-graph-uri` (repeatable); when present they replace the query's own `FROM` / `FROM NAMED` clauses, and an absent graph name yields an empty dataset rather than an error. |
+| `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for the BeakGraph-served endpoints (the single-file `/rdf` endpoint and every per-`.h5` query in directory mode); a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. It does not apply to directory mode's `/rdf` metadata dataset, which stock Fuseki serves. Note: queries that expand large composite (`cdt:`) literals with `UNFOLD`, or compare them by value, parse the whole literal in RAM (~1 µs per element) and can hit this limit — raise it for CDT-heavy workloads. |
 | `-version` / `-v` | — | Print version and exit. |
 | `-help` | — | Usage text. |
 
@@ -90,6 +94,37 @@ same `a.h5`: the first in path order is converted and the rest are reported and 
 the move — the finished build is kept as `<dest>.new` and the error says so; move it into place once
 the reader is closed) —
 a failed or interrupted build never corrupts a previous good store.
+
+### Serving a directory (LWS storage mode)
+
+`-endpoint <directory>` serves the directory tree as a
+[W3C LWS](https://github.com/w3c/lws-protocol) storage at `/`: every file is retrievable (with
+HTTP range support), containers are listed, and every `.h5` answers SPARQL at its own URL
+(`GET <file>.h5?query=...` or a `POST` with the query) through a pool of readers
+(`beakgraph.pool.*` below). A metadata model describing the tree is served by Fuseki at `/rdf`
+(read-only) and `/sparql` is the query UI. On first start the server generates that model and
+**writes it into the served directory** as `beakgraph.ttl.gz` - the directory must be writable
+(if the write fails the freshly generated model is still served, with a warning). The model is
+kept current afterwards: files added, replaced or removed while the server runs are picked up
+(`beakgraph.lws.refresh.seconds`), and the cache is validated against the directory on every
+start; delete the file to force a full regeneration. In single-file mode a `beakgraph.ttl.gz`
+sitting next to the `.h5` is loaded as the LWS model.
+
+### Document-relative IRIs
+
+Stores keep document-relative references (`<>`, `<sibling.png>`, `<../up.png>`, `</root>`)
+**unresolved** (SPECIFICATIONS.md §9.2) and resolve them at query time against the URL the
+store is served from: in directory mode against each request's URL, so a store served at
+`https://host/data/x.h5` answers `<>` as that URL and `<sibling.png>` as
+`https://host/data/sibling.png`; the single-file endpoint resolves against `<base>/rdf`.
+Sibling references therefore keep their meaning only when the served location mirrors the
+source tree (per-file conversion mirrors `-src` into `-dest`; the layout of a storage root is
+the operator's responsibility). `-merge` stores each document's references relative to `-src`
+(`<>` of `a/x.ttl` becomes `a/x.ttl`), so identical relative references in different documents
+stay distinct resources - unlike blank nodes, which are simply scoped per document. `-export`
+writes the relative forms verbatim unless `-base <URL>` is given; N-Triples / N-Quads cannot
+carry them, so exporting such a store as NT/NQ without `-base` fails with a message naming the
+option (§5a).
 
 ## 5. Supported source formats
 
@@ -194,6 +229,9 @@ java -Xmx32g -jar BeakGraph.jar \
   ~64 KiB per counter instead of holding the dictionary on the heap.
 * Blank nodes are scoped per source document (labels are not preserved in the output format;
   readers regenerate labels from dictionary ranks).
+* **Native binary** (`mvn -Pcmdlinenative`): it supports the in-memory engines only
+  (`-method 0/2/3`) and takes Substrate VM's default heap; raise it per run with
+  `beakgraph -XX:MaxHeapSize=16g ...` (the equivalent of `java -Xmx16g`).
 
 ## 8. Programmatic use
 
@@ -232,6 +270,7 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.fcd.cache.blocks` | `4096` | Decoded front-coded string blocks per FCD section (each block holds `blockSize`, typically 16, strings). |
 | `beakgraph.ffm.threshold` | `2147483647` | Dataset size in bytes above which BeakGraph FFM-maps the region itself instead of using jHDF's ByteBuffer. |
 | `beakgraph.scan.parallel.threshold` | `65536` | Minimum index position range for a scan-shaped first pattern (`?s ?p ?o`, or `?s <p> ?o`) to run as a chunked PARALLEL scan on the shared worker pool. `0` (or negative) disables parallel scanning. Chunks stop on query timeout/cancel and on early close (LIMIT). |
+| `beakgraph.scan.parallel.minchunk` | `16384` | Smallest chunk (index positions) a parallel scan is split into. Lower it only to force multi-chunk scans on small stores (tests). |
 | `beakgraph.fcd.maxFragmentBytes` | `268435456` | Largest decoded size accepted for one compressed dictionary fragment (one RDF term); a header claiming more is treated as corruption before any allocation. |
 | `beakgraph.pool.perKey` | `8` | Endpoint reader pool: readers a single store can have in use at once - one is held for the whole of a query's result streaming, so this is the number of concurrent queries per `.h5`. Readers are thread-safe; the cap bounds memory (each instance carries its own caches), not correctness. |
 | `beakgraph.pool.maxTotal` | `256` | Endpoint reader pool: readers across all stores. |
@@ -240,6 +279,7 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.lws.refresh.seconds` | `30` | Directory mode (`-endpoint <dir>`): how often the served directory is re-scanned for added, removed or replaced files. The cached `beakgraph.ttl.gz` metadata is validated against the directory at start-up and rewritten after every change. `0` disables the periodic scan; a request for a path that exists on disk but is not yet listed still triggers an immediate re-scan (once per new file). |
 | `beakgraph.export.fastpath` | `true` | `-export NT`/`NQ` streams straight off the GSPO index with per-id text memoization (byte-identical output to the generic writer). `false` falls back to the generic StreamRDF writer. |
 | `beakgraph.export.textcache` | `262144` | Object-text memo entries for the index export (cleared wholesale when full). |
+| `beakgraph.log.dir` | `logs` | Directory of the rolling `beakgraph.log` the shaded jar's log4j configuration writes (50 MB per file, ten kept, gzip-rotated). |
 
 JMH benchmarks for the read path live in `benchmarks/` (see its README) - use
 them to validate any tuning against your own store shape.
@@ -264,9 +304,14 @@ the last reader closes).
   while newer files are rejected by older builds with an "Upgrade BeakGraph"
   error. A store containing neither feature is byte-identical in shape to v3
   output.
-* Methods 0/2/3 produce **structurally identical** stores for the same single source
-  (same datasets, sizes, attributes); methods 1/4 produce **isomorphic** stores
-  (blank-node labels are rank-derived rather than relabelled).
+* Methods 0/2/3 produce **byte-identical** stores for the same single source on
+  the same platform (one format, one jHDF write sequence; the parity tests
+  compare the files byte for byte - the only platform-dependent bytes are zstd
+  frames, which the native and pure-Java codecs may encode differently), and
+  structurally identical stores (same datasets, sizes, attributes) for merges
+  and for VoID-enabled builds, where blank-node labels differ; methods 1/4/5
+  produce **isomorphic** stores (blank-node labels are rank-derived rather than
+  relabelled).
 * See `SPECIFICATIONS.md` (repo root) for the precise on-disk format — enough
   to re-create BeakGraph files without this source tree — and
   `docs/BeakGraph-HDF5-Architecture.pptx` for the original design slides.

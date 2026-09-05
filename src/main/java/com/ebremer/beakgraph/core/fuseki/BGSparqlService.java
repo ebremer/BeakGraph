@@ -9,6 +9,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import org.apache.jena.graph.Node;
@@ -21,6 +24,7 @@ import org.apache.jena.query.ResultSetFormatter;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.riot.RDFFormat;
+import org.apache.jena.sparql.core.DatasetDescription;
 import org.apache.jena.sparql.syntax.syntaxtransform.QueryTransformOps;
 
 /**
@@ -149,7 +153,7 @@ public final class BGSparqlService {
         }
         if ("POST".equals(req.getMethod())) {
             String ct = req.getContentType();
-            if (ct != null && ct.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
+            if (ct != null && ct.toLowerCase(Locale.ROOT).startsWith("application/x-www-form-urlencoded")) {
                 return req.getParameter("query");
             }
             try (InputStream in = req.getInputStream()) {
@@ -157,6 +161,42 @@ public final class BGSparqlService {
             }
         }
         return null;
+    }
+
+    /**
+     * The SPARQL 1.1 Protocol dataset of a request ({@code default-graph-uri}
+     * and {@code named-graph-uri}, repeatable, read from the URL for GET and
+     * for a direct POST, from the form for a form-encoded POST), or null when
+     * the request names none. Used to be ignored silently (BG-344).
+     */
+    public static DatasetDescription extractDatasetDescription(HttpServletRequest req) {
+        return datasetDescription(req.getParameterValues("default-graph-uri"), req.getParameterValues("named-graph-uri"));
+    }
+
+    static DatasetDescription datasetDescription(String[] defaultGraphUris, String[] namedGraphUris) {
+        List<String> dg = (defaultGraphUris == null) ? List.of() : Arrays.asList(defaultGraphUris);
+        List<String> ng = (namedGraphUris == null) ? List.of() : Arrays.asList(namedGraphUris);
+        if (dg.isEmpty() && ng.isEmpty()) {
+            return null;
+        }
+        return DatasetDescription.create(dg, ng);
+    }
+
+    /**
+     * Protocol section 2.1.4: a dataset given by the protocol parameters
+     * REPLACES the query's own FROM / FROM NAMED clauses (both of them - the
+     * protocol's dataset is the whole description). A null description leaves
+     * the query untouched. Graph names are matched as given; they are absolute
+     * IRIs in stored data, so no relativization applies.
+     */
+    static void applyProtocolDataset(Query query, DatasetDescription protocolDataset) {
+        if (protocolDataset == null || protocolDataset.isEmpty()) {
+            return;
+        }
+        query.getGraphURIs().clear();
+        query.getNamedGraphURIs().clear();
+        protocolDataset.getDefaultGraphURIs().forEach(query::addGraphURI);
+        protocolDataset.getNamedGraphURIs().forEach(query::addNamedGraphURI);
     }
 
     /** Collapses a query onto one log line (bounded, whitespace-normalized). */
@@ -218,7 +258,18 @@ public final class BGSparqlService {
      */
     public static boolean execute(Dataset ds, String queryStr, String baseURI,
                                String acceptHeader, HttpServletResponse resp) throws IOException {
-        String accept = (acceptHeader == null) ? "" : acceptHeader.toLowerCase();
+        return execute(ds, queryStr, baseURI, acceptHeader, resp, null);
+    }
+
+    /**
+     * As {@link #execute(Dataset, String, String, String, HttpServletResponse)},
+     * with the request's protocol dataset ({@link #extractDatasetDescription})
+     * applied over the query's FROM / FROM NAMED clauses when non-null.
+     */
+    public static boolean execute(Dataset ds, String queryStr, String baseURI,
+                               String acceptHeader, HttpServletResponse resp,
+                               DatasetDescription protocolDataset) throws IOException {
+        String accept = (acceptHeader == null) ? "" : acceptHeader.toLowerCase(Locale.ROOT);
         ResponseOutput out = null;
         try {
             // DELIBERATE: no Syntax argument, so Jena's default (syntaxARQ)
@@ -227,8 +278,9 @@ public final class BGSparqlService {
             // parses SPARQL 1.2 triple terms, reifiers-as-annotations, TRIPLE/
             // SUBJECT/OBJECT etc., AND the CDT extensions (UNFOLD/FOLD), while
             // syntaxSPARQL_12 drops UNFOLD from the grammar and silently breaks
-            // the supported CDT surface (PLAN Part I §4.0 Trap 1).
+            // the supported CDT surface (the syntaxARQ decision, CHANGELOG.md "Format v5 design notes").
             Query query = QueryFactory.create(queryStr);
+            applyProtocolDataset(query, protocolDataset);
             RelativeIRIResolver resolver = new RelativeIRIResolver(baseURI);
             // Relativize document IRIs the query names so they match the
             // dictionary. Skip the whole-query walk when there is no base.

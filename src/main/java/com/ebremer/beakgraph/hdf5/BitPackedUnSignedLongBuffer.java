@@ -180,7 +180,9 @@ public class BitPackedUnSignedLongBuffer {
         if (fromIndex >= numEntries) return -1;
         long w = fromIndex >>> 6;
         long lastWord = (numEntries - 1) >>> 6;
-        long budgetLast = w + maxWords - 1;
+        // Saturating: an unbounded budget (Long.MAX_VALUE) must not wrap negative
+        // and turn every word crossing into SCAN_EXHAUSTED.
+        long budgetLast = (maxWords >= Long.MAX_VALUE - w) ? Long.MAX_VALUE : w + maxWords - 1;
         // Bits are MSB-first within getWord64's view; shift out the bits before fromIndex.
         long word = getWord64(w << 6) << (fromIndex & 63);
         if (word != 0) {

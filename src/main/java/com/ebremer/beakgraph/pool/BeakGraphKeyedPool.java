@@ -35,7 +35,7 @@ public class BeakGraphKeyedPool extends GenericKeyedObjectPool<URI, BeakGraph> {
     }
     
     public String getStatus() {
-        return String.format("""
+        return String.format(java.util.Locale.ROOT, """
                Active Objects  : %d
                Idle Objects    : %d
                Total Borrowed  : %d

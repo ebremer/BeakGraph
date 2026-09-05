@@ -140,8 +140,7 @@ final class UltraDictionary {
     }
 
     /**
-     * Triple-term component resolution for the literals encoder (PLAN Part IV
-     * §IV.3, ultra flavor): s in the entity space, p in the predicate space,
+     * Triple-term component resolution for the literals encoder (CHANGELOG.md "Format v5 design notes", ultra flavor): s in the entity space, p in the predicate space,
      * o in the object space - entity id, or maxEntityId + literals-section
      * rank for literals and nested triple terms.
      */

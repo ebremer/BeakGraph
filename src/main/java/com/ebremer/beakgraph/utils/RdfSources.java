@@ -11,6 +11,9 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFLanguages;
+import org.apache.jena.riot.lang.LabelToNode;
+import org.apache.jena.riot.system.AsyncParser;
+import org.apache.jena.riot.system.AsyncParserBuilder;
 
 /**
  * The single home for "what RDF source files does BeakGraph accept and how are
@@ -53,6 +56,19 @@ public final class RdfSources {
         public void close() throws IOException {
             stream.close();
         }
+    }
+
+    /**
+     * The one parser configuration every ingest pipeline uses (RAM, parallel,
+     * ultra, huge, plaid): relative references resolve against {@code base}
+     * and blank-node labels are kept as written, so per-document scoping and
+     * bnode alignment see the source labels. A JSON-LD or RDF/XML option added
+     * here reaches all six engines at once (BG-429).
+     */
+    public static AsyncParserBuilder parser(OpenedSource opened, String base) {
+        AsyncParserBuilder builder = AsyncParser.of(opened.stream(), opened.lang(), base);
+        builder.mutateSources(rdfBuilder -> rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+        return builder;
     }
 
     /**

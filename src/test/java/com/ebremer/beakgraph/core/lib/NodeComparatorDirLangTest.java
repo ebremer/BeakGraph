@@ -13,7 +13,7 @@ import org.apache.jena.sparql.util.NodeCmp;
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins {@link NodeComparator}'s dirLangString tie-break (PLAN Phase 1.2), the
+ * Pins {@link NodeComparator}'s dirLangString tie-break, the
  * hard prerequisite for storing rdf:dirLangString: Jena 6.1.0's
  * {@code NodeCmp.compareRDFTerms} answers 0 for DISTINCT dirLangString
  * literals (it ignores both the language tag and the base direction), and

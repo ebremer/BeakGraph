@@ -38,18 +38,20 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
         <exec.mainClass>com.ebremer.beakgraph.cmdline.BeakGraphCLI</exec.mainClass>
+        <!-- On every Jena bump re-sync the pins below (log4j, slf4j, caffeine) with
+             the ver.* properties of org.apache.jena:jena:<version>'s POM: managed
+             versions win over Jena's transitives, so a stale pin silently runs
+             Jena on older libraries than it was built against (BG-195). -->
         <jena.version>6.2.0</jena.version>
         <!--<arrow.version>18.3.0</arrow.version>-->
-        <commons-compress.version>1.28.0</commons-compress.version>
-        <commons-collections.version>4.5.0</commons-collections.version>
         <!--<jaxb.version>2.4.0-b180830.0359</jaxb.version>-->
         <!--<jetty.version>11.0.26</jetty.version>-->
         <!-- Stable 2.x line: a beta logging backend (3.0.0-beta2) has no place in a
              released library. YAML config support in 2.x comes from log4j-core plus
              jackson-dataformat-yaml/jackson-databind (declared below) - the 3.x-only
              log4j-config-yaml module is not needed and does not exist for 2.x. -->
-        <log4j.version>2.25.2</log4j.version>
-        <slf4j.version>2.0.17</slf4j.version>
+        <log4j.version>2.26.1</log4j.version>
+        <slf4j.version>2.0.18</slf4j.version>
         <jhdf.version>0.13.0</jhdf.version>
         <!-- Native HDF5 (https://github.com/HDFGroup/hdf5) backend versions for the
              com.ebremer.beakgraph.huge writers, which need incremental (chunk-at-a-
@@ -58,25 +60,31 @@
              selection is a build-time dependency choice (identical class names
              cannot coexist on one classpath). See the hdf5-backend-* profiles:
              the JavaCPP preset (bundled natives, Maven Central) is the default;
-             -Dhdf5.ffm switches to the HDF Group's own Java 25 FFM bindings. -->
+             -Dhdf5.ffm=true switches to the HDF Group's own Java 25 FFM bindings.
+             The preset bundles natives for linux-x86_64, macosx-x86_64 and
+             windows-x86_64 only (no arm64 jars in any published preset as of
+             1.14.3-1.5.10); see docs/INSTRUCTIONS.md §1 for the platform matrix. -->
         <hdf5.javacpp.version>1.14.3-1.5.10</hdf5.javacpp.version>
         <hdf5.ffm.version>2.1.1</hdf5.ffm.version>
-        <!-- Overridden by the OS-detection profiles below; set explicitly
-             (-Dhdf5.ffm.classifier=...) for platforms they do not recognize.
+        <!-- hdf5.ffm.classifier is SET by the OS-detection profiles below (no
+             default here: an unrecognised platform must fail the enforcer rule
+             in the hdf5-backend-ffm profile, not silently take an x86_64 jar).
+             Set it explicitly (-Dhdf5.ffm.classifier=...) to override.
              Published classifiers: linux-x86_64, windows-x86_64, macos-x86_64,
-             macos-aarch64. -->
-        <hdf5.ffm.classifier>linux-x86_64</hdf5.ffm.classifier>
+             macos-aarch64 (no linux-aarch64, no windows-aarch64). -->
         <jcommander.version>3.0</jcommander.version>
         <hilbert.ver>0.2.3</hilbert.ver>
         <jts.ver>1.20.0</jts.ver>
         <aircompressor.version>3.6</aircompressor.version>
         <commons.pool.ver>2.13.1</commons.pool.ver>
-        <commons.io.version>2.21.0</commons.io.version>
-        <!-- Matches the version Jena pulls in transitively (Jena 6.1 manages 3.2.3);
-             declared explicitly because SimpleNodeTable uses Caffeine directly
-             (so don't rely on a transitive dep). -->
-        <caffeine.version>3.2.3</caffeine.version>
-        <maven-dependency-plugin.version>3.9.0</maven-dependency-plugin.version>
+        <!-- Matches the version Jena 6.2.0 manages (3.2.4); declared explicitly
+             because SimpleNodeTable, FCDReader and MultiTypeDictionaryReader use
+             Caffeine directly (so don't rely on a transitive dep). -->
+        <caffeine.version>3.2.4</caffeine.version>
+        <!-- Heap of the native-image BUILDER JVM (-Pcmdlinenative): the analysis
+             of Jena + Fuseki + jHDF needs tens of GB; override with
+             -Dnative.build.heap=12G on smaller machines (slower, may fail). -->
+        <native.build.heap>32G</native.build.heap>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
         <maven-shade-plugin.version>3.6.1</maven-shade-plugin.version>
         <maven-enforcer-plugin.version>3.6.2</maven-enforcer-plugin.version>
@@ -106,39 +114,34 @@
                 <version>${log4j.version}</version>
             </dependency>
             <dependency>
-                <groupId>org.apache.logging.log4j</groupId>
-                <artifactId>log4j-layout-template-json</artifactId>
-                <version>${log4j.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.logging.log4j</groupId>
-                <artifactId>log4j-1.2-api</artifactId>
-                <version>${log4j.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>commons-io</groupId>
-                <artifactId>commons-io</artifactId>
-                <version>${commons.io.version}</version>
-            </dependency>
-            <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-pool2</artifactId>
                 <version>${commons.pool.ver}</version>
             </dependency>
             <dependency>
-                <groupId>org.apache.commons</groupId>
-                <artifactId>commons-compress</artifactId>
-                <version>${commons-compress.version}</version>
-            </dependency>            
-            <dependency>
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
                 <version>${slf4j.version}</version>
-            </dependency>            
+            </dependency>
+            <!-- Nothing here calls these three; they are pinned ONLY so the
+                 dependencyConvergence rule (lib profile) sees one version across
+                 Jena's transitive graph (commons-csv, commons-compress and
+                 commons-fileupload2 ask for older ones). Kept at the versions
+                 Jena 6.2.0 manages: re-sync on every Jena bump (BG-195). -->
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
                 <version>3.20.0</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>2.22.0</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-codec</groupId>
+                <artifactId>commons-codec</artifactId>
+                <version>1.22.0</version>
             </dependency>
             <dependency>
                 <groupId>jakarta.servlet</groupId>
@@ -159,11 +162,6 @@
                 <groupId>io.airlift</groupId>
                 <artifactId>aircompressor-v3</artifactId>
                 <version>${aircompressor.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>commons-codec</groupId>
-                <artifactId>commons-codec</artifactId>
-                <version>1.20.0</version>
             </dependency>
             <dependency>
                 <groupId>com.github.ben-manes.caffeine</groupId>
@@ -194,17 +192,11 @@
         </resources>
         <plugins>
             <plugin>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>${maven-dependency-plugin.version}</version>
-            </plugin>
-            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${maven-compiler-plugin.version}</version>
                 <configuration>
                     <release>${java.version}</release>
-                    <fork>true</fork>
-                    <executable>${java.home}/bin/javac</executable>
                 </configuration>
             </plugin>
             <plugin>
@@ -213,6 +205,12 @@
                 <version>3.5.6</version>
                 <configuration>
                     <argLine>--enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -Xmx2g</argLine>
+                    <!-- A hung test (a deadlocked reader path under ConcurrentReadTest,
+                         a loopback server that never answers) used to block CI until
+                         the 6-hour job limit. The fork is killed well before that;
+                         src/test/resources/junit-platform.properties adds the
+                         per-method timeout that names the culprit first. -->
+                    <forkedProcessTimeoutInSeconds>3600</forkedProcessTimeoutInSeconds>
                 </configuration>
             </plugin>
         </plugins>
@@ -240,9 +238,10 @@
                     <!-- DELIBERATELY self-contained: the published BeakGraph jar must run
                          with nothing else on the classpath (owner decision - consumers get
                          one jar, dependencies, logging config and all). The trade-off is
-                         documented in REVIEW.md P1: a consumer that ALSO brings its own
-                         Jena/JTS sees duplicate (unrelocated) classes, and the embedded
-                         log4j2.yml at the classpath root takes over that app's logging. -->
+                         recorded in README.md, "Design decisions": a consumer that ALSO
+                         brings its own Jena/JTS sees duplicate (unrelocated) classes, and
+                         the embedded log4j2.yml at the classpath root takes over that
+                         app's logging (-Dthin skips the shading). -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-shade-plugin</artifactId>
@@ -336,7 +335,8 @@
                                      illegal-instruction errors on older or different CPUs.
                                      Switch to -march=compatibility for distributable binaries. -->
                                 <buildArg>-march=native</buildArg>
-                                <buildArg>-J-Xmx32G</buildArg>
+                                <!-- Builder JVM heap: see the native.build.heap property. -->
+                                <buildArg>-J-Xmx${native.build.heap}</buildArg>
                                 <buildArg>-H:IncludeResources=META-INF/sparql/.*</buildArg>
                                 <buildArg>-H:IncludeResources=beakgraph.png</buildArg>
                                 <buildArg>-H:IncludeResources=beakgraph-version.properties</buildArg>
@@ -347,7 +347,11 @@
                                 <buildArg>-H:+ReportExceptionStackTraces</buildArg>
                                 <buildArg>--link-at-build-time=com.ebremer.beakgraph</buildArg>
                                 <buildArg>--future-defaults=all</buildArg>
-                                <buildArg>-R:MaxHeapSize=4g</buildArg>
+                                <!-- No -R:MaxHeapSize: a baked-in cap (it was 4g) silently
+                                     starved the in-memory engines, which hold the whole
+                                     input on the heap. The binary takes Substrate VM's
+                                     default (a fraction of physical RAM); users raise it
+                                     per run with -XX:MaxHeapSize=16g (docs/INSTRUCTIONS.md §7). -->
                             </buildArgs>
                         </configuration>
                     </plugin>
@@ -413,8 +417,12 @@
                  shaded fat jars still package it. -->
             <id>hdf5-backend-javacpp</id>
             <activation>
+                <!-- Value-based: -Dhdf5.ffm=false (a parameterised CI matrix, say)
+                     must keep THIS backend. A bare presence test treated any value,
+                     including false, as opting in to the FFM backend (BG-450). -->
                 <property>
-                    <name>!hdf5.ffm</name>
+                    <name>hdf5.ffm</name>
+                    <value>!true</value>
                 </property>
             </activation>
             <dependencies>
@@ -427,7 +435,7 @@
             </dependencies>
         </profile>
         <profile>
-            <!-- OPT-IN (-Dhdf5.ffm): the HDF Group's own Java bindings for HDF5
+            <!-- OPT-IN (-Dhdf5.ffm=true): the HDF Group's own Java bindings for HDF5
                  ${hdf5.ffm.version}, using the Java 25 FFM API (no JNI glue). Same
                  hdf.hdf5lib.H5 API, so no BeakGraph code changes - any 2.x
                  signature drift would surface only in NativeHdf5File.
@@ -453,8 +461,40 @@
             <activation>
                 <property>
                     <name>hdf5.ffm</name>
+                    <value>true</value>
                 </property>
             </activation>
+            <build>
+                <plugins>
+                    <!-- BG-441: refuse to resolve a classifier the OS-detection
+                         profiles below did not set. Without this an unrecognised
+                         platform (linux-aarch64, windows-aarch64) silently took a
+                         default x86_64 jar of jextract bindings for another ABI. -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-enforcer-plugin</artifactId>
+                        <version>${maven-enforcer-plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>enforce-ffm-classifier</id>
+                                <goals>
+                                    <goal>enforce</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <requireProperty>
+                                            <property>hdf5.ffm.classifier</property>
+                                            <regex>(linux|windows|macos)-(x86_64|aarch64)</regex>
+                                            <regexMessage>hdf5.ffm.classifier must name one of the published hdf5-java-ffm classifiers (linux-x86_64, windows-x86_64, macos-x86_64, macos-aarch64).</regexMessage>
+                                            <message>No hdf5-java-ffm classifier is known for this platform (os.name=${os.name}, os.arch=${os.arch}). The HDF Group publishes linux-x86_64, windows-x86_64, macos-x86_64 and macos-aarch64 only; pass -Dhdf5.ffm.classifier=&lt;one of them&gt; deliberately, or build without -Dhdf5.ffm=true.</message>
+                                        </requireProperty>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
             <repositories>
                 <repository>
                     <id>github-hdfgroup</id>
@@ -479,7 +519,7 @@
         <profile>
             <id>hdf5-ffm-windows</id>
             <activation>
-                <os><family>windows</family></os>
+                <os><family>windows</family><arch>amd64</arch></os>
             </activation>
             <properties>
                 <hdf5.ffm.classifier>windows-x86_64</hdf5.ffm.classifier>
@@ -543,11 +583,6 @@
             <artifactId>progressbar</artifactId>
             <version>0.10.2</version>
         </dependency>
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-collections4</artifactId>
-            <version>${commons-collections.version}</version>
-        </dependency>
         <!--
         <dependency>
             <groupId>javax.xml.bind</groupId>
@@ -564,10 +599,6 @@
             <groupId>org.apache.jena</groupId>
             <artifactId>jena-fuseki-main</artifactId>
             <version>${jena.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-compress</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
@@ -595,21 +626,11 @@
         </dependency>
         <!-- The native HDF5 backend for com.ebremer.beakgraph.huge is supplied by
              one of the hdf5-backend-* profiles (JavaCPP by default, HDF Group FFM
-             with -Dhdf5.ffm) - see <profiles> below. -->
+             with -Dhdf5.ffm=true) - see <profiles> below. -->
         <dependency>
             <groupId>org.jcommander</groupId>
             <artifactId>jcommander</artifactId>
             <version>${jcommander.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-layout-template-json</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-1.2-api</artifactId>
-            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>com.github.davidmoten</groupId>
@@ -642,23 +663,11 @@
             </exclusions>
         </dependency>
     </dependencies>
-    <repositories>
-        <repository>
-            <id>central</id>
-            <name>Maven Central</name>
-            <url>https://repo1.maven.org/maven2</url>
-        </repository>
-        <repository>
-            <id>halcyon</id>
-            <name>Halcyon</name>
-            <url>https://cursus.bmi.stonybrookmedicine.edu/releases</url>
-        </repository>
-        <repository>
-            <id>apache</id>
-            <name>apache</name>
-            <url>https://repository.apache.org/snapshots</url>
-        </repository>
-    </repositories>
+    <!-- Every dependency and plugin is a Maven Central release, so no extra
+         resolution repositories: each one added here joins the supply-chain
+         boundary of EVERY lookup (and stalls clean builds when it is down).
+         The halcyon host remains the deploy target below; the HDF Group's
+         GitHub Packages repository is scoped to the hdf5-backend-ffm profile. -->
     <distributionManagement>
         <repository>
             <id>halcyon</id>

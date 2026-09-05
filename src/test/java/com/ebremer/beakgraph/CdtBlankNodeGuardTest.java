@@ -1,18 +1,20 @@
 package com.ebremer.beakgraph;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
-import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
-import com.ebremer.beakgraph.huge.HugeHDF5Writer;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.apache.jena.graph.Node;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -24,9 +26,9 @@ import org.junit.jupiter.api.io.TempDir;
  * pre-guard: the outside bnode read back as _:b00000000000000000002 while the
  * literal still said _:b1).
  *
- * <p>One rejection test per ingest hierarchy - ProcessQuad (method 0),
- * HugeBuildPipeline.collectLiteralStats (method 1), UltraIngest.buildSets
- * (method 3). Controls pin the boundaries: composite literals without blank
+ * <p>One rejection test per writer engine (methods 0-5: ProcessQuad,
+ * HugeBuildPipeline.collectLiteralStats, the parallel/ultra/hugeUltra/plaid
+ * ingests that inherit or sink into them). Controls pin the boundaries: composite literals without blank
  * nodes build; "_:x" inside a quoted string element is a string, not a blank
  * node (the detector parses, it does not substring-match); ill-formed
  * composite literals stay allowed and round-trip as opaque terms.
@@ -68,35 +70,19 @@ class CdtBlankNodeGuardTest {
         void run() throws Exception;
     }
 
-    @Test
-    void method0RejectsBlankNodeInsideList() throws Exception {
-        Path src = ttl("m0-bad.ttl", BAD_TTL);
-        File dest = dir.resolve("m0-bad.h5").toFile();
-        assertGuardFires(() ->
-            HDF5Writer.Builder().setSource(src.toFile()).setDestination(dest).build().write());
+    static Stream<WriterEngines.Engine> engines() {
+        return WriterEngines.all();
     }
 
-    @Test
-    void method1RejectsBlankNodeInsideList() throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
-        Path src = ttl("m1-bad.ttl", BAD_TTL);
-        File dest = dir.resolve("m1-bad.h5").toFile();
-        assertGuardFires(() -> {
-            HugeHDF5Writer.Builder b = HugeHDF5Writer.Builder().setDestination(dest);
-            b.setSource(src.toFile());
-            b.build().write();
-        });
-    }
-
-    @Test
-    void method3RejectsBlankNodeInsideList() throws Exception {
-        Path src = ttl("m3-bad.ttl", BAD_TTL);
-        File dest = dir.resolve("m3-bad.h5").toFile();
-        assertGuardFires(() -> {
-            UltraHDF5Writer.Builder b = UltraHDF5Writer.Builder().setDestination(dest).setCores(2);
-            b.setSource(src.toFile());
-            b.build().write();
-        });
+    /** BG-182: one rejection test per ENGINE, not per ingest hierarchy - inheritance is not coverage. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    void everyEngineRejectsBlankNodeInsideList(WriterEngines.Engine engine) throws Exception {
+        engine.assumeAvailable();
+        Path src = ttl(engine.name() + "-bad.ttl", BAD_TTL);
+        File dest = dir.resolve(engine.name() + "-bad.h5").toFile();
+        assertGuardFires(() -> engine.buildStore(src.toFile(), dest));
+        assertFalse(dest.exists(), "a rejected build must leave no store behind");
     }
 
     @Test

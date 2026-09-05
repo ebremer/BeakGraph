@@ -6,8 +6,14 @@ name: CI
 
 on:
   push:
-    branches: [ master, next ]
+    # Feature branches get push CI too (they used to be covered only once a PR
+    # was opened); pull_request still runs for forks.
+    branches: [ master, next, 'rdf12*', 'feature/**' ]
   pull_request:
+  # The native-image job below only runs when asked for (or nightly).
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
 
 jobs:
   test:
@@ -16,6 +22,9 @@ jobs:
       matrix:
         os: [ ubuntu-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
+    # Backstop above surefire's forkedProcessTimeoutInSeconds (pom.xml) and the
+    # per-test timeout (junit-platform.properties): never the 6-hour default.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -23,9 +32,53 @@ jobs:
           distribution: temurin
           java-version: 25
           cache: maven
-      - name: Build and test
+      - name: Build, test and package the library jar
+        # 'verify' (not 'test') so the lib profile's shade execution runs and
+        # an overlapping-resource regression is at least visible in the log.
         # Linux must load the bundled JavaCPP HDF5 natives (no system install
         # on the runner): requireNative turns a silent skip of -method 1/4/5
         # coverage into a failure. Windows cannot: the preset's Windows jar
         # ships a JNI glue that imports hdf5.dll without shipping it.
-        run: mvn -B -Plib clean test ${{ matrix.os == 'ubuntu-latest' && '-Dbeakgraph.test.requireNative=true' || '' }}
+        run: mvn -B -Plib clean verify ${{ matrix.os == 'ubuntu-latest' && '-Dbeakgraph.test.requireNative=true' || '' }}
+      - name: Package the command-line jar
+        run: mvn -B -Pcmdlinejar -DskipTests package
+      - name: Build the benchmarks module against the installed root artifact
+        # Catches a benchmarks/pom.xml pin that drifted from the root version.
+        run: |
+          mvn -B -Plib -DskipTests install
+          mvn -B -DskipTests -f benchmarks/pom.xml package
+      - name: RDF 1.2 / SPARQL 1.2 suites on the disk and parallel engines
+        # The vendored W3C suites and the triple-term tests build through the
+        # engine named by beakgraph.test.engine (method 0 in the run above).
+        # Re-run them on the disk pipeline (method 1) and the parallel one
+        # (method 3) so the six-engine conformance claim is tested, not assumed.
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest' -Dbeakgraph.test.engine=method1 -Dbeakgraph.test.requireNative=true
+          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest' -Dbeakgraph.test.engine=method3
+
+  native-image:
+    # Manual / weekly: builds the GraalVM native binary and runs a conversion
+    # through it, so the reachability metadata and the cmdlinenative profile
+    # are exercised at all (they never were). Methods 0/2/3 only - the disk
+    # engines need JNI metadata for hdf.hdf5lib that the image does not carry.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm-community'
+          cache: maven
+      - name: Build the native binary
+        run: mvn -B -Pcmdlinenative -DskipTests -Dnative.build.heap=12G package
+      - name: Convert, export and verify through the binary
+        run: |
+          printf '<http://ex.org/a> <http://ex.org/p> "x" .\n<http://ex.org/a> <http://ex.org/q> <http://ex.org/b> .\n' > tiny.ttl
+          ./target/beakgraph -version
+          ./target/beakgraph -src tiny.ttl -dest tiny.h5 -method 3 -cores 2
+          ./target/beakgraph -src tiny.h5 -export NT
+          ./target/beakgraph -verify tiny.h5 -deep
+          test -s tiny.nt

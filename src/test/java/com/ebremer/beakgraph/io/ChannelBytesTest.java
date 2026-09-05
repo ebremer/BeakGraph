@@ -16,6 +16,7 @@ import java.util.concurrent.Future;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -136,7 +137,8 @@ class ChannelBytesTest {
                         return true;
                     });
                 }
-                for (Future<Boolean> result : pool.invokeAll(tasks)) {
+                for (Future<Boolean> result : pool.invokeAll(tasks, 120, java.util.concurrent.TimeUnit.SECONDS)) {
+                    assertFalse(result.isCancelled(), "a concurrent read task did not finish within the deadline");
                     assertTrue(result.get(), "concurrent reads must match");
                 }
             }

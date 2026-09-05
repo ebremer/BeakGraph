@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -44,10 +45,14 @@ class ParallelScanTest {
     static Dataset ds;
     static Dataset truth;
     static String oldThreshold;
+    static String oldMinChunk;
 
     @BeforeAll
     static void build() throws Exception {
         oldThreshold = System.setProperty("beakgraph.scan.parallel.threshold", "64");
+        // BG-217: several chunks per scan, so two-scan shapes (MINUS, OPTIONAL,
+        // UNION) and concurrent queries really share and contend for workers.
+        oldMinChunk = System.setProperty("beakgraph.scan.parallel.minchunk", "64");
         StringBuilder trig = new StringBuilder("@prefix ex: <" + NS + "> .\n");
         for (int i = 0; i < SUBJECTS; i++) {
             trig.append("ex:s").append(i)
@@ -74,6 +79,11 @@ class ParallelScanTest {
             System.clearProperty("beakgraph.scan.parallel.threshold");
         } else {
             System.setProperty("beakgraph.scan.parallel.threshold", oldThreshold);
+        }
+        if (oldMinChunk == null) {
+            System.clearProperty("beakgraph.scan.parallel.minchunk");
+        } else {
+            System.setProperty("beakgraph.scan.parallel.minchunk", oldMinChunk);
         }
         if (bg != null) bg.close();
     }
@@ -155,6 +165,81 @@ class ParallelScanTest {
         assertTrue(ParallelScan.HITS.get() - before >= 1, "LIMIT scan should still parallelize");
         // The close cascade (slice -> ... -> ParallelScan.close) must stop the
         // producers even though the scan was abandoned almost immediately.
+        awaitWorkersDone();
+    }
+
+    /** All rows as a sorted multiset (shapes below legitimately repeat rows). */
+    private static List<String> rowsList(Dataset dataset, String queryBody) {
+        List<String> out = new java.util.ArrayList<>();
+        try (QueryExecution qe = QueryExecution.dataset(dataset)
+                .query(QueryFactory.create(PREFIX + queryBody)).timeout(30, java.util.concurrent.TimeUnit.SECONDS).build()) {
+            ResultSet rs = qe.execSelect();
+            List<String> vars = rs.getResultVars();
+            while (rs.hasNext()) {
+                QuerySolution row = rs.next();
+                StringBuilder sb = new StringBuilder();
+                for (String v : vars) sb.append(v).append('=').append(row.get(v)).append('|');
+                out.add(sb.toString());
+            }
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    private static void checkList(String queryBody, int minParallelScans) {
+        long before = ParallelScan.HITS.get();
+        List<String> got = rowsList(ds, queryBody);
+        assertEquals(rowsList(truth, queryBody), got, "results for: " + queryBody);
+        assertTrue(ParallelScan.HITS.get() - before >= minParallelScans, "expected " + minParallelScans + " parallel scans for: " + queryBody);
+        assertFalse(got.isEmpty(), "not vacuous: " + queryBody);
+    }
+
+    // --- BG-217: two eligible scans in one query, and many queries at once ---
+
+    @Test
+    @org.junit.jupiter.api.Timeout(60)
+    void minusOverTwoScansMatchesSequential() throws Exception {
+        // LEFT built first and consumed last: the shape that starved a fixed pool.
+        checkList("SELECT ?s WHERE { ?s ex:name ?n MINUS { ?s ex:value ?v FILTER(?v < 250) } }", 2);
+        checkList("SELECT ?s WHERE { ?s ?p ?o MINUS { ?s ex:link ?t FILTER(STRSTARTS(STR(?t), \"http://ex.org/s1\")) } }", 2);
+        awaitWorkersDone();
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(60)
+    void optionalOverTwoScansMatchesSequential() throws Exception {
+        checkList("SELECT * WHERE { ?s ex:value ?v OPTIONAL { ?s ex:name ?n } }", 1);
+        checkList("SELECT * WHERE { ?s ex:value ?v OPTIONAL { ?s ex:link ?t FILTER(?v > 400) } }", 1);
+        awaitWorkersDone();
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(60)
+    void unionAndNotExistsOverScansMatchSequential() throws Exception {
+        checkList("SELECT ?s WHERE { { ?s ex:value ?v } UNION { ?s ex:name ?n } }", 2);
+        checkList("SELECT ?s WHERE { ?s ex:value ?v FILTER NOT EXISTS { ?s ex:refl ?s } }", 1);
+        awaitWorkersDone();
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(120)
+    void concurrentFullScansAllCompleteAndMatchTruth() throws Exception {
+        int threads = 2 * Runtime.getRuntime().availableProcessors();
+        Set<String> expected = rows(truth, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }");
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        try {
+            List<java.util.concurrent.Future<Set<String>>> futures = new java.util.ArrayList<>();
+            long before = ParallelScan.HITS.get();
+            for (int t = 0; t < threads; t++) {
+                futures.add(pool.submit(() -> rows(ds, "SELECT ?s ?p ?o WHERE { ?s ?p ?o }")));
+            }
+            for (java.util.concurrent.Future<Set<String>> f : futures) {
+                assertEquals(expected, f.get(90, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertTrue(ParallelScan.HITS.get() - before >= threads, "every query ran as a parallel scan");
+        } finally {
+            pool.shutdownNow();
+        }
         awaitWorkersDone();
     }
 

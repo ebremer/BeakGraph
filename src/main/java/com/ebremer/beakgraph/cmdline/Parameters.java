@@ -11,10 +11,16 @@ import java.io.File;
  */
 public class Parameters {
     
-    @Parameter(names = "-help", converter = BooleanConverter.class, help = true)
+    @Parameter(names = "-help", converter = BooleanConverter.class, help = true,
+            description = "Print this usage text and exit")
     public boolean help = false;
 
-    @Parameter(names = "-endpoint", description = "Start SPARQL Endpoint for -endpoint", required = false)
+    @Parameter(names = "-endpoint",
+            description = "Serve instead of converting: a single .h5 file as a SPARQL endpoint at "
+                        + "/rdf, or a directory served in full as W3C LWS storage (every .h5 in it "
+                        + "answers SPARQL at its own URL; the metadata model is served at /rdf and "
+                        + "written into the directory as beakgraph.ttl.gz on first start)",
+            required = false)
     public File sparqlendpoint = null;
     
     @Parameter(names = "-port", description = "Set HTTP port when endpoint started", required = false)
@@ -59,10 +65,13 @@ public class Parameters {
                         + "(-method 1/4/5). Mutually exclusive with -void")
     public boolean voidSketch = false;
 
-    @Parameter(names = {"-spatial"}, converter = BooleanConverter.class)
+    @Parameter(names = {"-spatial"}, converter = BooleanConverter.class,
+            description = "Build the Hilbert-curve spatial index for geo:wktLiteral geometry "
+                        + "(adds the urn:x-beakgraph:Spatial graph and grid-tile graphs)")
     public boolean spatial = false;
 
-    @Parameter(names = {"-features"}, converter = BooleanConverter.class)
+    @Parameter(names = {"-features"}, converter = BooleanConverter.class,
+            description = "With -spatial: also derive 2-D shape features (area, axes, ...) per geometry")
     public boolean features = false;
 
     @Parameter(names = {"-huge"}, converter = BooleanConverter.class,
@@ -71,9 +80,10 @@ public class Parameters {
     public boolean huge = false;
 
     @Parameter(names = "-workdir",
-            description = "Workspace directory for -huge spill files; needs free space on the "
-                        + "order of a few times the uncompressed source (default: each "
-                        + "destination file's directory)", required = false)
+            description = "Workspace directory for the disk-based writers' (-method 1/4/5, -huge) "
+                        + "spill files; needs free space on the order of a few times the "
+                        + "uncompressed source (default: each destination file's directory)",
+            required = false)
     public File workdir = null;
     
     @Parameter(names = {"-merge"}, converter = BooleanConverter.class,
@@ -104,7 +114,7 @@ public class Parameters {
     public int method = 0;
 
     @Parameter(names = "-cores", validateWith = PositiveInteger.class,
-            description = "# of threads each -method 2 or -method 3 conversion may use (with "
+            description = "# of threads each -method 2/3/4/5 conversion may use (with "
                         + "-threads N, N conversions run at once, each capped at -cores)")
     public int cores = 4;
 
@@ -139,12 +149,16 @@ public class Parameters {
                         + "structural checks pass over")
     public boolean deep = false;
 
-    @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)
+    @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class,
+            description = "Print the version and exit")
     public boolean version = false;
 
-    @Parameter(names = {"-status"}, converter = BooleanConverter.class)
-    public boolean status = false;    
-    
-    @Parameter(names = "-threads", description = "# of Threads")
+    @Parameter(names = {"-status"}, converter = BooleanConverter.class,
+            description = "Show a progress bar (per-file mode) and end-of-run counters")
+    public boolean status = false;
+
+    @Parameter(names = "-threads", validateWith = PositiveInteger.class,
+            description = "Number of per-file conversions run concurrently (each gets its own "
+                        + "-cores budget, so total CPU is about threads x cores)")
     public int threads = 1;
 }

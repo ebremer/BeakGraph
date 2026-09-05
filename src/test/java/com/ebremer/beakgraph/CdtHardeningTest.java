@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * CDT hardening over a real store (PLAN Part II C.5/C.8/C.10), plus the
+ * CDT hardening over a real store, plus the
  * empty-store regression the SPARQL-CDTs suite exposed.
  */
 class CdtHardeningTest {

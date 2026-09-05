@@ -38,8 +38,6 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 import com.ebremer.beakgraph.core.lib.RelativeIris;
-import org.apache.jena.riot.lang.LabelToNode;
-import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.RDF;
@@ -137,7 +135,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private RecordSorter<TermRow> gSorter;
     private RecordSorter<TermRow> sSorter;
     private RecordSorter<TermRow> oSorter;
-    // Interior terms of RDF 1.2 triple terms (PLAN Part IV §IV.7): they need
+    // Interior terms of RDF 1.2 triple terms (CHANGELOG.md "Format v5 design notes"): they need
     // DICTIONARY entries but never role-list membership, so they spill to
     // dedicated sorters merged into the dictionary derivation only - never into
     // the positional columns the id joins and columnar lists are built from.
@@ -349,7 +347,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                         try (var s = litFile.read()) {
                             dicts[2].encode(s);
                         }
-                        // Reference join (PLAN Part IV §IV.8): entFile is safe to
+                        // Reference join (CHANGELOG.md "Format v5 design notes"): entFile is safe to
                         // read concurrently with the entities encode stage - the
                         // id joins already read it from three stages at once.
                         if (ttSupport != null && ttSupport.count() > 0) {
@@ -519,9 +517,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
         // Turtle); .gz and .zip are decompressed transparently - one shared rule
         // with the RAM writer and the CLI filter (RdfSources).
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase);
-            parserBuilder.mutateSources(rdfBuilder ->
-                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase);
             SpatialAugmenter augmenter = new SpatialAugmenter(features);
             // Spatial tasks run concurrently exactly like the RAM writer, but the
             // completion window is BOUNDED: results are drained and spilled as
@@ -834,7 +830,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /**
      * Numeric canonicalization, quad level. Delegates the per-node rule to the
      * RAM builder's single implementation (the former byte-identical copy here
-     * was the mirror-topology hazard PLAN §1.6 warns about), recursing into
+     * was the mirror-topology hazard CHANGELOG.md "Format v5 design notes" (mirror topology) warns about), recursing into
      * triple-term objects exactly as the RAM builder does.
      */
     public static Quad canonicalizeNumericObject(Quad quad) {

@@ -10,7 +10,7 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 
 /**
- * Disk-engine triple-term component machinery (PLAN Part IV §IV.8, realizing
+ * Disk-engine triple-term component machinery (CHANGELOG.md "Format v5 design notes", realizing
  * §3.2.7's join stage): during the literals-dictionary encode, each triple
  * term's component TERMS spill as {@code (term, key)} records with
  * {@code key = ordinal*3 + slot}; after the encode, one term-ordered pass -

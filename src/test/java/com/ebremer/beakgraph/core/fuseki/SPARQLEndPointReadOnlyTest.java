@@ -38,7 +38,7 @@ class SPARQLEndPointReadOnlyTest {
     private static Path root;
     private static SPARQLEndPoint endpoint;
     private static String base;
-    private static final HttpClient http = HttpClient.newHttpClient();
+    private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
 
     @BeforeAll
     static void startEndpoint() throws Exception {
@@ -67,7 +67,7 @@ class SPARQLEndPointReadOnlyTest {
     private static HttpResponse<String> ask() throws Exception {
         String q = "ASK { " + INJECTED + " }";
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + "rdf?query="
-                + URLEncoder.encode(q, StandardCharsets.UTF_8)))
+                + URLEncoder.encode(q, StandardCharsets.UTF_8))).timeout(java.time.Duration.ofSeconds(60))
                 .header("Accept", "application/sparql-results+json").GET().build();
         return send(req);
     }
@@ -81,7 +81,7 @@ class SPARQLEndPointReadOnlyTest {
         // BG-403: the endpoint wires the metadata refresher, so a file copied into
         // the served directory after start-up is servable on its first request.
         Files.write(root.resolve("later.txt"), "later".getBytes(StandardCharsets.UTF_8));
-        HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(base + "later.txt"))
+        HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(base + "later.txt")).timeout(java.time.Duration.ofSeconds(60))
                 .header("Accept", "*/*").GET().build());
         assertEquals(200, r.statusCode(), r.body());
         assertEquals("later", r.body());
@@ -96,11 +96,11 @@ class SPARQLEndPointReadOnlyTest {
         // SPARQL Update over the dedicated update service and over the dataset root.
         String update = "INSERT DATA { " + INJECTED + " }";
         for (String path : new String[] {"rdf/update", "rdf"}) {
-            HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(base + path))
+            HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60))
                     .header("Content-Type", "application/sparql-update")
                     .POST(HttpRequest.BodyPublishers.ofString(update)).build());
             assertRefused(r, "SPARQL Update via " + path);
-            r = send(HttpRequest.newBuilder(URI.create(base + path))
+            r = send(HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60))
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .POST(HttpRequest.BodyPublishers.ofString("update="
                             + URLEncoder.encode(update, StandardCharsets.UTF_8))).build());
@@ -110,15 +110,15 @@ class SPARQLEndPointReadOnlyTest {
         // Graph Store Protocol writes.
         String turtle = INJECTED + " .";
         for (String path : new String[] {"rdf?default", "rdf/data?default"}) {
-            HttpResponse<String> put = send(HttpRequest.newBuilder(URI.create(base + path))
+            HttpResponse<String> put = send(HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60))
                     .header("Content-Type", "text/turtle")
                     .PUT(HttpRequest.BodyPublishers.ofString(turtle)).build());
             assertRefused(put, "GSP PUT via " + path);
-            HttpResponse<String> post = send(HttpRequest.newBuilder(URI.create(base + path))
+            HttpResponse<String> post = send(HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60))
                     .header("Content-Type", "text/turtle")
                     .POST(HttpRequest.BodyPublishers.ofString(turtle)).build());
             assertRefused(post, "GSP POST via " + path);
-            HttpResponse<String> delete = send(HttpRequest.newBuilder(URI.create(base + path))
+            HttpResponse<String> delete = send(HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60))
                     .DELETE().build());
             assertRefused(delete, "GSP DELETE via " + path);
         }
@@ -131,7 +131,7 @@ class SPARQLEndPointReadOnlyTest {
         // Reads are still the whole point: the LWS metadata is queryable.
         String count = "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }";
         HttpResponse<String> r = send(HttpRequest.newBuilder(URI.create(base + "rdf?query="
-                + URLEncoder.encode(count, StandardCharsets.UTF_8)))
+                + URLEncoder.encode(count, StandardCharsets.UTF_8))).timeout(java.time.Duration.ofSeconds(60))
                 .header("Accept", "application/sparql-results+json").GET().build());
         assertEquals(200, r.statusCode(), r.body());
         assertFalse(r.body().contains("\"value\" : \"0\""), "metadata model must not be empty: " + r.body());

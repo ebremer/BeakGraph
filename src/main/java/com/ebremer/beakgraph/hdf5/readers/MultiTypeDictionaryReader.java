@@ -58,7 +58,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // Injected by PositionalDictionaryReader after every section exists: a
     // triple term's components live in DIFFERENT dictionaries (s: entities,
     // p: predicates, o: object space), which this per-section reader cannot
-    // reach on its own (PLAN Part IV §IV.4). Volatile only for safe publication;
+    // reach on its own (CHANGELOG.md "Format v5 design notes"). Volatile only for safe publication;
     // it is wired once, before any query can run.
     private volatile TripleTermResolver tripleTermResolver;
     private final long numEntries;

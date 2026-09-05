@@ -207,7 +207,7 @@ public class LWSStorageServlet extends HttpServlet {
         STORAGE_ROOT = root;
     }
     private boolean isHDF5(Path file) {
-        String name = file.getFileName().toString().toLowerCase();
+        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         return name.endsWith(".h5");
     }
 
@@ -215,7 +215,7 @@ public class LWSStorageServlet extends HttpServlet {
         String method = req.getMethod();
         String ct = req.getContentType();
         if ("POST".equals(method) && ct != null) {
-            String ctl = ct.toLowerCase();
+            String ctl = ct.toLowerCase(Locale.ROOT);
             if (ctl.startsWith("application/sparql-query")) return true;
             if (ctl.startsWith("application/x-www-form-urlencoded") && req.getParameter("query") != null) return true;
       }
@@ -242,7 +242,8 @@ public class LWSStorageServlet extends HttpServlet {
             // from, on the same live base the advertised links use - so result
             // IRIs and navigation links agree (and both follow -base when set).
             healthy = BGSparqlService.execute(bg.getDataset(), queryStr,
-                    liveBase(req) + encodeHref(reqPath), req.getHeader("Accept"), resp);
+                    liveBase(req) + encodeHref(reqPath), req.getHeader("Accept"), resp,
+                    BGSparqlService.extractDatasetDescription(req));
         } catch (BGSparqlService.QueryExecutionFailedException ex) {
             // Failure after the response committed: nothing may touch the response
             // now. Rethrow (after the finally settles the reader) so the container
@@ -719,7 +720,7 @@ public class LWSStorageServlet extends HttpServlet {
         if (reqPath.equals("description")) {
             // The storage description MUST be available as application/lws+json;
             // ld+json / json are equivalent bodies with a different Content-Type.
-            String acceptHdr = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase() : "";
+            String acceptHdr = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase(Locale.ROOT) : "";
             String ct = acceptHdr.contains("ld+json") && !acceptHdr.contains("lws+json")
                     ? "application/ld+json"
                     : (acceptHdr.contains("lws+json") || acceptHdr.isEmpty() || !acceptHdr.contains("json"))
@@ -753,7 +754,7 @@ public class LWSStorageServlet extends HttpServlet {
         boolean isContainer = r.hasProperty(RDF.type, LWS_CONTAINER);
         addCommonLinks(resp, base, resourceURI, isContainer);
         resp.setHeader("Vary", "Accept");
-        String accept = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase() : "";
+        String accept = req.getHeader("Accept") != null ? req.getHeader("Accept").toLowerCase(Locale.ROOT) : "";
         String formatParam = req.getParameter("format");
         boolean forceTurtle = "turtle".equalsIgnoreCase(formatParam);
         boolean forceJsonLd = "jsonld".equalsIgnoreCase(formatParam);
@@ -1024,7 +1025,9 @@ public class LWSStorageServlet extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         resp.setHeader("X-Content-Type-Options", "nosniff");
-        logger.info("LWS {} {} ct={} query-param={} bodyLen={}",
+        // One line per request is access-log volume: DEBUG, so a long-running
+        // -endpoint server does not grow its log file with every POST (BG-193).
+        logger.debug("LWS {} {} ct={} query-param={} bodyLen={}",
         req.getMethod(), req.getRequestURI(), req.getContentType(),
         req.getParameter("query") != null, req.getContentLengthLong());
         String reqPath = decodePath(req.getRequestURI());

@@ -342,7 +342,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             if (langDirs != null) langDirs.writeLong(0);
             // Component ids resolve NOW - the section's sort already fixed every
             // rank, so nested terms resolve through this (partially encoded)
-            // section's own locate() (the "flat second pass" of PLAN §3.1).
+            // section's own locate() (the "flat second pass" of the dictionary design).
             long[] c = tripleTermEncoder.encode(node, this);
             tripleTerms.writeLong(c[0]);
             tripleTerms.writeLong(c[1]);

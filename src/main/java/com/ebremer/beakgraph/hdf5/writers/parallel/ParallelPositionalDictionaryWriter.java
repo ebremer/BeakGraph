@@ -88,7 +88,7 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
 
         if (stats.numTripleTerms > 0) {
             // Triple-term component ids resolve against COMPLETED entities and
-            // predicates dictionaries (PLAN Part IV §IV.3's parallel-writer
+            // predicates dictionaries (CHANGELOG.md "Format v5 design notes"'s parallel-writer
             // sequencing constraint): join those two first, then build the
             // literals section. Triple-term-free datasets - the case that
             // matters for throughput - keep the historical full concurrency in
@@ -152,7 +152,7 @@ public class ParallelPositionalDictionaryWriter implements GSPODictionary, AutoC
     }
 
     /**
-     * Triple-term component resolution (PLAN Part IV §IV.3): entities and
+     * Triple-term component resolution (CHANGELOG.md "Format v5 design notes"): entities and
      * predicates are complete when this runs (the sequencing branch above);
      * literal and nested-triple-term objects resolve through the literals
      * section's own already-sorted ranks, offset into the object space.

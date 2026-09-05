@@ -49,7 +49,7 @@ class LWSMetadataRefreshTest {
     private static Server server;
     private static String base;
     private static LWSMetadataRefresher refresher;
-    private static final HttpClient http = HttpClient.newHttpClient();
+    private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
 
     @BeforeAll
     static void startServer() throws Exception {
@@ -79,7 +79,7 @@ class LWSMetadataRefreshTest {
     }
 
     private static HttpResponse<String> get(String path, String accept) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(base + path)).header("Accept", accept).GET().build();
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60)).header("Accept", accept).GET().build();
         return http.send(req, HttpResponse.BodyHandlers.ofString());
     }
 

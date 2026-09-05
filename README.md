@@ -13,22 +13,38 @@ BeakGraph is an [Apache Jena](https://jena.apache.org/) Graph implementation of 
 
 ## Building
 
-Configuration file generation for native-image (already generated for current source code.  Only needed if extensive changes have been made)
+Requires Java 25 and Maven 3.9 (see [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §1-2 for the
+native HDF5 library the disk-based engines need).
+
 ```
-java -Xmx16G -agentlib:native-image-agent=config-output-dir=src\main\resources\META-INF\native-image -jar target\BeakGraph-0.15.0.jar
+mvn -Plib clean package             # self-contained library jar: target/BeakGraph-<version>.jar
+mvn -Pcmdlinejar clean package      # the same jar, as the command-line tool
+mvn -Pcmdlinenative clean package   # GraalVM native binary: target/beakgraph
 ```
-Native Command-line
+
+The native binary runs the in-memory engines only (`-method 0/2/3`; the disk engines need JNI
+metadata for the HDF5 library that the image does not carry) and takes Substrate VM's default
+heap - raise it per run with `beakgraph -XX:MaxHeapSize=16g ...` (the equivalent of
+`java -Xmx16g`). The builder JVM needs a large heap (`-Dnative.build.heap=32G` by default).
+Its reachability metadata under `src/main/resources/META-INF/native-image` is generated with the
+tracing agent and must be regenerated after CLI or dependency changes:
+
 ```
-mvn -Pcmdlinenative clean package
+java -agentlib:native-image-agent=config-merge-dir=src/main/resources/META-INF/native-image \
+     -jar target/BeakGraph-<version>.jar <a representative run: -method 0..5, -merge, -export, -verify, -endpoint>
 ```
-Jar Command-line
-```
-mvn -Pcmdlinejar clean package
-```
-Core Library Jar Library
-```
-mvn -Plib clean package
-```
+
+## Command line
+
+`java -jar target/BeakGraph-<version>.jar -help` lists every option; the full reference is
+[docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md). In short:
+
+* `-src <file|dir> -dest <file|dir>` converts RDF to `.h5` (`-method 0..5` selects the engine:
+  in-memory 0/2/3, disk-based 1/4/5 for inputs larger than RAM; `-merge` folds a tree into one store).
+* `-src <file.h5|dir> -export NT|NQ|TTL|TRIG|JSON-LD` dumps stores back to RDF.
+* `-verify <file.h5|dir> [-deep]` integrity-checks stores before publishing them.
+* `-endpoint <file.h5|dir> -port 8888` serves one store, or a whole directory as W3C LWS storage,
+  over SPARQL.
 
 ## Benchmarks
 
@@ -44,9 +60,9 @@ java -jar target/benchmarks.jar  # run (see benchmarks/README.md for options)
 
 ### Creating a BeakGraph from your data
 
-The source syntax is detected from the file name (Turtle, TriG, N-Quads,
-N-Triples; `.gz` compression is handled), so named graphs can be loaded from
-quad-capable formats.
+The source syntax is detected from the file name - Turtle, N-Triples, N-Quads,
+TriG, RDF/XML and JSON-LD, each also as `.gz` or `.zip` - so named graphs can be
+loaded from the quad-capable formats (TriG, N-Quads).
 
 ```java
 BG.getBGWriterBuilder()
@@ -72,14 +88,32 @@ SPARQL runs with BeakGraph's own execution (index-driven joins, filter pushdown,
 issued against the dataset or against a Model over the graph (`ds.getDefaultModel()`,
 `ModelFactory.createModelForGraph(bg)`).
 
+### Querying a remote store in place
+
+A store on a web server or object store is queried through HTTP range requests, without
+downloading it (block-cached, retried on transient failures):
+
+```java
+try (BeakGraph bg = BG.getBeakGraph(
+        new HTTPSeekableByteChannel(URI.create("https://example.org/data.h5")))) {
+    Dataset ds = bg.getDataset();
+}
+```
+
+Document-relative IRIs (`<>`, `<sibling.png>`) are stored unresolved and resolved against the
+URL a store is served from; see [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) "Document-relative
+IRIs" and SPECIFICATIONS.md §9.2.
+
 BeakGraph is a [Apache Jena](https://jena.apache.org/) Graph implementation backed by [HDF5](https://www.hdfgroup.org/solutions/hdf5/).
 Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/).
 
 ### Limitations
 
-* BeakGraph files are read-only; the writer builds them in one pass and holds
-  the working set in RAM (very large datasets may need a correspondingly large
-  heap).
+* BeakGraph files are read-only. The in-memory engines (`-method 0/2/3`) hold
+  the whole input on the heap; the disk-based engines (`-method 1/4/5`, native
+  HDF5 library required, spill space under `-workdir`) bound RAM by spilling and
+  are the way to build stores larger than memory
+  ([docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §6-7).
 * GeoSPARQL support covers `geof:sfIntersects` only. It is fully functional: a
   recall-safe Hilbert cell-cover index produces candidate geometries and every
   candidate is verified with real JTS geometry, so results are exact. Other
@@ -104,16 +138,16 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   triple terms (`<<( s p o )>>`, including the reifier/annotation sugar and
   nesting; format v5) are stored and matched term-exactly across every writer
   engine, and SPARQL 1.2 triple-term patterns — embedded variables included —
-  are answered from the index. Evidence: the vendored W3C RDF 1.2 suites (213
-  executed, 0 failures) and SPARQL 1.2 suites (259 executed, 0 failures) run in
-  CI over real stores (`W3CRdf12SuiteTest`, `W3CSparql12SuiteTest`; see
+  are answered from the index. Evidence: the vendored W3C RDF 1.2 suites (215
+  executed, 0 failures) and SPARQL 1.2 suites (266 executed, 0 failures) run in
+  CI over real stores, on every writer engine (`W3CRdf12SuiteTest`, `W3CSparql12SuiteTest`; see
   [RDF_1.2-compliance.md](RDF_1.2-compliance.md)). Versions ≤ 0.17.0 silently
   stored base-direction literals as plain `"x"@en` — rebuild affected stores; a
   version that rejects or correctly stores them is the detector.
 * SPARQL-CDT composite literals (`cdt:List`/`cdt:Map`; the
   [spec](https://awslabs.github.io/SPARQL-CDTs/spec/latest.html) is an
   **Unofficial Draft**) are stored term-exactly and queryable with Jena's
-  `cdt:` functions, `FOLD`, and `UNFOLD` — the spec's own 658-test suite runs
+  `cdt:` functions, `FOLD`, and `UNFOLD` — the spec's own 659-test suite runs
   against BeakGraph stores in CI (`SparqlCdtSuiteTest`). Caveats: the
   dictionary orders composite literals lexically, so stores built by ≤ 0.17.0
   that contain them must be rebuilt; blank nodes inside composite literals are
@@ -122,6 +156,31 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   filtering or joining inside a list/map parses the whole value in RAM, so
   model data as triples when you need to query it and as composite literals
   when you need compact, exact round-tripping.
+
+### Design decisions
+
+* **One self-contained jar.** The published library jar shades every dependency (Jena, Fuseki,
+  jHDF, JTS, the HDF5 natives, log4j and its `log4j2.yml` at the classpath root), so a consumer
+  gets one artifact that runs on an empty classpath. The trade-off: a consumer that also brings
+  its own Jena or JTS sees duplicate, unrelocated classes, and the embedded logging
+  configuration takes over that application's log4j setup (it writes a rolling
+  `logs/beakgraph.log`; `-Dbeakgraph.log.dir` moves it). `mvn -Dthin` builds the plain jar.
+* **Six engines, one format.** Every `-method` targets the same on-disk format
+  (SPECIFICATIONS.md); the RAM-family engines produce byte-identical stores, the disk family
+  isomorphic ones. Rules shared by all engines live in one helper each
+  (`RdfSources.parser`, `RelativeIris`, `Params.gridGraph`, `NodeComparator`), because six
+  hand-mirrored copies of a rule were the recurring source of divergence.
+* **Locale-independent code.** Identifiers, protocol strings and file names are case-mapped
+  and formatted with `Locale.ROOT` (never the JVM default: `"trig".toUpperCase()` is `TRİG` under
+  tr-TR, `%d` prints Arabic-Indic digits under ar-EG); `LocaleRuleTest` scans the sources for
+  violations.
+* Format history and the RDF 1.2 design notes: [CHANGELOG.md](CHANGELOG.md).
+
+### License
+
+Apache License 2.0 ([LICENSE](LICENSE)). Source files without a header are BeakGraph's own,
+copyright 2021-2026 Erich Bremer; the vendored zstd codec (`io.airlift.compress.v3.zstdFFM`)
+and the Jena-derived GeoSPARQL vocabularies keep their original headers - see [NOTICE](NOTICE).
 
 ### Author's notes
 The first iteration of BeakGraph was backed by Apache Arrow instead of [HDF5](https://www.hdfgroup.org/solutions/hdf5/).  An Apache Arrow version will return.  Reasons for this are varied with some of these reasons being just experimentation.
@@ -146,7 +205,7 @@ wrapped in a [Research Object Crate (RO-Crate)](https://www.researchobject.org/r
 Developed to power [Halcyon](https://github.com/halcyon-project/Halcyon).  See [Arxiv](https://arxiv.org/) paper at http://arxiv.org/abs/2304.10612
 
 <img
-  src="https://github.com/ebremer/BeakGraph/blob/develop/src/main/resources/beakgraph.png"
+  src="https://github.com/ebremer/BeakGraph/raw/master/beakgraph.png?raw=true"
   width=300px height=300px
   alt="BeakGraph"
   title="BeakGraph"

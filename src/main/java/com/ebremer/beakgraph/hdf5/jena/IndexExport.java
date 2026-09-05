@@ -93,6 +93,14 @@ public final class IndexExport {
             return false;
         }
         HITS.incrementAndGet();
+        if (dict.isEmpty() || gspo.getIDBuffer('P') == null || gspo.getIDBuffer('O') == null
+                || gspo.getBitmapBuffer('S') == null) {
+            // A store built from an empty source (BG-348): no dictionary sections
+            // and absent or zero-entry index components. There is nothing to
+            // emit; the empty file IS the export. The emitter used to NPE here.
+            os.flush();
+            return true;
+        }
         Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8), 1 << 16);
         Emitter emitter = new Emitter(dict, gspo, w, termMap);
         long defaultGi = dict.getGraphs().locate(Quad.defaultGraphIRI);

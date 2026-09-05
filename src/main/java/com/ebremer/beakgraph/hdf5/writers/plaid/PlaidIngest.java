@@ -15,8 +15,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import org.apache.jena.riot.lang.LabelToNode;
-import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
@@ -104,9 +102,7 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
         logger.info("Parsing {} (plaid, parallel disk-based build)", input);
         final long start = System.nanoTime();
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), parseBase);
-            parserBuilder.mutateSources(rdfBuilder ->
-                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase);
             SpatialAugmenter augmenter = new SpatialAugmenter(features);
             // Batch state: source quads and their count in this batch (derived
             // spatial quads ride along but are not counted as source quads).

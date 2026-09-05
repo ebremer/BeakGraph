@@ -41,6 +41,24 @@ public final class WriterEngines {
         }
     }
 
+    /** Names the engine the W3C suites and the triple-term tests build with. */
+    public static final String ENGINE_PROPERTY = "beakgraph.test.engine";
+
+    /**
+     * The engine named by {@code -Dbeakgraph.test.engine} (a name from
+     * {@link #all()}, or its {@code methodN} prefix; default method 0). The
+     * vendored RDF 1.2 / SPARQL 1.2 suites and RDF12TripleTermTest build
+     * through this, so CI can re-run them on the disk and parallel engines
+     * (BG-293) instead of asserting six-engine conformance from method 0 alone.
+     */
+    public static Engine selected() {
+        String name = System.getProperty(ENGINE_PROPERTY, "method0");
+        return all().filter(e -> e.name().equals(name) || e.name().startsWith(name + "-"))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown " + ENGINE_PROPERTY + " '" + name
+                        + "'; one of " + all().map(Engine::name).toList()));
+    }
+
     public static Stream<Engine> all() {
         return Stream.of(
             new Engine("method0-HDF5Writer", false, (src, dest) ->

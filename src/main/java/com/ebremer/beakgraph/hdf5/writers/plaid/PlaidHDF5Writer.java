@@ -51,6 +51,8 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
     public void write() throws IOException {
         logger.info("Writing BeakGraph (plaid: parallel-ingest disk-based, {} cores) to {}",
                 builder.cores, builder.getDestination());
+        // Fail before any parsing or sorting if the native HDF5 library is missing (BG-441).
+        com.ebremer.beakgraph.huge.NativeHdf5File.requireAvailable();
         Path dest = builder.getDestination().toPath();
         Path tmp = AtomicPublish.tempFor(dest);
         Path workBase = (builder.workDir != null) ? builder.workDir

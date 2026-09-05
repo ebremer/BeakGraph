@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import io.jhdf.HdfFile;
 import io.jhdf.api.Group;
 import java.io.File;
@@ -31,7 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * RDF 1.2 triple terms over a real method-0 store (PLAN Phases 3+4, Part IV):
+ * RDF 1.2 triple terms over a real method-0 store:
  * term-exact round-trip (nested terms, blank-node co-reference, embedded
  * dirLang identity), the id-level unification of variable-containing
  * triple-term patterns through every iterator family, the SPARQL 1.2 term
@@ -80,7 +79,9 @@ class RDF12TripleTermTest {
         Path src = dir.resolve("tripleterms.trig");
         Files.writeString(src, TRIG);
         dest = dir.resolve("tripleterms.h5").toFile();
-        HDF5Writer.Builder().setSource(src.toFile()).setDestination(dest).build().write();
+        // The engine named by -Dbeakgraph.test.engine (method 0 by default).
+        WriterEngines.selected().assumeAvailable();
+        WriterEngines.selected().buildStore(src.toFile(), dest);
         bg = BG.getBeakGraph(dest);
         ds = bg.getDataset();
     }
@@ -131,7 +132,7 @@ class RDF12TripleTermTest {
         Path src = dir.resolve("canon.ttl");
         Files.writeString(src, two);
         File out = dir.resolve("canon.h5").toFile();
-        HDF5Writer.Builder().setSource(src.toFile()).setDestination(out).build().write();
+        WriterEngines.selected().buildStore(src.toFile(), out);
         try (BeakGraph b2 = BG.getBeakGraph(out)) {
             List<QuerySolution> rows = select(b2.getDataset(), PRE + "SELECT ?o WHERE { :r :num ?o }");
             assertEquals(1, rows.size(),

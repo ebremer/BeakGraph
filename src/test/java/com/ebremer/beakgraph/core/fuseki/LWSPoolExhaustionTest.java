@@ -46,7 +46,7 @@ class LWSPoolExhaustionTest {
     private static Server server;
     private static String base;
     private static URI poolKey;
-    private static final HttpClient http = HttpClient.newHttpClient();
+    private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
     private static final BeakGraphKeyedPool pool = BeakGraphPool.getPool();
 
     @BeforeAll
@@ -79,7 +79,7 @@ class LWSPoolExhaustionTest {
 
     private static HttpResponse<String> query() throws Exception {
         String url = base + "busy.h5?query=" + URLEncoder.encode("SELECT * WHERE { ?s ?p ?o }", StandardCharsets.UTF_8);
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url)).timeout(java.time.Duration.ofSeconds(60))
                 .header("Accept", "application/sparql-results+json").GET().build();
         return http.send(req, HttpResponse.BodyHandlers.ofString());
     }
