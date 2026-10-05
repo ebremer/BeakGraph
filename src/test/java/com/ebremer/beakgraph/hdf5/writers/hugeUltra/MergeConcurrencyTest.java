@@ -14,8 +14,12 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.RunnableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -42,7 +46,14 @@ class MergeConcurrencyTest {
         pool.shutdownNow();
     }
 
-    /** Delegates to the pool while counting how many submitted tasks run at once. */
+    /**
+     * Delegates to the pool while counting how many submitted tasks run at once.
+     * A task stops counting INSIDE its future, before the future completes: the
+     * sorter starts the next wave as soon as get() returns, so counting around
+     * the whole FutureTask - as this did - left a finished task still counted
+     * while its successor started. Under scheduling pressure (a loaded CI
+     * runner, the full suite) that read as cap + 1 or more tasks at once.
+     */
     static final class CountingExecutor extends AbstractExecutorService {
         private final ExecutorService delegate;
         private final AtomicInteger running = new AtomicInteger();
@@ -54,17 +65,32 @@ class MergeConcurrencyTest {
         }
 
         @Override
-        public void execute(Runnable command) {
-            total.incrementAndGet();
-            delegate.execute(() -> {
+        protected <T> RunnableFuture<T> newTaskFor(Callable<T> callable) {
+            return new FutureTask<>(counted(callable));
+        }
+
+        @Override
+        protected <T> RunnableFuture<T> newTaskFor(Runnable runnable, T value) {
+            return new FutureTask<>(counted(Executors.callable(runnable, value)));
+        }
+
+        private <T> Callable<T> counted(Callable<T> body) {
+            return () -> {
                 int now = running.incrementAndGet();
                 peak.accumulateAndGet(now, Math::max);
                 try {
-                    command.run();
+                    return body.call();
                 } finally {
                     running.decrementAndGet();
                 }
-            });
+            };
+        }
+
+        /** Every task the sorters hand over arrives through submit(), so newTaskFor counts it. */
+        @Override
+        public void execute(Runnable command) {
+            total.incrementAndGet();
+            delegate.execute(command);
         }
 
         int peak() { return peak.get(); }

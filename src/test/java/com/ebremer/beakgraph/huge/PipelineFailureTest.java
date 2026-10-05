@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,6 +38,13 @@ class PipelineFailureTest {
      * term sorters, whose sort runs inside the column-sort stage group; add()
      * for the row-id sorters, fed inside the id-join stage group) fails or
      * blocks until interrupted.
+     * <p>
+     * The failing sorter throws only once every blocking sibling is blocked.
+     * On a tiny input the failing stage otherwise finishes within
+     * milliseconds - on a loaded machine before a sibling has even been given
+     * a thread - and the pipeline (correctly) abandons that unstarted sibling
+     * without ever running it, so it is never interrupted and the count came
+     * up short. The test is about interrupting siblings that ARE running.
      */
     private static final class Rigged<T> implements RecordSorter<T> {
         final RecordSorter<T> delegate;
@@ -44,18 +52,28 @@ class PipelineFailureTest {
         final boolean onAdd;
         final CountDownLatch never = new CountDownLatch(1);
         final AtomicInteger interrupted;
+        final CountDownLatch siblingsBlocked;
 
-        Rigged(RecordSorter<T> delegate, boolean fail, boolean onAdd, AtomicInteger interrupted) {
+        Rigged(RecordSorter<T> delegate, boolean fail, boolean onAdd, AtomicInteger interrupted, CountDownLatch siblingsBlocked) {
             this.delegate = delegate;
             this.fail = fail;
             this.onAdd = onAdd;
             this.interrupted = interrupted;
+            this.siblingsBlocked = siblingsBlocked;
         }
 
         private void misbehave() throws IOException {
             if (fail) {
+                try {
+                    // Bounded: should a sibling never get a thread, the count
+                    // assertion reports it instead of the test hanging.
+                    siblingsBlocked.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
                 throw new IOException("boom");
             }
+            siblingsBlocked.countDown();
             try {
                 never.await();   // a "multi-hour sort": only an interrupt ends it
             } catch (InterruptedException e) {
@@ -100,11 +118,12 @@ class PipelineFailureTest {
     /** The sequential provider with one rigged tag: {@code failing} throws, the {@code blocking} tags block until interrupted. */
     private static SorterProvider rigged(String failing, List<String> blocking, AtomicInteger interrupted) {
         SorterProvider base = SorterProvider.sequential(1 << 18, 1 << 21, 64);
+        CountDownLatch siblingsBlocked = new CountDownLatch(blocking.size());
         return new SorterProvider() {
             private <T> RecordSorter<T> wrap(String tag, RecordSorter<T> s) {
                 boolean onAdd = tag.endsWith("id");   // row-id sorters are fed inside the id-join stages
-                if (tag.equals(failing)) return new Rigged<>(s, true, onAdd, interrupted);
-                if (blocking.contains(tag)) return new Rigged<>(s, false, onAdd, interrupted);
+                if (tag.equals(failing)) return new Rigged<>(s, true, onAdd, interrupted, siblingsBlocked);
+                if (blocking.contains(tag)) return new Rigged<>(s, false, onAdd, interrupted, siblingsBlocked);
                 return s;
             }
 
@@ -137,12 +156,16 @@ class PipelineFailureTest {
             IOException ex = org.junit.jupiter.api.Assertions.assertThrows(IOException.class,
                     () -> pipeline.run(dir.resolve("out-" + failing + ".h5")));
             assertEquals("boom", ex.getMessage(), "the FIRST failure is the one reported");
+            // Checked as run() throws - before close() and the pool's
+            // shutdownNow(), which would interrupt a still-blocked sibling
+            // themselves and hide a pipeline that never cancelled it.
+            assertEquals(blocking.size(), interrupted.get(),
+                    "every sibling stage was interrupted and drained before the failure was thrown");
         } finally {
             pool.shutdownNow();
         }
         long seconds = (System.nanoTime() - start) / 1_000_000_000L;
         assertTrue(seconds < 30, "the failure surfaced without waiting for the blocked siblings: " + seconds + " s");
-        assertEquals(blocking.size(), interrupted.get(), "every sibling stage was interrupted and drained");
         // BG-124: every file the build created is closed - the workspace goes away.
         Workspaces.deleteTree(work, LoggerFactory.getLogger(PipelineFailureTest.class));
         assertTrue(Files.notExists(work), "the workspace is fully removable after the failure");
