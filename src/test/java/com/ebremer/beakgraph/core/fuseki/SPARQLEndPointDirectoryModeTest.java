@@ -145,6 +145,28 @@ class SPARQLEndPointDirectoryModeTest {
     }
 
     @Test
+    void theFullServerKeepsTheLwsReadSurface() throws Exception {
+        // Through Fuseki's own filters, not just a bare servlet context.
+        HttpResponse<String> listing = get("", "Accept", "application/lws+json");
+        assertEquals(200, listing.statusCode());
+        assertEquals("application/lws+json", contentType(listing));
+        assertTrue(listing.headers().allValues("Link").contains("<" + base + "description>; rel=\"https://www.w3.org/ns/lws#storage\""),
+                listing.headers().allValues("Link").toString());
+        assertEquals("application/lws+cid", contentType(get("description")));
+        for (String method : new String[] {"PATCH", "PUT", "DELETE"}) {
+            HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create(base + "f00.txt")).timeout(Duration.ofSeconds(120))
+                    .method(method, HttpRequest.BodyPublishers.ofString("[]")).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(405, r.statusCode(), method);
+            assertEquals("GET, HEAD, OPTIONS", r.headers().firstValue("Allow").orElse(""), method);
+        }
+        HttpResponse<String> options = http.send(HttpRequest.newBuilder(URI.create(base + "data.h5")).timeout(Duration.ofSeconds(120))
+                .method("OPTIONS", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals("GET, HEAD, OPTIONS, POST", options.headers().firstValue("Allow").orElse(""), "a store also takes a query by POST");
+        assertEquals(415, post("data.h5", "<x> <y> <z> .", "text/turtle", null).statusCode(), "POST to a store is for queries only");
+        assertEquals("file 0", get("f00.txt").body(), "nothing was written");
+    }
+
+    @Test
     void storageDescriptionAdvertisesAWorkingSparqlEndpoint() throws Exception {
         HttpResponse<String> d = get("description", "Accept", "application/ld+json");
         assertEquals(200, d.statusCode(), d.body());

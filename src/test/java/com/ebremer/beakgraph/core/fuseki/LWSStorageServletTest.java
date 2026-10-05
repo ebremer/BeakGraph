@@ -31,31 +31,82 @@ class LWSStorageServletTest {
     @Test
     void linksetJsonEscapesValuesAndIsWellFormed() {
         // A value carrying characters that would break naive string interpolation / inject JSON.
-        String hostile = "12\" } , \n \\ \t inject";
+        String hostile = "http://h/12\" } , \n \\ \t inject";
         String json = LWSStorageServlet.linksetJson(
-            "http://h/r", "https://halcyon.is/ns/DataResource", "http://h/", "text/plain", hostile, null);
+            hostile, "https://www.w3.org/ns/lws#DataResource", "http://h/", "http://h/r.meta", "http://h/description");
 
         JsonObject link = parse(json).getJsonArray("linkset").getJsonObject(0); // throws if malformed
-        assertEquals("http://h/r", link.getString("anchor"));
-        assertEquals("text/plain", link.getJsonArray("mediaType").getJsonObject(0).getString("href"));
         // The hostile value survives a full write -> parse round-trip unchanged: it was escaped, not injected.
-        assertEquals(hostile, link.getJsonArray("size").getJsonObject(0).getString("href"));
-        assertFalse(link.containsKey("updated"), "null relation must be omitted");
+        assertEquals(hostile, link.getString("anchor"));
+        assertEquals("https://www.w3.org/ns/lws#DataResource", link.getJsonArray("type").getJsonObject(0).getString("href"));
+        assertEquals("http://h/", link.getJsonArray("up").getJsonObject(0).getString("href"));
+        JsonObject self = link.getJsonArray("linkset").getJsonObject(0);
+        assertEquals("http://h/r.meta", self.getString("href"));
+        assertEquals("application/linkset+json", self.getString("type"));
+        assertEquals("http://h/description",
+            link.getJsonArray("https://www.w3.org/ns/lws#storage").getJsonObject(0).getString("href"));
+        // RFC 9264: every member but the anchor is a link relation - no size,
+        // updated or mediaType pseudo-relations with non-URI "hrefs".
+        assertEquals(java.util.Set.of("anchor", "type", "up", "linkset", "https://www.w3.org/ns/lws#storage"), link.keySet());
+        assertFalse(parse(LWSStorageServlet.linksetJson("http://h/", "https://www.w3.org/ns/lws#Container", null,
+                "http://h/.meta", "http://h/description")).getJsonArray("linkset").getJsonObject(0).containsKey("up"),
+                "the root has no parent");
     }
 
     @Test
-    void descriptionJsonIsWellFormed() {
+    void descriptionJsonFollowsTheStorageDescriptionDataModel() {
         JsonObject doc = parse(LWSStorageServlet.descriptionJson("https://base.example/"));
+        // LWS Discovery: @context is an array starting with the CID and LWS contexts.
+        assertEquals(java.util.List.of("https://www.w3.org/ns/cid/v1", "https://www.w3.org/ns/lws/v1"),
+            doc.getJsonArray("@context").getValuesAs(jakarta.json.JsonString.class).stream()
+                .map(jakarta.json.JsonString::getString).toList());
+        // id is the storage URI - per CID also the URL the document is served at.
+        assertEquals("https://base.example/description", doc.getString("id"));
         assertEquals("Storage", doc.getString("type"));
-        // LWS Discovery data model: the storage is identified by "id" (the lws/v1
-        // context maps it to @id), and the StorageDescription service is mandatory.
-        assertEquals("https://base.example/", doc.getString("id"));
-        assertEquals("StorageDescription",
-            doc.getJsonArray("service").getJsonObject(0).getString("type"));
-        assertEquals("https://base.example/description",
-            doc.getJsonArray("service").getJsonObject(0).getString("serviceEndpoint"));
-        assertEquals("https://base.example/rdf",
-            doc.getJsonArray("service").getJsonObject(1).getString("serviceEndpoint"));
+        JsonObject root = doc.getJsonArray("service").getJsonObject(0);
+        assertEquals("StorageRoot", root.getString("type"), "the StorageRoot service is mandatory");
+        assertEquals("https://base.example/", root.getString("serviceEndpoint"), "it names the root container");
+        JsonObject sparql = doc.getJsonArray("service").getJsonObject(1);
+        assertEquals("http://www.w3.org/ns/sparql-service-description#Service", sparql.getString("type"));
+        assertEquals("https://base.example/rdf", sparql.getString("serviceEndpoint"));
+    }
+
+    @Test
+    void theLwsProfileOfJsonLdIsEchoed() {
+        String profiled = "application/ld+json; profile=\"https://www.w3.org/ns/lws/v1\"";
+        assertTrue(LWSStorageServlet.requestsLwsProfile(profiled));
+        assertTrue(LWSStorageServlet.requestsLwsProfile("text/html;q=0.5, application/ld+json;profile=https://www.w3.org/ns/lws/v1"));
+        assertTrue(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=\"http://ex.org/a https://www.w3.org/ns/lws/v1\""),
+                "profile is a space-separated list");
+        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json"));
+        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=user-profile"));
+        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=\"https://www.w3.org/ns/lws/v1\";q=0"),
+                "q=0 excludes the range");
+        assertFalse(LWSStorageServlet.requestsLwsProfile(null));
+        assertEquals(profiled, LWSStorageServlet.containerContentType("application/ld+json", profiled));
+        assertEquals("application/ld+json", LWSStorageServlet.containerContentType("application/ld+json", "application/ld+json"));
+        assertEquals("application/lws+json", LWSStorageServlet.containerContentType("application/lws+json", profiled + ", application/lws+json"));
+    }
+
+    @Test
+    void ifMatchComparesStrongly() {
+        assertTrue(LWSStorageServlet.ifMatchMatches(java.util.List.of("\"a\""), "\"a\""));
+        assertTrue(LWSStorageServlet.ifMatchMatches(java.util.List.of("\"x\", \"a\""), "\"a\""));
+        assertTrue(LWSStorageServlet.ifMatchMatches(java.util.List.of("*"), "\"a\""));
+        assertFalse(LWSStorageServlet.ifMatchMatches(java.util.List.of("W/\"a\""), "\"a\""), "a weak tag never matches If-Match");
+        assertFalse(LWSStorageServlet.ifMatchMatches(java.util.List.of("\"b\""), "\"a\""));
+    }
+
+    @Test
+    void entityTagsDifferPerRepresentation() {
+        byte[] body = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse(LWSStorageServlet.contentEtag("application/lws+cid", body)
+                .equals(LWSStorageServlet.contentEtag("application/json", body)), "same bytes, different representation");
+        assertEquals(LWSStorageServlet.contentEtag("application/json", body), LWSStorageServlet.contentEtag("application/json", body));
+        assertFalse(LWSStorageServlet.representationEtag("\"v1\"", "text/html")
+                .equals(LWSStorageServlet.representationEtag("\"v1\"", "application/lws+json")));
+        assertFalse(LWSStorageServlet.representationEtag("\"v1\"", "application/lws+json")
+                .equals(LWSStorageServlet.representationEtag("\"v2\"", "application/lws+json")), "the listing version still counts");
     }
 
     @Test

@@ -124,10 +124,13 @@ class SPARQLEndPointSingleFileTest {
     }
 
     @Test
-    void descriptionAdvertisesRdf() throws Exception {
+    void thereIsNoStorageDescriptionWithoutAStorage() throws Exception {
+        // Single-file mode serves no LWS storage, so there is no storage
+        // description: its mandatory StorageRoot service would name a root
+        // container that answers 404. The SPARQL endpoint stays at /rdf, where
+        // the directory-mode description advertises it (BG-37).
         HttpResponse<String> d = get("description", "Accept", "application/ld+json");
-        assertEquals(200, d.statusCode(), d.body());
-        assertTrue(d.body().contains("\"" + base + "rdf\""), d.body());
-        assertFalse(d.body().contains("\"" + base + "sparql\""), d.body());
+        assertEquals(404, d.statusCode(), d.body());
+        assertEquals(404, get("description.meta").statusCode());
     }
 }

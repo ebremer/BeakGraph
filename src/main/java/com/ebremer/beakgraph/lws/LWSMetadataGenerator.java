@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.lws;
 import com.ebremer.ns.LWS;
 import org.apache.jena.rdf.model.*;
 import org.apache.jena.vocabulary.RDF;
+import org.apache.jena.vocabulary.DCTerms;
 import org.apache.jena.vocabulary.OWL;
 import org.apache.jena.vocabulary.XSD;
 import java.io.*;
@@ -41,8 +42,14 @@ public class LWSMetadataGenerator {
         }
     }
 
-    private static final String AS_NS = "https://www.w3.org/ns/activitystreams#";
     private static final String SCHEMA_NS = "https://schema.org/";
+    /**
+     * Where caches written before the LWS vocabulary alignment kept format,
+     * modification time and member count (as:mediaType, as:updated,
+     * as:totalItems). A cache using them is stale whatever the tree says:
+     * {@link #modelSignature} marks it so the refresher regenerates it.
+     */
+    private static final String LEGACY_AS_NS = "https://www.w3.org/ns/activitystreams#";
 
     /**
      * Canonical base IRI for generated LWS resources. This is a stable namespace,
@@ -88,16 +95,18 @@ public class LWSMetadataGenerator {
     public static Model generateLWSModel(Path rootPath) throws IOException {
         Model model = ModelFactory.createDefaultModel();
         model.setNsPrefix("lws", LWS.NS);
-        model.setNsPrefix("as", AS_NS);
+        model.setNsPrefix("dcterms", DCTerms.NS);
         model.setNsPrefix("sdo", SCHEMA_NS);
         model.setNsPrefix("xsd", XSD.NS);
         model.setNsPrefix("owl", OWL.NS);
 
+        // The LWS vocabulary's own terms, so the model says what a container
+        // representation's JSON-LD expands to.
         Property items = LWS.items;
-        Property totalItems = model.createProperty(AS_NS, "totalItems");
-        Property mediaType = model.createProperty(AS_NS, "mediaType");
-        Property size = model.createProperty(SCHEMA_NS, "size");
-        Property modified = model.createProperty(AS_NS, "updated");
+        Property totalItems = LWS.totalItems;
+        Property mediaType = LWS.format;
+        Property size = LWS.size;
+        Property modified = LWS.modified;
 
         Resource containerType = LWS.Container;
         Resource dataType = LWS.DataResource;
@@ -177,8 +186,8 @@ public class LWSMetadataGenerator {
         return false;
     }
 
-    /** The {@code as:updated} lexical form of a file or directory: its mtime as a UTC ISO instant. */
-    public static String updatedLiteral(BasicFileAttributes attrs) {
+    /** The {@code dcterms:modified} lexical form of a file or directory: its mtime as a UTC ISO instant. */
+    public static String modifiedLiteral(BasicFileAttributes attrs) {
         return attrs.lastModifiedTime().toInstant()
                 .atZone(ZoneId.of("UTC"))
                 .format(DateTimeFormatter.ISO_INSTANT);
@@ -195,7 +204,7 @@ public class LWSMetadataGenerator {
 
     /**
      * Compact fingerprint of the metadata a storage tree would produce: one entry
-     * per file ({@code relative/path|size|updated}) and per directory
+     * per file ({@code relative/path|size|modified}) and per directory
      * ({@code relative/path|dir}), cache artifacts excluded. It is cheap - no
      * content probing - so a refresher can compare it against
      * {@link #modelSignature} on every poll and regenerate only when the tree
@@ -209,7 +218,7 @@ public class LWSMetadataGenerator {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 if (!isExcluded(rootPath, file, false)) {
-                    signature.add(relative(rootPath, file) + "|" + attrs.size() + "|" + updatedLiteral(attrs));
+                    signature.add(relative(rootPath, file) + "|" + attrs.size() + "|" + modifiedLiteral(attrs));
                 }
                 return FileVisitResult.CONTINUE;
             }
@@ -228,11 +237,22 @@ public class LWSMetadataGenerator {
         return signature;
     }
 
-    /** The same fingerprint as {@link #treeSignature}, read back from a generated or cached model. */
+    /**
+     * The same fingerprint as {@link #treeSignature}, read back from a generated
+     * or cached model. A model still using the pre-alignment vocabulary gets an
+     * entry no tree produces, so it never matches and is regenerated - even for
+     * a tree of directories only, whose entries carry no modification time.
+     */
     public static Set<String> modelSignature(Model model) {
         Set<String> signature = new HashSet<>();
-        Property size = model.createProperty(SCHEMA_NS, "size");
-        Property modified = model.createProperty(AS_NS, "updated");
+        Property size = LWS.size;
+        Property modified = LWS.modified;
+        for (String legacy : new String[] {"mediaType", "updated", "totalItems"}) {
+            if (model.contains(null, model.createProperty(LEGACY_AS_NS, legacy))) {
+                signature.add("!legacy-vocabulary");
+                break;
+            }
+        }
         String prefix = CANONICAL_BASE + "/";
         model.listSubjectsWithProperty(RDF.type, LWS.DataResource).forEachRemaining(res -> {
             String uri = res.getURI();
@@ -261,7 +281,7 @@ public class LWSMetadataGenerator {
         String originalFileUri = "file:///" + realPath.toAbsolutePath().toString().replace("\\", "/");
         res.addProperty(OWL.sameAs, model.createResource(originalFileUri));
 
-        res.addProperty(pModified, model.createTypedLiteral(updatedLiteral(attrs), XSD.dateTime.getURI()));
+        res.addProperty(pModified, model.createTypedLiteral(modifiedLiteral(attrs), XSD.dateTime.getURI()));
 
         if (pSize != null) {
             res.addProperty(pSize, model.createTypedLiteral(attrs.size(), XSD.integer.getURI()));

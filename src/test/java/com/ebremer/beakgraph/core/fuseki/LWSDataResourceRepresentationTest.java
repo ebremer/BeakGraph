@@ -144,8 +144,9 @@ class LWSDataResourceRepresentationTest {
         RDFDataMgr.read(desc, new StringReader(new String(ttl.body(), StandardCharsets.UTF_8)), null, Lang.TURTLE);
         var self = ResourceFactory.createResource(base + "graph.ttl");
         assertTrue(desc.contains(self, RDF.type, LWS.DataResource), "description must type the resource");
-        assertTrue(desc.contains(self, ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#mediaType"),
-                ResourceFactory.createPlainLiteral("text/turtle")), "description must carry the media type");
+        assertTrue(desc.contains(self, LWS.format, ResourceFactory.createPlainLiteral("text/turtle")),
+                "description must carry the media type as dct:format, the LWS vocabulary's term");
+        assertTrue(ttl.headers().firstValue("ETag").isPresent(), "every GET response carries an ETag");
         assertFalse(desc.contains(ResourceFactory.createResource("http://ex.org/a"), null, (org.apache.jena.rdf.model.RDFNode) null),
                 "description must not contain the stored graph's own triples");
 

@@ -7,6 +7,27 @@ brought and what a reader must rebuild.
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
 * Jena 6.2.0, jHDF 0.13.0.
+* LWS storage mode follows the LWS Protocol editor's draft of 2026-10-05 for
+  everything a read-only storage serves. Every GET/HEAD response links the
+  storage URI (`/description`) with `rel="https://www.w3.org/ns/lws#storage"`
+  (was `…#storageDescription`); the storage URI serves the storage
+  description as `application/lws+cid`, a Controlled Identifier document
+  (`@context` `[cid/v1, lws/v1]`, `id` the storage URI) with the mandatory
+  `StorageRoot` service beside the SPARQL endpoint. Container items carry
+  `format` (was `mediaType`) and the JSON body no longer mirrors pagination
+  as `as:first`/`as:next`/… (Link headers only); `application/ld+json` with
+  the LWS profile is echoed. Linksets hold only link relations (type, up,
+  linkset, storage) and, like the description, carry ETag and Last-Modified.
+  PUT, PATCH, DELETE, TRACE and POST (except a SPARQL query to a store)
+  answer 405 with `Allow`; OPTIONS reports it; errors are RFC 9457 problem
+  details; If-Match and If-Unmodified-Since are evaluated (412); a
+  container's HTML, Turtle and JSON listings have distinct ETags. Single-file
+  mode no longer serves a storage description - it has no storage. The
+  metadata model (`beakgraph.ttl.gz` and the directory-mode `/rdf` dataset)
+  uses the LWS vocabulary's `dcterms:format`, `dcterms:modified` and
+  `lws:totalItems` instead of `as:mediaType`, `as:updated` and
+  `as:totalItems`: a cache written with the old terms is regenerated at
+  start-up, and SPARQL queries over `/rdf` naming them must be updated.
 * Vendored zstd: the pure-Java compressor keeps one compression context per
   window size and reuses it across frames (hash/chain tables, sequence store
   and entropy workspaces used to be allocated for every compressed dictionary

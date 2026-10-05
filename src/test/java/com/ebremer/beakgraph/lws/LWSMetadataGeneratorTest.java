@@ -57,6 +57,30 @@ class LWSMetadataGeneratorTest {
     }
 
     @Test
+    void theModelSpeaksTheLwsVocabularyAndOlderCachesAreStale() throws Exception {
+        Files.write(Files.createDirectories(root.resolve("dir")).resolve("a.txt"), "abc".getBytes(StandardCharsets.UTF_8));
+        Model model = LWSMetadataGenerator.generateLWSModel(root);
+        String base = LWSMetadataGenerator.CANONICAL_BASE;
+        org.apache.jena.rdf.model.Resource file = model.getResource(base + "/dir/a.txt");
+        assertEquals("text/plain", file.getProperty(com.ebremer.ns.LWS.format).getString(), "format is dct:format");
+        assertTrue(file.hasProperty(com.ebremer.ns.LWS.modified), "modified is dcterms:modified");
+        assertEquals(3, file.getProperty(com.ebremer.ns.LWS.size).getInt(), "size is schema:size");
+        assertEquals(1, model.getResource(base + "/dir").getProperty(com.ebremer.ns.LWS.totalItems).getInt(), "totalItems is lws:totalItems");
+        assertFalse(model.listStatements().toList().stream()
+                .anyMatch(s -> s.getPredicate().getURI().startsWith("https://www.w3.org/ns/activitystreams#")), "no legacy as: terms");
+
+        // A cache written with the old as:mediaType / as:updated / as:totalItems
+        // terms never matches the tree, so the refresher regenerates it - even a
+        // tree of directories only, whose entries carry no timestamps.
+        Path dirsOnly = Files.createDirectories(root.resolve("dirs-only"));
+        Files.createDirectories(dirsOnly.resolve("empty"));
+        Model legacy = LWSMetadataGenerator.generateLWSModel(dirsOnly);
+        legacy.add(legacy.getResource(base), legacy.createProperty("https://www.w3.org/ns/activitystreams#totalItems"), legacy.createTypedLiteral(1));
+        assertEquals(LWSMetadataGenerator.treeSignature(dirsOnly), LWSMetadataGenerator.modelSignature(LWSMetadataGenerator.generateLWSModel(dirsOnly)));
+        assertFalse(LWSMetadataGenerator.treeSignature(dirsOnly).equals(LWSMetadataGenerator.modelSignature(legacy)));
+    }
+
+    @Test
     void regenerationDoesNotIndexTheMetadataCacheItself() throws Exception {
         Files.write(root.resolve("data.h5"), new byte[]{1, 2, 3});
         // A previous generation's cache is on disk - the regeneration walk must

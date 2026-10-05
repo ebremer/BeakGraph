@@ -30,13 +30,15 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * HTTP-level conformance of the unauthenticated read surface against the LWS
- * Protocol 1.0 draft (w3c.github.io/lws-protocol/lws10-core/): container
- * representation shape and media-type negotiation, link-based pagination
- * (first/last/next/prev in Link headers, full totalItems with page-scoped
- * items), mandatory Link relations (type / up / linkset / lws#storageDescription),
- * validators + conditional requests on containers, and single-range requests
- * on data resources. Runs a real Jetty server so header semantics are the
- * container's, not a mock's.
+ * Protocol 1.0 editor's draft of 2026-10-05 (w3c.github.io/lws-protocol/lws10-core/):
+ * storage discovery (rel=lws#storage, the application/lws+cid storage
+ * description), container representation shape and media-type negotiation,
+ * link-based pagination (first/last/next/prev in Link headers, full totalItems
+ * with page-scoped items), mandatory Link relations (type / up / linkset /
+ * storage), RFC 9264 linksets, validators + conditional requests, single-range
+ * requests on data resources, and the read-only method surface (405 + Allow,
+ * RFC 9457 problem details). Runs a real Jetty server so header semantics are
+ * the container's, not a mock's.
  */
 // Mutates JVM-global state (system properties / ARQ modes / a shared server):
 // never interleave with other classes should parallel execution be enabled (BG-189).
@@ -49,6 +51,7 @@ class LWSReadComplianceTest {
     private static Server server;
     private static String base;
     private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
+    private static final String STORAGE_REL = "rel=\"" + LWSStorageServlet.REL_STORAGE + "\"";
     private static final int FILES = 45;
     /** Enough members to span 3+ pages at any PAGE_SIZE the guard admits. */
     private static final int BIGSUB_FILES = LWSStorageServlet.PAGE_SIZE * 2 + 2;
@@ -132,8 +135,8 @@ class LWSReadComplianceTest {
         assertTrue(hasLink(resp, "rel=\"type\""), "rel=type link required");
         assertTrue(hasLink(resp, "https://www.w3.org/ns/lws#Container"), "type link must name lws#Container");
         assertTrue(hasLink(resp, "rel=\"linkset\""), "rel=linkset link required");
-        assertTrue(hasLink(resp, LWSStorageServlet.REL_STORAGE_DESCRIPTION),
-                "storage-description discovery link required on all storage responses");
+        assertEquals(base + "description", linkTarget(resp, STORAGE_REL),
+                "every GET/HEAD response links the storage URI with rel=lws#storage");
         assertFalse(hasLink(resp, "rel=\"up\""), "the root container has no parent");
 
         JsonObject doc = parse(resp.body());
@@ -154,11 +157,15 @@ class LWSReadComplianceTest {
             if ("Container".equals(o.getString("type")) && folder == null) folder = o;
         }
         assertNotNull(file, "page 1 must contain a DataResource");
-        assertEquals("text/plain", file.getString("mediaType"), "mediaType is required for DataResources");
+        assertEquals("text/plain", file.getString("format"), "format is required for DataResources");
+        assertFalse(file.containsKey("mediaType"), "the LWS property is format, not mediaType");
         assertTrue(file.containsKey("size"));
         assertTrue(file.containsKey("modified"));
         assertNotNull(folder, "page 1 must contain the 'big sub' Container (URI sort puts it first)");
-        assertFalse(folder.containsKey("mediaType"), "containers carry no mediaType");
+        assertFalse(folder.containsKey("format"), "containers carry no format");
+        // The body is exactly the container representation: navigation is in
+        // the Link headers, and the LWS context defines no term for it.
+        assertEquals(java.util.Set.of("@context", "id", "type", "totalItems", "items"), doc.keySet());
     }
 
     @Test
@@ -181,8 +188,6 @@ class LWSReadComplianceTest {
         JsonObject d1 = parse(p1.body());
         assertEquals(BIGSUB_FILES, d1.getInt("totalItems"));
         assertEquals(LWSStorageServlet.PAGE_SIZE, d1.getJsonArray("items").size());
-        assertTrue(d1.containsKey("as:next"), "subcontainer bodies embed navigation too");
-        assertEquals(next, d1.getJsonObject("as:next").getString("id"));
 
         // Follow the served link (opaque-URI navigation, as a client would).
         HttpResponse<String> p2 = get(next.substring(base.length()), "Accept", "application/lws+json");
@@ -229,13 +234,9 @@ class LWSReadComplianceTest {
         String next = linkTarget(p1, "rel=\"next\"");
         assertNotNull(next);
 
-        // The body mirrors the Link-header navigation (as: node references).
+        // Pagination is link-based: the JSON body carries no navigation of its own.
         JsonObject d1 = parse(p1.body());
-        assertTrue(d1.containsKey("as:first"), "paginated bodies embed as:first");
-        assertTrue(d1.containsKey("as:next"), "paginated bodies embed as:next");
-        assertFalse(d1.containsKey("as:prev"), "no as:prev on the first page");
-        assertEquals(next, d1.getJsonObject("as:next").getString("id"),
-                "the body's as:next must equal the Link header target");
+        assertFalse(d1.containsKey("as:first") || d1.containsKey("as:next") || d1.containsKey("next"), p1.body());
         HttpResponse<String> p2 = get(next.substring(base.length()), "Accept", "application/lws+json");
         assertEquals(200, p2.statusCode());
         assertTrue(hasLink(p2, "rel=\"prev\""));
@@ -251,8 +252,6 @@ class LWSReadComplianceTest {
         assertTrue(hasLink(pLast, "rel=\"prev\""));
         JsonObject dLast = parse(pLast.body());
         assertEquals(total - (pages - 1) * pageSize, dLast.getJsonArray("items").size());
-        assertFalse(dLast.containsKey("as:next"), "no as:next on the last page");
-        assertTrue(dLast.containsKey("as:prev"), "the last page embeds as:prev");
 
         assertEquals(404, get("?page=" + (pages + 1), "Accept", "application/lws+json").statusCode());
         assertEquals(400, get("?page=0", "Accept", "application/lws+json").statusCode());
@@ -390,19 +389,141 @@ class LWSReadComplianceTest {
     }
 
     @Test
-    void storageDescriptionUsesTheLwsMediaType() throws Exception {
-        HttpResponse<String> resp = get("description");
+    void theStorageUriServesTheStorageDescription() throws Exception {
+        // Discovery: follow the rel=lws#storage link from any resource.
+        String storage = linkTarget(get("sub", "Accept", "application/lws+json"), STORAGE_REL);
+        assertEquals(base + "description", storage);
+        HttpResponse<String> resp = get(storage.substring(base.length()));
         assertEquals(200, resp.statusCode());
-        assertTrue(resp.headers().firstValue("Content-Type").orElse("").startsWith("application/lws+json"),
-                "the storage description defaults to application/lws+json");
+        assertEquals("application/lws+cid", contentType(resp), "the storage description defaults to application/lws+cid");
         JsonObject doc = parse(resp.body());
-        assertEquals(base, doc.getString("id"));
+        assertEquals("https://www.w3.org/ns/cid/v1", doc.getJsonArray("@context").getString(0));
+        assertEquals("https://www.w3.org/ns/lws/v1", doc.getJsonArray("@context").getString(1));
+        assertEquals(storage, doc.getString("id"), "id is the storage URI");
         assertEquals("Storage", doc.getString("type"));
-        assertTrue(hasLink(resp, LWSStorageServlet.REL_STORAGE_DESCRIPTION));
+        JsonObject root = doc.getJsonArray("service").getValuesAs(JsonObject.class).stream()
+                .filter(s -> "StorageRoot".equals(s.getString("type"))).findFirst().orElseThrow();
+        assertEquals(base, root.getString("serviceEndpoint"), "StorageRoot names the root container");
+        assertEquals(storage, linkTarget(resp, STORAGE_REL), "the description links the storage too");
+        assertTrue(hasLink(resp, "https://www.w3.org/ns/lws#Storage"), "rel=type names lws#Storage");
+        String etag = resp.headers().firstValue("ETag").orElseThrow(() -> new AssertionError("GET responses carry an ETag"));
+        assertTrue(resp.headers().firstValue("Last-Modified").isPresent());
+        assertEquals(304, get("description", "If-None-Match", etag).statusCode());
 
         HttpResponse<String> ld = get("description", "Accept", "application/ld+json");
-        assertTrue(ld.headers().firstValue("Content-Type").orElse("").startsWith("application/ld+json"));
+        assertEquals("application/ld+json", contentType(ld));
         assertEquals(resp.body(), ld.body(), "negotiated flavors share one payload");
+        assertFalse(etag.equals(ld.headers().firstValue("ETag").orElse("")), "each representation has its own validator");
+        assertEquals("application/lws+cid", contentType(get("description", "Accept", "application/lws+json")),
+                "a client accepting none of the description's types still gets the LWS type");
+    }
+
+    @Test
+    void linksetsAreRfc9264DocumentsWithValidators() throws Exception {
+        HttpResponse<String> file = get("sub/a.txt", "Accept", "text/plain");
+        String linksetUri = linkTarget(file, "rel=\"linkset\"");
+        assertEquals(base + "sub/a.txt.meta", linksetUri);
+        HttpResponse<String> ls = get("sub/a.txt.meta");
+        assertEquals(200, ls.statusCode(), ls.body());
+        assertEquals("application/linkset+json", contentType(ls));
+        assertEquals("GET, HEAD, OPTIONS", ls.headers().firstValue("Allow").orElse(""), "read-only: no PATCH is advertised");
+        assertEquals(base + "description", linkTarget(ls, STORAGE_REL));
+        String etag = ls.headers().firstValue("ETag").orElseThrow(() -> new AssertionError("linksets carry an ETag"));
+        assertEquals(304, get("sub/a.txt.meta", "If-None-Match", etag).statusCode());
+
+        JsonObject link = parse(ls.body()).getJsonArray("linkset").getJsonObject(0);
+        assertEquals(base + "sub/a.txt", link.getString("anchor"));
+        assertEquals("https://www.w3.org/ns/lws#DataResource", link.getJsonArray("type").getJsonObject(0).getString("href"));
+        assertEquals(base + "sub", link.getJsonArray("up").getJsonObject(0).getString("href"));
+        assertEquals(linksetUri, link.getJsonArray("linkset").getJsonObject(0).getString("href"));
+        assertEquals(base + "description", link.getJsonArray(LWSStorageServlet.REL_STORAGE).getJsonObject(0).getString("href"));
+        for (String notALink : new String[] {"size", "updated", "mediaType"}) {
+            assertFalse(link.containsKey(notALink), notALink + " is not a link relation");
+        }
+
+        JsonObject rootLink = parse(get(".meta").body()).getJsonArray("linkset").getJsonObject(0);
+        assertEquals(base, rootLink.getString("anchor"));
+        assertFalse(rootLink.containsKey("up"), "the storage root has no parent");
+        JsonObject storageLink = parse(get("description.meta").body()).getJsonArray("linkset").getJsonObject(0);
+        assertEquals("https://www.w3.org/ns/lws#Storage", storageLink.getJsonArray("type").getJsonObject(0).getString("href"));
+        assertFalse(storageLink.containsKey("up"), "the storage is not a contained resource");
+    }
+
+    @Test
+    void writesAre405WithAnAllowHeader() throws Exception {
+        String[][] attempts = {
+            {"PUT", "f07.txt"}, {"DELETE", "f07.txt"}, {"PATCH", "f07.txt"},
+            {"POST", ""}, {"POST", "sub"}, {"POST", "f07.txt"}, {"PUT", "sub/new.txt"},
+            {"PATCH", "f07.txt.meta"}, {"PUT", "f07.txt.meta"}, {"DELETE", "sub"},
+        };
+        for (String[] a : attempts) {
+            HttpResponse<String> r = send(a[0], a[1], "Content-Type", "application/json-patch+json");
+            assertEquals(405, r.statusCode(), a[0] + " " + a[1]);
+            assertEquals("GET, HEAD, OPTIONS", r.headers().firstValue("Allow").orElse(""), a[0] + " " + a[1] + ": RFC 9110 requires Allow on 405");
+            assertEquals("application/problem+json", contentType(r), a[0] + " " + a[1]);
+        }
+        assertEquals("content-of-file-7", get("f07.txt").body(), "nothing was written");
+
+        HttpResponse<String> options = send("OPTIONS", "sub");
+        assertEquals(200, options.statusCode());
+        assertEquals("GET, HEAD, OPTIONS", options.headers().firstValue("Allow").orElse(""));
+        HttpResponse<String> trace = send("TRACE", "f07.txt");
+        assertEquals(405, trace.statusCode(), "TRACE must not echo the request");
+    }
+
+    @Test
+    void errorsAreProblemDetails() throws Exception {
+        HttpResponse<String> bad = get("?page=x", "Accept", "application/lws+json");
+        assertEquals(400, bad.statusCode());
+        assertEquals("application/problem+json", contentType(bad));
+        JsonObject problem = parse(bad.body());
+        assertEquals(400, problem.getInt("status"));
+        assertEquals("Bad Request", problem.getString("title"));
+        assertTrue(problem.getString("detail").contains("page"), bad.body());
+
+        HttpResponse<String> missing = get("no-such-file.txt");
+        assertEquals(404, missing.statusCode());
+        assertEquals("application/problem+json", contentType(missing));
+        assertFalse(missing.body().contains("HalcyonStorage") || missing.body().contains("localhost:8888"),
+                "the canonical model URI must not leak: " + missing.body());
+    }
+
+    @Test
+    void theLwsProfileOfJsonLdIsHonoured() throws Exception {
+        String profiled = "application/ld+json; profile=\"https://www.w3.org/ns/lws/v1\"";
+        HttpResponse<String> r = get("sub", "Accept", profiled);
+        assertEquals(200, r.statusCode());
+        assertEquals(profiled, contentType(r), "the requested media type is the response's Content-Type");
+        assertEquals(get("sub", "Accept", "application/lws+json").body(), r.body());
+        assertEquals("application/lws+json", contentType(get("sub", "Accept", "application/lws+json")),
+                "no charset parameter is appended to the echoed type");
+        assertTrue(r.headers().allValues("Vary").stream().anyMatch(v -> v.contains("Accept")));
+    }
+
+    @Test
+    void preconditionsFailWith412() throws Exception {
+        HttpResponse<String> listing = get("sub", "Accept", "application/lws+json");
+        String etag = listing.headers().firstValue("ETag").orElseThrow();
+        assertEquals(200, get("sub", "Accept", "application/lws+json", "If-Match", etag).statusCode());
+        assertEquals(412, get("sub", "Accept", "application/lws+json", "If-Match", "\"stale\"").statusCode());
+        assertEquals(412, get("sub", "Accept", "application/lws+json", "If-Unmodified-Since", "Sun, 06 Nov 1994 08:49:37 GMT").statusCode());
+        assertEquals(200, get("sub", "Accept", "application/lws+json", "If-Modified-Since", "not a date").statusCode(),
+                "an invalid date is ignored, not a 500");
+        HttpResponse<String> data = get("sub/a.txt");
+        assertEquals(412, get("sub/a.txt", "If-Match", "W/" + data.headers().firstValue("ETag").orElseThrow()).statusCode(),
+                "If-Match compares strongly");
+        // HTML and JSON listings of one container are distinct representations.
+        assertFalse(etag.equals(get("sub", "Accept", "text/html").headers().firstValue("ETag").orElse("")));
+    }
+
+    private static HttpResponse<String> send(String method, String path, String... headers) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60));
+        for (int i = 0; i < headers.length; i += 2) {
+            b.header(headers[i], headers[i + 1]);
+        }
+        HttpRequest.BodyPublisher body = method.equals("OPTIONS") || method.equals("TRACE") || method.equals("DELETE")
+                ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString("[]");
+        return http.send(b.method(method, body).build(), HttpResponse.BodyHandlers.ofString());
     }
 
     @Test

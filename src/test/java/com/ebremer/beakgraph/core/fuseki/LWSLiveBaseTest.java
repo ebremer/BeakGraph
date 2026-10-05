@@ -123,7 +123,7 @@ class LWSLiveBaseTest {
         assertFalse(r.body.contains("localhost"), "no localhost URI may leak into the body: " + r.body);
         List<String> links = r.links();
         assertTrue(links.stream().anyMatch(l -> l.contains("<" + base + "description>")),
-                "storageDescription link must be on " + base + ": " + links);
+                "rel=lws#storage link must be on " + base + ": " + links);
         assertTrue(links.stream().anyMatch(l -> l.contains("<" + base + ".meta>")),
                 "linkset link must be on " + base + ": " + links);
         assertTrue(links.stream().anyMatch(l -> l.contains("<" + base + "?page=2>") && l.contains("rel=\"next\"")),
