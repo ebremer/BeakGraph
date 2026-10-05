@@ -9,6 +9,8 @@
 
 BeakGraph is an [Apache Jena](https://jena.apache.org/) Graph implementation of [RDF HDT](https://www.rdfhdt.org/) technology pumped into a [HDF5](https://www.hdfgroup.org/solutions/hdf5/) file and extended to support a full RDF Dataset.
 
+Documentation: **[ebremer.github.io/BeakGraph](https://ebremer.github.io/BeakGraph/)**
+
 <br clear="all">
 
 ## Building

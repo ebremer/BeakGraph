@@ -1,0 +1,87 @@
+# Builds the documentation site (docs/: Jekyll + Just the Docs) and deploys it
+# to GitHub Pages from master. Pull requests that touch the documentation get a
+# build-only run, so a site that no longer builds is caught before the merge.
+#
+# One-time repository setup: Settings -> Pages -> Build and deployment ->
+# Source: "GitHub Actions".
+name: Pages
+
+on:
+  push:
+    branches: [ master ]
+    # docs/ plus every repository file docs/_config.yml publishes
+    # (repo_pages, repo_files).
+    paths:
+      - 'docs/**'
+      - 'SPECIFICATIONS.md'
+      - 'RDF_1.2-compliance.md'
+      - 'CHANGELOG.md'
+      - 'benchmarks/README.md'
+      - 'beakgraph.png'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'SPECIFICATIONS.md'
+      - 'RDF_1.2-compliance.md'
+      - 'CHANGELOG.md'
+      - 'benchmarks/README.md'
+      - 'beakgraph.png'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push queues behind a deployment in progress instead of cancelling it.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+          working-directory: docs
+      - name: Configure Pages
+        id: pages
+        if: github.ref == 'refs/heads/master'
+        uses: actions/configure-pages@v6
+      - name: Build the site
+        # The deployed site's base path (/BeakGraph, or empty under a custom
+        # domain); build-only runs get an empty one.
+        run: bundle exec jekyll build --baseurl "${{ steps.pages.outputs.base_path }}"
+        env:
+          JEKYLL_ENV: production
+      - name: Upload the site
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/_site
+
+  deploy:
+    # Only master deploys: the github-pages environment admits the default
+    # branch, and a manual run on any other branch is a build check.
+    if: github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

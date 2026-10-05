@@ -1,0 +1,12 @@
+// A fenced block in a language Rouge has no lexer for (```trig) is rendered
+// as a bare <pre><code>, outside the theme's highlighter-rouge box. Give it the
+// same box, so a long line scrolls inside it instead of widening the page.
+.main-content pre:not(.highlight):has(> code[class^="language-"]) {
+  overflow-x: auto;
+  padding: $sp-3;
+  margin-top: 0;
+  margin-bottom: $sp-3;
+  background-color: $code-background-color;
+  border: 1px solid $body-text-color;
+  border-radius: $border-radius;
+}
