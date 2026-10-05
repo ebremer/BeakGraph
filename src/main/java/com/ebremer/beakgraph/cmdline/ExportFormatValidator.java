@@ -10,9 +10,10 @@ import com.beust.jcommander.ParameterException;
 public class ExportFormatValidator implements IParameterValidator {
 
     /** Canonical form (NT/NQ/JSONLD/TTL/TRIG), or null if unrecognized. */
-    static String normalize(String value) {
+    public static String normalize(String value) {
         if (value == null) return null;
-        return switch (value.trim().toUpperCase().replace("-", "")) {
+        // Locale.ROOT: under tr-TR "trig".toUpperCase() is "TRİG" (dotted capital I).
+        return switch (value.trim().toUpperCase(java.util.Locale.ROOT).replace("-", "")) {
             case "NT" -> "NT";
             case "NQ" -> "NQ";
             case "JSONLD" -> "JSONLD";

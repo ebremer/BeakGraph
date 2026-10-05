@@ -1,12 +1,13 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.Params;
+
 import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
+import com.ebremer.beakgraph.hdf5.writers.DictionaryNodeEncoder;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
-import static com.ebremer.beakgraph.utils.UTIL.isRelativeIRI;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -14,8 +15,6 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.SortedSet;
 import org.apache.jena.graph.Node;
-import org.apache.jena.graph.TextDirection;
-import org.apache.jena.vocabulary.XSD;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,17 +27,16 @@ import org.slf4j.LoggerFactory;
  * of all nodes in memory, this writer receives the stream from an external
  * sort-merge, so dictionary size is bounded by disk.
  *
- * <p>The per-node encoding logic (buffer choice, offset bookkeeping, error
- * stance) is a line-for-line mirror of {@code MultiTypeDictionaryWriter.addNodeInternal};
- * any change there needs a matching change here to keep the two writers
- * producing identical files.
+ * <p>The per-node encoding (buffer choice, offset bookkeeping, error stance)
+ * is {@link DictionaryNodeEncoder}, the SAME code the RAM writer runs, over
+ * the disk-backed sinks; the two used to be line-for-line mirrors (BG-298).
  *
  * @author Erich Bremer
  */
 final class StreamingDictionaryWriter implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(StreamingDictionaryWriter.class);
-    private static final int FCD_BLOCK_SIZE = 16;
+    private static final int FCD_BLOCK_SIZE = Params.FCD_BLOCK_SIZE;
 
     private final String name;
     private final long nodeCount;
@@ -58,6 +56,13 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     // Mirror of MultiTypeDictionaryWriter.langDirs; null when no directional
     // literal exists, so v3-shaped files stay byte-identical.
     private final SpillBitPackedBuffer langDirs;
+    // RDF 1.2 triple terms (format v5): the encode pass writes each row's
+    // ordinal into offsets and spills component references through ttSupport;
+    // the resolved fixed-stride store arrives afterwards via
+    // setTripleTermsBuffer (component ids only exist once the dictionary
+    // files are complete - CHANGELOG.md "Format v5 design notes").
+    private final HugeTripleTerms ttSupport;
+    private SpillBitPackedBuffer tripleTerms;
     private final HashMap<String, Long> dataTypesLookUp = new HashMap<>();
     private final HashMap<String, Long> langLookUp = new HashMap<>();
     private final boolean literalsPresent;
@@ -67,16 +72,31 @@ final class StreamingDictionaryWriter implements AutoCloseable {
      * @param nodeCount  the exact number of distinct nodes {@link #encode} will
      *                   deliver; fixes the offsets bit width, exactly like the
      *                   RAM writer's {@code builder.getNodes().size()}
+     * @param section    which dictionary section this is; it fixes the routed term kinds
+     * @param section    which dictionary section this is; it fixes the routed term kinds
+     * @param section    which dictionary section this is; it fixes the routed term kinds
+     * @param section    which dictionary section this is; it fixes the routed term kinds
      * @param dataTypes  distinct literal datatype IRIs (natural String order),
      *                   empty for dictionaries without literals
      * @param langSet    distinct language tags among the literals, natural order
      * @param anyLangDir true when at least one literal carries a base direction
      *                   (rdf:dirLangString); allocates the langDirs column
+     * @param ttSupport  triple-term component machinery, non-null only for the
+     *                   literals section of a store containing triple terms
      */
     StreamingDictionaryWriter(Path workDir, String name, long nodeCount, Stats stats,
-                              Set<Types> et, SortedSet<String> dataTypes, SortedSet<String> langSet,
-                              boolean anyLangDir)
+                              DictionarySection section, SortedSet<String> dataTypes, SortedSet<String> langSet,
+                              boolean anyLangDir, HugeTripleTerms ttSupport)
             throws IOException {
+        // The section fixes the routed term kinds (the RAM writer's Builder.section);
+        // triple-term support only makes sense where triple terms are routed, so
+        // the two engines can no longer disagree about a section's contents (BG-90).
+        Set<DataType> et = section.routes();
+        if (ttSupport != null && !et.contains(DataType.TRIPLE_TERM)) {
+            throw new IllegalArgumentException("Dictionary '" + name + "' (" + section
+                    + ") does not hold triple terms; triple-term support belongs to " + DictionarySection.LITERALS);
+        }
+        this.ttSupport = ttSupport;
         this.name = name;
         this.nodeCount = nodeCount;
         logger.info("Building dictionary '{}' ({} nodes, disk-backed)", name, nodeCount);
@@ -85,63 +105,81 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         // temp files and for the HDF5 group they emit, so the isolation must
         // come from the directory, not a name prefix.
         Path dictDir = Files.createDirectories(workDir.resolve("dict." + name));
-        this.offsets = new SpillBitPackedBuffer(dictDir.resolve("offsets"), 1 + MinBits(nodeCount));
-        this.nativedatatypes = new SpillBitPackedBuffer(dictDir.resolve("datatypes"),
-                1 + MinBits(DataType.values().length));
+        // Up to a dozen spill streams open in sequence: if a later one fails
+        // (ENOSPC, EMFILE, a path in the way) the ones already open are
+        // released before the exception leaves, as the RAM twin does - the
+        // half-built object is never returned, so nothing else could close
+        // them (BG-128).
+        java.util.List<AutoCloseable> opened = new java.util.ArrayList<>();
+        try {
+            this.offsets = open(opened, new SpillBitPackedBuffer(dictDir.resolve("offsets"), 1 + MinBits(nodeCount)));
+            this.nativedatatypes = open(opened, new SpillBitPackedBuffer(dictDir.resolve("datatypes"),
+                    1 + MinBits(DataType.values().length)));
 
-        this.integers = (!et.contains(Types.INTEGER) || (stats.numInteger == 0)) ? null
-                : new SpillBitPackedBuffer(dictDir.resolve("integers"),
-                        (stats.minInteger < 0) ? 32 : (1 + MinBits(stats.maxInteger)));
-        int longWidth = 0;
-        if (et.contains(Types.LONG) && stats.numLong > 0) {
-            longWidth = (stats.minLong < 0) ? 64 : (1 + MinBits(stats.maxLong));
-            // Same rounding as the RAM writer: the bit-packed format supports
-            // widths 1..57 and 64 only.
-            if (longWidth > 57) longWidth = 64;
-        }
-        this.longs = (longWidth == 0) ? null
-                : new SpillBitPackedBuffer(dictDir.resolve("longs"), longWidth);
-
-        this.doubles = (!et.contains(Types.DOUBLE) || (stats.numDouble == 0)) ? null
-                : new SpillDataBuffer(dictDir.resolve("doubles"));
-        this.floats = (!et.contains(Types.FLOAT) || (stats.numFloat == 0)) ? null
-                : new SpillDataBuffer(dictDir.resolve("floats"));
-
-        this.literalsPresent = et.contains(Types.DOUBLE) || et.contains(Types.FLOAT)
-                || et.contains(Types.INTEGER) || et.contains(Types.LONG) || et.contains(Types.STRING);
-        if (literalsPresent) {
-            this.typedLiteralsDictionary = new SpillFCDWriter(dictDir, "typedLiteralsDictionary", FCD_BLOCK_SIZE);
-            this.typedLiterals = new SpillBitPackedBuffer(dictDir.resolve("typedLiterals"),
-                    1 + MinBits(dataTypes.size()));
-            for (String dt : dataTypes) {
-                typedLiteralsDictionary.add(dt);
-                dataTypesLookUp.put(dt, typedLiteralsDictionary.getNumEntries());
+            this.integers = (!et.contains(DataType.INTEGER) || (stats.numInteger == 0)) ? null
+                    : open(opened, new SpillBitPackedBuffer(dictDir.resolve("integers"),
+                            (stats.minInteger < 0) ? 32 : (1 + MinBits(stats.maxInteger))));
+            int longWidth = 0;
+            if (et.contains(DataType.LONG) && stats.numLong > 0) {
+                longWidth = (stats.minLong < 0) ? 64 : (1 + MinBits(stats.maxLong));
+                // Same rounding as the RAM writer: the bit-packed format supports
+                // widths 1..57 and 64 only.
+                if (longWidth > 57) longWidth = 64;
             }
-        } else {
-            this.typedLiteralsDictionary = null;
-            this.typedLiterals = null;
-        }
+            this.longs = (longWidth == 0) ? null
+                    : open(opened, new SpillBitPackedBuffer(dictDir.resolve("longs"), longWidth));
 
-        this.iri = (!et.contains(Types.IRI) || (stats.numIRI == 0)) ? null
-                : new SpillFCDWriter(dictDir, "iri", FCD_BLOCK_SIZE);
-        this.strings = (!et.contains(Types.STRING) || (stats.numStrings == 0)) ? null
-                : new SpillFCDWriter(dictDir, "strings", FCD_BLOCK_SIZE);
+            this.doubles = (!et.contains(DataType.DOUBLE) || (stats.numDouble == 0)) ? null
+                    : open(opened, new SpillDataBuffer(dictDir.resolve("doubles")));
+            this.floats = (!et.contains(DataType.FLOAT) || (stats.numFloat == 0)) ? null
+                    : open(opened, new SpillDataBuffer(dictDir.resolve("floats")));
 
-        if (literalsPresent && !langSet.isEmpty()) {
-            this.langs = new SpillFCDWriter(dictDir, "langs", FCD_BLOCK_SIZE);
-            for (String lang : langSet) {
-                langs.add(lang);
-                langLookUp.put(lang, langs.getNumEntries()); // 1-based id
+            this.literalsPresent = et.contains(DataType.DOUBLE) || et.contains(DataType.FLOAT)
+                    || et.contains(DataType.INTEGER) || et.contains(DataType.LONG) || et.contains(DataType.STRING);
+            if (literalsPresent) {
+                this.typedLiteralsDictionary = open(opened, new SpillFCDWriter(dictDir, "typedLiteralsDictionary", FCD_BLOCK_SIZE));
+                this.typedLiterals = open(opened, new SpillBitPackedBuffer(dictDir.resolve("typedLiterals"),
+                        1 + MinBits(dataTypes.size())));
+                for (String dt : dataTypes) {
+                    typedLiteralsDictionary.add(dt);
+                    dataTypesLookUp.put(dt, typedLiteralsDictionary.getNumEntries());
+                }
+            } else {
+                this.typedLiteralsDictionary = null;
+                this.typedLiterals = null;
             }
-            this.langTags = new SpillBitPackedBuffer(dictDir.resolve("langTags"),
-                    1 + MinBits(langSet.size()));
-        } else {
-            this.langs = null;
-            this.langTags = null;
+
+            this.iri = (!et.contains(DataType.IRI) || (stats.numIRI == 0)) ? null
+                    : open(opened, new SpillFCDWriter(dictDir, "iri", FCD_BLOCK_SIZE));
+            this.strings = (!et.contains(DataType.STRING) || (stats.numStrings == 0)) ? null
+                    : open(opened, new SpillFCDWriter(dictDir, "strings", FCD_BLOCK_SIZE));
+
+            if (literalsPresent && !langSet.isEmpty()) {
+                this.langs = open(opened, new SpillFCDWriter(dictDir, "langs", FCD_BLOCK_SIZE));
+                for (String lang : langSet) {
+                    langs.add(lang);
+                    langLookUp.put(lang, langs.getNumEntries()); // 1-based id
+                }
+                this.langTags = open(opened, new SpillBitPackedBuffer(dictDir.resolve("langTags"),
+                        1 + MinBits(langSet.size())));
+            } else {
+                this.langs = null;
+                this.langTags = null;
+            }
+            this.langDirs = (literalsPresent && anyLangDir)
+                    ? open(opened, new SpillBitPackedBuffer(dictDir.resolve("langDirs"), 1 + MinBits(2)))
+                    : null;
+        } catch (IOException | RuntimeException ex) {
+            for (int i = opened.size() - 1; i >= 0; i--) {
+                try { opened.get(i).close(); } catch (Exception ignored) { }
+            }
+            throw ex;
         }
-        this.langDirs = (literalsPresent && anyLangDir)
-                ? new SpillBitPackedBuffer(dictDir.resolve("langDirs"), 1 + MinBits(2))
-                : null;
+    }
+
+    private static <R extends AutoCloseable> R open(java.util.List<AutoCloseable> opened, R resource) {
+        opened.add(resource);
+        return resource;
     }
 
     /** Encodes the sorted distinct node stream; must deliver exactly {@code nodeCount} nodes. */
@@ -156,89 +194,17 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         completeAll();
     }
 
+    private DictionaryNodeEncoder encoder;
+
     private void addNodeInternal(Node node) {
-        if (node.isBlank()) {
-            // Rank-based BNodes: offset 0, label regenerated from ID on read.
-            nativedatatypes.writeInteger(DataType.BNODE.ordinal());
-            offsets.writeLong(0);
-            if (literalsPresent) typedLiterals.writeLong(0);
-            if (langTags != null) langTags.writeLong(0);
-            if (langDirs != null) langDirs.writeLong(0);
-        } else if (node.isURI()) {
-            try {
-                boolean relative = isRelativeIRI(node.getURI());
-                offsets.writeLong(iri.getNumEntries());
-                nativedatatypes.writeInteger((relative ? DataType.RELATIVE_IRI : DataType.IRI).ordinal());
-                iri.add(node.getURI());
-                if (literalsPresent) typedLiterals.writeLong(0);
-                if (langTags != null) langTags.writeLong(0);
-                if (langDirs != null) langDirs.writeLong(0);
-            } catch (IOException ex) {
-                throw new UncheckedIOException("Failed to add IRI to dictionary: " + node, ex);
-            }
-        } else if (node.isLiteral()) {
-            String dt = node.getLiteralDatatypeURI();
-            long dtId = dataTypesLookUp.getOrDefault(dt, 0L);
-            if (literalsPresent) typedLiterals.writeLong(dtId);
-            if (langTags != null) {
-                String lang = node.getLiteralLanguage();
-                langTags.writeLong((lang == null || lang.isEmpty()) ? 0L : langLookUp.getOrDefault(lang, 0L));
-            }
-            if (langDirs != null) {
-                TextDirection dir = node.getLiteralBaseDirection();
-                langDirs.writeLong((dir == null) ? 0L : (dir == TextDirection.LTR ? 1L : 2L));
-            }
-            Object val;
-            try {
-                val = node.getLiteralValue();
-            } catch (RuntimeException ex) {
-                val = null; // ill-typed literal: strings branch below
-            }
-            if (dt.equals(XSD.xlong.getURI()) && longs != null && val instanceof Number num) {
-                offsets.writeLong(longs.getNumEntries());
-                nativedatatypes.writeInteger(DataType.LONG.ordinal());
-                longs.writeLong(num.longValue());
-            } else if (dt.equals(XSD.xint.getURI()) && integers != null && val instanceof Number num) {
-                offsets.writeLong(integers.getNumEntries());
-                nativedatatypes.writeInteger(DataType.INTEGER.ordinal());
-                integers.writeInteger(num.intValue());
-            } else if (dt.equals(XSD.xdouble.getURI()) && doubles != null && val instanceof Number num) {
-                offsets.writeLong(doubles.getNumEntries());
-                nativedatatypes.writeInteger(DataType.DOUBLE.ordinal());
-                try {
-                    doubles.writeDouble(num.doubleValue());
-                } catch (IOException ex) {
-                    throw new UncheckedIOException("Failed to add double literal to dictionary", ex);
-                }
-            } else if (dt.equals(XSD.xfloat.getURI()) && floats != null && val instanceof Number num) {
-                offsets.writeLong(floats.getNumEntries());
-                nativedatatypes.writeInteger(DataType.FLOAT.ordinal());
-                try {
-                    floats.writeFloat(num.floatValue());
-                } catch (IOException ex) {
-                    throw new UncheckedIOException("Failed to add float literal to dictionary", ex);
-                }
-            } else if (strings != null) {
-                String lex = node.getLiteralLexicalForm();
-                offsets.writeLong(strings.getNumEntries());
-                nativedatatypes.writeInteger(DataType.STRING.ordinal());
-                try {
-                    strings.add(lex);
-                } catch (IOException ex) {
-                    throw new UncheckedIOException("Failed to add string literal to dictionary", ex);
-                }
-            } else {
-                throw new IllegalStateException(
-                    "No writer buffer for literal datatype " + dt + " (strings buffer not allocated); "
-                  + "refusing to write a misaligned dictionary entry.");
-            }
-        } else {
-            throw new IllegalStateException("Unsupported node kind in dictionary '" + name + "': " + node);
+        if (encoder == null) {
+            encoder = new DictionaryNodeEncoder(name, nodeCount, offsets, nativedatatypes, typedLiterals,
+                    integers, longs, floats, doubles, iri, strings, langTags, langDirs,
+                    dataTypesLookUp, langLookUp, literalsPresent,
+                    (ttSupport == null) ? null : ttSupport::onTripleTerm);
         }
+        encoder.encode(node);
         encoded++;
-        if (encoded % 1_000_000 == 0) {
-            logger.info("Dictionary '{}': encoded {} / {} nodes", name, encoded, nodeCount);
-        }
     }
 
     private void completeAll() throws IOException {
@@ -257,14 +223,33 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         return nodeCount;
     }
 
+    /**
+     * Installs the resolved fixed-stride component store (the pipeline runs the
+     * reference join once the dictionary files are complete). Must be called
+     * before {@link #transferTo} for any section that encoded triple terms.
+     */
+    void setTripleTermsBuffer(SpillBitPackedBuffer resolved) {
+        this.tripleTerms = resolved;
+    }
+
     /** Writes this dictionary as a subgroup, mirroring MultiTypeDictionaryWriter.add(). */
     void transferTo(StreamingHdf5Group group) throws IOException {
+        if (ttSupport != null && ttSupport.count() > 0 && tripleTerms == null) {
+            throw new IllegalStateException("Dictionary '" + name + "' encoded " + ttSupport.count()
+                    + " triple terms but the resolved component store was never installed");
+        }
         StreamingHdf5Group subGroup = group.putGroup(name);
         if (typedLiterals != null) typedLiterals.transferTo(subGroup, "typedLiterals");
         offsets.transferTo(subGroup, "offsets");
-        if (typedLiteralsDictionary != null) typedLiteralsDictionary.transferTo(subGroup);
+        // Entry-count gate, mirroring the RAM writer: a literals section whose
+        // only rows are triple terms has NO datatype IRIs, and absence already
+        // means "none" to the reader.
+        if (typedLiteralsDictionary != null && typedLiteralsDictionary.getNumEntries() > 0) {
+            typedLiteralsDictionary.transferTo(subGroup);
+        }
         if (integers != null) integers.transferTo(subGroup, "integers");
         if (longs != null) longs.transferTo(subGroup, "longs");
+        if (tripleTerms != null) tripleTerms.transferTo(subGroup, "tripleTerms");
         if (floats != null) floats.transferTo(subGroup, "floats");
         if (doubles != null) doubles.transferTo(subGroup, "doubles");
         if (iri != null && iri.getNumEntries() > 0) iri.transferTo(subGroup);
@@ -279,6 +264,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     public void close() throws IOException {
         offsets.close();
         nativedatatypes.close();
+        if (tripleTerms != null) tripleTerms.close();
         if (typedLiterals != null) typedLiterals.close();
         if (integers != null) integers.close();
         if (longs != null) longs.close();

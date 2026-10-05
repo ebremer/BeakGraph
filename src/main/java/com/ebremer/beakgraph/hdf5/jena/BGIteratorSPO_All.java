@@ -10,8 +10,6 @@ import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
-import org.apache.jena.sparql.expr.Expr;
-import org.apache.jena.sparql.expr.ExprFunction2;
 import org.apache.jena.sparql.expr.ExprList;
 
 /**
@@ -48,8 +46,23 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     private Var gVar, sVar, pVar, oVar;
     private long gId;
 
+    // Triple-term pattern in the object position: this scan-shaped iterator
+    // formerly dropped the constraint entirely (a var-containing triple term is
+    // not isConcrete()) and returned every row - the one-classifier rule, CHANGELOG.md "Format v5 design notes". Candidates
+    // now unify per row in computeNext; null for every other shape.
+    private TripleTermMatcher ttMatcher;
+
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, presetGi);
     }
 
     /**
@@ -58,7 +71,15 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
      * own subject range) are walked. Each subject's whole P/O sub-tree belongs
      * to the chunk owning its position, so chunks neither split nor duplicate rows.
      */
+    /** Number of scans constructed (chunks included) - tests pin what does NOT route here. */
+    public static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
+
     BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long sPosLo, long sPosHi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, sPosLo, sPosHi, -1);
+    }
+
+    private BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long sPosLo, long sPosHi, long presetGi) {
+        HITS.incrementAndGet();
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
         BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
@@ -75,16 +96,22 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         this.spNum = Sp.getNumEntries();
         this.soNum = So.getNumEntries();
 
-        if (filter != null && !filter.isEmpty()) {
-            analyzeFilters(filter, dict, quad);
-        }
+        RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+        minSubId = bounds.minS;
+        maxSubId = bounds.maxS;
+        minPid = bounds.minP;
+        maxPid = bounds.maxP;
+        minObjId = bounds.minO;
+        maxObjId = bounds.maxO;
 
         // Resolve the graph the same way the other three iterators behind
         // BGIteratorMaster do: the dispatcher also routes here when the graph
         // VARIABLE is pre-bound in the BindingNodeId, and locate() on the raw
         // variable node returns -1 - silently yielding nothing for a graph
         // that exists.
-        if (quad.getGraph().isVariable()) {
+        if (presetGi >= 1) {
+            gi = presetGi;
+        } else if (quad.getGraph().isVariable()) {
             long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
             gi = (bound != NodeId.NONE) ? NodeId.id(bound) : -1;
         } else {
@@ -92,21 +119,53 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         }
         if (gi < 1) return;
 
-        // Honour concrete subject / object terms named directly in the triple
-        // pattern. This iterator otherwise scans every S and O in the graph, so
-        // a concrete "<subject> ?p ?o" would wrongly return every triple.
+        // Honour a subject / object fixed by the pattern - a concrete term named
+        // in the triple, or a VARIABLE the parent binding already holds (a join's
+        // second pattern, VALUES, a DESCRIBE star). HDF5Reader.read leaves a
+        // same-space bound variable as a Var and expects the iterator to consult
+        // the binding, as the SO/OS/POS iterators do; this one only looked at
+        // isConcrete(), so "?y ?p ?o" after "?x :knows ?y" walked the graph's
+        // ENTIRE subject range per input row and rejected every non-matching
+        // row in computeNext. A bound id is in the position's own id-space
+        // (cross-space bindings were materialized upstream), so it clamps the
+        // range exactly like a located concrete term; the per-row putCompatible
+        // check stays as the final word.
         long concreteSubId = -1;
-        if (quad.getSubject().isConcrete()) {
-            concreteSubId = dict.getSubjects().locate(quad.getSubject());
+        Node sNode = quad.getSubject();
+        if (sNode.isConcrete()) {
+            concreteSubId = dict.getSubjects().locate(sNode);
             if (concreteSubId < 1) return;
+        } else if (sNode.isVariable() && bnid != null) {
+            long bound = bnid.get(Var.alloc(sNode));
+            if (bound != NodeId.NONE) {
+                concreteSubId = NodeId.id(bound);
+                if (concreteSubId < 1) return; // DOES_NOT_EXIST: nothing can match
+            }
+        }
+        if (concreteSubId > 0) {
             minSubId = Math.max(minSubId, concreteSubId);
             maxSubId = Math.min(maxSubId, concreteSubId);
         }
-        if (quad.getObject().isConcrete()) {
-            long oid = dict.getObjects().locate(quad.getObject());
+        Node oNode = quad.getObject();
+        if (oNode.isConcrete()) {
+            long oid = dict.getObjects().locate(oNode);
             if (oid < 1) return;
             minObjId = Math.max(minObjId, oid);
             maxObjId = Math.min(maxObjId, oid);
+        } else if (oNode.isVariable() && bnid != null && bnid.get(Var.alloc(oNode)) != NodeId.NONE) {
+            long oid = NodeId.id(bnid.get(Var.alloc(oNode)));
+            if (oid < 1) return; // DOES_NOT_EXIST: nothing can match
+            minObjId = Math.max(minObjId, oid);
+            maxObjId = Math.min(maxObjId, oid);
+        } else if (TripleTermMatcher.isPattern(quad.getObject())) {
+            // Var-containing triple term: not concrete, but very much a
+            // constraint. Clamp to the triple-term suffix of the object space
+            // and unify each surviving row in computeNext.
+            ttMatcher = TripleTermMatcher.compile(quad.getObject(), dict);
+            if (ttMatcher == null) {
+                return; // pattern cannot match anything in this store
+            }
+            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
         }
 
         // -----------------------------------------------------------------
@@ -138,13 +197,13 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // LEVEL 2: Predicate Cursor
         // -----------------------------------------------------------------
         // Start of Predicates for Subject `idxS` is the (idxS + 1)-th '1' in Bp.
-        this.idxP = select1Safe(dirP, Bp, idxS + 1);
+        this.idxP = RangeSelect.blockStart(dirP, Bp, idxS + 1);
 
         // -----------------------------------------------------------------
         // LEVEL 3: Object Cursor
         // -----------------------------------------------------------------
         // Start of Objects for Predicate `idxP` is the (idxP + 1)-th '1' in Bo.
-        this.idxO = select1Safe(dirO, Bo, idxP + 1);
+        this.idxO = RangeSelect.blockStart(dirO, Bo, idxP + 1);
 
         // --- Safety Checks ---
         // If idxP or idxO are -1 (not found), it means the lists are empty or we overshot.
@@ -169,13 +228,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         advance();
     }
 
-    private long select1Safe(HDTBitmapDirectory dir, BitPackedUnSignedLongBuffer fallback, long rank) {
-        if (rank < 1) return -1; // 1-based rank must be >= 1
-        // Accelerated O(log n) select via the superblock/block directory when present;
-        // fall back to the buffer's linear scan only for indexes written without it.
-        return (dir != null) ? dir.select1(rank) : fallback.select1(rank);
-    }
-
     /**
      * Binary search the subject-id buffer Ss (ascending within a graph) for
      * {@code sid} in the inclusive position range [lo, hi]. Returns the buffer
@@ -192,9 +244,17 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         return -1;
     }
 
+    /** Candidate rows examined so far; lets tests prove an index path was taken. */
+    private long visited;
+
+    long rowsVisited() {
+        return visited;
+    }
+
     private void advance() {
         hasNext = false;
         while (idxS <= endS) {
+            visited++;
             boolean isMatch = true;
             if (curSID < minSubId) {
                 skipSubjectBlock();
@@ -216,8 +276,23 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 continue;
             }
             this.curOID = So.get(idxO);
-            if (curOID < minObjId || curOID > maxObjId) {
-                isMatch = false;
+            // Objects ascend within an (S,P) block, so an object range is
+            // navigated, not filtered row by row: below the range, seek to the
+            // first candidate; above it, nothing later in the block can match.
+            if (curOID < minObjId) {
+                long nextBlock = RangeSelect.blockStart(dirO, Bo, idxP + 2);
+                long blockEnd = (nextBlock == -1 ? soNum : nextBlock) - 1;
+                long pos = So.lowerBound(idxO, blockEnd, minObjId);
+                if (pos == -1) {
+                    skipPredicateBlock();
+                    continue;
+                }
+                idxO = pos;
+                this.curOID = So.get(idxO);
+            }
+            if (curOID > maxObjId) {
+                skipPredicateBlock();
+                continue;
             }
             if (isMatch) {
                 this.resS = curSID;
@@ -248,7 +323,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // Find start of NEXT predicate block
         // Current Predicate is idxP. Its start was select1(idxP+1).
         // Next Predicate is idxP+1. Its start is select1(idxP+2).
-        long nextPStart = select1Safe(dirO, Bo, idxP + 2);
+        long nextPStart = RangeSelect.blockStart(dirO, Bo, idxP + 2);
         idxO = (nextPStart == -1) ? soNum : nextPStart;
 
         idxP++;
@@ -266,7 +341,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // Find start of NEXT Subject block
         // Current Subject idxS. Start was select1(idxS+1).
         // Next Subject idxS+1. Start is select1(idxS+2).
-        long nextSStartP = select1Safe(dirP, Bp, idxS + 2);
+        long nextSStartP = RangeSelect.blockStart(dirP, Bp, idxS + 2);
 
         if (nextSStartP == -1) {
             idxP = spNum;
@@ -274,7 +349,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         } else {
             idxP = nextSStartP;
             // Now align Object cursor to the new Predicate
-            long nextSStartO = select1Safe(dirO, Bo, idxP + 1);
+            long nextSStartO = RangeSelect.blockStart(dirO, Bo, idxP + 1);
             idxO = (nextSStartO == -1) ? soNum : nextSStartO;
         }
 
@@ -282,65 +357,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
 
         if (idxS <= endS) curSID = Ss.get(idxS);
         if (idxP < spNum) curPID = Sp.get(idxP);
-    }
-
-    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        for (Expr expr : filter.getList()) {
-            if (expr instanceof ExprFunction2 func) {
-                Expr left = func.getArg1();
-                Expr right = func.getArg2();
-                String opcode = func.getOpName();
-                if (left.isVariable() && right.isConstant()) {
-                    applyBound(left.asVar(), opcode, right.getConstant().asNode(), dict, quad);
-                } else if (left.isConstant() && right.isVariable()) {
-                    applyBound(right.asVar(), flipOp(opcode), left.getConstant().asNode(), dict, quad);
-                }
-            }
-        }
-    }
-
-    private String flipOp(String op) {
-        return switch (op) {
-            case ">" -> "<"; case "<" -> ">"; case ">=" -> "<="; case "<=" -> ">="; default -> op;
-        };
-    }
-
-    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        int type;
-        if (var.equals(quad.getSubject())) type = 1;
-        else if (var.equals(quad.getPredicate())) type = 2;
-        else if (var.equals(quad.getObject())) type = 3;
-        else return;
-
-        // Snap the bound to the edges of the whole value-equal cluster: value-equal
-        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
-        // adjacent distinct ids, and the raw exact-term insertion point can land
-        // inside that cluster, silently dropping qualifying boundary rows.
-        long[] c = switch (type) {
-            case 1 -> ValueCluster.of(dict.getSubjects(), value);
-            case 2 -> ValueCluster.of(dict.getPredicates(), value);
-            default -> ValueCluster.of(dict.getObjects(), value);
-        };
-
-        long min, max;
-        switch (type) {
-            case 1 -> { min = minSubId; max = maxSubId; }
-            case 2 -> { min = minPid; max = maxPid; }
-            default -> { min = minObjId; max = maxObjId; }
-        }
-
-        switch (op) {
-            case ">" -> min = Math.max(min, c[1] + 1);
-            case ">=" -> min = Math.max(min, c[0]);
-            case "<" -> max = Math.min(max, c[0] - 1);
-            case "<=" -> max = Math.min(max, c[1]);
-        }
-
-        switch (type) {
-            case 1 -> { minSubId = min; maxSubId = max; }
-            case 2 -> { minPid = min; maxPid = max; }
-            default -> { minObjId = min; maxObjId = max; }
-        }
     }
 
     // Look-ahead: the next deliverable row, or null. Rows whose repeated-variable
@@ -371,6 +387,14 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             }
             if (ok && oVar != null) {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, resO), nodeTable);
+            }
+            if (ok && ttMatcher != null) {
+                BindingNodeId unified = ttMatcher.matchAndBind(resO, result, nodeTable);
+                if (unified == null) {
+                    ok = false;
+                } else {
+                    result = unified;
+                }
             }
             advance();
             if (ok) return result;

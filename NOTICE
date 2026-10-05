@@ -1,0 +1,19 @@
+BeakGraph
+Copyright 2021-2026 Erich Bremer
+
+Licensed under the Apache License, Version 2.0 (see LICENSE). Source files
+without a license header are BeakGraph's own and fall under that license
+and copyright.
+
+This product bundles third-party code:
+
+* src/main/java/io/airlift/compress/v3/zstdFFM - the FFM port of the Zstandard
+  codec from the airlift/aircompressor fork at
+  https://github.com/ebremer/aircompressor (Apache License 2.0; headers
+  retained in each file; local divergences are listed in that directory's
+  README.md).
+* src/main/java/com/ebremer/ns/GEO.java and GEOF.java - GeoSPARQL vocabulary
+  classes derived from Apache Jena (Apache License 2.0; ASF headers retained).
+* src/test/resources/w3c and src/test/resources/sparql-cdts - vendored W3C
+  and SPARQL-CDT test suites under their own licenses (see the README.md and
+  LICENSE files in those directories).

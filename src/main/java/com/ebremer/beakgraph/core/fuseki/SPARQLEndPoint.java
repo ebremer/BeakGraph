@@ -4,8 +4,13 @@ import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.cmdline.Parameters;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
+import com.ebremer.beakgraph.lws.LWSMetadataRefresher;
 import com.ebremer.beakgraph.turbo.Spatial;
 import org.apache.jena.fuseki.main.FusekiServer;
+import org.apache.jena.graph.Graph;
+import org.apache.jena.query.ARQ;
+import org.apache.jena.sparql.core.DatasetGraphFactory;
+import org.apache.jena.sparql.graph.GraphWrapper;
 import org.apache.jena.query.Dataset;
 import org.apache.jena.query.DatasetFactory;
 import org.apache.jena.rdf.model.Model;
@@ -24,6 +29,7 @@ import jakarta.servlet.http.*;
 import java.io.*;
 import java.nio.file.*;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Enumeration;
 import java.util.zip.GZIPInputStream;
 
@@ -34,13 +40,14 @@ public class SPARQLEndPoint {
     private static String BASE_URL;
     private Model lwsModel;
     private Path storageRoot = null;
+    /** Directory mode only: keeps the served metadata in step with the files on disk. */
+    private LWSMetadataRefresher refresher;
     private BeakGraph singleFileGraph;
     private final Dataset dataset;
 
     static {
         JenaSystem.init();
         Spatial.init();
-        JenaShaper.init();
     }
 
     private SPARQLEndPoint(Parameters params) throws Exception {
@@ -52,29 +59,32 @@ public class SPARQLEndPoint {
         if (Files.isDirectory(endpointPath)) {
             logger.info("Directory mode (LWS) – metadata becomes default graph");
             storageRoot = endpointPath;
-            Path ttlGzFile = endpointPath.resolve(LWSMetadataGenerator.CACHE_FILE_NAME);
-            if (Files.exists(ttlGzFile)) {
-                try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
-                    lwsModel = ModelFactory.createDefaultModel();
-                    RDFDataMgr.read(lwsModel, is, RDFFormat.TURTLE.getLang());
-                    logger.info("Loaded LWS metadata from {}", ttlGzFile);
-                } catch (Exception ex) {
-                    logger.error("Failed to load " + LWSMetadataGenerator.CACHE_FILE_NAME, ex);
-                    lwsModel = ModelFactory.createDefaultModel();
-                }
-            } else {
-                logger.info("{} not found – generating LWS metadata from {}",
-                        LWSMetadataGenerator.CACHE_FILE_NAME, endpointPath);
-                try {
-                    lwsModel = LWSMetadataGenerator.generateLWSModel(endpointPath);
-                    LWSMetadataGenerator.writeModelToGZ(lwsModel, ttlGzFile);
-                    logger.info("Generated and cached LWS metadata to {}", ttlGzFile);
-                } catch (Exception ex) {
-                    logger.error("Failed to generate LWS metadata for " + endpointPath, ex);
-                    lwsModel = ModelFactory.createDefaultModel();
-                }
+            lwsModel = loadOrGenerate(endpointPath, endpointPath.resolve(LWSMetadataGenerator.CACHE_FILE_NAME));
+            // The tree changes underneath a running server (files copied in,
+            // replaced, deleted) and a cached beakgraph.ttl.gz may predate changes
+            // made while the server was down. The refresher validates the cache
+            // now, re-scans on a fixed interval, and is consulted whenever a request
+            // names a path the snapshot does not know. Fuseki and the servlet both
+            // read the CURRENT snapshot: the graph handed to Fuseki delegates every
+            // operation to whatever model the refresher holds at that moment.
+            refresher = new LWSMetadataRefresher(endpointPath, lwsModel);
+            if (refresher.refreshIfChanged()) {
+                logger.info("Cached LWS metadata was out of date with {}; regenerated", endpointPath);
             }
-            ds = DatasetFactory.create(lwsModel);
+            long refreshSeconds = Long.getLong("beakgraph.lws.refresh.seconds", 30L);
+            refresher.start(refreshSeconds);
+            logger.info("LWS metadata refresh: {} plus on-demand checks for unknown paths",
+                    refreshSeconds > 0 ? "every " + refreshSeconds + "s" : "periodic scan disabled");
+            ds = DatasetFactory.wrap(DatasetGraphFactory.wrap(new CurrentModelGraph(refresher)));
+            // -timeout applies here too. Fuseki takes its per-query limit from
+            // ARQ.queryTimeout in the dataset's context (milliseconds) and
+            // answers a cancelled query with 503 - the BeakGraph-served
+            // endpoints read the same property themselves. Without this the
+            // metadata dataset ran unbounded queries (BG-402).
+            long timeoutSeconds = BGSparqlService.queryTimeoutSeconds();
+            if (timeoutSeconds > 0) {
+                ds.getContext().set(ARQ.queryTimeout, Long.toString(timeoutSeconds * 1000L));
+            }
         } else {
             logger.info("Single-file mode (HDF5)");
             // A single-file endpoint serves one graph for the whole server lifetime, so open
@@ -82,22 +92,12 @@ public class SPARQLEndPoint {
             // never returning it (which leaks the handle and permanently ties up a pool slot).
             singleFileGraph = BG.getBeakGraph(params.sparqlendpoint);
             ds = singleFileGraph.getDataset();
-
-            Path parent = endpointPath.getParent();
-            if (parent != null) {
-                Path ttlGzFile = parent.resolve("beakgraph.ttl.gz");
-                if (Files.exists(ttlGzFile)) {
-                    try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
-                        lwsModel = ModelFactory.createDefaultModel();
-                        RDFDataMgr.read(lwsModel, is, RDFFormat.TURTLE.getLang());
-                        logger.info("Loaded LWS metadata from {}", ttlGzFile);
-                    } catch (Exception ex) {
-                        logger.error("Failed to load beakgraph.ttl.gz", ex);
-                        lwsModel = ModelFactory.createDefaultModel();
-                    }
-                }
-            }
-            if (lwsModel == null) lwsModel = ModelFactory.createDefaultModel();
+            // Single-file mode serves ONE store, at /rdf. A beakgraph.ttl.gz left
+            // in the parent directory by an earlier directory-mode run used to be
+            // loaded here, so the LWS servlet advertised the whole parent tree
+            // while, with no storage root, every data GET answered 500 (BG-45).
+            // The LWS surface is empty in this mode: it answers 404.
+            lwsModel = ModelFactory.createDefaultModel();
         }
         this.dataset = ds;
 
@@ -110,7 +110,12 @@ public class SPARQLEndPoint {
             // Directory mode: /rdf serves the LWS metadata model (absolute IRIs).
             // Single-file mode registers /rdf below via HDF5SparqlServlet instead,
             // so document-relative IRIs in the HDF5 data get resolved.
-            serverBuilder.add("/rdf", ds);
+            // READ-ONLY (allowUpdate=false): the two-argument add() registers
+            // SPARQL Update and Graph Store PUT/POST/DELETE as well, and `ds` is
+            // the very model LWSStorageServlet uses as its allow-list of servable
+            // files - an unauthenticated client could have rewritten it. This
+            // endpoint provides read access only, by design.
+            serverBuilder.add("/rdf", ds, false);
         }
         server = serverBuilder.build();
 
@@ -118,14 +123,22 @@ public class SPARQLEndPoint {
         ServletContextHandler context = (ServletContextHandler) jettyServer.getHandler();
 
         BASE_URL = "http://localhost:" + params.port + "/";
-        LWSStorageServlet.setBase(BASE_URL);
-        LWSStorageServlet.setStorageRoot(storageRoot);
+        // Advertised links and IRI resolution use the base each client actually
+        // reaches the server on - derived per request, with a reverse proxy's
+        // Forwarded / X-Forwarded-* headers honoured - unless -base pins a public
+        // URL for a proxy that does not forward the original host. A fixed
+        // localhost base sent every remote client's next/up/linkset links to its
+        // own loopback while the server deliberately listens on all interfaces.
+        String publicBase = publicBase(params.base);
+        LWSStorageServlet.honourForwardedHeaders(jettyServer);
 
         ServletHolder sparqlPageHolder = new ServletHolder("sparql-page", new SparqlWebPageServlet());
         context.addServlet(sparqlPageHolder, "/sparql");
         context.addServlet(sparqlPageHolder, "/sparql/*");
 
-        ServletHolder lwsHolder = new ServletHolder("lws-storage", new LWSStorageServlet(lwsModel));
+        ServletHolder lwsHolder = new ServletHolder("lws-storage",
+                refresher != null ? new LWSStorageServlet(refresher, publicBase, storageRoot)
+                                  : new LWSStorageServlet(lwsModel, publicBase, storageRoot));
         context.addServlet(lwsHolder, "/*");
 
         if (singleFile) {
@@ -135,8 +148,7 @@ public class SPARQLEndPoint {
             // Resolution base is the SERVED URL, never the local file URI: resolving
             // stored-relative IRIs against endpointPath.toUri() sent every client
             // file:///<absolute-server-path>/... IRIs - full filesystem disclosure.
-            ServletHolder rdfHolder = new ServletHolder("hdf5-sparql",
-                    new HDF5SparqlServlet(ds, BASE_URL + "rdf"));
+            ServletHolder rdfHolder = new ServletHolder("hdf5-sparql", new HDF5SparqlServlet(ds, publicBase));
             context.addServlet(rdfHolder, "/rdf");
             context.addServlet(rdfHolder, "/rdf/*");
         }
@@ -145,6 +157,81 @@ public class SPARQLEndPoint {
         logger.info("Fuseki server started successfully!");
         logger.info("SPARQL: http://localhost:{}/rdf/query", params.port);
         logger.info("LWS: {}", BASE_URL);
+        if (publicBase != null) {
+            logger.info("Public base URL (from -base): {}", publicBase);
+        } else {
+            logger.info("Public base URL: derived from each request (Forwarded/X-Forwarded-* honoured; -base overrides)");
+        }
+    }
+
+    /**
+     * The directory-mode metadata model: the cache when it loads, otherwise a
+     * fresh generation (which the refresher and this method try to cache).
+     * A cache that fails to load - a truncated file from a crash mid-write, a
+     * corrupt one - is deleted (best effort) and regenerated instead of being
+     * served as an empty model that 404s every path (BG-38). Generation
+     * failing altogether yields an empty model, logged at error.
+     */
+    static Model loadOrGenerate(Path endpointPath, Path ttlGzFile) {
+        if (Files.exists(ttlGzFile)) {
+            try (InputStream is = new GZIPInputStream(Files.newInputStream(ttlGzFile))) {
+                Model m = ModelFactory.createDefaultModel();
+                RDFDataMgr.read(m, is, RDFFormat.TURTLE.getLang());
+                logger.info("Loaded LWS metadata from {}", ttlGzFile);
+                return m;
+            } catch (Exception ex) {
+                logger.warn("Cannot load the LWS metadata cache {} ({}); regenerating it from {}",
+                        ttlGzFile, ex.toString(), endpointPath);
+                try {
+                    Files.deleteIfExists(ttlGzFile);
+                } catch (IOException deleteEx) {
+                    logger.warn("Could not delete the unreadable cache {}: {}", ttlGzFile, deleteEx.toString());
+                }
+            }
+        } else {
+            logger.info("{} not found – generating LWS metadata from {}",
+                    LWSMetadataGenerator.CACHE_FILE_NAME, endpointPath);
+        }
+        Model generated;
+        try {
+            generated = LWSMetadataGenerator.generateLWSModel(endpointPath);
+        } catch (Exception ex) {
+            logger.error("Failed to generate LWS metadata for " + endpointPath, ex);
+            return ModelFactory.createDefaultModel();
+        }
+        try {
+            LWSMetadataGenerator.writeModelToGZ(generated, ttlGzFile);
+            logger.info("Generated and cached LWS metadata to {}", ttlGzFile);
+        } catch (Exception ex) {
+            // A read-only served directory: serve the freshly generated model
+            // anyway (it used to be discarded for an EMPTY one, so every LWS
+            // path answered 404 with only a log line).
+            logger.warn("Serving the generated LWS metadata without caching it: cannot write {} ({})",
+                    ttlGzFile, ex.toString());
+        }
+        return generated;
+    }
+
+    /**
+     * Normalizes a {@code -base} value: null or blank means "derive per request";
+     * anything else must be an absolute http(s) URL and is returned ending with '/'.
+     */
+    static String publicBase(String configured) {
+        if (configured == null || configured.isBlank()) {
+            return null;
+        }
+        String b = configured.strip();
+        java.net.URI u;
+        try {
+            u = new java.net.URI(b);
+        } catch (java.net.URISyntaxException e) {
+            throw new IllegalArgumentException("-base is not a valid URL: " + configured, e);
+        }
+        String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+        if (!(scheme.equals("http") || scheme.equals("https")) || u.getHost() == null) {
+            throw new IllegalArgumentException("-base must be an absolute http(s) URL such as https://data.example.org/ (got " + configured + ")");
+        }
+        return b.endsWith("/") ? b : b + "/";
     }
 
     // synchronized so the lazy init is atomic: two concurrent callers must not each build
@@ -164,35 +251,153 @@ public class SPARQLEndPoint {
     }
 
     public void shutdown() {
-        if (server != null) server.stop();
+        if (server != null) {
+            server.stop();
+            server = null;
+        }
+        // Forget this instance: getSPARQLEndPoint() used to keep handing out the
+        // stopped endpoint (isRunning() lied, a re-request got a dead server).
+        synchronized (SPARQLEndPoint.class) {
+            if (sep == this) {
+                sep = null;
+            }
+        }
+        if (refresher != null) {
+            refresher.close();
+            refresher = null;
+        }
         if (singleFileGraph != null) {
             singleFileGraph.close();
             singleFileGraph = null;
         }
     }
 
+    /** Graph view that delegates every operation to the refresher's current metadata snapshot. */
+    private static final class CurrentModelGraph extends GraphWrapper {
+        private final LWSMetadataRefresher refresher;
+
+        CurrentModelGraph(LWSMetadataRefresher refresher) {
+            super(refresher.current().getGraph());
+            this.refresher = refresher;
+        }
+
+        @Override
+        public Graph get() {
+            return refresher.current().getGraph();
+        }
+    }
+
     public boolean isRunning() { return server != null; }
 
+    /**
+     * Whether a request is a SPARQL query - the only responses the JSON-LD
+     * profile frame is meant for: the /rdf endpoint, or a {@code ?query=} /
+     * {@code application/sparql-query} request on a served .h5 file. An LWS
+     * metadata response framed with the geo:FeatureCollection frame matched
+     * nothing and came back as an empty document (BG-427).
+     */
+    static boolean targetsSparql(HttpServletRequest req) {
+        String path = req.getRequestURI();
+        if (path != null && (path.equals("/rdf") || path.startsWith("/rdf/"))) {
+            return true;
+        }
+        String ct = req.getContentType();
+        if ("POST".equals(req.getMethod()) && ct != null
+                && ct.toLowerCase(Locale.ROOT).startsWith("application/sparql-query")) {
+            return true;
+        }
+        String qs = req.getQueryString();
+        return qs != null && (qs.startsWith("query=") || qs.contains("&query="));
+    }
+
+    /**
+     * Applies the user-profile JSON-LD frame: a SPARQL response requested with
+     * {@code Accept: application/ld+json;profile=user-profile} is produced by
+     * the endpoint as ordinary JSON-LD (the Accept header is narrowed for it),
+     * buffered here, and framed by {@link JenaShaper} before it is sent.
+     * Buffering is inherent to framing - a frame needs the whole document -
+     * and keeps the JSON-LD writer registry untouched (BG-216); JSON-LD
+     * CONSTRUCT answers are capped by the endpoint anyway.
+     */
     private static class ProfileInterceptorFilter implements Filter {
         @Override
         public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
             HttpServletRequest req = (HttpServletRequest) request;
             String acceptHeader = req.getHeader("Accept");
-            boolean isProfileRequested = acceptHeader != null && acceptHeader.contains("application/ld+json") && acceptHeader.contains("profile=user-profile");
-            if (isProfileRequested) {
-                JenaShaper.USE_PROFILE.set(true);
-                HttpServletRequestWrapper wrapper = new HttpServletRequestWrapper(req) {
-                    @Override public String getHeader(String name) { return "Accept".equalsIgnoreCase(name) ? "application/ld+json" : super.getHeader(name); }
-                    @Override public Enumeration<String> getHeaders(String name) { return "Accept".equalsIgnoreCase(name) ? Collections.enumeration(Collections.singletonList("application/ld+json")) : super.getHeaders(name); }
-                };
-                try { chain.doFilter(wrapper, response); } finally { JenaShaper.USE_PROFILE.remove(); }
+            boolean isProfileRequested = acceptHeader != null && acceptHeader.contains("application/ld+json")
+                    && acceptHeader.contains("profile=user-profile") && targetsSparql(req);
+            if (!isProfileRequested) {
+                chain.doFilter(request, response);
                 return;
             }
-            try { chain.doFilter(request, response); } finally { JenaShaper.USE_PROFILE.remove(); }
+            HttpServletRequestWrapper wrapper = new HttpServletRequestWrapper(req) {
+                @Override public String getHeader(String name) { return "Accept".equalsIgnoreCase(name) ? "application/ld+json" : super.getHeader(name); }
+                @Override public Enumeration<String> getHeaders(String name) { return "Accept".equalsIgnoreCase(name) ? Collections.enumeration(Collections.singletonList("application/ld+json")) : super.getHeaders(name); }
+            };
+            HttpServletResponse resp = (HttpServletResponse) response;
+            BufferedResponse buffered = new BufferedResponse(resp);
+            chain.doFilter(wrapper, buffered);
+            byte[] body = buffered.body();
+            String ct = buffered.getContentType();
+            boolean jsonLd = ct != null && ct.toLowerCase(Locale.ROOT).contains("ld+json");
+            if (buffered.getStatus() < 300 && jsonLd && body.length > 0) {
+                body = JenaShaper.frame(body);
+            }
+            if (!resp.isCommitted()) {
+                resp.setContentLength(body.length);
+            }
+            OutputStream out = resp.getOutputStream();
+            out.write(body);
+            out.flush();
         }
 
         @Override public void init(FilterConfig filterConfig) {}
         @Override public void destroy() {}
+    }
+
+    /** Captures the body an endpoint writes so the filter can frame it; status and headers pass straight through. */
+    private static final class BufferedResponse extends HttpServletResponseWrapper {
+        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        private ServletOutputStream stream;
+        private PrintWriter writer;
+
+        BufferedResponse(HttpServletResponse response) {
+            super(response);
+        }
+
+        byte[] body() {
+            if (writer != null) {
+                writer.flush();
+            }
+            return buffer.toByteArray();
+        }
+
+        @Override
+        public ServletOutputStream getOutputStream() {
+            if (stream == null) {
+                stream = new ServletOutputStream() {
+                    @Override public boolean isReady() { return true; }
+                    @Override public void setWriteListener(WriteListener listener) {}
+                    @Override public void write(int b) { buffer.write(b); }
+                    @Override public void write(byte[] b, int off, int len) { buffer.write(b, off, len); }
+                };
+            }
+            return stream;
+        }
+
+        @Override
+        public PrintWriter getWriter() throws IOException {
+            if (writer == null) {
+                String enc = getCharacterEncoding();
+                writer = new PrintWriter(new OutputStreamWriter(getOutputStream(), enc == null ? "UTF-8" : enc));
+            }
+            return writer;
+        }
+
+        @Override public void setContentLength(int len) {}
+        @Override public void setContentLengthLong(long len) {}
+        @Override public void flushBuffer() {}
+        @Override public void resetBuffer() { buffer.reset(); }
     }
 
     private static class SparqlWebPageServlet extends HttpServlet {
@@ -201,6 +406,14 @@ public class SPARQLEndPoint {
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             String pathInfo = req.getPathInfo();
             String resourcePath;
+            if (pathInfo == null && "/sparql".equals(req.getServletPath())) {
+                // The page's assets are relative (yasgui.min.js, beakgraph.png):
+                // served at the bare /sparql they resolved to /yasgui.min.js -
+                // the LWS servlet's 404 - and the page rendered without its
+                // editor. Send the browser to the directory form.
+                resp.sendRedirect(req.getContextPath() + "/sparql/");
+                return;
+            }
             if (pathInfo == null || pathInfo.equals("/") || pathInfo.isEmpty()) {
                 resourcePath = "/META-INF/sparql/index.html";
             } else if (pathInfo.equals("/beakgraph.png")) {
@@ -246,11 +459,11 @@ public class SPARQLEndPoint {
     private static class HDF5SparqlServlet extends HttpServlet {
         private static final long serialVersionUID = 1L;
         private final transient Dataset ds;
-        private final String baseURI;
+        private final String configuredBase;
 
-        HDF5SparqlServlet(Dataset ds, String baseURI) {
+        HDF5SparqlServlet(Dataset ds, String configuredBase) {
             this.ds = ds;
-            this.baseURI = baseURI;
+            this.configuredBase = configuredBase;
         }
 
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -273,7 +486,11 @@ public class SPARQLEndPoint {
                 resp.sendError(400, "No SPARQL query provided");
                 return;
             }
-            BGSparqlService.execute(ds, queryStr, baseURI, req.getHeader("Accept"), resp);
+            // The resolution base follows the request (or -base): /rdf and
+            // /rdf/query both resolve against <live base>/rdf, matching the LWS
+            // path, so result IRIs are dereferenceable from wherever the client is.
+            BGSparqlService.execute(ds, queryStr, LWSStorageServlet.liveBase(req, configuredBase) + "rdf",
+                    req.getHeader("Accept"), resp, BGSparqlService.extractDatasetDescription(req));
         }
     }
 }

@@ -54,4 +54,20 @@ class CompressionContext
         offsets.commit();
         huffmanContext.saveChanges();
     }
+
+    /**
+     * Makes this context indistinguishable from a freshly constructed one for a new
+     * frame starting at {@code baseAddress}: repeat offsets, hash/chain tables and
+     * window, Huffman tables and the sequence store all restart. The sizes stay as
+     * constructed, so the caller must have built it for at least these parameters
+     * (BeakGraph divergence: ZstdJavaCompressor keeps one context per window size
+     * instead of allocating the tables and workspaces for every frame, see README.md).
+     */
+    public void reset(long baseAddress)
+    {
+        offsets.reset();
+        blockCompressionState.reset(baseAddress);
+        huffmanContext.reset();
+        sequenceStore.reset();
+    }
 }

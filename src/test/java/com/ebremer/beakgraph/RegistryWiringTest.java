@@ -1,5 +1,8 @@
 package com.ebremer.beakgraph;
 
+import com.ebremer.beakgraph.core.QueryEngineBG;
+import com.ebremer.beakgraph.hdf5.jena.AggregateCountFastPath;
+import org.apache.jena.sparql.core.DatasetGraphFactory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -7,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
@@ -88,6 +90,31 @@ class RegistryWiringTest {
     }
 
     // --- global registries stay intact -------------------------------------
+
+    @Test
+    void aReplacedGlobalStageGeneratorIsReWrappedOnTheNextOpen() throws Exception {
+        org.apache.jena.sparql.engine.main.StageGenerator before =
+                org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(ARQ.getContext());
+        assertTrue(before instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG, "control: BeakGraph is wired");
+        try {
+            // Another component replaces (does not wrap) the global generator.
+            org.apache.jena.sparql.engine.main.StageBuilder.setGenerator(ARQ.getContext(),
+                    org.apache.jena.sparql.engine.main.StageBuilder.standardGenerator());
+            assertFalse(org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(ARQ.getContext())
+                    instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG);
+            try (BeakGraph again = new BeakGraph(new HDF5Reader(dir.resolve("wiring.ttl.h5").toFile()))) {
+                assertTrue(org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(ARQ.getContext())
+                        instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG,
+                        "opening a BeakGraph re-installs the director (BG-63)");
+                assertTrue(org.apache.jena.sparql.engine.main.StageBuilder.chooseStageGenerator(
+                        again.getDataset().asDatasetGraph().getContext())
+                        instanceof com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG,
+                        "the dataset's own context carries the director regardless of the global slot");
+            }
+        } finally {
+            org.apache.jena.sparql.engine.main.StageBuilder.setGenerator(ARQ.getContext(), before);
+        }
+    }
 
     @Test
     void rdfsMemberStaysRegisteredGlobally() {
@@ -171,5 +198,96 @@ class RegistryWiringTest {
         assertTrue(intersects("<http://www.opengis.net/def/crs/EPSG/0/4326> POINT(5 5)",
                 "POLYGON((0 0,10 0,10 10,0 10,0 0))"),
             "CRS-prefixed wktLiteral must be handled");
+    }
+
+    // --- BG-338: the Model path gets the same wiring as the dataset path ----
+
+    private static java.util.List<String> members(Model model) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try (QueryExecution qe = QueryExecutionFactory.create(QueryFactory.create(
+                "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> " +
+                "SELECT ?x WHERE { <http://ex.org/bag> rdfs:member ?x }"), model)) {
+            ResultSet rs = qe.execSelect();
+            while (rs.hasNext()) out.add(rs.next().getResource("x").getURI());
+        }
+        return out;
+    }
+
+    private static long countViaModel(Model model) {
+        try (QueryExecution qe = QueryExecutionFactory.create(QueryFactory.create(
+                "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }"), model)) {
+            return qe.execSelect().next().getLiteral("c").getLong();
+        }
+    }
+
+    @Test
+    void modelPathsAnswerRdfsMemberLikeTheDataset() {
+        // ds.getDefaultModel() and a Model over the graph are Jena-wrapped into a
+        // fresh DatasetGraphOne whose context is not the BGDatasetGraph's. With
+        // Jena 6.2 the global container property function happens to answer a
+        // literal rdfs:member triple too, so this is an equivalence check across
+        // the three routes rather than a reproduction of a miss.
+        assertEquals(java.util.List.of("http://ex.org/item"), members(ds.getDefaultModel()));
+        assertEquals(java.util.List.of("http://ex.org/item"), members(ModelFactory.createModelForGraph(bg)));
+    }
+
+    @Test
+    void modelPathsRunOnTheBGExecutor() {
+        // What the Model path really lost: the BG OpExecutor (filter pushdown,
+        // spatial seeding, the DISTINCT/COUNT fast paths) lives in the dataset
+        // context, which a DatasetGraphOne never carries. QueryEngineBG installs
+        // it per execution; the COUNT fast path's hit counter is the witness.
+        for (Model model : new Model[]{ds.getDefaultModel(), ModelFactory.createModelForGraph(bg)}) {
+            long before = AggregateCountFastPath.HITS.get();
+            assertEquals(2, countViaModel(model));
+            assertEquals(1, AggregateCountFastPath.HITS.get() - before,
+                    "the BG COUNT fast path must run for a Model over a BeakGraph");
+        }
+        assertTrue(QueryEngineBG.isBeakGraphDataset(DatasetGraphFactory.wrap(bg)));
+        assertTrue(QueryEngineBG.isBeakGraphDataset(ds.asDatasetGraph()));
+        // Plain Jena models keep Jena's engine (see rdfsMemberStillWorksOnPlainJenaModels).
+        assertFalse(QueryEngineBG.isBeakGraphDataset(DatasetGraphFactory.wrap(ModelFactory.createDefaultModel().getGraph())));
+    }
+
+
+    @Test
+    void propertyFunctionsRegisteredLaterAreVisible() {
+        // BG-6: the dataset's scoped registry used to be a one-time copy of the
+        // global one, so a function registered after the first BeakGraph opened
+        // was invisible here (the pattern ran as a plain stored predicate).
+        String uri = "http://ex.org/pf/late-" + System.nanoTime();
+        org.apache.jena.sparql.pfunction.PropertyFunctionFactory factory = u -> new org.apache.jena.sparql.pfunction.PFuncSimple() {
+            @Override
+            public org.apache.jena.sparql.engine.QueryIterator execEvaluated(
+                    org.apache.jena.sparql.engine.binding.Binding binding, org.apache.jena.graph.Node subject,
+                    org.apache.jena.graph.Node predicate, org.apache.jena.graph.Node object,
+                    org.apache.jena.sparql.engine.ExecutionContext execCxt) {
+                org.apache.jena.sparql.engine.binding.Binding b = org.apache.jena.sparql.engine.binding.BindingFactory.binding(
+                        binding, org.apache.jena.sparql.core.Var.alloc(object), org.apache.jena.graph.NodeFactory.createLiteralString("late"));
+                return org.apache.jena.sparql.engine.iterator.QueryIterPlainWrapper.create(java.util.List.of(b).iterator(), execCxt);
+            }
+        };
+        PropertyFunctionRegistry.get().put(uri, factory);
+        try {
+            PropertyFunctionRegistry scoped = PropertyFunctionRegistry.chooseRegistry(ds.asDatasetGraph().getContext());
+            assertTrue(scoped.isRegistered(uri), "the scoped registry sees the late registration");
+            assertTrue(scoped.manages(uri));
+            assertNotNull(scoped.get(uri));
+            assertFalse(scoped.isRegistered(RDFS.member.getURI()), "rdfs:member stays masked");
+            java.util.Set<String> keys = new java.util.HashSet<>();
+            scoped.keys().forEachRemaining(keys::add);
+            assertTrue(keys.contains(uri));
+            assertFalse(keys.contains(RDFS.member.getURI()));
+            try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(
+                    "SELECT ?o WHERE { <http://ex.org/s> <" + uri + "> ?o }")).build()) {
+                ResultSet rs = qe.execSelect();
+                assertTrue(rs.hasNext(), "the property function must answer on a BG dataset");
+                assertEquals("late", rs.next().getLiteral("o").getString());
+            }
+        } finally {
+            PropertyFunctionRegistry.get().remove(uri);
+        }
+        assertFalse(PropertyFunctionRegistry.chooseRegistry(ds.asDatasetGraph().getContext()).isRegistered(uri),
+                "and an unregistration is visible too");
     }
 }

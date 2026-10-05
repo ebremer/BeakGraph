@@ -5,11 +5,8 @@ import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.apache.jena.graph.Node;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class SimpleNodeTable implements NodeTable {
-    private static final Logger logger = LoggerFactory.getLogger(SimpleNodeTable.class);
 
     private final PositionalDictionaryReader dict;
 
@@ -43,8 +40,26 @@ public class SimpleNodeTable implements NodeTable {
             .weigher((Node n, Long id) -> weightOf(n))
             .build();
 
+    /** The cache loader, one instance per table (no per-call lambda). */
+    private final java.util.function.Function<Long, Node> extractById;
+
     public SimpleNodeTable(PositionalDictionaryReader dict) {
         this.dict = dict;
+        this.extractById = this::extract;
+    }
+
+    /**
+     * SUBJECT and GRAPH both point to the entity dictionary, OBJECT to the
+     * hybrid entity + literal wrapper.
+     */
+    private Node extract(Long boxed) {
+        long nodeId = boxed;
+        return switch (NodeId.type(nodeId)) {
+            case SUBJECT, GRAPH -> dict.getSubjects().extract(NodeId.id(nodeId));
+            case PREDICATE -> dict.getPredicates().extract(NodeId.id(nodeId));
+            case OBJECT -> dict.getObjects().extract(NodeId.id(nodeId));
+            default -> throw new IllegalStateException("Unresolvable NodeId: " + NodeId.toString(nodeId));
+        };
     }
 
     /**
@@ -69,8 +84,16 @@ public class SimpleNodeTable implements NodeTable {
 
         long id;
 
-        // 1. If it's a Literal, it MUST be in the Object dictionary (Literals dataset)
-        if (n.isLiteral()) {
+        // 1. Literals and RDF 1.2 triple terms live in the Object dictionary
+        // only (triple terms are the literals section's contiguous suffix).
+        if (n.isLiteral() || n.isTripleTerm()) {
+            if (n.isTripleTerm() && !n.isConcrete()) {
+                // A variable-containing triple-term PATTERN is not a term; it can
+                // never be in any store, and probing the dictionary comparator
+                // with embedded variables is undefined. (The iterators route
+                // such patterns to unification, never here.)
+                return NodeId.DOES_NOT_EXIST;
+            }
             if ((id = dict.getObjects().locate(n)) != -1) {
                 return NodeId.pack(NodeType.OBJECT, id);
             }
@@ -121,23 +144,12 @@ public class SimpleNodeTable implements NodeTable {
     public Node getNodeForNodeId(long nodeId) {
         if (nodeId == NodeId.NONE) throw new IllegalArgumentException("getNodeForNodeId: NONE");
 
-        Node cachedNode = nodeId2nodemap.getIfPresent(nodeId);
-        if (cachedNode != null) {
-            return cachedNode;
-        }
-
-        // Because of the monolithic design, SUBJECT and GRAPH both point to the Entity dictionary.
-        // OBJECT points to the hybrid Entity+Literal dictionary wrapper.
-        Node node = switch (NodeId.type(nodeId)) {
-            case SUBJECT, GRAPH -> dict.getSubjects().extract(NodeId.id(nodeId));
-            case PREDICATE -> dict.getPredicates().extract(NodeId.id(nodeId));
-            case OBJECT -> dict.getObjects().extract(NodeId.id(nodeId));
-            default -> throw new IllegalStateException("Unresolvable NodeId: " + NodeId.toString(nodeId));
-        };
-
+        // One boxed key per call, one cache operation: get-with-loader replaces
+        // the getIfPresent + put pair (which boxed twice on a miss). A null
+        // mapping result is not cached, so an unresolvable id stays a miss (BG-253).
+        Node node = nodeId2nodemap.get(nodeId, extractById);
         if (node != null) {
-            nodeId2nodemap.put(nodeId, node);
-            // Deliberately NOT seeding node2nodeIdmap here. A dual-role URI has two valid
+            // The reverse map is deliberately NOT seeded here. A dual-role URI has two valid
             // NodeIds (predicate vs entity id-space); writing the reverse mapping from
             // whichever role was reconstructed first would make getNodeIdForNode flip
             // between roles on successive lookups. Leaving the Node -> NodeId mapping
@@ -149,10 +161,11 @@ public class SimpleNodeTable implements NodeTable {
         return node;
     }
 
-    public void status() {
-        // Caffeine evaluates size concurrently, so we use estimatedSize()
-        logger.debug("nodeId2nodemap size: {}, node2nodeIdmap size: {}",
-                nodeId2nodemap.estimatedSize(), node2nodeIdmap.estimatedSize());
+    /** Entries the two caches currently hold (pending evictions applied) - tests pin that close() empties them. */
+    public long cachedEntries() {
+        nodeId2nodemap.cleanUp();
+        node2nodeIdmap.cleanUp();
+        return nodeId2nodemap.estimatedSize() + node2nodeIdmap.estimatedSize();
     }
 
     @Override

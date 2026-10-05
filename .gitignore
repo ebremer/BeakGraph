@@ -1,11 +1,22 @@
 /target/
 /benchmarks/target/
 *.log
+/logs/
+# JMH output: local runs are not committed (reference runs live in benchmarks/results/)
+/benchmarks/*.json
+/benchmarks/results/local/
 .claude/settings.local.json
 *.h5
 
 # benchmark targets (deployment-specific local paths + URLs, not source)
 testpairs.tsv
+
+# documentation site build output (docs/, see .github/workflows/pages.yml)
+/docs/_site/
+/docs/.jekyll-cache/
+/docs/.jekyll-metadata
+/docs/.bundle/
+/docs/vendor/
 
 # maven-shade artifact
 dependency-reduced-pom.xml

@@ -1,13 +1,15 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import java.util.Map;
+import com.ebremer.beakgraph.core.Futures;
+import java.util.Collections;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
-import com.ebremer.beakgraph.utils.ImageTools;
+import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.utils.RdfSources;
-import com.ebremer.halcyon.hilbert.HilbertSpace;
-import com.ebremer.halcyon.hilbert.PolygonScaler;
+import com.ebremer.beakgraph.huge.SpatialAugmenter;
 import com.ebremer.halcyon.hilbert.WKTDatatype;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -17,46 +19,48 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
-import org.apache.jena.irix.IRIx;
+import com.ebremer.beakgraph.core.lib.RelativeIris;
 import org.apache.jena.rdf.model.Model;
-import org.apache.jena.riot.lang.LabelToNode;
-import org.apache.jena.riot.system.AsyncParser;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.XSD;
-import org.locationtech.jts.geom.Envelope;
-import org.locationtech.jts.geom.GeometryFactory;
-import org.locationtech.jts.geom.Polygon;
-import org.locationtech.jts.geom.Polygonal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static com.ebremer.beakgraph.Params.BGVOID;
-import com.ebremer.beakgraph.features.MajorMinor;
-import com.ebremer.beakgraph.features.pyradiomics.Gen2DFeatures;
-import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.ns.GEO;
-import org.apache.jena.vocabulary.RDFS;
-import org.apache.jena.vocabulary.VOID;
-import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.io.WKTReader;
 
+/**
+ * Ingest stage of the in-memory writers: parses the sources into the quad
+ * array, the per-section node sets and the statistics the dictionary and
+ * index stages read. Internal writer API, not a stable public surface: the
+ * ultra engine subclasses it and the parallel engine reuses its parse. The
+ * node-set getters are read-only views; {@link #getQuads()} is the live array
+ * the index stage reorders in place. A builder is single-use - {@link #build()}
+ * a second time is refused rather than accumulating a second parse into the
+ * first one's sets (BG-274, BG-102).
+ */
 public class PositionalDictionaryWriterBuilder {
+    static {
+        // Deterministic datatype registration before any document is parsed.
+        com.ebremer.halcyon.hilbert.WKTDatatype.register();
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriterBuilder.class);
     private File src;
     private File dest;
     /** When non-empty, ALL of these documents are parsed into ONE store (-merge); src is ignored. */
     private final List<File> sources = new ArrayList<>();
     /** Replacement-label counter for AlignBnodes; never resets, so labels stay unique across merged sources. */
-    private long bnodeCounter = 0;
+    private final long[] bnodeCounter = {0};
     private final HashSet<Node> entities = new HashSet<>();   // URIs & BNodes from G, S, O
     private final HashSet<Node> predicates = new HashSet<>(); // URIs from P
     private final HashSet<Node> literals = new HashSet<>();   // Literals from O
@@ -77,55 +81,12 @@ public class PositionalDictionaryWriterBuilder {
     private int MaxY = Integer.MIN_VALUE;
     // Sentinel base: relative references in the source are parsed against this
     // stable, reserved (.invalid) host that survives IRI normalization, then
-    // stripped back to relative form for storage and resolved at query time
-    // against the URL the .h5 file is served from. Protected: the ultra
-    // subclass parses documents itself and must use the identical base.
-    protected static final String REL_BASE = "http://beakgraph.invalid/document";
-    private static final String REL_BASE_PREFIX = "http://beakgraph.invalid/";
-    private static final IRIx REL_BASE_IRIX = IRIx.create(REL_BASE);
+    // stripped back to relative form for storage (RelativeIris) and resolved
+    // at query time against the URL the .h5 file is served from. Protected:
+    // the ultra subclass parses documents itself and must use the identical
+    // base. One constant for every engine, so they cannot drift apart.
+    protected static final String REL_BASE = RelativeIris.SENTINEL_BASE;
     
-    private static final Node[] asHilbert = {
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert0"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert1"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert2"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert3"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert4"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert5"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert6"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert7"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert8"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert9"),
-        NodeFactory.createURI("https://halcyon.is/ns/asHilbert10"), NodeFactory.createURI("https://halcyon.is/ns/asHilbert11")
-    };
-    private static final Node[] low = {
-        NodeFactory.createURI("https://halcyon.is/ns/low0"), NodeFactory.createURI("https://halcyon.is/ns/low1"),
-        NodeFactory.createURI("https://halcyon.is/ns/low2"), NodeFactory.createURI("https://halcyon.is/ns/low3"),
-        NodeFactory.createURI("https://halcyon.is/ns/low4"), NodeFactory.createURI("https://halcyon.is/ns/low5"),
-        NodeFactory.createURI("https://halcyon.is/ns/low6"), NodeFactory.createURI("https://halcyon.is/ns/low7"),
-        NodeFactory.createURI("https://halcyon.is/ns/low8"), NodeFactory.createURI("https://halcyon.is/ns/low9"),
-        NodeFactory.createURI("https://halcyon.is/ns/low10"), NodeFactory.createURI("https://halcyon.is/ns/low11")
-    };
-    private static final Node[] high = {
-        NodeFactory.createURI("https://halcyon.is/ns/high0"), NodeFactory.createURI("https://halcyon.is/ns/high1"),
-        NodeFactory.createURI("https://halcyon.is/ns/high2"), NodeFactory.createURI("https://halcyon.is/ns/high3"),
-        NodeFactory.createURI("https://halcyon.is/ns/high4"), NodeFactory.createURI("https://halcyon.is/ns/high5"),
-        NodeFactory.createURI("https://halcyon.is/ns/high6"), NodeFactory.createURI("https://halcyon.is/ns/high7"),
-        NodeFactory.createURI("https://halcyon.is/ns/high8"), NodeFactory.createURI("https://halcyon.is/ns/high9"),
-        NodeFactory.createURI("https://halcyon.is/ns/high10"), NodeFactory.createURI("https://halcyon.is/ns/high11")
-    };
-    private static final Node[] hasRange = {
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange0"), NodeFactory.createURI("https://halcyon.is/ns/hasRange1"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange2"), NodeFactory.createURI("https://halcyon.is/ns/hasRange3"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange4"), NodeFactory.createURI("https://halcyon.is/ns/hasRange5"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange6"), NodeFactory.createURI("https://halcyon.is/ns/hasRange7"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange8"), NodeFactory.createURI("https://halcyon.is/ns/hasRange9"),
-        NodeFactory.createURI("https://halcyon.is/ns/hasRange10"), NodeFactory.createURI("https://halcyon.is/ns/hasRange11")
-    };
-    private static final Node[] asWKT = {
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT0"), NodeFactory.createURI("https://halcyon.is/ns/asWKT1"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT2"), NodeFactory.createURI("https://halcyon.is/ns/asWKT3"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT4"), NodeFactory.createURI("https://halcyon.is/ns/asWKT5"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT6"), NodeFactory.createURI("https://halcyon.is/ns/asWKT7"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT8"), NodeFactory.createURI("https://halcyon.is/ns/asWKT9"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT10"), NodeFactory.createURI("https://halcyon.is/ns/asWKT11"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT12"), NodeFactory.createURI("https://halcyon.is/ns/asWKT13"),
-        NodeFactory.createURI("https://halcyon.is/ns/asWKT14")
-    };
     /**
      * Spatial index entry parameters. Each geometry part's bbox is covered by
      * whole Hilbert cells at the coarsest scale where the cover holds at most
@@ -151,18 +112,41 @@ public class PositionalDictionaryWriterBuilder {
         this.voidMode = mode;
         return this;
     }
+
+    private String voidDatasetIri = Params.VOID_DATASET_IRI;
+
+    /** IRI of the sd:Dataset resource the statistics graph describes (BG-109). */
+    public PositionalDictionaryWriterBuilder setVoidDatasetIri(String iri) {
+        this.voidDatasetIri = iri;
+        return this;
+    }
+
+    public String getVoidDatasetIri() { return voidDatasetIri; }
     
     public File getDestination() { return dest; }
-    public Quad[] getQuads() { return quads; }
-   
-    public Set<Node> getEntities() { return entities; }
-    public Set<Node> getPredicates() { return predicates; }
-    public Set<Node> getLiterals() { return literals; }
 
-    // GETTERS FOR THE NEW UNIQUE SETS
-    public Set<Node> getUniqueGraphs() { return uniqueGraphs; }
-    public Set<Node> getUniqueSubjects() { return uniqueSubjects; }
-    public Set<Node> getUniqueObjects() { return uniqueObjects; }
+    // The configuration, readable by the subclasses that drive their own
+    // parse (the ultra ingest used to keep shadow copies of it, BG-313).
+    protected final File getSource() { return src; }
+    protected final List<File> getSources() { return Collections.unmodifiableList(sources); }
+    protected final boolean isSpatial() { return spatial; }
+    protected final boolean isFeatures() { return features; }
+    protected final com.ebremer.beakgraph.core.VoidMode getVoidMode() { return voidMode; }
+
+    /**
+     * The LIVE quad array (never a copy): the index stage sorts it in place,
+     * and the in-memory engines hold exactly one copy of the quads by design.
+     */
+    public Quad[] getQuads() { return quads; }
+
+    // Read-only views: consumers (the dictionary writers, the columnar list
+    // fills, the ultra index) only read them (BG-274).
+    public Set<Node> getEntities() { return Collections.unmodifiableSet(entities); }
+    public Set<Node> getPredicates() { return Collections.unmodifiableSet(predicates); }
+    public Set<Node> getLiterals() { return Collections.unmodifiableSet(literals); }
+    public Set<Node> getUniqueGraphs() { return Collections.unmodifiableSet(uniqueGraphs); }
+    public Set<Node> getUniqueSubjects() { return Collections.unmodifiableSet(uniqueSubjects); }
+    public Set<Node> getUniqueObjects() { return Collections.unmodifiableSet(uniqueObjects); }
     
     public PositionalDictionaryWriterBuilder setSource(File src) {
         this.src = src; return this;
@@ -177,6 +161,20 @@ public class PositionalDictionaryWriterBuilder {
         this.sources.clear();
         this.sources.addAll(files);
         return this;
+    }
+
+    private File sourceRoot;
+
+    /** Merge mode: root the documents' stored relative references are taken from (see {@link RelativeIris#parseBase}). */
+    public PositionalDictionaryWriterBuilder setSourceRoot(File root) {
+        this.sourceRoot = root;
+        return this;
+    }
+
+    /** The base {@code input} is parsed against: the sentinel, or its per-document merge base. */
+    protected String parseBase(File input) {
+        List<File> inputs = sources.isEmpty() ? List.of(src) : sources;
+        return RelativeIris.parseBase(input, inputs, sourceRoot);
     }
 
     public PositionalDictionaryWriterBuilder setSpatial(boolean flag) {
@@ -194,221 +192,67 @@ public class PositionalDictionaryWriterBuilder {
     public long getNumberOfQuads() { return numQuads; }
     public Stats getStats() { return stats; }
     public String getName() { return name; }
-    public Set<String> getDataTypes() { return dataTypes; }
+    public Set<String> getDataTypes() { return Collections.unmodifiableSet(dataTypes); }
     
     public PositionalDictionaryWriterBuilder setName(String name) {
         this.name = name; return this;
     }
     
-    public void maxExtent(Polygon poly) {
-        Envelope env = poly.getEnvelopeInternal();
-        MaxX = Math.max(MaxX, (int) env.getMaxX());
-        MaxY = Math.max(MaxY, (int) env.getMaxY());
-    }
-    
-    private List<Node> generateGridURNs(Polygon polygon, int resolutionLevel) {
-        List<Node> intersectingURNs = new ArrayList<>();
-        Envelope env = polygon.getEnvelopeInternal();   
-        double cellSize = Params.GRIDTILESIZE;   
-        long minTileX = (long) Math.floor(env.getMinX() / cellSize);
-        long maxTileX = (long) Math.floor(env.getMaxX() / cellSize);
-        long minTileY = (long) Math.floor(env.getMinY() / cellSize);
-        long maxTileY = (long) Math.floor(env.getMaxY() / cellSize);   
-        GeometryFactory gf = polygon.getFactory();
-        for (long x = minTileX; x <= maxTileX; x++) {
-            double tileMinX = x * cellSize;
-            double tileMaxX = tileMinX + cellSize;
-            for (long y = minTileY; y <= maxTileY; y++) {
-                double tileMinY = y * cellSize;
-                double tileMaxY = tileMinY + cellSize;            
-                Envelope tileEnv = new Envelope(tileMinX, tileMaxX, tileMinY, tileMaxY);
-                if (env.intersects(tileEnv)) {
-                    Polygon tilePoly = (Polygon) gf.toGeometry(tileEnv);
-                    if (polygon.intersects(tilePoly)) {
-                        intersectingURNs.add(NodeFactory.createURI(
-                            String.format("urn:x-beakgraph:grid:%d:%d:%d", resolutionLevel, x, y)));
-                    }
-                }
-            }
-        }
-        return intersectingURNs;
-    }
-    
-    // Protected, not private: thread-safe per-quad augmentation (guarded by the
-    // spatial/features flags only), reused by the ultra subclass's per-document
-    // parallel parse. Both callers already invoke it concurrently.
+    /**
+     * Spatial index + derived-feature quads for one geometry-carrying quad.
+     * ONE implementation for every engine: {@link SpatialAugmenter}, the
+     * disk pipeline's port of the ~150-line block that lived here, is now the
+     * only copy - the two had to stay byte-identical to each other and to
+     * SpatialIndexIterator's floor snapping (BG-296). Protected, thread-safe:
+     * the ultra subclass's per-document parallel parse calls it too.
+     */
     protected ArrayList<Quad> addSpatial(Quad quad) {
-        final ArrayList<Quad> qqq = new ArrayList<>();
-        // The GeoSPARQL-standard "<crs-uri> WKT" form must be indexed too: strip the
-        // prefix once here so the parser and the scaler both see plain WKT
-        // (previously such geometries failed the parse and were silently dropped).
-        String wkt = ImageTools.stripCrs(quad.getObject().getLiteralLexicalForm());
-        if (features) {
-            // Same containment as the geometry block below: feature generation runs
-            // inside the spatial task, so anything escaping here feeds Future.get()
-            // and fails the whole write over one bad geometry.
-            try {
-                addFeatures(qqq, quad, wkt);
-            } catch (Exception ex) {
-                logger.warn("Failed to generate features for {}: {}", quad.getSubject(), ex.toString());
-            }
-        }
-        // Everything geometry-related sits inside the catch-all below: a single bad
-        // geometry must never abort the build (these tasks feed Future.get(), whose
-        // ExecutionException would otherwise fail the whole write).
-        try {
-            // Index EVERY polygonal part: MULTIPOLYGON members each get their own
-            // pyramid and corner entries (indexing only the first part made the
-            // others unfindable). Non-areal members (POINT, LINESTRING) are indexed
-            // via their expanded envelopes - PER MEMBER, not only as a fallback
-            // when no polygon exists: in a mixed GEOMETRYCOLLECTION the point/line
-            // members next to a polygon member were silently unindexed, invisible
-            // to every spatial query.
-            Geometry g = new WKTReader().read(wkt);
-            if (g.isEmpty()) {
-                return qqq;
-            }
-            List<Polygon> parts = new ArrayList<>(ImageTools.wktToPolygons(wkt));
-            GeometryFactory gf = new GeometryFactory();
-            for (int i = 0; i < g.getNumGeometries(); i++) {
-                Geometry member = g.getGeometryN(i);
-                if (!(member instanceof Polygonal) && !member.isEmpty()) {
-                    Envelope env = member.getEnvelopeInternal();
-                    env.expandBy(0.5); // a point/degenerate envelope still needs area
-                    parts.add((Polygon) gf.toGeometry(env));
-                }
-            }
-            for (Polygon part : parts) {
-                addSpatialIndexCells(qqq, quad, part);
-                addSpatialScales(qqq, quad, wkt, PolygonScaler.toPolygons(part));
-            }
-        } catch (Exception ex) {
-            // Expected data condition (pathology exports contain degenerate
-            // geometries such as two-point rings): one line per skip, no stack -
-            // a slide can contain thousands of these.
-            logger.warn("Skipping spatial indexing for {}: {} ({})",
-                    quad.getSubject(), ex.toString(), abbrevWkt(wkt));
-        }
-        return qqq;
+        return new SpatialAugmenter(features).addSpatial(quad);
     }
 
-    private void addSpatialScales(ArrayList<Quad> qqq, Quad quad, String wkt, Polygon[] scales) {
-        if (scales == null) {
-            return;
-        }
-        final String[] wktScales = PolygonScaler.toWKT(scales);
-        for (int s=0; s<Math.min(scales.length, asWKT.length); s++) {
-            List<Node> tiles = generateGridURNs(scales[s],s);
-            try {
-                for (int ii=0; ii<tiles.size(); ii++) {
-                    qqq.add( Quad.create(tiles.get(ii), quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)));
-                }
-            } catch (Exception ex) {
-                logger.error("Failed to add spatial tile quads for {}", abbrevWkt(wkt), ex);
-            }
-            try {
-                qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), asWKT[s], NodeFactory.createLiteralDT(wktScales[s], WKTDatatype.INSTANCE)) );
-            } catch (Exception ex) {
-                logger.error("Failed to add scaled WKT quad for {}", abbrevWkt(wkt), ex);
-            }
-        }
-    }
 
     /**
-     * Emits this part's recall-safe spatial index entries: the Hilbert indices of
-     * every whole cell covering its bbox, at the coarsest scale where that cover
-     * is at most {@link #MAX_INDEX_CELLS} cells. Cell coordinates use floor
-     * snapping - the query side MUST snap identically or shared cells are missed.
+     * Blank-node alignment, THE implementation for the sequential parse and
+     * the ultra per-document parse (BG-313): every blank node - in the graph,
+     * subject or object position, or inside a triple term, which shares the
+     * quad's document scope so a label keeps co-referring inside and outside
+     * the term - is replaced by its scoped alias {@code <labelPrefix><counter>}
+     * in first-encounter order. Not synchronized: one parse drives one map.
      */
-    private void addSpatialIndexCells(ArrayList<Quad> qqq, Quad quad, Polygon part) {
-        Envelope env = part.getEnvelopeInternal();
-        // The Hilbert domain is [0, 2^31), so bboxes are CLAMPED into it - never
-        // skipped, never allowed to alias (the curve masks out-of-range bits).
-        // Clamping is a monotone projection applied identically on the query
-        // side, so overlapping boxes still overlap after it and recall is
-        // preserved; out-of-domain geometry just indexes coarsely at the domain
-        // edge cells (false positives there are killed by the sfIntersects
-        // verification on the exact original WKT). Skipping fully-negative
-        // geometry instead made it unfindable by ANY query.
-        long minX = HilbertSpace.clampToDomain((long) Math.floor(env.getMinX()));
-        long maxX = HilbertSpace.clampToDomain((long) Math.floor(env.getMaxX()));
-        long minY = HilbertSpace.clampToDomain((long) Math.floor(env.getMinY()));
-        long maxY = HilbertSpace.clampToDomain((long) Math.floor(env.getMaxY()));
-        int s = 0;
-        while (s < MAX_INDEX_SCALE && cellCount(minX, maxX, minY, maxY, s) > MAX_INDEX_CELLS) {
-            s++;
-        }
-        long cell = 1L << s;
-        Node pred = NodeFactory.createURI(HILBERT_CELL_NS + s);
-        HashSet<Long> cells = new HashSet<>();
-        for (long x = Math.floorDiv(minX, cell); x <= Math.floorDiv(maxX, cell); x++) {
-            for (long y = Math.floorDiv(minY, cell); y <= Math.floorDiv(maxY, cell); y++) {
-                cells.add(HilbertSpace.hc.index(new long[]{x, y}));
-            }
-        }
-        for (Long c : cells) {
-            qqq.add(Quad.create(Params.SPATIAL, quad.getSubject(), pred, NodeFactory.createLiteralByValue((long) c)));
-        }
-    }
-
-    private static long cellCount(long minX, long maxX, long minY, long maxY, int s) {
-        long cell = 1L << s;
-        long nx = Math.floorDiv(maxX, cell) - Math.floorDiv(minX, cell) + 1;
-        long ny = Math.floorDiv(maxY, cell) - Math.floorDiv(minY, cell) + 1;
-        return nx * ny;
-    }
-
-    private static String abbrevWkt(String wkt) {
-        return (wkt != null && wkt.length() > 200) ? wkt.substring(0, 200) + "..." : wkt;
-    }
-    
-    // Takes the CRS-stripped WKT computed once in addSpatial: re-reading the raw
-    // lexical form here made JTS throw on every "<crs-uri> WKT"-form literal, so
-    // CRS-prefixed geometries silently got no derived features while identical
-    // unprefixed ones did.
-    private void addFeatures(ArrayList<Quad> qqq, Quad quad, String wkt) {
-        Node geo = quad.getSubject();
-        Gen2DFeatures.generate(qqq, geo, wkt);
-        MajorMinor.add(qqq, geo, wkt);
-    }
-    
-    // Not synchronized: called only from the sequential streamQuads().forEach pipeline
-    // (one consumer thread), like the other per-quad steps; the concurrent addSpatial
-    // tasks never touch bmap.
-    private Quad AlignBnodes(Quad quad) {
+    protected static Quad alignBnodes(Quad quad, Map<Node, Node> bmap, long[] counter, String labelPrefix) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node o = quad.getObject();
-        if (g.isBlank()||s.isBlank()||o.isBlank()) {
-            if (g.isBlank()) {
-                if (!bmap.containsKey(g)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
-                    bmap.put(g, neo);
-                    g = neo;
-                } else {
-                    g = bmap.get(g);
-                }
-            }
-            if (s.isBlank()) {
-                if (!bmap.containsKey(s)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
-                    bmap.put(s, neo);
-                    s = neo;
-                } else {
-                    s = bmap.get(s);
-                }
-            }
-            if (o.isBlank()) {
-                if (!bmap.containsKey(o)) {
-                    Node neo = NodeFactory.createBlankNode(String.format("b%020d", bnodeCounter++));
-                    bmap.put(o, neo);
-                    o = neo;
-                } else {
-                    o = bmap.get(o);
-                }
-            }
+        boolean oTT = o.isTripleTerm();
+        if (!(g.isBlank() || s.isBlank() || o.isBlank() || oTT)) {
+            return quad;
         }
-        return new Quad(g,s,quad.getPredicate(),o);
+        java.util.function.UnaryOperator<Node> align = n -> n.isBlank()
+                ? bmap.computeIfAbsent(n, k -> NodeFactory.createBlankNode(Params.blankNodeLabel(labelPrefix, counter[0]++)))
+                : n;
+        Node g2 = align.apply(g);
+        Node s2 = align.apply(s);
+        Node o2 = oTT ? TripleTerms.map(o, align) : align.apply(o);
+        if (g2 == g && s2 == s && o2 == o) {
+            return quad;
+        }
+        return new Quad(g2, s2, quad.getPredicate(), o2);
+    }
+
+    /**
+     * The per-quad normalization chain both parses apply, in this order:
+     * default-graph sentinel, relativize, blank-node alignment, numeric
+     * canonicalization (BG-313).
+     */
+    protected final Stream<Quad> normalizedQuads(Stream<Quad> parsed, Map<Node, Node> bmap, long[] counter,
+                                                 String labelPrefix) {
+        return parsed
+                .map(quad -> quad.isDefaultGraph()
+                        ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
+                        : quad)
+                .map(this::relativize)
+                .map(quad -> alignBnodes(quad, bmap, counter, labelPrefix))
+                .map(this::canonicalizeNumericObject);
     }
     
     /**
@@ -419,40 +263,7 @@ public class PositionalDictionaryWriterBuilder {
      * are resolved against the serving URL at query time.
      */
     protected final Quad relativize(Quad q) {
-        Node qg = q.getGraph();
-        Node qs = q.getSubject();
-        Node qp = q.getPredicate();
-        Node qo = q.getObject();
-        Node g = relativizeNode(qg);
-        Node s = relativizeNode(qs);
-        Node p = relativizeNode(qp);
-        Node o = relativizeNode(qo);
-        // relativizeNode returns the same Node when nothing changed; if no
-        // position held a document-relative IRI, reuse the quad as-is.
-        if (g == qg && s == qs && p == qp && o == qo) {
-            return q;
-        }
-        return new Quad(g, s, p, o);
-    }
-
-    private Node relativizeNode(Node n) {
-        if (n == null || !n.isURI() || !n.getURI().startsWith(REL_BASE_PREFIX)) {
-            return n;
-        }
-        String u = n.getURI();
-        try {
-            IRIx rel = REL_BASE_IRIX.relativize(IRIx.create(u));
-            if (rel != null && rel.isRelative()) {
-                return NodeFactory.createURI(rel.str());
-            }
-        } catch (RuntimeException ignore) {
-            // fall through to textual stripping
-        }
-        // IRIx relativization failed or was incomplete. Strip the sentinel
-        // textually so it can never leak into stored data. This loses correct
-        // <#fragment> / <../> handling - an acceptable trade for a rare case.
-        return NodeFactory.createURI(
-                u.equals(REL_BASE) ? "" : u.substring(REL_BASE_PREFIX.length()));
+        return RelativeIris.relativizeQuad(q);   // the one implementation (BG-432)
     }
 
     /**
@@ -469,7 +280,25 @@ public class PositionalDictionaryWriterBuilder {
      */
     protected final Quad canonicalizeNumericObject(Quad quad) {
         Node o = quad.getObject();
-        if (!o.isLiteral()) return quad;
+        // Inside a triple term the same duplicate-"equal"-entries hazard applies
+        // to the term's OBJECT component (subjects/predicates cannot be
+        // literals), so the node-level rule recurses through map().
+        Node canon = o.isTripleTerm()
+                ? TripleTerms.map(o, PositionalDictionaryWriterBuilder::canonicalizeNumericNode)
+                : canonicalizeNumericNode(o);
+        if (canon == o) return quad;
+        return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canon);
+    }
+
+    /**
+     * Node-level canonicalization: the canonical value term for a well-formed
+     * xsd:int / xsd:long / xsd:float / xsd:double literal, the node itself
+     * (same instance) otherwise - including ill-formed numerics, which stay
+     * term-exact on the strings path. Public: the disk pipeline's quad-level
+     * mirror delegates here instead of keeping a byte-identical copy.
+     */
+    public static Node canonicalizeNumericNode(Node o) {
+        if (!o.isLiteral()) return o;
         String dt = o.getLiteralDatatypeURI();
         try {
             Node canonical = null;
@@ -482,11 +311,11 @@ public class PositionalDictionaryWriterBuilder {
             } else if (XSD.xdouble.getURI().equals(dt)) {
                 if (o.getLiteralValue() instanceof Number n) canonical = NodeFactory.createLiteralByValue(n.doubleValue());
             }
-            if (canonical == null || canonical.equals(o)) return quad;
-            return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canonical);
+            if (canonical == null || canonical.equals(o)) return o;
+            return canonical;
         } catch (RuntimeException e) {
             // Malformed numeric literal: leave it untouched; downstream handling decides.
-            return quad;
+            return o;
         }
     }
 
@@ -517,9 +346,12 @@ public class PositionalDictionaryWriterBuilder {
      * encodes the node. Extracted from {@link #ProcessQuad} so the ultra
      * writer's post-dedup, chunk-parallel stats pass counts literals with
      * EXACTLY the sequential rules (a drifted copy here would corrupt buffer
-     * allocation, not just reporting). Must be called once per unique literal.
+     * allocation, not just reporting). Called once per unique literal here;
+     * the disk pipeline calls it once per OCCURRENCE, which is safe because
+     * only the min/max values and the zero-ness of the counts are consumed
+     * there (BG-297: it used to keep a byte-identical copy).
      */
-    protected static void countLiteralStats(Node o, Stats stats) {
+    public static void countLiteralStats(Node o, Stats stats) {
         String dt = o.getLiteralDatatypeURI();
         if (dt.equals(XSD.xlong.getURI())) {
             if (literalValueOrNull(o) instanceof Number n) {
@@ -608,23 +440,14 @@ public class PositionalDictionaryWriterBuilder {
             entities.add(s);
         }
         if (!predicates.contains(p)) {
+            requirePredicate(p);
             stats.numIRI++;
             predicates.add(p);
         }
         if (o.isLiteral()) {
-            if (!literals.contains(o)) {
-                // Blank nodes inside a composite (cdt:) literal: labels regenerate
-                // from dictionary rank, so the label in the literal's text would
-                // silently stop co-referring with the graph. Reject at ingest
-                // (checked once per distinct literal; parses composite values only).
-                if (CdtTerms.containsBlankNode(o)) {
-                    throw new IllegalStateException(
-                            "Unsupported object literal (blank node inside cdt: composite literal cannot be stored; its co-reference with the graph would silently break): " + o);
-                }
-                dataTypes.add(o.getLiteralDatatypeURI());
-                countLiteralStats(o, stats);
-                literals.add(o);
-            }
+            registerLiteral(o);
+        } else if (o.isTripleTerm()) {
+            registerTripleTerm(o);
         } else {
             if (!entities.contains(o)) {
                 if (o.isBlank()) {
@@ -632,13 +455,120 @@ public class PositionalDictionaryWriterBuilder {
                 } else if (o.isURI()) {
                     stats.numIRI++;
                 } else {
-                    throw new IllegalStateException("Unexpected object node type (not URI, blank, or literal): " + o);
+                    throw new IllegalStateException("Unexpected object node type (not URI, blank, literal, or triple term): " + o);
                 }
                 entities.add(o);
             }
         }
     }
+
+    /**
+     * The predicate-position term-kind guard every ingest path applies
+     * (this builder, the ultra ingest, the disk pipeline): a predicate must be
+     * an IRI (SPECIFICATIONS.md §9.5). Every accepted syntax's parser already
+     * refuses a blank-node or literal predicate (Turtle, N-Triples, N-Quads and
+     * TriG error out; JSON-LD drops the property), so this is defence in depth
+     * for programmatic and future sources - without it a non-IRI predicate
+     * reached the predicates dictionary and failed there with "No writer buffer
+     * for literal datatype", far from its cause (BG-295).
+     */
+    public static void requirePredicate(Node p) {
+        if (!p.isURI()) {
+            throw new IllegalStateException("Unexpected predicate node type (not URI): " + p);
+        }
+    }
+
+    /**
+     * Records one literal OBJECT - top-level or inside a triple term - into the
+     * literals dictionary set with its stats accounting. Idempotent per term.
+     */
+    private void registerLiteral(Node o) {
+        if (literals.contains(o)) {
+            return;
+        }
+        // Blank nodes or relative IRIs inside a composite (cdt:) literal would
+        // silently stop co-referring with the graph. Reject at ingest (checked
+        // once per distinct literal; parses composite values only).
+        CdtTerms.requireStorable(o);
+        dataTypes.add(o.getLiteralDatatypeURI());
+        countLiteralStats(o, stats);
+        literals.add(o);
+    }
+
+    /** Records an IRI or blank node encountered inside a triple term into the entity dictionary set. */
+    private void registerEntity(Node n) {
+        if (!entities.contains(n)) {
+            if (n.isBlank()) {
+                stats.numBlankNodes++;
+            } else {
+                stats.numIRI++;
+            }
+            entities.add(n);
+        }
+    }
+
+    /**
+     * Records a triple term and, recursively, every component into the
+     * dictionary sets. Interiors get DICTIONARY entries, not role-list
+     * membership (CHANGELOG.md "Format v5 design notes"): an IRI appearing only inside a triple
+     * term is an entity, but it is not a subject/object for the
+     * uniqueSubjects/uniqueObjects role lists. The triple term itself joins the
+     * literals section (it is macro-ranked after every literal, so the section
+     * stays sorted with triple terms as a contiguous suffix). Component kinds
+     * are guarded loudly, matching the top-level position guards.
+     */
+    private void registerTripleTerm(Node tt) {
+        if (literals.contains(tt)) {
+            return; // components were registered when the term first appeared
+        }
+        TripleTerms.walk(tt, new TripleTerms.ComponentVisitor() {
+            @Override
+            public void component(TripleTerms.Position position, Node n) {
+                switch (position) {
+                    case SUBJECT -> {
+                        if (!(n.isBlank() || n.isURI())) {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term subject (not URI or blank): " + n + " in " + tt);
+                        }
+                        registerEntity(n);
+                    }
+                    case PREDICATE -> {
+                        if (!n.isURI()) {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term predicate (not URI): " + n + " in " + tt);
+                        }
+                        if (!predicates.contains(n)) {
+                            stats.numIRI++;
+                            predicates.add(n);
+                        }
+                    }
+                    case OBJECT -> {
+                        if (n.isLiteral()) {
+                            registerLiteral(n);
+                        } else if (n.isBlank() || n.isURI()) {
+                            registerEntity(n);
+                        } else {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term object node type: " + n + " in " + tt);
+                        }
+                    }
+                }
+            }
+
+            @Override
+            public void nestedTripleTerm(Node nested) {
+                if (!literals.contains(nested)) {
+                    stats.numTripleTerms++;
+                    literals.add(nested);
+                }
+            }
+        });
+        stats.numTripleTerms++;
+        literals.add(tt);
+    }
     
+    private boolean parsed = false;
+
     public PositionalDictionaryWriter build() throws IOException {
         parse();
         return new PositionalDictionaryWriter(this);
@@ -658,8 +588,14 @@ public class PositionalDictionaryWriterBuilder {
         if (sources.isEmpty() && src == null) {
             throw new IllegalStateException("No source set: call setSource() or setSources()");
         }
+        if (parsed) {
+            // The node sets, stats and bnode counter accumulate; a second parse
+            // would silently fold two stores' terms into one dictionary (BG-102).
+            throw new IllegalStateException("PositionalDictionaryWriterBuilder is single-use: create a new builder per store");
+        }
+        parsed = true;
         final List<File> inputs = sources.isEmpty() ? List.of(src) : List.copyOf(sources);
-        this.xvoid = BGVoIDSD.forMode(voidMode, "https://ebremer.com/void/");
+        this.xvoid = BGVoIDSD.forMode(voidMode, voidDatasetIri);
         for (File input : inputs) {
             parseSource(input, quadcount);
             // Blank-node labels are document-scoped in RDF: two sources may both
@@ -672,15 +608,6 @@ public class PositionalDictionaryWriterBuilder {
         // VoID/SD metadata accumulated over ALL sources (only when requested)
         if (xvoid != null) {
             Model xxx = xvoid.getModel();
-            xxx.setNsPrefix("void", VOID.NS);
-            xxx.setNsPrefix("sd", SD.getURI());
-            xxx.setNsPrefix("xsd", XSD.getURI());
-            xxx.setNsPrefix("rdfs", RDFS.getURI());
-            xxx.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
-            xxx.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
-            xxx.setNsPrefix("dct", "http://purl.org/dc/terms/");
-            xxx.setNsPrefix("hal", "https://halcyon.is/ns/");
-            xxx.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
             xxx.listStatements().forEach(s -> {
                 Triple ff = s.asTriple();
                 Quad qqq = canonicalizeNumericObject(Quad.create(BGVOID, ff));
@@ -706,28 +633,37 @@ public class PositionalDictionaryWriterBuilder {
         // RDF/XML, JSON-LD, Turtle; .gz and .zip handled) instead of
         // hardcoding Turtle: this is a quad store, and named graphs can only
         // arrive through a quad-capable syntax.
-        try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
+        // Only OPENING the source is reported as an I/O failure: a parse error
+        // or an ingest guard used to be re-wrapped by an outer catch as "I/O
+        // error while reading RDF source", burying the real message two causes
+        // deep (BG-98).
+        RdfSources.OpenedSource opened;
+        try {
+            opened = RdfSources.open(input);
+        } catch (FileNotFoundException e) {
+            throw new IOException("Source file not found: " + input, e);
+        } catch (IOException e) {
+            throw new IOException("I/O error while reading RDF source: " + input, e);
+        }
+        try (opened) {
             // Parse relative references against a stable sentinel base so they
             // resolve deterministically (not against the process working
             // directory). The relativize() step below strips the sentinel back
             // off; the relative form is resolved at query time against the URL
             // the .h5 file is served from.
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(), REL_BASE);
-            parserBuilder.mutateSources(rdfBuilder ->
-                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase(input), input);
             final List<Future<ArrayList<Quad>>> spatialTasks = new ArrayList<>();
             // A per-task virtual-thread executor (final API since JDK 21). Its
             // try-with-resources close() blocks until every submitted spatial task finishes,
             // giving the same "join all forked work" guarantee as a structured task scope -
-            // without depending on a preview API.
-            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor()) {
-                parserBuilder.streamQuads()
-                    .map(quad -> quad.isDefaultGraph()
-                            ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
-                            : quad)
-                    .map(this::relativize)
-                    .map(this::AlignBnodes)
-                    .map(this::canonicalizeNumericObject)
+            // without depending on a preview API. The quad stream is a resource
+            // too, declared after the executor so it closes FIRST: closing it
+            // aborts and joins Jena's parser thread when the loop below throws
+            // (a guard, an invalid term), which otherwise stayed parked on its
+            // full queue for the life of the process (BG-100).
+            try (ExecutorService scope = Executors.newVirtualThreadPerTaskExecutor();
+                 Stream<Quad> quads = parserBuilder.streamQuads()) {
+                normalizedQuads(quads, bmap, bnodeCounter, "b")
                     .forEach(quad -> {
                         quadcount.incrementAndGet();
                         if (quadcount.get() % 100_000 == 0) {
@@ -752,24 +688,13 @@ public class PositionalDictionaryWriterBuilder {
             }
             for (Future<ArrayList<Quad>> task : spatialTasks) {
                 ArrayList<Quad> extraQuads;
-                try {
-                    extraQuads = task.get();
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while collecting spatial results: " + input, ex);
-                } catch (ExecutionException ex) {
-                    throw new IOException("Spatial processing failed for " + input, ex.getCause());
-                }
+                extraQuads = Futures.join(task, "collecting spatial results for " + input);
                 extraQuads.forEach(q -> {
                     Quad canon = canonicalizeNumericObject(q);
                     quadslist.add(canon);
                     ProcessQuad(canon);
                 });
             }
-        } catch (FileNotFoundException e) {
-            throw new IOException("Source file not found: " + input, e);
-        } catch (IOException e) {
-            throw new IOException("I/O error while reading RDF source: " + input, e);
         }
     }
 

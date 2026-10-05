@@ -21,25 +21,21 @@ public final class LWS {
     }
 
     // Resources
+    // Classes defined by the LWS 1.0 vocabulary (https://www.w3.org/ns/lws#,
+    // W3C LWS Protocol draft, lws10-vocab). Terms that are NOT in that vocabulary
+    // (ContainerPage, MetadataResource, Representation, contains, tag, partOf,
+    // representation, first/last/next/prev, mediaType, sizeInBytes) were removed:
+    // clients following the spec would not recognise them. Size, format and
+    // modification time are deliberately NOT here either - the vocabulary defers
+    // them to schema:size, as:mediaType and as:updated, which the servlet emits.
     public static final Resource Container        = ResourceFactory.createResource(NS + "Container");
-    public static final Resource ContainerPage    = ResourceFactory.createResource(NS + "ContainerPage");
     public static final Resource DataResource     = ResourceFactory.createResource(NS + "DataResource");
-    public static final Resource MetadataResource = ResourceFactory.createResource(NS + "MetadataResource");
-    public static final Resource Representation    = ResourceFactory.createResource(NS + "Representation");
+    public static final Resource Storage          = ResourceFactory.createResource(NS + "Storage");
+    public static final Resource StorageRoot      = ResourceFactory.createResource(NS + "StorageRoot");
 
     // Properties
     public static final Property items          = ResourceFactory.createProperty(NS + "items");
-    public static final Property contains       = ResourceFactory.createProperty(NS + "contains");
-    public static final Property tag            = ResourceFactory.createProperty(NS + "tag");
-    public static final Property partOf         = ResourceFactory.createProperty(NS + "partOf");
-    public static final Property representation = ResourceFactory.createProperty(NS + "representation");
-    public static final Property first          = ResourceFactory.createProperty(NS + "first");
-    public static final Property last           = ResourceFactory.createProperty(NS + "last");
-    public static final Property next           = ResourceFactory.createProperty(NS + "next");
-    public static final Property prev           = ResourceFactory.createProperty(NS + "prev");
     public static final Property totalItems     = ResourceFactory.createProperty(NS + "totalItems");
-    public static final Property mediaType      = ResourceFactory.createProperty(NS + "mediaType");
-    public static final Property sizeInBytes    = ResourceFactory.createProperty(NS + "sizeInBytes");
 
     private LWS() {}
 }

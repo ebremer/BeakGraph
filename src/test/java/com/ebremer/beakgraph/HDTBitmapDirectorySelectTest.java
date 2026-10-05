@@ -22,14 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class HDTBitmapDirectorySelectTest {
 
     private static HDTBitmapDirectory directory(boolean[] bits) {
-        BitPackedUnSignedLongBuffer bitmap = new BitPackedUnSignedLongBuffer(Path.of("b"), null, 0, 1);
+        BitPackedUnSignedLongBuffer bitmap = new BitPackedUnSignedLongBuffer(Path.of("b"), 1);
         for (boolean b : bits) bitmap.writeLong(b ? 1 : 0);
         bitmap.prepareForReading();
 
         int superblocks = (bits.length + SUPERBLOCKSIZE - 1) / SUPERBLOCKSIZE;
         int blocks = (bits.length + BLOCKSIZE - 1) / BLOCKSIZE;
 
-        BitPackedUnSignedLongBuffer sb = new BitPackedUnSignedLongBuffer(Path.of("sb"), null, 0, 32);
+        BitPackedUnSignedLongBuffer sb = new BitPackedUnSignedLongBuffer(Path.of("sb"), 32);
         long ones = 0;
         for (int k = 0; k < superblocks; k++) {
             sb.writeLong(ones); // ones before superblock k
@@ -39,7 +39,7 @@ class HDTBitmapDirectorySelectTest {
         }
         sb.prepareForReading();
 
-        BitPackedUnSignedLongBuffer bb = new BitPackedUnSignedLongBuffer(Path.of("bb"), null, 0, 16);
+        BitPackedUnSignedLongBuffer bb = new BitPackedUnSignedLongBuffer(Path.of("bb"), 16);
         for (int j = 0; j < blocks; j++) {
             int sbStart = (j * BLOCKSIZE / SUPERBLOCKSIZE) * SUPERBLOCKSIZE;
             long inSuper = 0;
@@ -50,12 +50,11 @@ class HDTBitmapDirectorySelectTest {
         }
         bb.prepareForReading();
 
-        // The ids buffer is not consulted by select1; any 1-bit buffer of equal length works.
-        return new HDTBitmapDirectory(sb, bb, bitmap, bitmap);
+        return new HDTBitmapDirectory(sb, bb, bitmap);
     }
 
     private static void assertAgreesForEveryRank(boolean[] bits, String label) {
-        BitPackedUnSignedLongBuffer bitmap = new BitPackedUnSignedLongBuffer(Path.of("lin"), null, 0, 1);
+        BitPackedUnSignedLongBuffer bitmap = new BitPackedUnSignedLongBuffer(Path.of("lin"), 1);
         long total = 0;
         for (boolean b : bits) {
             bitmap.writeLong(b ? 1 : 0);

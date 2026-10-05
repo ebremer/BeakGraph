@@ -18,9 +18,9 @@ import java.nio.file.StandardOpenOption;
  *
  * <p>Mappings use an automatic {@link Arena}: the region unmaps when the
  * segment becomes unreachable, so no close() plumbing is needed through the
- * reader stack (the file channel is closed immediately after mapping - the
- * mapping survives it). Windows caveat: as with any mapping, the file stays
- * in-use until the unmap actually happens.
+ * reader stack (a mapping survives the close of the channel it was made
+ * from). Windows caveat: as with any mapping, the file stays in-use until
+ * the unmap actually happens.
  *
  * <p>All reads are absolute and the layouts are unaligned BIG-ENDIAN (the
  * bit-packed data honors no alignment). Auto arenas are shared, so instances
@@ -43,12 +43,22 @@ public final class MemorySegmentBytes implements RandomAccessBytes {
         this.segment = segment;
     }
 
-    /** Maps {@code size} bytes of {@code file} starting at {@code offset}, read-only. */
+    /**
+     * Maps {@code size} bytes of {@code file} starting at {@code offset},
+     * read-only, through a channel opened here for the purpose. Prefer
+     * {@link #map(FileChannel, long, long)} whenever a channel on the file is
+     * already open: this form resolves whatever the path names NOW.
+     */
     public static MemorySegmentBytes map(Path file, long offset, long size) throws IOException {
         try (FileChannel fc = FileChannel.open(file, StandardOpenOption.READ)) {
-            MemorySegment seg = fc.map(FileChannel.MapMode.READ_ONLY, offset, size, Arena.ofAuto());
-            return new MemorySegmentBytes(seg);
+            return map(fc, offset, size);
         }
+    }
+
+    /** Maps {@code size} bytes at {@code offset} of an open channel, read-only; the mapping outlives the channel. */
+    public static MemorySegmentBytes map(FileChannel channel, long offset, long size) throws IOException {
+        MemorySegment seg = channel.map(FileChannel.MapMode.READ_ONLY, offset, size, Arena.ofAuto());
+        return new MemorySegmentBytes(seg);
     }
 
     @Override

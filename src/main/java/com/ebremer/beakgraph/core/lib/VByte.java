@@ -23,25 +23,36 @@ public class VByte {
      * @throws IOException
      */
     public static int encode(OutputStream out, long value) throws IOException {
-        int c = 0;
         if (value < 0)
             throw new IllegalArgumentException("Value must be non-negative: " + value);
+        // One write per value, not per byte: the dictionary writers' streams
+        // (ByteArrayOutputStream, BufferedOutputStream) lock per call (BG-250).
+        byte[] buf = new byte[10];
+        int c = 0;
         while (value > 0x7F) {
-            out.write((int)(value & 0x7F));
-            c++;
+            buf[c++] = (byte) (value & 0x7F);
             value >>>= 7;
         }
-        out.write((int)(value | 0x80));
-        c++;
+        buf[c++] = (byte) (value | 0x80);
+        out.write(buf, 0, c);
         return c;
     }
+
+    /** Longest sequence {@link #encode} emits: nine 7-bit groups carry the 63 bits of a non-negative long. */
+    public static final int MAX_BYTES = 9;
 
     /**
      * Decode an unsigned long at an absolute offset. Absolute reads only, so a
      * single backing region can be read by concurrent threads safely.
+     * <p>
+     * A sequence longer than {@link #MAX_BYTES} is rejected as corrupt: the
+     * encoder never emits one, and a tenth byte's low bits would otherwise be
+     * shifted out of the long silently ({@code shift == 63}) before the guard
+     * fired on the eleventh (BG-26).
      * @param bytes the region to read from
      * @param offset the absolute byte offset to start decoding at
      * @return value and nextOffset (the absolute position just past the encoded value)
+     * @throws IllegalArgumentException for a sequence of more than {@value #MAX_BYTES} bytes
      */
     public static DecodeResult decodeAt(RandomAccessBytes bytes, long offset) {
         long result = 0;
@@ -49,7 +60,10 @@ public class VByte {
         long pos = offset;
         byte b;
         do {
-            if (shift >= 64) throw new IllegalArgumentException("VByte sequence too long");
+            if (shift >= 7 * MAX_BYTES) {
+                throw new IllegalArgumentException("VByte sequence too long at offset " + offset
+                        + ": more than " + MAX_BYTES + " bytes");
+            }
             b = bytes.get(pos++);
             result |= (long)(b & 0x7F) << shift;
             shift += 7;

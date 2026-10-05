@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * The keyed pool of readers: keys are store URIs, {@code file:} or
+ * {@code http(s):} (see {@link BeakGraphPoolFactory}).
  *
  * @author erich
  */
@@ -35,7 +37,7 @@ public class BeakGraphKeyedPool extends GenericKeyedObjectPool<URI, BeakGraph> {
     }
     
     public String getStatus() {
-        return String.format("""
+        return String.format(java.util.Locale.ROOT, """
                Active Objects  : %d
                Idle Objects    : %d
                Total Borrowed  : %d

@@ -13,15 +13,22 @@ package com.ebremer.beakgraph.io;
  *
  * <p>Implementations: {@link ByteBufferBytes} (wraps the jHDF-mapped buffer,
  * the default for datasets under 2 GiB), {@link MemorySegmentBytes} (an FFM
- * mapped segment for datasets beyond ByteBuffer's reach). A future chunked
- * implementation (e.g. Zarr with a decompressed-chunk cache) plugs in here
- * without touching the readers.
+ * mapped segment for datasets beyond ByteBuffer's reach) and
+ * {@link ChannelBytes} (positional reads through a remote-backed channel).
+ * The interface is sealed so the hottest call site in the read path -
+ * {@code BitPackedUnSignedLongBuffer}'s word fetch, which every id lookup,
+ * bitmap probe and binary-search step lands on - can dispatch with a klass
+ * compare and a direct call instead of a megamorphic interface call once a
+ * JVM has opened all three kinds of dataset (BG-260). A future chunked
+ * implementation (e.g. Zarr with a decompressed-chunk cache) joins the
+ * {@code permits} list and that buffer's {@code readLong}/{@code readByte}
+ * chain; the readers themselves stay untouched.
  *
  * <p>Out-of-range offsets throw {@link IndexOutOfBoundsException}.
  *
  * @author Erich Bremer
  */
-public interface RandomAccessBytes {
+public sealed interface RandomAccessBytes permits ByteBufferBytes, MemorySegmentBytes, ChannelBytes {
 
     /** Total number of readable bytes. */
     long size();
@@ -40,4 +47,13 @@ public interface RandomAccessBytes {
 
     /** Copies {@code length} bytes starting at {@code offset} into {@code dst}. */
     void get(long offset, byte[] dst, int dstOffset, int length);
+
+    /**
+     * Whether reads reach a remote store (an HTTP range channel) rather than
+     * local memory or a local file. Readers use it to skip eager accelerators
+     * that touch a whole section - over HTTP that is a full download (BG-240).
+     */
+    default boolean isRemote() {
+        return false;
+    }
 }

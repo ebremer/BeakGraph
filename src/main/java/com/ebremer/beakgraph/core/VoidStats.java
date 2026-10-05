@@ -13,8 +13,12 @@ import org.slf4j.LoggerFactory;
 /**
  * Read-time cardinality statistics used for join reordering, recovered from the VoID description the
  * writer persists in the {@link Params#BGVOID} graph. Each {@code void:propertyPartition} gives an
- * exact per-predicate triple count; the total is their sum (every triple has exactly one predicate),
- * and distinct subject/object/predicate counts come from the dictionary partitions.
+ * exact per-predicate triple count; the total is their sum (every triple has exactly one predicate).
+ * Distinct subject and object counts are the sizes of the columnar role lists (the distinct terms
+ * that actually occur in each role); the dictionary section sizes used to stand in for them, and
+ * as the entity section pools graph names and object-only entities, every object-bound pattern was
+ * costed as more selective than a subject-bound one by a constant factor (BG-12). The predicate
+ * count is the predicate section's size, which is exactly the distinct predicates.
  *
  * <p>Loading reads the VoID graph through {@code BGReader.graphBaseFind}, which goes straight to the
  * index iterators - not through the query engine - so building the reorder transform cannot recurse
@@ -91,8 +95,8 @@ final class VoidStats {
         }
 
         GSPODictionary dict = reader.getDictionary();
-        long ds = dict.getSubjects().getNumberOfNodes();
-        long dobj = dict.getObjects().getNumberOfNodes();
+        long ds = (dict.subjectCount() >= 0) ? dict.subjectCount() : dict.getSubjects().getNumberOfNodes();
+        long dobj = (dict.objectCount() >= 0) ? dict.objectCount() : dict.getObjects().getNumberOfNodes();
         long dp = dict.getPredicates().getNumberOfNodes();
 
         logger.debug("VoID stats: {} triples across {} predicates (Ds={}, Do={}, Dp={})",

@@ -1,5 +1,14 @@
 package com.ebremer.beakgraph.core;
 
+import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
+import org.apache.jena.sparql.graph.NodeTransformLib;
+import org.apache.jena.sparql.graph.NodeTransform;
+import com.ebremer.beakgraph.hdf5.jena.StageGeneratorDirectorBG;
+import org.apache.jena.query.ARQ;
+import org.apache.jena.sparql.engine.main.StageGenerator;
+import org.apache.jena.sparql.engine.main.StageBuilder;
+import com.ebremer.beakgraph.hdf5.jena.BGReader;
 import com.ebremer.beakgraph.hdf5.jena.BindingNodeId;
 import com.ebremer.beakgraph.hdf5.jena.OpExecutorBG;
 import java.util.ArrayList;
@@ -29,6 +38,7 @@ import org.apache.jena.vocabulary.RDFS;
  * @author erich
  */
 public class BGDatasetGraph extends DatasetGraphBase {
+    private static final Logger logger = LoggerFactory.getLogger(BGDatasetGraph.class);
     private final BeakGraph bg;
     // Per-dataset execution wiring (the TDB pattern): the engine merges this context
     // over the global ARQ context when a query runs against this dataset, so BG's
@@ -40,29 +50,104 @@ public class BGDatasetGraph extends DatasetGraphBase {
     private final Transactional txn = TransactionalLock.createMRSW();
 
     /**
-     * The standard property-function registry minus rdfs:member. BG stores use
-     * rdfs:member as a plain stored predicate; Jena's container-membership property
-     * function would rewrite those patterns into rdf:_1/rdf:_2... lookups and answer
-     * nothing. Scoped here per dataset - the global registry is left untouched.
+     * The global property-function registry minus rdfs:member, consulted LIVE.
+     * BG stores use rdfs:member as a plain stored predicate; Jena's
+     * container-membership property function would rewrite those patterns
+     * into rdf:_1/rdf:_2... lookups and answer nothing. Scoped here per
+     * dataset - the global registry is left untouched. A one-time COPY of the
+     * global registry used to be taken at class initialisation, so a property
+     * function registered later (jena-text, GeoSPARQL setup, application code)
+     * was invisible to every BeakGraph dataset for the JVM's lifetime (BG-6);
+     * this view delegates every lookup to the global registry as it is now.
      */
     private static final class BGPropertyFunctions {
-        static final PropertyFunctionRegistry INSTANCE = build();
-        private static PropertyFunctionRegistry build() {
-            PropertyFunctionRegistry global = PropertyFunctionRegistry.get();
-            PropertyFunctionRegistry reg = new PropertyFunctionRegistry();
-            global.keys().forEachRemaining(uri -> {
-                if (!RDFS.member.getURI().equals(uri)) {
-                    reg.put(uri, global.get(uri));
-                }
-            });
+        static final PropertyFunctionRegistry INSTANCE = new PropertyFunctionRegistry() {
+            private boolean masked(String uri) {
+                return RDFS.member.getURI().equals(uri);
+            }
+
+            @Override
+            public org.apache.jena.sparql.pfunction.PropertyFunctionFactory get(String uri) {
+                return masked(uri) ? null : PropertyFunctionRegistry.get().get(uri);
+            }
+
+            @Override
+            public boolean isRegistered(String uri) {
+                return !masked(uri) && PropertyFunctionRegistry.get().isRegistered(uri);
+            }
+
+            @Override
+            public boolean manages(String uri) {
+                return !masked(uri) && PropertyFunctionRegistry.get().manages(uri);
+            }
+
+            @Override
+            public Iterator<String> keys() {
+                return org.apache.jena.atlas.iterator.Iter.filter(PropertyFunctionRegistry.get().keys(), u -> !masked(u));
+            }
+
+            @Override
+            public void put(String uri, org.apache.jena.sparql.pfunction.PropertyFunctionFactory factory) {
+                PropertyFunctionRegistry.get().put(uri, factory);
+            }
+
+            @Override
+            public void put(String uri, Class<?> extClass) {
+                PropertyFunctionRegistry.get().put(uri, extClass);
+            }
+
+            @Override
+            public org.apache.jena.sparql.pfunction.PropertyFunctionFactory remove(String uri) {
+                return PropertyFunctionRegistry.get().remove(uri);
+            }
+        };
+    }
+
+    /**
+     * The global filter-function registry plus BeakGraph's geof:sfIntersects
+     * evaluator (the JTS verification stage the spatial index relies on),
+     * scoped to BG executions: an embedder that registers another
+     * implementation globally (jena-geosparql) keeps it for its own datasets,
+     * and BG datasets are not at the mercy of initialization order.
+     */
+    private static final class BGFunctions {
+        static final org.apache.jena.sparql.function.FunctionRegistry INSTANCE = build();
+        private static org.apache.jena.sparql.function.FunctionRegistry build() {
+            org.apache.jena.sparql.function.FunctionRegistry global = org.apache.jena.sparql.function.FunctionRegistry.get();
+            org.apache.jena.sparql.function.FunctionRegistry reg = org.apache.jena.sparql.function.FunctionRegistry.createFrom(global);
+            reg.put(com.ebremer.ns.GEOF.sfIntersects.getURI(), com.ebremer.beakgraph.turbo.Intersects.class);
             return reg;
         }
     }
 
     public BGDatasetGraph(BeakGraph g) {
         this.bg = g;
+        wire(context);
+    }
+
+    /**
+     * Installs BeakGraph's execution wiring into {@code context}: the BG
+     * OpExecutor factory and the rdfs:member-free property-function registry.
+     * Used for this dataset's own context and, by {@link QueryEngineBG}, for
+     * the per-execution context of any query whose default graph is a
+     * BeakGraph reached some other way (a Model over the graph, a
+     * {@code DatasetGraphOne} wrapper) - those never see a BGDatasetGraph
+     * context and used to fall back to the global registry, where rdfs:member
+     * is rewritten into container membership and answers nothing.
+     */
+    public static void wire(Context context) {
+        // The stage generator rides in the dataset's own context too, so an
+        // execution over this dataset never depends on the global slot that
+        // another component may have overwritten (BG-63).
+        StageGenerator current = StageBuilder.chooseStageGenerator(ARQ.getContext());
+        StageBuilder.setGenerator(context, (current instanceof StageGeneratorDirectorBG)
+                ? current : new StageGeneratorDirectorBG(current));
+        // The stage generator rides in the dataset's own context too, so an
+        // execution over this dataset never depends on the global slot that
+        // another component may have overwritten (BG-63).
         QC.setFactory(context, OpExecutorBG.opExecFactoryBG);
         PropertyFunctionRegistry.set(context, BGPropertyFunctions.INSTANCE);
+        org.apache.jena.sparql.function.FunctionRegistry.set(context, BGFunctions.INSTANCE);
         // Re-pin CDT support for each dataset: a later ARQ.setStrictMode() call
         // elsewhere in the JVM flips the global off, and BeakGraph's stored
         // cdt: literals need composite semantics to query correctly.
@@ -90,8 +175,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public Graph getGraph(Node node) {
-        // A non-owning view over the shared reader (closing it is a no-op).
-        return new BeakGraph(node, bg.getReader());
+        // A non-owning view over the shared reader (closing it is a no-op),
+        // sharing the dataset graph's reorder statistics.
+        return new BeakGraph(node, bg.getReader(), bg);
     }
 
     @Override
@@ -106,8 +192,9 @@ public class BGDatasetGraph extends DatasetGraphBase {
 
     @Override
     public Iterator<Node> listGraphNodes() {
+        Node own = bg.getNamedGraph();
         return bg.getReader().getDictionary().streamGraphs()
-                .filter(n -> !Quad.isDefaultGraph(n) && !Quad.isUnionGraph(n))
+                .filter(n -> !Quad.isDefaultGraph(n) && !Quad.isUnionGraph(n) && !n.equals(own))
                 .iterator();
     }
     
@@ -125,16 +212,18 @@ public class BGDatasetGraph extends DatasetGraphBase {
     @Override
     public Iterator<Quad> find(Node g, Node s, Node p, Node o) {
         // If the graph is ANY (Wildcard), we must iterate over all known graphs
-        // because the underlying indices (GSPO) require a concrete Graph ID 
+        // because the underlying indices (GSPO) require a concrete Graph ID
         // to jump to the correct segment.
         if (g == null || Node.ANY.equals(g)) {
             return findInAnyGraph(s, p, o);
         }
-        
+        if (Quad.isDefaultGraph(g)) {
+            return findInDefaultGraph(g, s, p, o);
+        }
         // Concrete Graph Search
         return findInSpecificGraph(g, s, p, o);
     }
-    
+
     @Override
     public Iterator<Quad> findNG(Node g, Node s, Node p, Node o) {
         // findNG matches NAMED graphs only - unlike find(ANY,...), the default
@@ -143,51 +232,109 @@ public class BGDatasetGraph extends DatasetGraphBase {
             return findInSpecificGraph(g, s, p, o); // read() handles the union semantics
         }
         if (g == null || Node.ANY.equals(g)) {
-            // Lazy per-graph chaining - see findInAnyGraph.
-            return org.apache.jena.atlas.iterator.Iter.flatMap(listGraphNodes(),
-                    gn -> findInSpecificGraph(gn, s, p, o));
+            return findInNamedGraphs(s, p, o);
         }
         if (Quad.isDefaultGraph(g)) {
-            return Collections.emptyIterator();
+            // Jena's DatasetGraphBaseFind answers the default graph when it is
+            // named explicitly (only the wildcard excludes it); match that so a
+            // dynamic-dataset or Model view built over this dataset agrees with
+            // an in-memory one (BG-183).
+            return findInDefaultGraph(Quad.defaultGraphIRI, s, p, o);
         }
         return findInSpecificGraph(g, s, p, o);
     }
 
+    /**
+     * The dataset's default graph is {@code bg} itself - on a named-graph view
+     * that is the view's graph, not the stored default graph, so the quad API
+     * agrees with {@code getDefaultGraph()} and with SPARQL (BG-14).
+     */
+    private Iterator<Quad> findInDefaultGraph(Node sentinel, Node s, Node p, Node o) {
+        Triple triplePattern = pattern(s, p, o);
+        Iterator<BindingNodeId> it = bg.read(new BindingNodeId(), triplePattern, null);
+        return toQuads(it, sentinel, triplePattern, bg.getReader().getNodeTable());
+    }
+
+    // Map Node.ANY to Variables for the binding system
+    private static final Var S_VAR = Var.alloc("s");
+    private static final Var P_VAR = Var.alloc("p");
+    private static final Var O_VAR = Var.alloc("o");
+
+    private Triple pattern(Node s, Node p, Node o) {
+        Node sPattern = (s == null || Node.ANY.equals(s)) ? S_VAR : s;
+        Node pPattern = (p == null || Node.ANY.equals(p)) ? P_VAR : p;
+        Node oPattern = (o == null || Node.ANY.equals(o)) ? O_VAR : o;
+        Triple t = Triple.create(sPattern, pPattern, oPattern);
+        RelativeIRIResolver resolver = bg.resolver();
+        // A caller naming the document by its served URL reaches the stored
+        // relative term (BG-396).
+        return (resolver == null) ? t : NodeTransformLib.transform(resolver.absoluteToStorage(bg.storedTerm()), t);
+    }
+
     private Iterator<Quad> findInSpecificGraph(Node g, Node s, Node p, Node o) {
-        // Map Node.ANY to Variables for the binding system
-        Var sVar = Var.alloc("s");
-        Var pVar = Var.alloc("p");
-        Var oVar = Var.alloc("o");
-
-        Node sPattern = (s == null || Node.ANY.equals(s)) ? sVar : s;
-        Node pPattern = (p == null || Node.ANY.equals(p)) ? pVar : p;
-        Node oPattern = (o == null || Node.ANY.equals(o)) ? oVar : o;
-
-        Triple triplePattern = Triple.create(sPattern, pPattern, oPattern);
+        Triple triplePattern = pattern(s, p, o);
         NodeTable nodeTable = bg.getReader().getNodeTable();
-
         // Execute Read against the specific graph
         Iterator<BindingNodeId> it = bg.getReader().read(g, new BindingNodeId(), triplePattern, null, nodeTable);
+        return toQuads(it, g, triplePattern, nodeTable);
+    }
 
-        // Convert Bindings to Quads
+    /**
+     * Convert Bindings to Quads of graph {@code g}. A row with an id the node
+     * table cannot resolve is dropped, as {@code HDF5Reader.graphBaseFind}
+     * drops it, instead of reaching a {@code Quad.create} that throws out of
+     * {@code next()} (BG-235); relative terms are resolved against the
+     * graph's base when it has one (BG-396).
+     */
+    private Iterator<Quad> toQuads(Iterator<BindingNodeId> it, Node g, Triple triplePattern, NodeTable nodeTable) {
+        Node s = triplePattern.getSubject();
+        Node p = triplePattern.getPredicate();
+        Node o = triplePattern.getObject();
+        RelativeIRIResolver resolver = bg.resolver();
+        NodeTransform out = (resolver == null) ? null : resolver.storageToAbsolute();
         return WrappedIterator.create(it).mapWith(bnid -> {
-            Node sRes = sPattern.isConcrete() ? s : nodeTable.getNodeForNodeId(bnid.get(sVar));
-            Node pRes = pPattern.isConcrete() ? p : nodeTable.getNodeForNodeId(bnid.get(pVar));
-            Node oRes = oPattern.isConcrete() ? o : nodeTable.getNodeForNodeId(bnid.get(oVar));
-            return Quad.create(g, sRes, pRes, oRes);
-        });
+            Node sRes = s.isConcrete() ? s : nodeTable.getNodeForNodeId(bnid.get(S_VAR));
+            Node pRes = p.isConcrete() ? p : nodeTable.getNodeForNodeId(bnid.get(P_VAR));
+            Node oRes = o.isConcrete() ? o : nodeTable.getNodeForNodeId(bnid.get(O_VAR));
+            if (sRes == null || pRes == null || oRes == null) {
+                logger.warn("Dropping a row of graph {} whose term ids cannot be resolved (s {}, p {}, o {})", g,
+                        bnid.get(S_VAR), bnid.get(P_VAR), bnid.get(O_VAR));
+                return null;
+            }
+            Quad q = Quad.create(g, sRes, pRes, oRes);
+            return (out == null) ? q : NodeTransformLib.transform(out, q);
+        }).filterDrop(q -> q == null);
     }
 
     private Iterator<Quad> findInAnyGraph(Node s, Node p, Node o) {
         // Lazily chain the default graph and every named graph: constructing
         // each graph's iterator up front paid its index searches before the
         // first quad came back, and spatial stores hold thousands of tile
-        // graphs. Skip default if it appears in the graph list (duplicates).
-        Iterator<Node> graphs = org.apache.jena.atlas.iterator.Iter.concat(
-                List.of(Quad.defaultGraphIRI).iterator(),
-                org.apache.jena.atlas.iterator.Iter.filter(listGraphNodes(),
-                        gn -> !gn.equals(Quad.defaultGraphIRI)));
-        return org.apache.jena.atlas.iterator.Iter.flatMap(graphs, gn -> findInSpecificGraph(gn, s, p, o));
+        // graphs.
+        return org.apache.jena.atlas.iterator.Iter.concat(
+                findInDefaultGraph(Quad.defaultGraphIRI, s, p, o), findInNamedGraphs(s, p, o));
+    }
+
+    /**
+     * Every named graph, driven by the columnar graph list's ids: the id
+     * answers the read and the term is extracted once for the result quads,
+     * instead of extracting the term and having the reader locate it again
+     * (the round trip BGIteratorMaster's variable-graph path avoids, BG-259).
+     */
+    private Iterator<Quad> findInNamedGraphs(Node s, Node p, Node o) {
+        BGReader reader = bg.getReader();
+        Dictionary graphs = reader.getDictionary().getGraphs();
+        Triple triplePattern = pattern(s, p, o);
+        NodeTable nodeTable = reader.getNodeTable();
+        Iterator<Long> ids = reader.graphIds().boxed().iterator();
+        Node own = bg.getNamedGraph(); // a view's own graph is the dataset's DEFAULT graph, not a named one
+        return org.apache.jena.atlas.iterator.Iter.flatMap(ids, gid -> {
+            Node gn = graphs.extract(gid);
+            if (Quad.isDefaultGraph(gn) || Quad.isUnionGraph(gn) || gn.equals(own)) {
+                return org.apache.jena.atlas.iterator.Iter.nullIterator();
+            }
+            return toQuads(reader.read(gid, new BindingNodeId(), triplePattern, null, nodeTable), gn, triplePattern, nodeTable);
+        });
     }
 
     // One mutable prefix map per dataset: the old implementation built a whole
@@ -210,7 +357,11 @@ public class BGDatasetGraph extends DatasetGraphBase {
     @Override
     public void begin(TxnType type) {
         if (type == TxnType.WRITE) throw new UnsupportedOperationException("Write transactions not supported");
-        txn.begin(type);
+        // TransactionalLock rejects the promote types outright; this store is
+        // immutable, so a promotable read is simply a read (promote() answers
+        // false) - the default begin() / Txn.execute() entry points used to
+        // throw before any read ran (BG-3). transactionType() reports READ.
+        txn.begin(TxnType.READ);
     }
 
     @Override

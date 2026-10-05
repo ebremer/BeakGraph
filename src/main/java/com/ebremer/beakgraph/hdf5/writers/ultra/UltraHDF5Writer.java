@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
@@ -7,10 +8,7 @@ import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.concurrent.ForkJoinPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +18,10 @@ import org.slf4j.LoggerFactory;
  * {@code -method 3}, thread count via {@code -cores}). Same source formats,
  * same HDF5 output format, same readers as
  * {@link com.ebremer.beakgraph.hdf5.writers.HDF5Writer}; the entire build is
- * restructured as a dependency DAG on one dedicated {@link ForkJoinPool}:
+ * restructured as a dependency DAG on one dedicated {@link ForkJoinPool}
+ * (plus, outside that pool, one Jena parser thread per document being read
+ * and - with spatial indexing - JDK-scheduled virtual threads for the
+ * per-geometry augmentation; see the package description):
  *
  * <pre>
  *  parse docs (parallel)  ->  dedup sets + stats (parallel)
@@ -63,56 +64,52 @@ public class UltraHDF5Writer implements BeakGraphWriter {
     public void write() throws IOException {
         logger.info("Writing BeakGraph to {} (ultra, {} cores)", builder.getDestination(), builder.getCores());
         Path dest = builder.getDestination().toPath();
-        // Same publish discipline as every other writer: build into a sibling
-        // temp file, swap in atomically on success, never disturb a previous
-        // good artifact, never expose a half-written file.
-        Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
         final long total = System.nanoTime();
         ForkJoinPool pool = new ForkJoinPool(builder.getCores());
         try {
-            logger.info("Stage 1/4: ingest (parallel parse + dedup + statistics)");
-            UltraIngest ingest = new UltraIngest();
-            ingest.setSource(builder.getSource());
-            ingest.setSources(builder.getSources());
-            ingest.setSpatial(builder.getSpatial());
-            ingest.setVoidMode(builder.getVoidMode());
-            ingest.setDestination(builder.getDestination());
-            ingest.setFeatures(builder.getFeatures());
-            ingest.setName(Params.DICTIONARY);
-            ingest.ingest(pool);
+            // AtomicPublish.build: a unique sibling temp file, published only
+            // on success, removed on ANY failure - an OutOfMemoryError included,
+            // the realistic failure of this engine - with dest untouched; the
+            // one publish discipline for every engine (BG-119, BG-140, BG-314).
+            AtomicPublish.build(dest, tmp -> {
+                logger.info("Stage 1/4: ingest (parallel parse + dedup + statistics)");
+                UltraIngest ingest = new UltraIngest();
+                ingest.setSource(builder.getSource());
+                ingest.setSources(builder.getSources());
+                ingest.setSourceRoot(builder.getSourceRoot());
+                ingest.setSpatial(builder.getSpatial());
+                ingest.setVoidMode(builder.getVoidMode());
+                ingest.setVoidDatasetIri(builder.getVoidDatasetIri());
+                ingest.setDestination(builder.getDestination());
+                ingest.setFeatures(builder.getFeatures());
+                ingest.setName(Params.DICTIONARY);
+                ingest.ingest(pool);
 
-            // Dictionary storage encodes in the background; the index stage
-            // needs only the id maps and starts immediately.
-            logger.info("Stage 2/4: dictionaries (sorts, rank maps; encoding + columns in background)");
-            UltraDictionary dict = new UltraDictionary(ingest, pool);
-            logger.info("Stage 3/4: GSPO/GPOS indexes (packed keys, sort, dedup, parallel emission)");
-            UltraBGIndex[] indexes = UltraBGIndex.buildBoth(dict, ingest, pool);
-            dict.awaitStorage();
+                // Dictionary storage encodes in the background; the index stage
+                // needs only the id maps and starts immediately.
+                logger.info("Stage 2/4: dictionaries (sorts, rank maps; encoding + columns in background)");
+                UltraDictionary dict = new UltraDictionary(ingest, pool);
+                logger.info("Stage 3/4: GSPO/GPOS indexes (packed keys, sort, dedup, parallel emission)");
+                UltraBGIndex[] indexes = UltraBGIndex.buildBoth(dict, ingest, pool);
+                dict.awaitStorage();
+                // The rank maps and the ingest's node sets served the packing pass
+                // and the column fills, which awaitStorage() has just joined; drop
+                // them before the HDF5 emission allocates its buffers (BG-115).
+                dict.releaseRankMaps();
+                ingest.releaseNodeSets();
 
-            logger.info("Stage 4/4: writing HDF5 file {}", builder.getDestination());
-            long ioStart = System.nanoTime();
-            try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
-                final WritableGroup hdt = hdfFile.putGroup(builder.getName());
-                hdt.putAttribute("numQuads", ingest.getNumberOfQuads());
-                hdt.putAttribute("formatVersion", Params.FORMAT_VERSION);
-                dict.add(hdt);
-                indexes[0].add(hdt);
-                indexes[1].add(hdt);
-            }
-            logger.info("HDF5 file written in {} ms", (System.nanoTime() - ioStart) / 1_000_000L);
-            try {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException | RuntimeException ex) {
-            // Only the temp file is ever cleaned up; dest is untouched on failure.
-            try {
-                Files.deleteIfExists(tmp);
-            } catch (IOException cleanup) {
-                logger.warn("Failed to remove temp output {}", tmp, cleanup);
-            }
-            throw ex;
+                logger.info("Stage 4/4: writing HDF5 file {}", builder.getDestination());
+                long ioStart = System.nanoTime();
+                try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
+                    final WritableGroup hdt = hdfFile.putGroup(builder.getName());
+                    hdt.putAttribute(Params.NUM_QUADS, ingest.getNumberOfQuads());
+                    hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
+                    dict.add(hdt);
+                    indexes[0].add(hdt);
+                    indexes[1].add(hdt);
+                }
+                logger.info("HDF5 file written in {} ms", (System.nanoTime() - ioStart) / 1_000_000L);
+            });
         } finally {
             pool.shutdown();
         }
@@ -120,6 +117,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
     }
 
     public static class Builder extends AbstractGraphBuilder<Builder> {
+        /** Sort/dedup/dictionary/index worker threads; {@value #DEFAULT_CORES} by default, like the CLI's -cores. */
         private int cores = DEFAULT_CORES;
 
         public Builder setCores(int cores) {
@@ -146,6 +144,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
 
         @Override
         public UltraHDF5Writer build() {
+            requireSourceAndDestination();
             return new UltraHDF5Writer(this);
         }
     }

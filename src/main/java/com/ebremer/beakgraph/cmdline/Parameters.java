@@ -2,7 +2,6 @@ package com.ebremer.beakgraph.cmdline;
 
 import com.beust.jcommander.Parameter;
 import com.beust.jcommander.converters.BooleanConverter;
-import com.beust.jcommander.validators.PositiveInteger;
 import java.io.File;
 
 /**
@@ -11,14 +10,30 @@ import java.io.File;
  */
 public class Parameters {
     
-    @Parameter(names = "-help", converter = BooleanConverter.class, help = true)
+    @Parameter(names = "-help", converter = BooleanConverter.class, help = true,
+            description = "Print this usage text and exit")
     public boolean help = false;
 
-    @Parameter(names = "-endpoint", description = "Start SPARQL Endpoint for -endpoint", required = false)
+    @Parameter(names = "-endpoint",
+            description = "Serve instead of converting: a single .h5 file as a SPARQL endpoint at "
+                        + "/rdf, or a directory served in full as W3C LWS storage (every .h5 in it "
+                        + "answers SPARQL at its own URL; the metadata model is served at /rdf and "
+                        + "written into the directory as beakgraph.ttl.gz on first start)",
+            required = false)
     public File sparqlendpoint = null;
     
-    @Parameter(names = "-port", description = "Set HTTP port when endpoint started", required = false)
+    @Parameter(names = "-port", validateWith = PortRange.class,
+            description = "HTTP port for -endpoint (default 8888; 0 picks a free port)", required = false)
     public int port = 8888;
+
+    @Parameter(names = "-base",
+            description = "Public base URL clients use to reach -endpoint, e.g. https://data.example.org/. "
+                        + "Only needed behind a reverse proxy that does not send Forwarded/X-Forwarded-* "
+                        + "headers: by default every response derives its links and IRIs from the request "
+                        + "it answers. With -export: the base the store's document-relative IRIs "
+                        + "(<>, <sib.png>) are resolved against; required for NT/NQ output of such a store",
+            required = false)
+    public String base = null;
 
     @Parameter(names = "-timeout",
             description = "Per-query wall-clock limit in seconds for -endpoint (0 = unlimited). "
@@ -26,10 +41,43 @@ public class Parameters {
             required = false)
     public long timeout = 30;
     
-    @Parameter(names = "-src", description = "Source Folder or File", required = false)
+    @Parameter(names = "-src",
+            description = "Source RDF file, or a directory tree walked recursively (convert); with "
+                        + "-export, the .h5/.hdf5 store or directory of stores to dump", required = false)
     public File src = null;
 
-    @Parameter(names = "-dest", description = "Destination Folder or File", required = false)
+    /**
+     * A {@code -dest} argument that remembers whether it was written with a
+     * trailing separator: {@code java.io.File} strips it, so {@code -merge}
+     * could not tell {@code D:\\out\\} (a directory that does not exist
+     * yet) from an output file named {@code out} (BG-422).
+     */
+    public static final class DestinationFile extends File {
+        private static final long serialVersionUID = 1L;
+        private final boolean trailingSeparator;
+
+        public DestinationFile(String raw) {
+            super(raw);
+            this.trailingSeparator = raw.endsWith("/") || raw.endsWith(File.separator);
+        }
+
+        public boolean trailingSeparator() {
+            return trailingSeparator;
+        }
+    }
+
+    public static final class DestinationConverter implements com.beust.jcommander.IStringConverter<File> {
+        @Override
+        public File convert(String value) {
+            return new DestinationFile(value);
+        }
+    }
+
+    @Parameter(names = "-dest", converter = DestinationConverter.class,
+            description = "Destination: in per-file mode the directory mirroring the -src tree with .h5 "
+                        + "files; with -merge the ONE store to write - a name ending in .h5/.hdf5 is the "
+                        + "file, anything else (an existing directory, a trailing separator, or no "
+                        + "such suffix) is a directory that receives merged.h5", required = false)
     public File dest = null;
     
     @Parameter(names = {"-void"}, converter = BooleanConverter.class,
@@ -50,11 +98,25 @@ public class Parameters {
                         + "(-method 1/4/5). Mutually exclusive with -void")
     public boolean voidSketch = false;
 
-    @Parameter(names = {"-spatial"}, converter = BooleanConverter.class)
+    @Parameter(names = {"-voidbase"},
+            description = "With -void / -voidsketch: the IRI of the sd:Dataset resource the statistics graph "
+                        + "describes (default " + com.ebremer.beakgraph.Params.VOID_DATASET_IRI + ")")
+    public String voidBase = null;
+
+    @Parameter(names = {"-spatial"}, converter = BooleanConverter.class,
+            description = "Build the Hilbert-curve spatial index for geo:wktLiteral geometry "
+                        + "(adds the urn:x-beakgraph:Spatial graph and grid-tile graphs)")
     public boolean spatial = false;
 
-    @Parameter(names = {"-features"}, converter = BooleanConverter.class)
+    @Parameter(names = {"-features"}, converter = BooleanConverter.class,
+            description = "With -spatial: also derive 2-D shape features (area, axes, ...) per geometry")
     public boolean features = false;
+
+    @Parameter(names = {"-jsonLdRemote"}, converter = BooleanConverter.class,
+            description = "Allow JSON-LD sources to fetch http(s) @context references (30 s timeout). Off by default: "
+                        + "a context is loaded from the source tree (a relative reference resolves next to the "
+                        + "document; a file: reference must stay inside the tree) and a remote one fails the file")
+    public boolean jsonLdRemote = false;
 
     @Parameter(names = {"-huge"}, converter = BooleanConverter.class,
             description = "Shorthand for \"-method 1\": the disk-based writer "
@@ -62,11 +124,39 @@ public class Parameters {
     public boolean huge = false;
 
     @Parameter(names = "-workdir",
-            description = "Workspace directory for -huge spill files; needs free space on the "
-                        + "order of a few times the uncompressed source (default: each "
-                        + "destination file's directory)", required = false)
+            description = "Workspace directory for the disk-based writers' (-method 1/4/5, -huge) "
+                        + "spill files; needs free space on the order of a few times the "
+                        + "uncompressed source (default: each destination file's directory)",
+            required = false)
     public File workdir = null;
     
+    @Parameter(names = "-spillMB", validateWith = AtLeastOne.class,
+            description = "Disk-based writers (-method 1/4/5): megabytes of parsed terms each of the three "
+                        + "term sorters buffers before spilling a sorted run, whatever the record count - "
+                        + "the bound that keeps multi-KB literals (WKT geometry) from exhausting the heap "
+                        + "(default: max heap / 8 per sorter for -method 1, / 16 for -method 4/5)")
+    public Integer spillMB = null;
+
+    @Parameter(names = "-termSpillBatch", validateWith = AtLeastOne.class,
+            description = "Disk-based writers: (term, row) records buffered per term sorter before a run "
+                        + "spills (default: 262144 for -method 1, 524288 for -method 4/5)")
+    public Integer termSpillBatch = null;
+
+    @Parameter(names = "-idSpillBatch", validateWith = AtLeastOne.class,
+            description = "Disk-based writers: numeric id/quad records buffered per sorter before a run "
+                        + "spills (default: 2M for -method 1, 4M for -method 4/5)")
+    public Integer idSpillBatch = null;
+
+    @Parameter(names = "-mergeFanIn", validateWith = AtLeastOne.class,
+            description = "Disk-based writers: spill runs merged per pass, at least 2 "
+                        + "(default: 64 for -method 1, 128 for -method 4/5)")
+    public Integer mergeFanIn = null;
+
+    @Parameter(names = {"-force"}, converter = BooleanConverter.class,
+            description = "Per-file mode: rebuild destination .h5 files that already exist instead of "
+                        + "skipping them (the default skip is what makes a re-run resume)")
+    public boolean force = false;
+
     @Parameter(names = {"-merge"}, converter = BooleanConverter.class,
             description = "Merge ALL RDF sources found under -src (typically a directory tree) "
                         + "into ONE BeakGraph HDF5 file at -dest instead of one .h5 per source "
@@ -94,9 +184,11 @@ public class Parameters {
                         + "concurrently; the fastest option for -merge over many files")
     public int method = 0;
 
-    @Parameter(names = "-cores", validateWith = PositiveInteger.class,
-            description = "# of threads each -method 2 or -method 3 conversion may use (with "
-                        + "-threads N, N conversions run at once, each capped at -cores)")
+    @Parameter(names = "-cores", validateWith = AtLeastOne.class,
+            description = "# of threads each -method 2/3/4/5 conversion may use for its build stages (with "
+                        + "-threads N, N conversions run at once, each capped at -cores; each document's parser "
+                        + "thread and, with -spatial, the geometry augmentation's virtual threads are extra). "
+                        + "Programmatic builders of methods 4/5 default to all processors instead")
     public int cores = 4;
 
     @Parameter(names = "-export", validateWith = ExportFormatValidator.class,
@@ -130,12 +222,16 @@ public class Parameters {
                         + "structural checks pass over")
     public boolean deep = false;
 
-    @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class)
+    @Parameter(names = {"-version","-v"}, converter = BooleanConverter.class,
+            description = "Print the version and exit")
     public boolean version = false;
 
-    @Parameter(names = {"-status"}, converter = BooleanConverter.class)
-    public boolean status = false;    
-    
-    @Parameter(names = "-threads", description = "# of Threads")
+    @Parameter(names = {"-status"}, converter = BooleanConverter.class,
+            description = "Show a progress bar (per-file mode) and end-of-run counters")
+    public boolean status = false;
+
+    @Parameter(names = "-threads", validateWith = AtLeastOne.class,
+            description = "Number of per-file conversions run concurrently (each gets its own "
+                        + "-cores budget, so total CPU is about threads x cores)")
     public int threads = 1;
 }

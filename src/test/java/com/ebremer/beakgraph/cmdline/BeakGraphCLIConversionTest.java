@@ -1,5 +1,8 @@
 package com.ebremer.beakgraph.cmdline;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,11 +48,78 @@ class BeakGraphCLIConversionTest {
                 "the well-formed source must still convert");
     }
 
+    /**
+     * BG-157: an existing non-empty destination is skipped (logged, counted
+     * as skipped - NOT as a success) unless -force asks for a rebuild.
+     */
+    @Test
+    void existingDestinationsAreSkippedUnlessForced() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("srcskip"));
+        Path ttl = src.resolve("data.ttl");
+        Files.writeString(ttl, "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("outskip").toFile();
+        BeakGraphCLI first = new BeakGraphCLI(p);
+        first.traverse();
+        assertEquals(1, first.getFileCounter().getSuccessfulConversionCount());
+        assertEquals(0, first.getFileCounter().getSkippedExistingCount());
+        File h5 = dir.resolve("outskip").resolve("data.h5").toFile();
+        byte[] original = Files.readAllBytes(h5.toPath());
+
+        // The source changes; a plain re-run leaves the stale store alone and says so in the counters.
+        Files.writeString(ttl, "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n"
+                + "<http://ex.org/a> <http://ex.org/q> <http://ex.org/c> .\n", StandardCharsets.UTF_8);
+        BeakGraphCLI second = new BeakGraphCLI(p);
+        second.traverse();
+        assertEquals(1, second.getFileCounter().getSkippedExistingCount());
+        assertEquals(0, second.getFileCounter().getSuccessfulConversionCount(), "a skip is not a success");
+        assertEquals(0, second.getFileCounter().getFailedConversionFileCount());
+        assertTrue(second.getFileCounter().toString().contains("Skipped (existing)     : 1"));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(original, Files.readAllBytes(h5.toPath()), "the stale store was left alone");
+
+        // -force rebuilds it.
+        p.force = true;
+        BeakGraphCLI third = new BeakGraphCLI(p);
+        third.traverse();
+        assertEquals(0, third.getFileCounter().getSkippedExistingCount());
+        assertEquals(1, third.getFileCounter().getSuccessfulConversionCount());
+        assertEquals(0, third.getFileCounter().getFailedConversionFileCount());
+        assertFalse(java.util.Arrays.equals(original, Files.readAllBytes(h5.toPath())), "the store was rebuilt");
+        assertTrue(hasTriple(h5, "http://ex.org/q"), "the store was rebuilt from the changed source");
+    }
+
+    private static boolean hasTriple(File h5, String predicate) throws Exception {
+        try (com.ebremer.beakgraph.core.BeakGraph bg = new com.ebremer.beakgraph.core.BeakGraph(
+                new com.ebremer.beakgraph.hdf5.readers.HDF5Reader(h5))) {
+            return bg.find(org.apache.jena.graph.Node.ANY, org.apache.jena.graph.NodeFactory.createURI(predicate),
+                    org.apache.jena.graph.Node.ANY).hasNext();
+        }
+    }
+
+    /** BG-226: an Error inside -merge is counted and summarised, not thrown out of main with a stack trace. */
+    @Test
+    void outOfMemoryDuringMergeIsCountedNotThrown() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("srcoommerge"));
+        Files.writeString(src.resolve("a.ttl"), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("oommerge.h5").toFile();
+        p.merge = true;
+        BeakGraphCLI cli = new BeakGraphCLI(p) {
+            @Override
+            com.ebremer.beakgraph.core.BeakGraphWriter newWriter(File source, List<File> sources, File dest) {
+                return () -> { throw new OutOfMemoryError("simulated"); };
+            }
+        };
+        cli.merge();
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount());
+        assertFalse(dir.resolve("oommerge.h5").toFile().exists());
+    }
+
     @Test
     void hugeFlagConvertsThroughDiskBasedWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = Files.createDirectories(dir.resolve("srchuge"));
         Files.write(src.resolve("data.ttl"),
                 "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n".getBytes(StandardCharsets.UTF_8));
@@ -133,17 +203,13 @@ class BeakGraphCLIConversionTest {
 
     @Test
     void methodFiveConvertsThroughPlaidWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         convertsWithMethod(5, "plaid");
     }
 
     @Test
     void methodFourConvertsThroughHugeUltraWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         convertsWithMethod(4, "hugeultra");
     }
 
@@ -164,5 +230,111 @@ class BeakGraphCLIConversionTest {
         cli.traverse();
 
         assertEquals(1, cli.getFileCounter().getFailedConversionFileCount());
+    }
+
+    // --- BG-417: "-src ." ----------------------------------------------------
+
+    @Test
+    void relativeSourceDirectoryMapsEveryFile() {
+        // Path.of(".").normalize() is the empty path and nothing startsWith it:
+        // every file under "-src ." used to be rejected as "not under -src".
+        Path out = Path.of("out");
+        assertEquals(out.toAbsolutePath().normalize().resolve("a.h5"),
+                BeakGraphCLI.mapToDestinationWithNewExtension(Path.of("./a.ttl"), Path.of("."), out, "h5"));
+        assertEquals(out.toAbsolutePath().normalize().resolve("sub").resolve("b.h5"),
+                BeakGraphCLI.mapToDestinationWithNewExtension(Path.of("./sub/b.nt"), Path.of("."), out, "h5"));
+        assertEquals(out.toAbsolutePath().normalize().resolve("c.h5"),
+                BeakGraphCLI.mapToDestinationWithNewExtension(Path.of("c.ttl"), Path.of(""), out, "h5"));
+    }
+
+    // --- BG-261: a single-file -src ---------------------------------------------
+
+    @Test
+    void singleFileSourceWritesTheNamedDestination() throws Exception {
+        Path src = dir.resolve("single.ttl");
+        Files.writeString(src, "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Path outFile = dir.resolve("named").resolve("out.h5");
+        Files.createDirectories(outFile.getParent());
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = outFile.toFile();
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.traverse();
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount());
+        assertTrue(outFile.toFile().isFile() && outFile.toFile().length() > 0, "-dest names the output file");
+        assertFalse(outFile.resolve(".h5").toFile().exists(), "-dest must not become a directory holding '.h5'");
+
+        // -dest as an existing directory: <dest>/<name>.h5
+        Path outDir = Files.createDirectories(dir.resolve("outdir"));
+        p.dest = outDir.toFile();
+        cli = new BeakGraphCLI(p);
+        cli.traverse();
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount());
+        assertTrue(outDir.resolve("single.h5").toFile().isFile());
+    }
+
+    // --- BG-420: colliding destinations and skipped existing files ------------
+
+    @Test
+    void sourcesDifferingOnlyByExtensionAreReportedNotRaced() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("collide"));
+        Files.writeString(src.resolve("a.ttl"), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Files.writeString(src.resolve("a.nt"), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/c> .\n", StandardCharsets.UTF_8);
+        Files.writeString(src.resolve("b.ttl"), "<http://ex.org/b> <http://ex.org/p> <http://ex.org/c> .\n", StandardCharsets.UTF_8);
+        var plan = BeakGraphCLI.planDestinations(List.of(src.resolve("a.nt"), src.resolve("a.ttl"), src.resolve("b.ttl")),
+                src.toFile(), dir.resolve("collide-out").toFile());
+        assertEquals(2, plan.size());
+        assertEquals(2, plan.get(dir.resolve("collide-out").toAbsolutePath().normalize().resolve("a.h5")).size());
+
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("collide-out").toFile();
+        p.threads = 2;
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.traverse();
+        assertEquals(3, cli.getFileCounter().getRDFFileCount());
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount(), "the second source for a.h5 is a reported failure");
+        assertTrue(dir.resolve("collide-out").resolve("a.h5").toFile().length() > 0);
+        assertTrue(dir.resolve("collide-out").resolve("b.h5").toFile().length() > 0);
+        try (var tmps = Files.list(dir.resolve("collide-out"))) {
+            assertTrue(tmps.noneMatch(f -> f.getFileName().toString().endsWith(".tmp")), "no temp file left behind");
+        }
+    }
+
+    @Test
+    void existingDestinationsAreSkippedAndCounted() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("skip"));
+        Files.writeString(src.resolve("s.ttl"), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("skip-out").toFile();
+        new BeakGraphCLI(p).traverse();
+        BeakGraphCLI second = new BeakGraphCLI(p);
+        second.traverse();
+        assertEquals(1, second.getFileCounter().getSkippedExistingCount(), "the existing .h5 is skipped, and says so");
+        assertEquals(0, second.getFileCounter().getFailedConversionFileCount());
+        assertTrue(second.getFileCounter().toString().contains("Skipped (existing)     : 1"));
+    }
+
+    // --- BG-143: an Error is a failed conversion, not a silent success ---------
+
+    @Test
+    void anErrorInTheWriterIsCountedAsAFailure() throws Exception {
+        Path src = Files.createDirectories(dir.resolve("oom"));
+        Files.writeString(src.resolve("big.ttl"), "<http://ex.org/a> <http://ex.org/p> <http://ex.org/b> .\n", StandardCharsets.UTF_8);
+        Parameters p = new Parameters();
+        p.src = src.toFile();
+        p.dest = dir.resolve("oom-out").toFile();
+        BeakGraphCLI cli = new BeakGraphCLI(p) {
+            @Override
+            com.ebremer.beakgraph.core.BeakGraphWriter newWriter(File source, List<File> sources, File dest) {
+                return () -> { throw new OutOfMemoryError("simulated"); };
+            }
+        };
+        cli.traverse();
+        assertEquals(1, cli.getFileCounter().getRDFFileCount());
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount(),
+                "an Error escaping the writer used to be swallowed by the FutureTask and counted as success");
+        assertEquals(0, cli.getFileCounter().getSuccessfulConversionCount());
     }
 }

@@ -1,16 +1,18 @@
 package com.ebremer.beakgraph.core;
 
+import com.ebremer.beakgraph.Params;
 import java.io.File;
 import java.util.List;
-import org.apache.jena.query.Dataset;
 
 // T refers to the concrete class (e.g., HDF5Writer.Builder)
+// Inputs are FILES (setSource / setSources): an in-memory Dataset must be
+// written to TriG / N-Quads first. The former setDataset(Dataset) was a
+// silent no-op no engine consumed (BG-264).
 public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
 
     protected File src;
     protected File dest;
     protected List<File> sources = List.of();
-    protected Dataset ds;
     protected boolean spatial;
     protected boolean features;
     protected VoidMode voidMode = VoidMode.NONE;
@@ -39,6 +41,19 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
     }
 
     public List<File> getSources() { return sources; }
+
+    protected File sourceRoot;
+
+    /**
+     * Merge mode: the directory the merged documents' paths are taken relative
+     * to when their relative references are stored (the CLI's {@code -src}).
+     * Defaults to the sources' common ancestor directory.
+     */
+    public T setSourceRoot(File root) {
+        this.sourceRoot = root;
+        return self();
+    }
+    public File getSourceRoot() { return sourceRoot; }
     
     /**
      * Whether/how the VoID+SD statistics graph is generated: {@code NONE}
@@ -52,6 +67,26 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
 
     public VoidMode getVoidMode() {
         return voidMode;
+    }
+
+    protected String voidDatasetIri = Params.VOID_DATASET_IRI;
+
+    /**
+     * The IRI of the {@code sd:Dataset} resource the VoID/SD statistics graph
+     * describes (CLI {@code -voidbase}); default {@link Params#VOID_DATASET_IRI}.
+     * Every engine threads it into its statistics collector, so the six stay
+     * isomorphic for one configuration (BG-109).
+     */
+    public T setVoidDatasetIri(String iri) {
+        if (iri == null || iri.isBlank()) {
+            throw new IllegalArgumentException("The VoID dataset IRI must not be blank");
+        }
+        this.voidDatasetIri = iri;
+        return self();
+    }
+
+    public String getVoidDatasetIri() {
+        return voidDatasetIri;
     }
 
     public T setSpatial(boolean flag) {
@@ -72,15 +107,26 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
         return features;
     }
 
-    public T setDataset(Dataset ds) {
-        this.ds = ds;
-        return self();
-    }
-
     public File getSource() { return src; }
     public File getDestination() { return dest; }
-    public Dataset getDataset() { return ds; }
     
+    /**
+     * The check every engine's {@code build()} runs first: without it the
+     * six {@code write()} methods died on a bare NullPointerException from
+     * {@code getDestination().toPath()} or {@code List.of(null)}, and the
+     * disk engines had already created their workspace (BG-279).
+     *
+     * @throws IllegalStateException naming the missing setter
+     */
+    protected final void requireSourceAndDestination() {
+        if (dest == null) {
+            throw new IllegalStateException("No destination set: call setDestination()");
+        }
+        if (sources.isEmpty() && src == null) {
+            throw new IllegalStateException("No source set: call setSource() or setSources()");
+        }
+    }
+
     // All writers usually need a root group name
     public abstract String getName(); 
     

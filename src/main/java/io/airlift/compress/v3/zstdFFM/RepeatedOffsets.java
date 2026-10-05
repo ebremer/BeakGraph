@@ -46,4 +46,13 @@ class RepeatedOffsets
         offset0 = tempOffset0;
         offset1 = tempOffset1;
     }
+
+    /** Back to the frame-initial repeat offsets (1, 4) for a reused context. */
+    public void reset()
+    {
+        offset0 = 1;
+        offset1 = 4;
+        tempOffset0 = 0;
+        tempOffset1 = 0;
+    }
 }

@@ -14,10 +14,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
+import java.util.function.ToLongFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +35,12 @@ import org.slf4j.LoggerFactory;
  * <p>Single-consumer: {@link #sorted()} may be called once. Duplicate records
  * are preserved (callers dedup while streaming, exactly like the RAM writers
  * dedup after sorting).
+ *
+ * <p>A run spills when the buffer holds {@code maxRecordsInMemory} records OR,
+ * when a {@code sizer} is given, when the sizer's estimates add up to
+ * {@code maxBytesInMemory}. The record cap alone bounded nothing for the term
+ * columns: 262,144 buffered multi-KB WKT literals were gigabytes of heap on
+ * the engine sold as bounded-RAM (BG-125).
  *
  * @author Erich Bremer
  */
@@ -52,16 +61,35 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
     private final Comparator<? super T> comparator;
     private final int maxRecordsInMemory;
     private final int mergeFanIn;
+    private final ToLongFunction<? super T> sizer;
+    private final long maxBytesInMemory;
     private ArrayList<T> buffer = new ArrayList<>();
+    private long bufferedBytes = 0;
     private final List<Path> runs = new ArrayList<>();
+    // Records written into each run: the reader checks it at EOF, because a
+    // record cut in the middle throws the same EOFException as a clean end
+    // (BG-129).
+    private final Map<Path, Long> runCounts = new HashMap<>();
     private long size = 0;
     private int runCounter = 0;
+    private int runsSpilled = 0;
     private boolean consumed = false;
 
     public ExternalSorter(Path workDir, String tag, Codec<T> codec, Comparator<? super T> comparator,
                           int maxRecordsInMemory, int mergeFanIn) {
-        if (maxRecordsInMemory < 1 || mergeFanIn < 2) {
-            throw new IllegalArgumentException("maxRecordsInMemory >= 1 and mergeFanIn >= 2 required");
+        this(workDir, tag, codec, comparator, maxRecordsInMemory, mergeFanIn, null, Long.MAX_VALUE);
+    }
+
+    /**
+     * @param sizer estimated retained bytes of one record, or null to spill on
+     *              the record count alone
+     * @param maxBytesInMemory buffered estimate at which a run spills
+     */
+    public ExternalSorter(Path workDir, String tag, Codec<T> codec, Comparator<? super T> comparator,
+                          int maxRecordsInMemory, int mergeFanIn,
+                          ToLongFunction<? super T> sizer, long maxBytesInMemory) {
+        if (maxRecordsInMemory < 1 || mergeFanIn < 2 || maxBytesInMemory < 1) {
+            throw new IllegalArgumentException("maxRecordsInMemory >= 1, mergeFanIn >= 2 and maxBytesInMemory >= 1 required");
         }
         this.workDir = workDir;
         this.tag = tag;
@@ -69,6 +97,8 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
         this.comparator = comparator;
         this.maxRecordsInMemory = maxRecordsInMemory;
         this.mergeFanIn = mergeFanIn;
+        this.sizer = sizer;
+        this.maxBytesInMemory = maxBytesInMemory;
     }
 
     @Override
@@ -78,7 +108,10 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
         }
         buffer.add(record);
         size++;
-        if (buffer.size() >= maxRecordsInMemory) {
+        if (sizer != null) {
+            bufferedBytes += sizer.applyAsLong(record);
+        }
+        if (buffer.size() >= maxRecordsInMemory || bufferedBytes >= maxBytesInMemory) {
             spillRun();
         }
     }
@@ -87,6 +120,11 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
     @Override
     public long size() {
         return size;
+    }
+
+    /** Runs written so far by a full buffer (not counting intermediate merges). */
+    public int runsSpilled() {
+        return runsSpilled;
     }
 
     @SuppressWarnings("unchecked")
@@ -109,8 +147,12 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
             }
         }
         runs.add(run);
-        logger.debug("Sorter '{}': spilled run {} ({} records)", tag, run.getFileName(), arr.length);
+        runCounts.put(run, (long) arr.length);
+        runsSpilled++;
+        logger.debug("Sorter '{}': spilled run {} ({} records, ~{} KB buffered)", tag, run.getFileName(),
+                arr.length, bufferedBytes >> 10);
         buffer = new ArrayList<>();
+        bufferedBytes = 0;
     }
 
     /**
@@ -141,14 +183,19 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
             runs.subList(0, mergeFanIn).clear();
             Path merged = workDir.resolve(tag + ".run" + (runCounter++));
             logger.debug("Sorter '{}': intermediate merge of {} runs", tag, group.size());
+            long written = 0;
             try (MergeIterator mergeIt = new MergeIterator(group);
                  DataOutputStream out = new DataOutputStream(
                          new BufferedOutputStream(Files.newOutputStream(merged), 1 << 16))) {
                 while (mergeIt.hasNext()) {
                     codec.write(out, mergeIt.next());
+                    if ((++written & 0xFFFF) == 0) {
+                        HugeBuildPipeline.checkCancelled("merging sorter '" + tag + "'");
+                    }
                 }
             }
             runs.add(merged);
+            runCounts.put(merged, written);
         }
         List<Path> finalRuns = new ArrayList<>(runs);
         runs.clear();
@@ -166,15 +213,19 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
             }
         }
         runs.clear();
+        runCounts.clear();
     }
 
     private final class RunReader {
         final Path path;
         final DataInputStream in;
+        final Long expected;
+        long read = 0;
         T head;
 
         RunReader(Path path) throws IOException {
             this.path = path;
+            this.expected = runCounts.get(path);
             this.in = new DataInputStream(new BufferedInputStream(Files.newInputStream(path), 1 << 16));
         }
 
@@ -182,10 +233,15 @@ public final class ExternalSorter<T> implements RecordSorter<T> {
         boolean advance() throws IOException {
             try {
                 head = codec.read(in);
+                read++;
                 return true;
             } catch (EOFException eof) {
                 head = null;
                 closeAndDelete();
+                if (expected != null && read != expected) {
+                    throw new IOException("Spill run " + path + " of sorter '" + tag + "' truncated: read "
+                            + read + " of " + expected + " records");
+                }
                 return false;
             }
         }

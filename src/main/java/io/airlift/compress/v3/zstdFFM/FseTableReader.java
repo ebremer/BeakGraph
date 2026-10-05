@@ -136,9 +136,11 @@ class FseTableReader
 
         table.log2Size = tableLog;
 
-        for (byte symbol = 0; symbol < symbolCount; symbol++) {
+        // int, not byte: a corrupted stream declaring more than 128 symbols wrapped
+        // a byte loop variable negative.
+        for (int symbol = 0; symbol < symbolCount; symbol++) {
             if (normalizedCounters[symbol] == -1) {
-                table.symbol[highThreshold--] = symbol;
+                table.symbol[highThreshold--] = (byte) symbol;
                 nextSymbol[symbol] = 1;
             }
             else {

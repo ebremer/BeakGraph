@@ -14,11 +14,11 @@
 package io.airlift.compress.v3.zstdFFM;
 
 import java.lang.foreign.MemorySegment;
-
 import static io.airlift.compress.v3.zstdFFM.Constants.COMPRESSED_BLOCK;
 import static io.airlift.compress.v3.zstdFFM.Constants.COMPRESSED_LITERALS_BLOCK;
 import static io.airlift.compress.v3.zstdFFM.Constants.MAGIC_NUMBER;
 import static io.airlift.compress.v3.zstdFFM.Constants.MIN_BLOCK_SIZE;
+import static io.airlift.compress.v3.zstdFFM.Constants.MAX_WINDOW_LOG;
 import static io.airlift.compress.v3.zstdFFM.Constants.MIN_WINDOW_LOG;
 import static io.airlift.compress.v3.zstdFFM.Constants.RAW_BLOCK;
 import static io.airlift.compress.v3.zstdFFM.Constants.RAW_LITERALS_BLOCK;
@@ -138,6 +138,19 @@ final class ZstdFrameCompressor
 
     public static int compress(MemorySegment inputBase, long inputAddress, long inputLimit, MemorySegment outputBase, long outputAddress, long outputLimit, int compressionLevel)
     {
+        return compress(inputBase, inputAddress, inputLimit, outputBase, outputAddress, outputLimit, compressionLevel, null);
+    }
+
+    /**
+     * As {@link #compress(MemorySegment, long, long, MemorySegment, long, long, int)},
+     * drawing the compression context from {@code contexts} (indexed by window log)
+     * instead of allocating one per frame - the hash and chain tables, the sequence
+     * store and the Huffman/FSE workspaces are the bulk of a small frame's cost. Null
+     * keeps the per-frame allocation. The array is the caller's and is not
+     * thread-safe (BeakGraph divergence, see README.md).
+     */
+    public static int compress(MemorySegment inputBase, long inputAddress, long inputLimit, MemorySegment outputBase, long outputAddress, long outputLimit, int compressionLevel, CompressionContext[] contexts)
+    {
         int inputSize = (int) (inputLimit - inputAddress);
 
         CompressionParameters parameters = CompressionParameters.compute(compressionLevel, inputSize);
@@ -146,13 +159,34 @@ final class ZstdFrameCompressor
 
         output += writeMagic(outputBase, output, outputLimit);
         output += writeFrameHeader(outputBase, output, outputLimit, inputSize, parameters.getWindowSize());
-        output += compressFrame(inputBase, inputAddress, inputLimit, outputBase, output, outputLimit, parameters);
+        output += compressFrame(inputBase, inputAddress, inputLimit, outputBase, output, outputLimit, parameters, contexts);
         output += writeChecksum(outputBase, output, outputLimit, inputBase, inputAddress, inputLimit);
 
         return (int) (output - outputAddress);
     }
 
-    private static int compressFrame(MemorySegment inputBase, long inputAddress, long inputLimit, MemorySegment outputBase, long outputAddress, long outputLimit, CompressionParameters parameters)
+    /** Size of the array {@link #compress(MemorySegment, long, long, MemorySegment, long, long, int, CompressionContext[])} expects. */
+    public static final int CONTEXT_CACHE_SIZE = MAX_WINDOW_LOG + 1;
+
+    private static CompressionContext contextFor(CompressionContext[] contexts, CompressionParameters parameters, long baseAddress, int inputSize)
+    {
+        if (contexts == null) {
+            return new CompressionContext(parameters, baseAddress, inputSize);
+        }
+        int slot = parameters.getWindowLog();
+        CompressionContext context = contexts[slot];
+        if (context == null || !context.parameters.sameAs(parameters)) {
+            // Sized for the whole window, so every input these parameters get chosen for fits.
+            context = new CompressionContext(parameters, baseAddress, parameters.getWindowSize());
+            contexts[slot] = context;
+        }
+        else {
+            context.reset(baseAddress);
+        }
+        return context;
+    }
+
+    private static int compressFrame(MemorySegment inputBase, long inputAddress, long inputLimit, MemorySegment outputBase, long outputAddress, long outputLimit, CompressionParameters parameters, CompressionContext[] contexts)
     {
         int blockSize = parameters.getBlockSize();
 
@@ -162,7 +196,7 @@ final class ZstdFrameCompressor
         long output = outputAddress;
         long input = inputAddress;
 
-        CompressionContext context = new CompressionContext(parameters, inputAddress, remaining);
+        CompressionContext context = contextFor(contexts, parameters, inputAddress, remaining);
         do {
             checkArgument(outputSize >= SIZE_OF_BLOCK_HEADER + MIN_BLOCK_SIZE, "Output buffer too small");
 

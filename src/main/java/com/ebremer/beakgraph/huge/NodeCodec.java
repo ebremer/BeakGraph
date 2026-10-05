@@ -17,8 +17,8 @@ import org.apache.jena.graph.NodeFactory;
  * {@code equals()} to - and {@code NodeComparator}-orders identically to - the
  * parsed original.
  *
- * <p>Node kinds the BeakGraph format cannot store (RDF-star triple terms,
- * variables) fail loudly here, matching the RAM writer's ProcessQuad guards.
+ * <p>Node kinds the BeakGraph format cannot store (variables) fail loudly
+ * here, matching the RAM writer's ProcessQuad guards.
  *
  * @author Erich Bremer
  */
@@ -32,6 +32,7 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
     private static final byte T_LITERAL_DT = 2;
     private static final byte T_LITERAL_LANG = 3;
     private static final byte T_LITERAL_DIRLANG = 4;
+    private static final byte T_TRIPLE_TERM = 5;
 
     private NodeCodec() {}
 
@@ -69,6 +70,15 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
                 writeString(out, n.getLiteralLexicalForm());
                 writeString(out, n.getLiteralDatatypeURI());
             }
+        } else if (n.isTripleTerm()) {
+            // Recursive, structural: term identity is preserved component-exactly
+            // (nesting only occurs through the object position; RDF 1.2 forbids
+            // cycles, so this terminates).
+            out.writeByte(T_TRIPLE_TERM);
+            org.apache.jena.graph.Triple t = n.getTriple();
+            writeNode(out, t.getSubject());
+            writeNode(out, t.getPredicate());
+            writeNode(out, t.getObject());
         } else {
             // Same stance as ProcessQuad: a node kind the store cannot represent
             // must abort the build, not silently skew it.
@@ -100,6 +110,12 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
                 }
                 yield NodeFactory.createLiteralDirLang(lex, lang,
                         dir == 1 ? TextDirection.LTR : TextDirection.RTL);
+            }
+            case T_TRIPLE_TERM -> {
+                Node s = readNode(in);
+                Node p = readNode(in);
+                Node o = readNode(in);
+                yield NodeFactory.createTripleTerm(s, p, o);
             }
             default -> throw new IOException("Corrupt spill record: unknown node tag " + tag);
         };

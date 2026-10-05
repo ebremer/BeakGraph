@@ -92,12 +92,29 @@ class RelativeIRIResolverTest {
     }
 
     @Test
-    void parentDirectoryFormIsNeverStoredSoNoRewrite() {
-        // "../other.png" is relative per IRIx but not a form the writer produces;
-        // with nothing stored, the absolute name must pass through untouched.
+    void nothingStoredMeansNoRewriteForAnyForm() {
         Node up = NodeFactory.createURI("http://localhost:8888/HalcyonStorage/utah/other.png");
         NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage(n -> false);
         assertSame(up, t.apply(up));
+    }
+
+    @Test
+    void parentAndPathAbsoluteFormsAreRewrittenWhenStored() {
+        // BG-391: the writer stores <../other.png>, <../../x> and </LICENSE>
+        // in exactly those forms; a query naming the served IRI must reach them.
+        String[][] cases = {
+            {"http://localhost:8888/HalcyonStorage/utah/other.png", "../other.png"},
+            {"http://localhost:8888/HalcyonStorage/x", "../../x"},
+            {"http://localhost:8888/LICENSE", "/LICENSE"},
+            {"http://localhost:8888/HalcyonStorage/utah/hdf5/sub/y.png", "sub/y.png"},
+        };
+        for (String[] c : cases) {
+            NodeTransform t = new RelativeIRIResolver(BASE).absoluteToStorage(n -> n.getURI().equals(c[1]));
+            assertEquals(c[1], t.apply(NodeFactory.createURI(c[0])).getURI(), c[0]);
+            // and the stored form serves back as the IRI the query named
+            assertEquals(c[0], new RelativeIRIResolver(BASE).storageToAbsolute()
+                    .apply(NodeFactory.createURI(c[1])).getURI(), c[1]);
+        }
     }
 
     @Test

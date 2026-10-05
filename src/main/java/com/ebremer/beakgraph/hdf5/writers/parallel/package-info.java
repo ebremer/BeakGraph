@@ -11,8 +11,11 @@
  * <ul>
  *   <li>{@link com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer} -
  *       the public entry point (a {@code BeakGraphWriter}, drop-in alternative
- *       to {@code HDF5Writer}); owns the {@code ForkJoinPool} every stage runs
- *       in, so one conversion never uses more than the requested cores;</li>
+ *       to {@code HDF5Writer}); owns the {@code ForkJoinPool} every build
+ *       stage runs in, so those stages never use more than the requested
+ *       cores (each document's parse adds one Jena producer thread, and with
+ *       spatial indexing the per-geometry augmentation runs on JDK virtual
+ *       threads outside the pool, BG-120);</li>
  *   <li>{@link com.ebremer.beakgraph.hdf5.writers.parallel.ParallelPositionalDictionaryWriterBuilder} -
  *       inherits the whole ingest pipeline (parse, bnode alignment, spatial /
  *       feature augmentation, VoID statistics) from the sequential builder and

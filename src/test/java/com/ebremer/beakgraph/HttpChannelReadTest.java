@@ -61,7 +61,8 @@ class HttpChannelReadTest {
         ex:s2 ex:p "hello"@en .
         ex:s2 ex:q "42"^^xsd:integer .
         ex:s3 ex:p ex:o2 .
-        """;
+        ex:s3 ex:long "%s" .
+        """.formatted("z".repeat(2048));   // past the 64-byte FCD zstd threshold: the fragment path runs over HTTP
 
     @TempDir
     static Path dir;
@@ -117,6 +118,9 @@ class HttpChannelReadTest {
                         count(remote.getDataset(), "SELECT * WHERE { ?s ?p ?o }"));
                 assertEquals(2, count(remote.getDataset(),
                         "SELECT * WHERE { <http://ex.org/s1> <http://ex.org/p> ?o }"));
+                assertEquals(1, count(remote.getDataset(),
+                        "SELECT * WHERE { <http://ex.org/s3> <http://ex.org/long> \"" + "z".repeat(2048) + "\" }"),
+                        "a zstd-compressed literal must decode through the channel");
                 List<String> gets = server.requests.stream()
                         .filter(r -> r.startsWith("GET ")).toList();
                 assertFalse(gets.isEmpty());
@@ -164,7 +168,8 @@ class HttpChannelReadTest {
             }
             assertArrayEquals(data, all.toByteArray());
             long afterScan = ch.getRangeRequestCount();
-            assertEquals(3, afterScan, "three blocks -> three range requests");
+            assertTrue(afterScan <= 2, "block 0 alone, then blocks 1-2 in one read-ahead request: " + afterScan);
+            assertEquals(data.length, ch.getBytesFetched(), "every byte fetched exactly once");
 
             // cache: re-reading issues no further requests
             ch.position(0);
@@ -226,6 +231,223 @@ class HttpChannelReadTest {
         }
     }
 
+    // --- BG-180: retry, validation, truncation and eviction branches ------
+
+    private static List<String> rangedGets(RangeServer server) {
+        return server.requests.stream().filter(r -> r.startsWith("GET ") && r.contains("bytes=")).toList();
+    }
+
+    // --- BG-387 / BG-10 / BG-9 / BG-11 / BG-277 ------------------------------
+
+    @Test
+    void redirectsAreFollowedOnceAtOpenNotPerBlock() throws Exception {
+        byte[] data = pattern(400_000);
+        try (RangeServer server = new RangeServer(data)) {
+            server.redirectFrom = "/redir.bin";
+            server.redirectTo = server.uri("/target.bin").toString();
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/redir.bin"))) {
+                assertEquals(data.length, ch.size());
+                ch.position(300_000);
+                ByteBuffer bb = ByteBuffer.allocate(1000);
+                assertEquals(1000, ch.read(bb));
+                assertArrayEquals(Arrays.copyOfRange(data, 300_000, 301_000), bb.array());
+                ch.position(10);
+                assertEquals(1000, ch.read(ByteBuffer.allocate(1000)));
+            }
+            List<String> viaRedirect = server.requests.stream().filter(r -> r.contains(" /redir.bin")).toList();
+            assertEquals(1, viaRedirect.size(), "only the probe goes through the redirector: " + server.requests);
+            assertTrue(viaRedirect.get(0).startsWith("HEAD "), viaRedirect.toString());
+            assertTrue(rangedGets(server).stream().allMatch(r -> r.contains(" /target.bin ")),
+                    "every block request goes to the resolved target: " + rangedGets(server));
+        }
+    }
+
+    @Test
+    void a206WithoutOrWithAnOverlongBodyIsRejected() throws Exception {
+        byte[] data = pattern(300_000);
+        try (RangeServer server = new RangeServer(data)) {
+            server.omitContentRange = true;
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/nocr.bin"))) {
+                ch.position(131_072);
+                IOException e = assertThrows(IOException.class, () -> ch.read(ByteBuffer.allocate(16)));
+                assertTrue(e.getMessage().contains("no Content-Range"), e.getMessage());
+            }
+            assertEquals(1, rangedGets(server).size(), "a missing Content-Range is permanent: no retry");
+        }
+        try (RangeServer server = new RangeServer(data)) {
+            server.fullBodyOn206 = true;
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/full.bin"))) {
+                ch.position(131_072);
+                IOException e = assertThrows(IOException.class, () -> ch.read(ByteBuffer.allocate(16)));
+                assertTrue(e.getMessage().contains("Content-Length"), e.getMessage());
+            }
+        }
+    }
+
+    @Test
+    void aHeadWithZeroContentLengthFallsBackToTheRangeProbe() throws Exception {
+        byte[] data = pattern(20_000);
+        try (RangeServer server = new RangeServer(data)) {
+            server.headContentLengthZero = true;
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/zero-head.bin"))) {
+                assertEquals(data.length, ch.size(), "the range probe's Content-Range total is the size");
+                ByteBuffer bb = ByteBuffer.allocate(100);
+                assertEquals(100, ch.read(bb));
+                assertArrayEquals(Arrays.copyOf(data, 100), bb.array());
+            }
+            assertTrue(server.requests.stream().anyMatch(r -> r.contains("bytes=0-0")), server.requests.toString());
+        }
+    }
+
+    @Test
+    void retryAfterIsHonouredAndEveryAttemptCounts() throws Exception {
+        byte[] data = pattern(10_000);
+        try (RangeServer server = new RangeServer(data)) {
+            server.failFirstN = 2;
+            server.failStatus = "503 Service Unavailable";
+            server.retryAfterSeconds = 1;
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/throttled.bin"))) {
+                long t0 = System.nanoTime();
+                ByteBuffer bb = ByteBuffer.allocate(100);
+                assertEquals(100, ch.read(bb));
+                long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
+                assertArrayEquals(Arrays.copyOf(data, 100), bb.array());
+                assertTrue(elapsedMs >= 1_900, "two Retry-After: 1 waits were honoured, took " + elapsedMs + " ms");
+                assertEquals(rangedGets(server).size(), ch.getRangeRequestCount(),
+                        "the metric agrees with what the server saw: " + rangedGets(server));
+                assertEquals(3, ch.getRangeRequestCount());
+            }
+        }
+    }
+
+    @Test
+    void thePoolOpensHttpKeysAndNamesTheSchemesItAccepts() throws Exception {
+        try (RangeServer server = new RangeServer(h5Bytes)) {
+            URI key = server.uri("/pooled.ttl.h5");
+            BeakGraph pooled = com.ebremer.beakgraph.pool.BeakGraphPool.getPool().borrowObject(key);
+            try {
+                assertEquals(key, pooled.getURI());
+                assertEquals(key, pooled.getBase(), "a remote store resolves against its own URL by default");
+                assertTrue(count(pooled.getDataset(), "SELECT * WHERE { ?s ?p ?o }") > 0);
+            } finally {
+                com.ebremer.beakgraph.pool.BeakGraphPool.getPool().returnObject(key, pooled);
+            }
+            com.ebremer.beakgraph.pool.BeakGraphPool.getPool().clear(key);
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> new com.ebremer.beakgraph.pool.BeakGraphPoolFactory().create(URI.create("ftp://host/x.h5")));
+        assertTrue(e.getMessage().contains("file: and http(s):"), e.getMessage());
+    }
+
+    @Test
+    void transientServerErrorsAreRetriedThenGivenUp() throws Exception {
+        byte[] data = pattern(10_000);
+        try (RangeServer server = new RangeServer(data)) {
+            server.failFirstN = 2;   // two 503s, then the real answer
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/flaky.bin"))) {
+                ByteBuffer bb = ByteBuffer.allocate(100);
+                assertEquals(100, ch.read(bb));
+                assertArrayEquals(Arrays.copyOf(data, 100), bb.array());
+                assertEquals(3, ch.getRangeRequestCount(), "every attempt that got an answer counts (BG-11)");
+            }
+            List<String> gets = rangedGets(server);
+            assertEquals(3, gets.size(), "two failures plus the success: " + gets);
+            assertEquals(1, new HashSet<>(gets).size(), "every attempt asks for the same range: " + gets);
+        }
+        try (RangeServer server = new RangeServer(data)) {
+            server.failFirstN = 5;
+            server.failStatus = "429 Too Many Requests";
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/dead.bin"))) {
+                IOException e = assertThrows(IOException.class, () -> ch.read(ByteBuffer.allocate(16)));
+                assertTrue(e.getMessage().contains("after 5 attempts"), e.getMessage());
+                assertTrue(e.getCause() != null && e.getCause().getMessage().contains("HTTP 429"),
+                        "the last failure rides along as the cause: " + e.getCause());
+            }
+            assertEquals(5, rangedGets(server).size(), "MAX_ATTEMPTS bounds the retries");
+        }
+    }
+
+    @Test
+    void mismatchedContentRangeIsRejectedWithoutRetry() throws Exception {
+        try (RangeServer server = new RangeServer(pattern(10_000))) {
+            server.contentRangeOffsetSkew = 1;   // body is right, header claims the wrong offset
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/skew.bin"))) {
+                IOException e = assertThrows(IOException.class, () -> ch.read(ByteBuffer.allocate(16)));
+                assertTrue(e.getMessage().contains("mismatched Content-Range"), e.getMessage());
+            }
+            assertEquals(1, rangedGets(server).size(), "a wrong offset is permanent: no retry");
+        }
+    }
+
+    @Test
+    void truncatedBodyIsRetried() throws Exception {
+        byte[] data = pattern(10_000);
+        try (RangeServer server = new RangeServer(data)) {
+            server.truncateFirstN = 1;   // first answer stops one byte short, then closes
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/short.bin"))) {
+                ch.position(4_000);
+                ByteBuffer bb = ByteBuffer.allocate(500);
+                assertEquals(500, ch.read(bb));
+                assertArrayEquals(Arrays.copyOfRange(data, 4_000, 4_500), bb.array());
+                assertEquals(2, ch.getRangeRequestCount(), "the truncated attempt counts too");
+            }
+            assertEquals(2, rangedGets(server).size(), "the truncated answer is retried once");
+        }
+        try (RangeServer server = new RangeServer(data)) {
+            server.truncateFirstN = Integer.MAX_VALUE;
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/always-short.bin"))) {
+                IOException e = assertThrows(IOException.class, () -> ch.read(ByteBuffer.allocate(16)));
+                assertTrue(e.getMessage().contains("after 5 attempts"), e.getMessage());
+            }
+        }
+    }
+
+    @Test
+    void notFoundFailsImmediately() throws Exception {
+        try (RangeServer server = new RangeServer(pattern(1_000))) {
+            server.notFound = true;
+            try (HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/gone.bin"))) {
+                IOException e = assertThrows(IOException.class, () -> ch.read(ByteBuffer.allocate(16)));
+                assertTrue(e.getMessage().contains("HTTP 404"), e.getMessage());
+            }
+            assertEquals(1, rangedGets(server).size(), "4xx is permanent: no retry");
+        }
+    }
+
+    @Test
+    void cacheEvictsBeyondItsCapacityAndStillReadsCorrectly() throws Exception {
+        int block = 4096;
+        byte[] data = pattern(64 * block);
+        try (RangeServer server = new RangeServer(data);
+             HTTPSeekableByteChannel ch = new HTTPSeekableByteChannel(server.uri("/big.bin"), block, 4)) {
+            ByteArrayOutputStream all = new ByteArrayOutputStream();
+            ByteBuffer chunk = ByteBuffer.allocate(7_000);
+            int n;
+            while ((n = ch.read(chunk)) != -1) {
+                all.write(chunk.array(), 0, n);
+                chunk.clear();
+            }
+            assertArrayEquals(data, all.toByteArray());
+            long sequential = ch.getRangeRequestCount();
+            // Read-ahead is capped at half the cache (2 blocks here): about one
+            // request per two blocks, never more than one per block.
+            assertTrue(sequential >= 32 && sequential <= 64, "sequential pass: " + sequential + " requests");
+            assertEquals(data.length, ch.getBytesFetched(), "every byte fetched once on the sequential pass");
+            java.util.Random rnd = new java.util.Random(5);
+            for (int i = 0; i < 200; i++) {
+                int at = rnd.nextInt(data.length - 64);
+                int len = 1 + rnd.nextInt(64);
+                ch.position(at);
+                ByteBuffer bb = ByteBuffer.allocate(len);
+                assertEquals(len, ch.read(bb));
+                assertArrayEquals(Arrays.copyOfRange(data, at, at + len), bb.array(), "random read at " + at);
+            }
+            assertTrue(ch.getRangeRequestCount() > sequential,
+                    "with a 4-block cache the random reads must miss (evicted blocks are re-fetched)");
+            assertTrue(ch.getRangeRequestCount() < 64 + 200, "but hot blocks must still hit");
+        }
+    }
+
     @Test
     void nonHttpUriIsRejected() {
         assertThrows(IllegalArgumentException.class,
@@ -240,17 +462,40 @@ class HttpChannelReadTest {
      * headers itself), plus a request log for assertions. Toggles:
      * {@link #rejectHead} answers HEAD with 405, {@link #ignoreRanges}
      * answers ranged GETs with the full resource (a server without range
-     * support).
+     * support), {@link #failFirstN} answers the first N ranged GETs with
+     * {@link #failStatus}, {@link #truncateFirstN} cuts the body of the first
+     * N ranged GETs one byte short, {@link #contentRangeOffsetSkew} shifts
+     * the offset claimed in Content-Range while sending the right bytes, and
+     * {@link #notFound} answers every GET with 404.
      */
     static final class RangeServer implements AutoCloseable {
 
         private static final Pattern RANGE = Pattern.compile("bytes=(\\d+)-(\\d+)");
 
         private final ServerSocket server;
-        private final byte[] content;
+        private volatile byte[] content;
         final List<String> requests = Collections.synchronizedList(new ArrayList<>());
+        /** Emit a strong ETag derived from the content and honour If-Range (BG-380). */
+        volatile boolean emitEtag = true;
         volatile boolean rejectHead;
         volatile boolean ignoreRanges;
+        volatile int failFirstN;
+        volatile String failStatus = "503 Service Unavailable";
+        volatile int truncateFirstN;
+        volatile long contentRangeOffsetSkew;
+        volatile boolean notFound;
+        /** Path answered with a 302 to {@code redirectTo} (an absolute URL). */
+        volatile String redirectFrom;
+        volatile String redirectTo;
+        /** 206 answers without the Content-Range header (BG-10). */
+        volatile boolean omitContentRange;
+        /** 206 answers carrying the whole resource as the body (BG-10). */
+        volatile boolean fullBodyOn206;
+        /** HEAD answers 200 with Content-Length: 0 (BG-9). */
+        volatile boolean headContentLengthZero;
+        /** Retry-After (seconds) sent with the failing answers (BG-11). */
+        volatile int retryAfterSeconds;
+        private final java.util.concurrent.atomic.AtomicInteger rangedGets = new java.util.concurrent.atomic.AtomicInteger();
 
         RangeServer(byte[] content) throws IOException {
             this.content = content;
@@ -260,6 +505,15 @@ class HttpChannelReadTest {
 
         URI uri(String path) {
             return URI.create("http://127.0.0.1:" + server.getLocalPort() + path);
+        }
+
+        /** Overwrites the served resource in place, as an S3 PUT or a rebuild into a served directory would. */
+        void replace(byte[] newContent) {
+            this.content = newContent;
+        }
+
+        private String etag() {
+            return "\"" + Integer.toHexString(Arrays.hashCode(content)) + "-" + content.length + "\"";
         }
 
         @Override
@@ -288,34 +542,66 @@ class HttpChannelReadTest {
                 String method = requestLine[0];
                 String path = requestLine[1];
                 String range = null;
+                String ifRange = null;
                 for (int i = 1; i < head.size(); i++) {
                     int colon = head.get(i).indexOf(':');
                     if (colon > 0 && head.get(i).substring(0, colon).trim().equalsIgnoreCase("Range")) {
                         range = head.get(i).substring(colon + 1).trim();
                     }
+                    if (colon > 0 && head.get(i).substring(0, colon).trim().equalsIgnoreCase("If-Range")) {
+                        ifRange = head.get(i).substring(colon + 1).trim();
+                    }
+                }
+                byte[] content = this.content;
+                if (range != null && ifRange != null && emitEtag && !ifRange.equals(etag())) {
+                    // RFC 9110 13.1.5: a stale validator turns the range request into a full 200.
+                    range = null;
                 }
                 requests.add(method + " " + path + (range == null ? "" : " " + range));
                 OutputStream out = socket.getOutputStream();
+                if (redirectFrom != null && path.equals(redirectFrom)) {
+                    out.write(("HTTP/1.1 302 Found\r\nLocation: " + redirectTo + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .getBytes(StandardCharsets.ISO_8859_1));
+                    out.flush();
+                    return;
+                }
                 if (method.equals("HEAD")) {
                     if (rejectHead) {
                         writeHead(out, "405 Method Not Allowed", 0, null);
                     } else {
-                        writeHead(out, "200 OK", content.length, null);
+                        writeHead(out, "200 OK", headContentLengthZero ? 0 : content.length, null);
                     }
                     return;
                 }
+                if (notFound) {
+                    writeHead(out, "404 Not Found", 0, null);
+                    return;
+                }
                 if (range != null && !ignoreRanges) {
+                    int nth = rangedGets.incrementAndGet();
+                    if (nth <= failFirstN) {
+                        writeHead(out, failStatus, 0, null, retryAfterSeconds > 0 ? "Retry-After: " + retryAfterSeconds : null);
+                        return;
+                    }
                     Matcher m = RANGE.matcher(range);
                     if (m.matches()) {
                         long from = Long.parseLong(m.group(1));
                         long to = Math.min(Long.parseLong(m.group(2)), content.length - 1L);
                         if (from <= to && from < content.length) {
                             int len = (int) (to - from + 1);
-                            writeHead(out, "206 Partial Content", len,
-                                    "bytes " + from + "-" + to + "/" + content.length);
-                            out.write(content, (int) from, len);
+                            String contentRange = omitContentRange ? null
+                                    : "bytes " + (from + contentRangeOffsetSkew) + "-" + to + "/" + content.length;
+                            if (fullBodyOn206) {
+                                writeHead(out, "206 Partial Content", content.length, contentRange);
+                                out.write(content);
+                                out.flush();
+                                return;
+                            }
+                            writeHead(out, "206 Partial Content", len, contentRange);
+                            int send = (nth <= truncateFirstN) ? len - 1 : len;
+                            out.write(content, (int) from, send);
                             out.flush();
-                            return;
+                            return;   // try-with-resources closes the socket: a short body, then EOF
                         }
                     }
                     writeHead(out, "416 Range Not Satisfiable", 0, "bytes */" + content.length);
@@ -346,11 +632,17 @@ class HttpChannelReadTest {
             return null;
         }
 
-        private static void writeHead(OutputStream out, String status, long contentLength,
-                String contentRange) throws IOException {
+        private void writeHead(OutputStream out, String status, long contentLength,
+                String contentRange, String... extraHeaders) throws IOException {
             StringBuilder sb = new StringBuilder();
             sb.append("HTTP/1.1 ").append(status).append("\r\n");
             sb.append("Content-Length: ").append(contentLength).append("\r\n");
+            for (String h : extraHeaders) {
+                if (h != null) sb.append(h).append("\r\n");
+            }
+            if (emitEtag) {
+                sb.append("ETag: ").append(etag()).append("\r\n");
+            }
             sb.append("Accept-Ranges: bytes\r\n");
             if (contentRange != null) {
                 sb.append("Content-Range: ").append(contentRange).append("\r\n");

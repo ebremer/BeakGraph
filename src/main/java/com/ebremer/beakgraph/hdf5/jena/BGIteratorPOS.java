@@ -10,8 +10,6 @@ import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
-import org.apache.jena.sparql.expr.Expr;
-import org.apache.jena.sparql.expr.ExprFunction2;
 import org.apache.jena.sparql.expr.ExprList;
 
 /**
@@ -35,8 +33,22 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     // so the vars each row binds are computed once. Object and subject vary per row.
     private Var oVar, sVar;
 
+    // Triple-term pattern in the object position: rows whose object id fails
+    // unification are dropped in computeNext (the same skip path repeated-var
+    // conflicts already use). Null for every other pattern shape.
+    private TripleTermMatcher ttMatcher;
+
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, presetGi);
     }
 
     /**
@@ -46,6 +58,10 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      * subject block belongs to the chunk owning its position.
      */
     BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, -1);
+    }
+
+    private BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi, long presetGi) {
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
 
@@ -61,12 +77,25 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         this.dirS = reader.getDirectory('S');
 
         // Analyze filters specifically for the Object variable
-        if (filter != null && !filter.isEmpty()) {
-            analyzeFilters(filter, dict, quad);
+        RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+        minObjId = bounds.minO;
+        maxObjId = bounds.maxO;
+
+        // Triple-term pattern in the object position: clamp the object range to
+        // the triple-term suffix of the object space (empties instantly on a
+        // triple-term-free store) and unify per candidate in computeNext.
+        if (TripleTermMatcher.isPattern(quad.getObject())) {
+            ttMatcher = TripleTermMatcher.compile(quad.getObject(), dict);
+            if (ttMatcher == null) {
+                return; // pattern cannot match anything in this store
+            }
+            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
         }
 
         // 1. Resolve Graph
-        if (quad.getGraph().isVariable()) {
+        if (presetGi >= 1) {
+            gi = presetGi;
+        } else if (quad.getGraph().isVariable()) {
             long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
             if (bound == NodeId.NONE) throw new IllegalStateException("BGIteratorPOS requires Graph to be bound.");
             gi = NodeId.id(bound);
@@ -164,57 +193,6 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         }
     }
 
-    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        for (Expr expr : filter.getList()) {
-            if (expr instanceof ExprFunction2 func) {
-                Expr left = func.getArg1();
-                Expr right = func.getArg2();
-                String opcode = func.getOpName();
-                if (left.isVariable() && right.isConstant()) {
-                    applyBound(left.asVar(), opcode, right.getConstant().asNode(), dict, quad);
-                } else if (left.isConstant() && right.isVariable()) {
-                    applyBound(right.asVar(), flipOp(opcode), left.getConstant().asNode(), dict, quad);
-                }
-            }
-        }
-    }
-
-    private String flipOp(String op) {
-        return switch (op) {
-            case ">" -> "<";
-            case "<" -> ">";
-            case ">=" -> "<=";
-            case "<=" -> ">=";
-            default -> op;
-        };
-    }
-
-    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        if (!var.equals(quad.getObject())) return;
-        // Snap the bound to the edges of the whole value-equal cluster: value-equal
-        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
-        // adjacent distinct ids, and the raw exact-term insertion point can land
-        // inside that cluster, silently dropping qualifying boundary rows.
-        long[] c = ValueCluster.of(dict.getObjects(), value);
-        switch (op) {
-            case ">" -> {
-                 long target = c[1] + 1;
-                 if (Long.compareUnsigned(target, minObjId) > 0) minObjId = target;
-            }
-            case ">=" -> {
-                 if (Long.compareUnsigned(c[0], minObjId) > 0) minObjId = c[0];
-            }
-            case "<" -> {
-                 long target = c[0] - 1;
-                 if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-            }
-            case "<=" -> {
-                 long target = c[1];
-                 if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-            }
-        }
-    }
-
     // Look-ahead: the next deliverable row, or null. Rows whose repeated-variable
     // bindings conflict are skipped here, so hasNext() only answers true when
     // next() really has a row to return.
@@ -233,6 +211,18 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             boolean ok = true;
             if (oVar != null) {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, So.get(curOIndex)), nodeTable);
+            }
+            if (ok && ttMatcher != null) {
+                // Unify the candidate object id against the triple-term pattern
+                // BEFORE the subject binds, so a repeated variable spanning the
+                // two (?x inside the term and as pattern subject) is checked by
+                // putCompatible against the embedded binding.
+                BindingNodeId unified = ttMatcher.matchAndBind(So.get(curOIndex), result, nodeTable);
+                if (unified == null) {
+                    ok = false;
+                } else {
+                    result = unified;
+                }
             }
             if (ok && sVar != null) {
                 ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, Ss.get(curSIndex)), nodeTable);

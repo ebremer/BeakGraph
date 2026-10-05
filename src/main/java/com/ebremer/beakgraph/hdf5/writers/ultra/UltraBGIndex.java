@@ -1,12 +1,13 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.core.Futures;
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.hdf5.Index;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 import org.apache.jena.sparql.core.Quad;
@@ -76,8 +77,11 @@ final class UltraBGIndex {
      * ingest's quad array as soon as the keys are packed.
      */
     static UltraBGIndex[] buildBoth(UltraDictionary dict, UltraIngest ingest, ForkJoinPool pool) throws IOException {
-        final Quad[] quads = ingest.getQuads();
-        final int n = quads.length;
+        // Only the COUNT is kept here: the quad array, the packed key arrays
+        // and the pre-dedup sorted pair live inside packSortDedup, so they are
+        // collectable while both index builds and the GPOS repack allocate
+        // (BG-115; ParallelRadixSort's contract asks callers to drop them).
+        final int n = ingest.getQuads().length;
         final long e = dict.getNumberOfGraphs();
         final long p = dict.getNumberOfPredicates();
         final long o = dict.getNumberOfObjects();
@@ -91,35 +95,8 @@ final class UltraBGIndex {
         }
         final boolean twoWords = totalBits > 63;
 
-        logger.info("Packing {} quad keys ({} bits, {} words)...", n, totalBits, twoWords ? 2 : 1);
-        long start = System.nanoTime();
-        long[] lo = new long[n];
-        long[] hi = twoWords ? new long[n] : null;
-        final long[] fLo = lo, fHi = hi;
-        ParallelRadixSort.runChunks(pool, chunksFor(pool, n), n, (c, from, to) -> {
-            for (int i = from; i < to; i++) {
-                Quad q = quads[i];
-                pack(fLo, fHi, i,
-                        dict.locateGraph(q.getGraph()),
-                        dict.locateSubject(q.getSubject()),
-                        dict.locatePredicate(q.getPredicate()),
-                        dict.locateObject(q.getObject()),
-                        gspoLayout);
-            }
-        });
-        ingest.releaseQuads();
-        logger.info("Packed ids for {} quads in {} ms", n, (System.nanoTime() - start) / 1_000_000L);
-
-        logger.info("Sorting {} GSPO keys ({})...", n,
-                (hi == null && n < (1 << 20)) ? "JDK parallel sort" : "parallel radix sort");
-        start = System.nanoTime();
-        long[][] sorted = sortKeys(lo, hi, totalBits, pool);
-        logger.info("GSPO keys sorted in {} ms", (System.nanoTime() - start) / 1_000_000L);
-        start = System.nanoTime();
-        long[][] deduped = dedup(sorted[0], sorted[1], pool);
+        long[][] deduped = packSortDedup(dict, ingest, gspoLayout, totalBits, twoWords, pool);
         final long[] dLo = deduped[0], dHi = deduped[1];
-        logger.info("Deduplicated in {} ms: {} unique quads of {} (GPOS reuses the deduplicated set)",
-                (System.nanoTime() - start) / 1_000_000L, dLo.length, n);
 
         ForkJoinTask<UltraBGIndex> gspoTask = pool.submit(() ->
                 new UltraBGIndex(Index.GSPO, dLo, dHi, gspoLayout, dict, n, pool));
@@ -146,6 +123,44 @@ final class UltraBGIndex {
             return new UltraBGIndex(Index.GPOS, s[0], s[1], gposLayout, dict, n, pool);
         });
         return new UltraBGIndex[]{join(gspoTask, Index.GSPO), join(gposTask, Index.GPOS)};
+    }
+
+    /**
+     * Resolves every quad's ids, packs GSPO keys, sorts and deduplicates; the
+     * ONLY arrays that survive the call are the returned deduplicated pair.
+     */
+    private static long[][] packSortDedup(UltraDictionary dict, UltraIngest ingest, Layout gspoLayout,
+                                          int totalBits, boolean twoWords, ForkJoinPool pool) throws IOException {
+        final Quad[] quads = ingest.getQuads();
+        final int n = quads.length;
+        logger.info("Packing {} quad keys ({} bits, {} words)...", n, totalBits, twoWords ? 2 : 1);
+        long start = System.nanoTime();
+        final long[] lo = new long[n];
+        final long[] hi = twoWords ? new long[n] : null;
+        ParallelRadixSort.runChunks(pool, chunksFor(pool, n), n, (c, from, to) -> {
+            for (int i = from; i < to; i++) {
+                Quad q = quads[i];
+                pack(lo, hi, i,
+                        dict.locateGraph(q.getGraph()),
+                        dict.locateSubject(q.getSubject()),
+                        dict.locatePredicate(q.getPredicate()),
+                        dict.locateObject(q.getObject()),
+                        gspoLayout);
+            }
+        });
+        ingest.releaseQuads();
+        logger.info("Packed ids for {} quads in {} ms", n, (System.nanoTime() - start) / 1_000_000L);
+
+        logger.info("Sorting {} GSPO keys ({})...", n,
+                (hi == null && n < (1 << 20)) ? "JDK parallel sort" : "parallel radix sort");
+        start = System.nanoTime();
+        long[][] sorted = sortKeys(lo, hi, totalBits, pool);
+        logger.info("GSPO keys sorted in {} ms", (System.nanoTime() - start) / 1_000_000L);
+        start = System.nanoTime();
+        long[][] deduped = dedup(sorted[0], sorted[1], pool);
+        logger.info("Deduplicated in {} ms: {} unique quads of {} (GPOS reuses the deduplicated set)",
+                (System.nanoTime() - start) / 1_000_000L, deduped[0].length, n);
+        return deduped;
     }
 
     /**
@@ -176,17 +191,7 @@ final class UltraBGIndex {
             // Small single-word inputs: the JDK dual-pivot sort has lower
             // constant overhead than four radix passes. Signed order equals
             // unsigned order here - keys are at most 63 bits, never negative.
-            try {
-                pool.submit(() -> Arrays.parallelSort(lo)).get();
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Interrupted while sorting index keys", ex);
-            } catch (ExecutionException ex) {
-                Throwable cause = ex.getCause();
-                if (cause instanceof RuntimeException re) throw re;
-                if (cause instanceof Error err) throw err;
-                throw new IOException("Failed to sort index keys", cause);
-            }
+            Futures.join(pool.submit(() -> Arrays.parallelSort(lo)), "sorting index keys");
             return new long[][]{lo, null};
         }
         return ParallelRadixSort.sort(lo, hi, totalBits, pool);
@@ -254,8 +259,8 @@ final class UltraBGIndex {
 
         // Identical width sizing to the sequential/parallel index builders.
         long maxCumulativeOnes = originalQuadCount + maxL0Id + 128L;
-        int sbBits = roundUp8(MinBits(maxCumulativeOnes));
-        int bbBits = roundUp8(MinBits(SUPERBLOCKSIZE));
+        int sbBits = byteRoundedWidth(maxCumulativeOnes);
+        int bbBits = byteRoundedWidth(SUPERBLOCKSIZE);
         final int w1 = getBitSize(dict, comps[1]);
         final int w2 = getBitSize(dict, comps[2]);
         final int w3 = getBitSize(dict, comps[3]);
@@ -337,11 +342,14 @@ final class UltraBGIndex {
                     boolean ch1 = ch0 || k1 != p1;
                     boolean ch2 = ch1 || k2 != p2;
                     if (ch0) {
+                        // Padding rows: id 0 (the buffers start zeroed, so only
+                        // the bitmap bits need setting) and bit 1, as a word-wise
+                        // range fill instead of one atomic OR per bit (BG-114).
                         long pads = first ? k0 - 1 : k0 - p0 - 1;
-                        for (long k = 0; k < pads; k++) {
-                            S1.set(c1, 0); B1.set(c1); c1++;
-                            S2.set(c2, 0); B2.set(c2); c2++;
-                            S3.set(c3, 0); B3.set(c3); c3++;
+                        if (pads > 0) {
+                            B1.setRange(c1, c1 + pads); c1 += pads;
+                            B2.setRange(c2, c2 + pads); c2 += pads;
+                            B3.setRange(c3, c3 + pads); c3 += pads;
                         }
                     }
                     S3.set(c3, k3);
@@ -360,21 +368,21 @@ final class UltraBGIndex {
                     p0 = k0; p1 = k1; p2 = k2; first = false;
                 }
                 if (to == m) {
+                    // The trailing L0 padding (up to the entity count) used to be
+                    // a serial per-bit tail; it is three range fills now (BG-114).
                     long tail = maxL0Id - p0;
-                    for (long k = 0; k < tail; k++) {
-                        S1.set(c1, 0); B1.set(c1); c1++;
-                        S2.set(c2, 0); B2.set(c2); c2++;
-                        S3.set(c3, 0); B3.set(c3); c3++;
+                    if (tail > 0) {
+                        B1.setRange(c1, c1 + tail);
+                        B2.setRange(c2, c2 + tail);
+                        B3.setRange(c3, c3 + tail);
                     }
                 }
             });
         } else {
             long pads = Math.max(0, maxL0Id - 1);
-            for (long k = 0; k < pads; k++) {
-                S1.set(k, 0); B1.set(k);
-                S2.set(k, 0); B2.set(k);
-                S3.set(k, 0); B3.set(k);
-            }
+            B1.setRange(0, pads);
+            B2.setRange(0, pads);
+            B3.setRange(0, pads);
         }
 
         logger.info("{}: emitted S/B buffers in {} ms", type, (System.nanoTime() - phase) / 1_000_000L);
@@ -435,10 +443,6 @@ final class UltraBGIndex {
         return out;
     }
 
-    private static int roundUp8(int bits) {
-        return (int) (Math.ceil(bits / 8.0) * 8);
-    }
-
     private static String levelName(char component) {
         return switch (component) {
             case 'G' -> "g";
@@ -460,24 +464,11 @@ final class UltraBGIndex {
     }
 
     private static int getBitSize(UltraDictionary w, char component) {
-        int needed = MinBits(count(w, component) + 1);
-        if (needed == 0) return 8;
-        return roundUp8(needed);
+        return byteRoundedWidth(count(w, component) + 1);
     }
 
     private static UltraBGIndex join(ForkJoinTask<UltraBGIndex> task, Index which) throws IOException {
-        try {
-            return task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while building index " + which, ex);
-        } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof IOException io) throw io;
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to build index " + which, cause);
-        }
+        return Futures.join(task, "building index " + which);
     }
 
     void add(WritableGroup hdt) {

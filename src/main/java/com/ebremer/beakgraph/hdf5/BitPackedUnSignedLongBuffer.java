@@ -1,12 +1,13 @@
 package com.ebremer.beakgraph.hdf5;
 
+import com.ebremer.beakgraph.io.MemorySegmentBytes;
+import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.io.ByteBufferBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
 import com.ebremer.beakgraph.utils.UTIL;
 import io.jhdf.api.WritableDataset;
 import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
-import java.nio.BufferOverflowException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -25,70 +26,96 @@ import java.util.stream.StreamSupport;
  * the write side after {@link #prepareForReading()}) the internally
  * accumulated bytes.
  */
-public class BitPackedUnSignedLongBuffer {
+public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
+    // Write side: the packed bytes once prepareForReading() ran (empty before);
+    // null for a read view, whose write API is unavailable.
     private ByteBuffer buffer;
     private RandomAccessBytes data;
+    // data.size(), cached: the bounds check in get() is on the same hot path
+    // as the word fetch and would otherwise be a second megamorphic call (BG-260).
+    private long dataSize;
     private final int bitWidth;
 
-    // Writing State
+    // Writing State. The packed bytes accumulate in memory (internalStream) and
+    // become readable through prepareForReading(); the former "write into a
+    // caller-supplied ByteBuffer" mode and the sequential-cursor reads had no
+    // callers (BG-310).
     private long writeAccumulator;
     private int writeAccumulatorCount;
-    private final boolean usesInternalStream;
-    private ByteArrayOutputStream internalStream;
-
-    // Reading State (Sequential)
-    private long readAccumulator;
-    private int readAccumulatorCount;
-    private long readPos;
+    private final ByteArrayOutputStream internalStream;
+    // Packed bytes are staged here and handed to the stream a chunk at a time:
+    // ByteArrayOutputStream.write(int) is synchronized, and every S/B/SB/BB
+    // entry of every index level paid that lock per byte (BG-250).
+    private static final int STAGE_BYTES = 1 << 16;
+    private final byte[] stage;
+    private int staged;
 
     private final Path path;
     private long numEntries;
 
-    public BitPackedUnSignedLongBuffer(Path path, ByteBuffer buffer, long numEntries, int bitWidth) {
+    /**
+     * A write-side buffer of {@code bitWidth}-bit values, stored in HDF5 as the
+     * dataset named {@code path} by {@link #add}; readable through
+     * {@link #get} after {@link #prepareForReading()}.
+     */
+    public BitPackedUnSignedLongBuffer(Path path, int bitWidth) {
         this.path = path;
         checkWidth(bitWidth);
         this.bitWidth = bitWidth;
-        if (buffer == null) {
-            this.internalStream = new ByteArrayOutputStream();
-            this.usesInternalStream = true;
-            this.buffer = ByteBuffer.allocate(0);
-            this.data = new ByteBufferBytes(this.buffer);
-            this.numEntries = 0;
-        } else {
-            this.buffer = buffer;
-            // Enforce Big Endian so getLong() matches the stream byte order
-            this.buffer.order(ByteOrder.BIG_ENDIAN);
-            this.data = new ByteBufferBytes(this.buffer);
-            this.usesInternalStream = false;
-            this.numEntries = numEntries;
-        }
-        resetState();
+        this.internalStream = new ByteArrayOutputStream();
+        this.stage = new byte[STAGE_BYTES];
+        this.buffer = ByteBuffer.allocate(0);
+        this.data = new ByteBufferBytes(this.buffer);
+        this.dataSize = 0;
+        this.numEntries = 0;
     }
 
     private BitPackedUnSignedLongBuffer(RandomAccessBytes data, long numEntries, int bitWidth) {
         this.path = null;
         checkWidth(bitWidth);
+        // The attributes are the file's word, not the truth: a corrupted or
+        // foreign numEntries/width used to be stored verbatim and surfaced as
+        // a BufferUnderflow/IndexOutOfBounds at query time, after -verify had
+        // mapped the dataset and said OK (BG-345). Every reader (indexes,
+        // dictionaries, FCD blocks) constructs through here, so the check
+        // fails the open instead.
+        long needed;
+        try {
+            needed = (numEntries < 0) ? Long.MAX_VALUE : (Math.multiplyExact(numEntries, (long) bitWidth) + 7) >>> 3;
+        } catch (ArithmeticException overflow) {
+            needed = Long.MAX_VALUE;
+        }
+        if (numEntries < 0 || needed > data.size()) {
+            throw new IllegalStateException("bit-packed buffer declares " + numEntries + " x " + bitWidth
+                    + "-bit entries (" + (numEntries < 0 ? "negative" : needed + " bytes") + ") but only "
+                    + data.size() + " bytes are stored");
+        }
         this.bitWidth = bitWidth;
         this.buffer = null; // pure read view: the write-side API is unavailable
+        this.internalStream = null;
+        this.stage = null;
         this.data = data;
-        this.usesInternalStream = false;
+        this.dataSize = data.size();
         this.numEntries = numEntries;
-        resetState();
     }
 
     /**
-     * A read-only view over already-packed bytes. This is how the HDF5 readers
-     * construct buffers (via {@code DatasetBytes.of}); unlike the ByteBuffer
-     * constructor it carries no 2 GiB ceiling. A static factory rather than a
-     * constructor overload: the writers construct with a null ByteBuffer
-     * literal, which an overload would make ambiguous.
+     * A read-only view over already-packed bytes: how the HDF5 readers (via
+     * {@code DatasetBytes.of}) and the spill readers construct buffers, with
+     * no 2 GiB ceiling. A static factory so the read side stays visibly
+     * distinct from the write-side constructor.
      */
+    /** Whether the backing bytes are read from a remote store (see {@link RandomAccessBytes#isRemote()}). */
+    public boolean isRemote() {
+        return data != null && data.isRemote();
+    }
+
     public static BitPackedUnSignedLongBuffer readView(RandomAccessBytes data, long numEntries, int bitWidth) {
         return new BitPackedUnSignedLongBuffer(data, numEntries, bitWidth);
     }
 
     private static void checkWidth(int bitWidth) {
-        // The pack/unpack accumulators (putValue/getValue/get/stream) hold a value together with its
+        // The pack/unpack accumulators (putValue/get/stream) hold a value together with its
         // <=7-bit sub-byte offset in a single 64-bit long. That fits only for width <= 57 (7 + 57 = 64);
         // width 64 is also safe because it is byte-aligned (offset always 0). Widths 58..63 would
         // silently drop high bits on both read and write, so reject them up front rather than corrupt
@@ -101,12 +128,25 @@ public class BitPackedUnSignedLongBuffer {
         }
     }
 
-    private void resetState() {
-        this.writeAccumulator = 0L;
-        this.writeAccumulatorCount = 0;
-        this.readAccumulator = 0L;
-        this.readAccumulatorCount = 0;
-        this.readPos = 0L;
+    // The one RandomAccessBytes call site every id fetch, bitmap probe and
+    // binary-search step lands on. Its receiver-type profile is process-wide:
+    // a JVM that has opened small (ByteBufferBytes), FFM-mapped
+    // (MemorySegmentBytes) and remote (ChannelBytes) datasets turns the plain
+    // interface call megamorphic, measured at +57% on randomGet and +42% on
+    // binarySearch (benchmarks/BitPackedBufferBench, profile=mixed vs mono).
+    // RandomAccessBytes is sealed, so each branch is a klass compare plus a
+    // direct, inlinable call whatever the site has seen (BG-260).
+    private long readLong(long offset) {
+        if (data instanceof ByteBufferBytes b) return b.getLong(offset);
+        if (data instanceof MemorySegmentBytes m) return m.getLong(offset);
+        return data.getLong(offset);
+    }
+
+    /** The unsigned byte at {@code offset}; same dispatch as {@link #readLong}. */
+    private int readByte(long offset) {
+        if (data instanceof ByteBufferBytes b) return b.get(offset) & 0xFF;
+        if (data instanceof MemorySegmentBytes m) return m.get(offset) & 0xFF;
+        return data.get(offset) & 0xFF;
     }
 
     // --- QUERY METHODS ---
@@ -122,12 +162,12 @@ public class BitPackedUnSignedLongBuffer {
         // so trailing padding / arena tail bytes can't inflate popcount and skew the rank.
         long fullWords = maxIndex / 64;
         long fullWordBytes = fullWords * 8;
-        long safeLimit = Math.min(fullWordBytes, data.size()) - 8;
+        long safeLimit = Math.min(fullWordBytes, dataSize) - 8;
         long bufferOffset = 0;
         long i = 0;
         // FAST PATH: Iterate over full 64-bit words directly from the backing bytes
         while (bufferOffset <= safeLimit && i < maxIndex) {
-            long word = data.getLong(bufferOffset);
+            long word = readLong(bufferOffset);
             int pop = Long.bitCount(word);
             if (currentRank + pop >= rank) {
                 // The target bit is in this word.
@@ -180,7 +220,9 @@ public class BitPackedUnSignedLongBuffer {
         if (fromIndex >= numEntries) return -1;
         long w = fromIndex >>> 6;
         long lastWord = (numEntries - 1) >>> 6;
-        long budgetLast = w + maxWords - 1;
+        // Saturating: an unbounded budget (Long.MAX_VALUE) must not wrap negative
+        // and turn every word crossing into SCAN_EXHAUSTED.
+        long budgetLast = (maxWords >= Long.MAX_VALUE - w) ? Long.MAX_VALUE : w + maxWords - 1;
         // Bits are MSB-first within getWord64's view; shift out the bits before fromIndex.
         long word = getWord64(w << 6) << (fromIndex & 63);
         if (word != 0) {
@@ -259,7 +301,7 @@ public class BitPackedUnSignedLongBuffer {
     }
 
     private void putValue(long valToPack) {
-        if (buffer == null) {
+        if (internalStream == null) {
             throw new IllegalStateException("This buffer is a read view; the write API is unavailable");
         }
         writeAccumulator = (writeAccumulator << bitWidth) | valToPack;
@@ -267,59 +309,48 @@ public class BitPackedUnSignedLongBuffer {
 
         while (writeAccumulatorCount >= 8) {
             int shift = writeAccumulatorCount - 8;
-            byte b = (byte) (writeAccumulator >>> shift);
-
-            if (usesInternalStream) {
-                internalStream.write(b);
-            } else {
-                if (!buffer.hasRemaining()) {
-                    throw new BufferOverflowException();
-                }
-                buffer.put(b);
-            }
-
+            stageByte((byte) (writeAccumulator >>> shift));
             writeAccumulator &= (1L << shift) - 1;
             writeAccumulatorCount -= 8;
         }
     }
 
+    /** Pads the last partial byte and hands every staged byte to the stream. A no-op on a read view. */
     public void complete() {
         if (writeAccumulatorCount > 0) {
-            byte b = (byte) (writeAccumulator << (8 - writeAccumulatorCount));
-
-            if (usesInternalStream) {
-                internalStream.write(b);
-            } else {
-                if (buffer.hasRemaining()) {
-                    buffer.put(b);
-                } else {
-                    throw new BufferOverflowException();
-                }
-            }
+            stageByte((byte) (writeAccumulator << (8 - writeAccumulatorCount)));
             writeAccumulator = 0;
             writeAccumulatorCount = 0;
+        }
+        flushStage();
+    }
+
+    private void stageByte(byte b) {
+        stage[staged++] = b;
+        if (staged == stage.length) {
+            flushStage();
+        }
+    }
+
+    private void flushStage() {
+        if (staged > 0) {
+            internalStream.write(stage, 0, staged);
+            staged = 0;
         }
     }
 
     // --- READ METHODS ---
 
+    /** Makes everything written so far readable through {@link #get}; a no-op on a read view. */
     public void prepareForReading() {
-        complete();
-        if (usesInternalStream) {
-            byte[] bytes = internalStream.toByteArray();
-            buffer = ByteBuffer.wrap(bytes);
-            // Enforce Big Endian for internal buffers too
-            buffer.order(ByteOrder.BIG_ENDIAN);
-        } else {
-            buffer.flip();
-            // Enforce Big Endian
-            buffer.order(ByteOrder.BIG_ENDIAN);
+        if (internalStream == null) {
+            return;
         }
-        // Refresh the read view: the flip/wrap above changed the readable window.
+        complete();
+        // Big endian, matching the stream's byte order.
+        buffer = ByteBuffer.wrap(internalStream.toByteArray()).order(ByteOrder.BIG_ENDIAN);
         data = new ByteBufferBytes(buffer);
-        readAccumulator = 0L;
-        readAccumulatorCount = 0;
-        readPos = 0L;
+        dataSize = data.size();
     }
 
     public long get(long index) {
@@ -335,8 +366,8 @@ public class BitPackedUnSignedLongBuffer {
         // This is the innermost primitive of the whole read path (every id fetch,
         // bitmap probe, and binary-search step lands here), and the former
         // byte-at-a-time accumulation loop dominated its cost.
-        if (startByteIndex + 8 <= data.size()) {
-            long word = data.getLong(startByteIndex);
+        if (startByteIndex + 8 <= dataSize) {
+            long word = readLong(startByteIndex);
             if (bitWidth == 64) {
                 return word;
             }
@@ -348,10 +379,10 @@ public class BitPackedUnSignedLongBuffer {
         int bitsCollected = 0;
         long currentByteIndex = startByteIndex;
         while (bitsCollected < bitOffsetInFirstByte + bitWidth) {
-            if (currentByteIndex >= data.size()) {
+            if (currentByteIndex >= dataSize) {
                  throw new BufferUnderflowException();
             }
-            acc = (acc << 8) | (data.get(currentByteIndex) & 0xFFL);
+            acc = (acc << 8) | readByte(currentByteIndex);
             currentByteIndex++;
             bitsCollected += 8;
         }
@@ -369,54 +400,60 @@ public class BitPackedUnSignedLongBuffer {
         }
         long raw;
         try {
-            raw = data.getLong(byteIndex);
+            raw = readLong(byteIndex);
         } catch (IndexOutOfBoundsException | BufferUnderflowException e) {
             return getWord64SafeTail(bitIndex);
         }
         if (bitOffset == 0) {
             return raw;
         }
-        if (byteIndex + 8 >= data.size()) {
+        if (byteIndex + 8 >= dataSize) {
              return getWord64SafeTail(bitIndex);
         }
-        long nextByte = data.get(byteIndex + 8) & 0xFFL;
+        long nextByte = readByte(byteIndex + 8);
         return (raw << bitOffset) | (nextByte >>> (8 - bitOffset));
     }
 
+    /**
+     * The 64-bit MSB-first word at {@code bitIndex} of a bitmap whose end lies
+     * within the word (bits past {@code numEntries} read as 0). Assembled from
+     * the at most nine bytes that hold it; the former 64 bounds-checked
+     * {@link #get} calls per tail word were paid by every block-end lookup on
+     * the last graphs/subjects of a level and, on a channel-backed store, by
+     * 64 locked channel reads (BG-83).
+     */
     private long getWord64SafeTail(long bitIndex) {
-        long acc = 0;
-        for (int i = 0; i < 64; i++) {
-            acc <<= 1;
-            long entryIdx = bitIndex + i;
-            if (entryIdx < numEntries) {
-                acc |= get(entryIdx);
+        if (bitWidth != 1) {
+            long acc = 0;
+            for (int i = 0; i < 64; i++) {
+                acc <<= 1;
+                long entryIdx = bitIndex + i;
+                if (entryIdx < numEntries) {
+                    acc |= get(entryIdx);
+                }
+            }
+            return acc;
+        }
+        if (bitIndex < 0 || bitIndex >= numEntries) {
+            return 0L;
+        }
+        long byteIndex = bitIndex >>> 3;
+        int bitOffset = (int) (bitIndex & 7);
+        long size = dataSize;
+        int avail = (int) Math.min(8, size - byteIndex);
+        long word = 0;
+        for (int k = 0; k < avail; k++) {
+            word = (word << 8) | readByte(byteIndex + k);
+        }
+        word <<= (8 - avail) * 8; // left-align: bit 0 of the word is the MSB
+        if (bitOffset != 0) {
+            word <<= bitOffset;
+            if (byteIndex + 8 < size) {
+                word |= ((long) readByte(byteIndex + 8)) >>> (8 - bitOffset);
             }
         }
-        return acc;
-    }
-
-    public int get() {
-        return (int) getValue();
-    }
-
-    public long getLong() {
-        return getValue();
-    }
-
-    private long getValue() {
-        while (readAccumulatorCount < bitWidth) {
-            if (readPos >= data.size()) {
-                throw new BufferUnderflowException();
-            }
-            readAccumulator = (readAccumulator << 8) | (data.get(readPos++) & 0xFFL);
-            readAccumulatorCount += 8;
-        }
-        int shift = readAccumulatorCount - bitWidth;
-        long value = readAccumulator >>> shift;
-
-        readAccumulator &= (1L << shift) - 1;
-        readAccumulatorCount -= bitWidth;
-        return value;
+        long remaining = numEntries - bitIndex;
+        return (remaining < 64) ? word & (-1L << (64 - remaining)) : word;
     }
 
     public Path getName() {
@@ -434,8 +471,8 @@ public class BitPackedUnSignedLongBuffer {
 
         if (data.length > 0) {
             WritableDataset ds = group.putDataset(path.toString(), data);
-            ds.putAttribute("width", bitWidth);
-            ds.putAttribute("numEntries", numEntries);
+            ds.putAttribute(Params.WIDTH, bitWidth);
+            ds.putAttribute(Params.NUM_ENTRIES, numEntries);
         }
     }
 

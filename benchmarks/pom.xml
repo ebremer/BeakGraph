@@ -4,7 +4,7 @@
     <groupId>com.ebremer</groupId>
     <artifactId>beakgraph-benchmarks</artifactId>
     <name>BeakGraph JMH Benchmarks</name>
-    <version>0.17.0</version>
+    <version>0.18.0</version>
     <packaging>jar</packaging>
 
     <description>
@@ -18,8 +18,10 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
         <jmh.version>1.37</jmh.version>
-        <!-- Keep in sync with the root pom's version; override with -Dbeakgraph.version=... -->
-        <beakgraph.version>0.17.0</beakgraph.version>
+        <!-- Keep in sync with the root pom's <version> (CI builds this module
+             against the freshly installed root artifact, so a stale pin fails
+             there); override with -Dbeakgraph.version=... -->
+        <beakgraph.version>0.18.0</beakgraph.version>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
         <maven-shade-plugin.version>3.6.1</maven-shade-plugin.version>
     </properties>

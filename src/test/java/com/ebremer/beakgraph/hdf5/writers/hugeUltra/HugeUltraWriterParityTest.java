@@ -1,23 +1,16 @@
 package com.ebremer.beakgraph.hdf5.writers.hugeUltra;
 
+import com.ebremer.beakgraph.StoreParity;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
-import com.ebremer.beakgraph.huge.NativeHdf5File;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Set;
-import java.util.TreeSet;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryFactory;
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
-import org.apache.jena.rdf.model.Model;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -40,16 +33,21 @@ class HugeUltraWriterParityTest {
 
     @BeforeAll
     static void requireNativeHdf5() {
-        Assumptions.assumeTrue(NativeHdf5File.isAvailable(), "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
     }
 
     private static Path writeBoth(String name, String content) throws Exception {
+        return writeBoth(name, content, false, false);
+    }
+
+    private static Path writeBoth(String name, String content, boolean spatial, boolean features) throws Exception {
         File src = dir.resolve(name).toFile();
         Files.write(src.toPath(), content.getBytes(StandardCharsets.UTF_8));
         File seq = dir.resolve(name + ".seq.h5").toFile();
         File hu = dir.resolve(name + ".hugeultra.h5").toFile();
-        HDF5Writer.Builder().setSource(src).setDestination(seq).build().write();
+        HDF5Writer.Builder().setSource(src).setDestination(seq).setSpatial(spatial).setFeatures(features).build().write();
         HugeUltraHDF5Writer.Builder()
+                .setSpatial(spatial).setFeatures(features)
                 .setSource(src)
                 .setDestination(hu)
                 .setWorkDirectory(Files.createDirectories(dir.resolve("work-" + name)))
@@ -62,59 +60,6 @@ class HugeUltraWriterParityTest {
                 .build()
                 .write();
         return dir;
-    }
-
-    private static Set<String> graphNames(org.apache.jena.query.Dataset ds) {
-        Set<String> names = new TreeSet<>();
-        ds.asDatasetGraph().listGraphNodes().forEachRemaining(g -> names.add(g.toString()));
-        return names;
-    }
-
-    private static Model graphModel(org.apache.jena.query.Dataset ds, String graphUri) {
-        String q = (graphUri == null)
-                ? "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }"
-                : "CONSTRUCT { ?s ?p ?o } WHERE { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
-        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(q)).build()) {
-            return qe.execConstruct();
-        }
-    }
-
-    private static java.util.List<String> select(org.apache.jena.query.Dataset ds, String query) {
-        java.util.List<String> rows = new java.util.ArrayList<>();
-        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(query)).build()) {
-            ResultSet rs = qe.execSelect();
-            while (rs.hasNext()) {
-                QuerySolution qs = rs.next();
-                StringBuilder sb = new StringBuilder();
-                rs.getResultVars().forEach(v -> sb.append(v).append('=').append(qs.get(v)).append('|'));
-                rows.add(sb.toString());
-            }
-        }
-        rows.sort(String::compareTo);
-        return rows;
-    }
-
-    private static void assertStoresEquivalent(Path seqH5, Path huH5, String... probes) throws Exception {
-        try (BeakGraph a = new BeakGraph(new HDF5Reader(seqH5.toFile()));
-             BeakGraph b = new BeakGraph(new HDF5Reader(huH5.toFile()))) {
-            org.apache.jena.query.Dataset da = a.getDataset();
-            org.apache.jena.query.Dataset db = b.getDataset();
-            assertEquals(graphNames(da), graphNames(db), "graph lists must match");
-            Model defA = graphModel(da, null);
-            Model defB = graphModel(db, null);
-            assertTrue(defA.isIsomorphicWith(defB),
-                    "default graphs must be isomorphic (seq=" + defA.size() + ", hugeUltra=" + defB.size() + ")");
-            for (String g : graphNames(da)) {
-                if (!g.startsWith("http") && !g.startsWith("urn")) continue;
-                Model ga = graphModel(da, g);
-                Model gb = graphModel(db, g);
-                assertTrue(ga.isIsomorphicWith(gb),
-                        "graph <" + g + "> must be isomorphic (seq=" + ga.size() + ", hugeUltra=" + gb.size() + ")");
-            }
-            for (String probe : probes) {
-                assertEquals(select(da, probe), select(db, probe), "probe results must match: " + probe);
-            }
-        }
     }
 
     @Test
@@ -135,7 +80,16 @@ class HugeUltraWriterParityTest {
             ex:s0 ex:flag true .
             ex:s0 ex:when "2024-05-06T07:08:09Z"^^xsd:dateTime .
             ex:s0 ex:ill "abc"^^xsd:int .
-            <> ex:self <sibling.png> .
+            ex:s0 ex:dl "hello"@en--ltr .
+            ex:s0 ex:dl "hi"@en--rtl .
+            ex:s0 ex:tt <<( ex:a ex:b ex:c )>> .
+            ex:s0 ex:tt2 <<( ex:a ex:b <<( ex:x ex:y "nested" )>> )>> .
+            ex:s0 ex:list "[1, 2]"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/List> .
+            ex:s0 ex:map "{\\"k\\": 1}"^^<http://w3id.org/awslabs/neptune/SPARQL-CDTs/Map> .
+            ex:s0 ex:count "042"^^xsd:int .
+            ex:s0 ex:d2 "1.0E1"^^xsd:double .
+            ex:s0 ex:d2 "10.0"^^xsd:double .
+            <> ex:self <sibling.png> ; ex:up <../up.png> ; ex:up2 <../../up2.png> ; ex:root </root.png> ; ex:frag <#frag> ; ex:query <?q=1> .
             _:b1 ex:p0 _:b2 .
             _:b2 ex:knows ex:s0 .
             ex:g1 {
@@ -145,10 +99,27 @@ class HugeUltraWriterParityTest {
             ex:g2 { ex:s0 ex:p0 ex:s1 . }
             """;
         writeBoth("hu-mixed.trig", trig);
-        assertStoresEquivalent(dir.resolve("hu-mixed.trig.seq.h5"), dir.resolve("hu-mixed.trig.hugeultra.h5"),
+        StoreParity.assertStoresEquivalent(dir.resolve("hu-mixed.trig.seq.h5"), dir.resolve("hu-mixed.trig.hugeultra.h5"),
                 "SELECT ?p ?o WHERE { <http://ex.org/s0> ?p ?o }",
                 "SELECT ?s WHERE { ?s <http://ex.org/p0> <http://ex.org/o0> }",
-                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }");
+                "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/p0> <http://ex.org/o0> } }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/dl> ?o }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/tt> ?o }",
+                "SELECT ?x WHERE { <http://ex.org/s0> <http://ex.org/tt2> <<( <http://ex.org/a> <http://ex.org/b> <<( <http://ex.org/x> <http://ex.org/y> ?x )>> )>> }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/list> ?o }",
+                "SELECT ?o WHERE { <http://ex.org/s0> <http://ex.org/count> ?o }",
+                "SELECT (COUNT(?o) AS ?n) WHERE { <http://ex.org/s0> <http://ex.org/d2> ?o }");
+    }
+
+    /** BG-182: the SPATIAL graph and the derived features must match the sequential build. */
+    @Test
+    void spatialAndFeaturesParity() throws Exception {
+        String trig = StoreParity.SPATIAL_TRIG;
+        writeBoth("hu-spatial.trig", trig, true, true);
+        StoreParity.assertStoresEquivalent(dir.resolve("hu-spatial.trig.seq.h5"), dir.resolve("hu-spatial.trig.hugeultra.h5"),
+                "SELECT ?s ?p ?o WHERE { GRAPH <urn:x-beakgraph:Spatial> { ?s ?p ?o } }",
+                "SELECT ?g WHERE { GRAPH ?g { <http://ex.org/geo1> ?p ?o } }",
+                "SELECT ?p ?o WHERE { <http://ex.org/geo1> ?p ?o }");
     }
 
     @Test
@@ -175,7 +146,7 @@ class HugeUltraWriterParityTest {
             }
         }
         writeBoth("hu-stress.nq", nq.toString());
-        assertStoresEquivalent(dir.resolve("hu-stress.nq.seq.h5"), dir.resolve("hu-stress.nq.hugeultra.h5"),
+        StoreParity.assertStoresEquivalent(dir.resolve("hu-stress.nq.seq.h5"), dir.resolve("hu-stress.nq.hugeultra.h5"),
                 "SELECT ?s ?o WHERE { ?s <http://ex.org/p3> ?o }",
                 "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g",
                 "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }",

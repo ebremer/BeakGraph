@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.Params;
+import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import static com.ebremer.beakgraph.Params.COMPRESSION_THRESHOLD;
 import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.utils.StringUtils;
@@ -20,7 +22,7 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-final class SpillFCDWriter implements AutoCloseable {
+final class SpillFCDWriter implements AutoCloseable, DictionarySinks.StringSink {
 
     private final String name;
     private final int blockSize;
@@ -46,16 +48,27 @@ final class SpillFCDWriter implements AutoCloseable {
         this.blockSize = blockSize;
         this.stringFile = workDir.resolve(name + ".fcd.strings");
         this.stringOut = new BufferedOutputStream(Files.newOutputStream(stringFile), 1 << 16);
-        this.offsets = new SpillDataBuffer(workDir.resolve(name + ".fcd.offsets"));
-        this.compressed = new SpillBitPackedBuffer(workDir.resolve(name + ".fcd.compressed"), 1);
+        SpillDataBuffer offs = null;
+        try {
+            offs = new SpillDataBuffer(workDir.resolve(name + ".fcd.offsets"));
+            this.compressed = new SpillBitPackedBuffer(workDir.resolve(name + ".fcd.compressed"), 1);
+        } catch (IOException | RuntimeException ex) {
+            // Release the streams already open (BG-128).
+            try { stringOut.close(); } catch (IOException ignored) { }
+            if (offs != null) {
+                try { offs.close(); } catch (IOException ignored) { }
+            }
+            throw ex;
+        }
+        this.offsets = offs;
     }
 
     private void writeFragment(byte[] data) throws IOException {
         boolean shouldCompress = data.length >= COMPRESSION_THRESHOLD;
         byte[] finalData;
         if (shouldCompress) {
-            // Byte-identical to FCDWriter: decode to String, Zstd-compress that.
-            finalData = su.compress(new String(data, StandardCharsets.UTF_8));
+            // Byte-identical to FCDWriter: Zstd-compress the UTF-8 bytes (BG-105).
+            finalData = su.compress(data);
             compressed.writeLong(1);
         } else {
             finalData = data;
@@ -66,7 +79,7 @@ final class SpillFCDWriter implements AutoCloseable {
         position += finalData.length;
     }
 
-    void add(String item) throws IOException {
+    public void add(String item) throws IOException {
         numEntries++;
         if (stringsInCurrentBlock == 0) {
             offsets.writeLong(position);
@@ -96,7 +109,7 @@ final class SpillFCDWriter implements AutoCloseable {
         return i;
     }
 
-    long getNumEntries() {
+    public long getNumEntries() {
         return numEntries;
     }
 
@@ -116,10 +129,10 @@ final class SpillFCDWriter implements AutoCloseable {
     void transferTo(StreamingHdf5Group parent) throws IOException {
         complete();
         StreamingHdf5Group strings = parent.putGroup(name);
-        strings.putAttribute("blockSize", blockSize);
+        strings.putAttribute(Params.BLOCK_SIZE, blockSize);
         long validBlocks = (stringsInCurrentBlock == 0 && numEntries > 0) ? numBlocks : numBlocks + 1;
-        strings.putAttribute("numBlocks", (numEntries == 0) ? 0 : validBlocks);
-        strings.putAttribute("numEntries", numEntries);
+        strings.putAttribute(Params.NUM_BLOCKS, (numEntries == 0) ? 0 : validBlocks);
+        strings.putAttribute(Params.NUM_ENTRIES, numEntries);
         strings.putAttribute("compression_threshold", COMPRESSION_THRESHOLD);
         long size = Files.size(stringFile);
         if (size > 0) {

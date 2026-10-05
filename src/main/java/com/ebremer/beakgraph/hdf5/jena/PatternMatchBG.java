@@ -29,7 +29,11 @@ public class PatternMatchBG {
 
     private static final String SF_INTERSECTS = GEOF.sfIntersects.getURI();
 
+    /** Number of BGPs executed by the id-level engine - tests pin that a plan shape does not fall back to Jena's. */
+    public static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
+
     public static QueryIterator execute(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
+        HITS.incrementAndGet();
         List<Triple> triples = new ArrayList<>(bgp.getList());
         List<Abortable> killList = new ArrayList<>();
         Iterator<BindingNodeId> chain = Iter.map(input, SolverLibBeak.convFromBinding(bGraph));
@@ -40,11 +44,17 @@ public class PatternMatchBG {
         // the verification stage that removes the candidates' false positives with
         // real JTS geometry. The old code removed it, which made the lossy index
         // pre-filter the final answer.
+        // Seeding is only correct when the store actually HAS the spatial index:
+        // on a store built without it (the CLI default) the candidate set would be
+        // empty and the query would silently return nothing. Without the index the
+        // chain is left untouched and the sfIntersects OpFilter answers the query
+        // by itself (a full JTS check per row - slow, but exact).
         SpatialContext spatialCtx = getSpatialContext(filter);
         if (spatialCtx != null) {
             Triple triggerTriple = findTriggerTriple(triples, spatialCtx.geometryVar);
-            if (triggerTriple != null) {
-                chain = new SpatialIndexIterator(chain, bGraph, (Var) triggerTriple.getSubject(), spatialCtx);
+            if (triggerTriple != null && SpatialIndexIterator.isAvailable(bGraph)) {
+                chain = new SpatialIndexIterator(chain, bGraph, (Var) triggerTriple.getSubject(), spatialCtx,
+                        execCxt.getCancelSignal());
             }
         }
 
@@ -80,12 +90,18 @@ public class PatternMatchBG {
     }
 
     /**
-     * First pattern of the BGP. When the input is exactly one binding (the plain
-     * top-level root - by far the common case for scan queries) and the pattern
+     * First pattern of the BGP. When the input is exactly one binding that is
+     * the engine's root (or a copy of it: nothing bound - the plain top-level
+     * execution, a top-level UNION branch or {@code GRAPH <g>}) and the pattern
      * is scan-shaped, answer it with a chunked parallel scan; the scan is
      * registered in the kill-list so cancellation stops its workers, and close
      * reaches it through the Iter close cascade. Multi-binding inputs (spatial
-     * seeding, joins) keep the ordinary lazy per-binding chaining.
+     * seeding, joins) keep the ordinary lazy per-binding chaining - and so does
+     * a single binding that carries variables: that is an OUTER ROW, for which
+     * OPTIONAL, EXISTS, {@code GRAPH ?g} and friends re-execute the pattern
+     * once per row through a singleton input. Planning a parallel scan there
+     * built a worker set, a queue and a Cleaner registration per outer row
+     * (BG-337); the uncorrelated scan runs sequentially instead.
      */
     private static Iterator<BindingNodeId> solveFirst(BeakGraph bGraph, Triple triple, ExprList filter,
                                                       Iterator<BindingNodeId> chain, ExecutionContext execCxt,
@@ -97,6 +113,9 @@ public class PatternMatchBG {
         if (chain.hasNext()) {
             return solve(bGraph, triple, filter, Iter.concat(List.of(b0).iterator(), chain), execCxt);
         }
+        if (!isRootLike(b0)) {
+            return find(bGraph, b0, triple, filter, execCxt);
+        }
         ParallelScan parallel = ScanChunks.tryParallel(bGraph, b0, triple, filter, execCxt);
         if (parallel != null) {
             killList.add(parallel);
@@ -105,25 +124,31 @@ public class PatternMatchBG {
         return find(bGraph, b0, triple, filter, execCxt);
     }
     
+    /**
+     * The engine's root binding or a copy of it: no variable bound at any
+     * level. A binding with variables is an outer row of a re-executed
+     * sub-pattern, not a fresh top-level execution.
+     */
+    static boolean isRootLike(BindingNodeId b) {
+        if (b.iterator().hasNext()) {
+            return false;
+        }
+        Binding parent = b.getParentBinding();
+        return parent == null || parent.isEmpty();
+    }
+
     private static Iterator<BindingNodeId> find(BeakGraph bGraph, BindingNodeId bnid, Triple xPattern, 
                                                 ExprList filter, ExecutionContext execCxt) {
-        return bGraph.getReader().read(bGraph.getNamedGraph(), bnid, xPattern, filter, 
-                                       bGraph.getReader().getNodeTable());
+        return bGraph.read(bnid, xPattern, filter);
     }
 
     public static class SpatialContext {
         Var geometryVar;
         String searchRegionWKT;
-        int scale;
 
         public SpatialContext(Var v, String wkt) {
-            this(v, wkt, 0);
-        }
-        
-        public SpatialContext(Var v, String wkt, int scale) {
             this.geometryVar = v;
             this.searchRegionWKT = wkt;
-            this.scale = scale;
         }
     }
 
@@ -147,55 +172,32 @@ public class PatternMatchBG {
                 continue;
             }
             
-            int argCount = func.getArgs().size();
-            
-            if (argCount == 2) {
+            // geof:sfIntersects(?geometry, <constant WKT>): exactly two arguments.
+            // A third "scale" argument used to be parsed and then ignored - the
+            // candidate sweep covers every index scale regardless - so a query
+            // that named a pyramid level got the identical answer without a word;
+            // the function now refuses it at build time (BG-318).
+            if (func.getArgs().size() == 2) {
                 Expr arg0 = func.getArgs().get(0);
                 Expr arg1 = func.getArgs().get(1);
-                
+
                 if (arg0.isVariable()) {
                     Var targetVar = arg0.asVar();
                     String wktString = extractWKTString(arg1);
-                    
+
                     if (wktString != null) {
                         return new SpatialContext(targetVar, wktString);
                     }
                 }
-            } else if (argCount == 3) {
-                Expr arg0 = func.getArgs().get(0);
-                Expr arg1 = func.getArgs().get(1);
-                Expr arg2 = func.getArgs().get(2);
-                
-                if (arg0.isVariable()) {
-                    Var targetVar = arg0.asVar();
-                    String wktString = extractWKTString(arg1);
-                    Integer scale = extractScale(arg2);
-                    
-                    if (wktString != null && scale != null) {
-                        return new SpatialContext(targetVar, wktString, scale);
-                    }
-                }
             }
         }
-        
+
         return null;
     }
 
     private static String extractWKTString(Expr expr) {
         if (expr.isConstant()) {
             return expr.getConstant().asNode().getLiteralLexicalForm();
-        }
-        return null;
-    }
-
-    private static Integer extractScale(Expr expr) {
-        if (expr.isConstant()) {
-            try {
-                String lexicalForm = expr.getConstant().asNode().getLiteralLexicalForm();
-                return Integer.valueOf(lexicalForm);
-            } catch (NumberFormatException ex) {
-                return null;
-            }
         }
         return null;
     }

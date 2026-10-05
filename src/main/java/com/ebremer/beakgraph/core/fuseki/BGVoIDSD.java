@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.apache.jena.vocabulary.XSD;
+import org.apache.jena.vocabulary.RDFS;
 import com.ebremer.beakgraph.sniff.SD;
 import com.ebremer.beakgraph.utils.UTIL;
 import java.util.HashSet;
@@ -17,7 +19,6 @@ import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.sparql.core.Quad;
-import org.apache.jena.vocabulary.DCTerms;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.VOID;
 
@@ -29,9 +30,11 @@ import org.apache.jena.vocabulary.VOID;
  * distinct-object, and per-class instance counts are exact up to
  * {@value Stats#EXACT_LIMIT} distinct nodes per graph and then spill into
  * HyperLogLog sketches ({@link DistinctNodeCounter}); the
- * {@code void:uriSpace} common prefix and {@code void:vocabulary} namespaces
- * are maintained incrementally (exact, tiny state) instead of over retained
- * node sets. Small and medium stores therefore report byte-identical VoID
+ * {@code void:uriSpace} common prefix is maintained incrementally (one
+ * string) and {@code void:vocabulary} is derived from the predicate and
+ * class namespaces - state bounded by the number of predicates and classes,
+ * never by the number of objects (a hierarchical object IRI's parent path is
+ * not a vocabulary, and one string per object was unbounded; BG-43). Small and medium stores therefore report byte-identical VoID
  * to previous versions; billion-quad disk builds report deterministic
  * estimates (~0.8% error) instead of holding much of their dictionary on
  * the heap. Fully thread-safe: parallel-ingest writers call {@link #add}
@@ -98,6 +101,17 @@ public class BGVoIDSD {
      */
     public Model getModel() {
         Model m = ModelFactory.createDefaultModel();
+        // Presentation prefixes for anyone serializing this model; they never
+        // reach the store's quads (the writers used to set them, BG-313).
+        m.setNsPrefix("void", VOID.NS);
+        m.setNsPrefix("sd", SD.getURI());
+        m.setNsPrefix("xsd", XSD.getURI());
+        m.setNsPrefix("rdfs", RDFS.getURI());
+        m.setNsPrefix("geo", "http://www.opengis.net/ont/geosparql#");
+        m.setNsPrefix("prov", "http://www.w3.org/ns/prov#");
+        m.setNsPrefix("dct", "http://purl.org/dc/terms/");
+        m.setNsPrefix("hal", "https://halcyon.is/ns/");
+        m.setNsPrefix("exif", "http://www.w3.org/2003/12/exif/ns#");
         // Primary dataset resource
         Resource dataset = m.createResource(datasetURI).addProperty(RDF.type, SD.Dataset);
         // Default graph description
@@ -128,21 +142,22 @@ public class BGVoIDSD {
 
         private final int exactLimit;
         private final LongAdder numtriples = new LongAdder();
-        private final ConcurrentHashMap<Node, Long> predicateCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Node, LongAdder> predicateCounts = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<Node, DistinctNodeCounter> classInstances = new ConcurrentHashMap<>();
         private final DistinctNodeCounter distinctSubjects;
         private final DistinctNodeCounter distinctObjects;
-        // Incremental replacements for what used to be derived from the FULL
-        // retained node sets: object-URI namespaces (small set of strings) and
-        // the running longest common prefix of absolute subject URIs (one
-        // string; null = none seen yet, "" = no common prefix).
-        private final Set<String> objectNamespaces = ConcurrentHashMap.newKeySet();
+        /** Distinct typed subjects: void:entities counts an entity once, however many classes it has (BG-50). */
+        private final DistinctNodeCounter typedEntities;
+        // Incremental replacement for what used to be derived from the FULL
+        // retained subject set: the running longest common prefix of absolute
+        // subject URIs (one string; null = none seen yet, "" = no common prefix).
         private final AtomicReference<String> subjectPrefix = new AtomicReference<>(null);
 
         Stats(int exactLimit) {
             this.exactLimit = exactLimit;
             this.distinctSubjects = new DistinctNodeCounter(exactLimit);
             this.distinctObjects = new DistinctNodeCounter(exactLimit);
+            this.typedEntities = new DistinctNodeCounter(exactLimit);
         }
 
         public void add(Quad quad) {
@@ -150,18 +165,20 @@ public class BGVoIDSD {
             Node sNode = quad.getSubject();
             Node pNode = quad.getPredicate();
             Node oNode = quad.getObject();
-            predicateCounts.merge(pNode, 1L, Long::sum);
+            LongAdder predicateCount = predicateCounts.get(pNode); // get-first: no lambda on the hot path
+            if (predicateCount == null) {
+                predicateCount = predicateCounts.computeIfAbsent(pNode, k -> new LongAdder());
+            }
+            predicateCount.increment();
             distinctSubjects.add(sNode);
             distinctObjects.add(oNode);
             if (sNode.isURI() && !UTIL.isRelativeIRI(sNode.getURI())) {
                 updateSubjectPrefix(sNode.getURI());
             }
-            if (oNode.isURI() && !UTIL.isRelativeIRI(oNode.getURI())) {
-                objectNamespaces.add(getNamespaceBase(oNode.getURI()));
-            }
             // Classes and instances (rdf:type)
             if (pNode.equals(RDF.type.asNode()) && oNode.isURI() && sNode.isURI()) {
                 classInstances.computeIfAbsent(oNode, c -> new DistinctNodeCounter(exactLimit)).add(sNode);
+                typedEntities.add(sNode);
             }
         }
 
@@ -188,7 +205,8 @@ public class BGVoIDSD {
         }
 
         public void applyTo(Resource graphRes, Model m) {
-            long entities = classInstances.values().stream().mapToLong(DistinctNodeCounter::count).sum();
+            // Summing the per-class counts counted a multi-typed entity once per class.
+            long entities = typedEntities.count();
             graphRes.addProperty(RDF.type, VOID.Dataset)
                     .addLiteral(VOID.triples, numtriples.sum())
                     .addLiteral(VOID.classes, (long) classInstances.size())
@@ -196,7 +214,9 @@ public class BGVoIDSD {
                     .addLiteral(VOID.distinctSubjects, distinctSubjects.count())
                     .addLiteral(VOID.distinctObjects, distinctObjects.count())
                     .addLiteral(VOID.entities, entities);
-            Set<String> vocabNamespaces = new HashSet<>(objectNamespaces);
+            // void:vocabulary: the namespaces of the predicates and of the classes
+            // (rdf:type objects) in use - the ontologies the data draws on.
+            Set<String> vocabNamespaces = new HashSet<>();
             // Process Property Partitions & capture predicate namespaces
             predicateCounts.forEach((pNode, count) -> {
                 if (pNode.isURI()) {
@@ -207,12 +227,15 @@ public class BGVoIDSD {
                     graphRes.addProperty(VOID.propertyPartition,
                         graphRes.getModel().createResource()
                             .addProperty(VOID.property, prop)
-                            .addLiteral(VOID.triples, count));
+                            .addLiteral(VOID.triples, count.sum()));
                 }
             });
             // Process Class Partitions
             classInstances.forEach((cNode, instances) -> {
                 if (cNode.isURI()) {
+                    if (!UTIL.isRelativeIRI(cNode.getURI())) {
+                        vocabNamespaces.add(getNamespaceBase(cNode.getURI()));
+                    }
                     Resource clazz = ResourceFactory.createResource(cNode.getURI());
                     graphRes.addProperty(VOID.classPartition,
                         graphRes.getModel().createResource()
@@ -232,13 +255,6 @@ public class BGVoIDSD {
                 Literal regexLit = m.createTypedLiteral(regex, XSDDatatype.XSDstring);
                 graphRes.addLiteral(VOID.uriRegexPattern, regexLit);
             }
-            // Copy existing dcterms: properties
-            graphRes.listProperties().toList().stream()
-                .filter(st -> st.getPredicate().getNameSpace().equals(DCTerms.NS))
-                .forEach(st -> {
-                    Property pred = ResourceFactory.createProperty(st.getPredicate().getURI());
-                    graphRes.addProperty(pred, st.getObject());
-                });
         }
 
         /** Same trailing cut the retained-set version applied: back to the last '/' or '#'. */

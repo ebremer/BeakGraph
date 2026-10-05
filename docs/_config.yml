@@ -1,0 +1,72 @@
+# BeakGraph documentation site: Jekyll + Just the Docs, built and deployed to
+# GitHub Pages by .github/workflows/pages.yml. Local preview, from docs/:
+#   bundle install
+#   bundle exec jekyll serve     # -> http://localhost:4000/BeakGraph/
+
+title: BeakGraph
+description: >-
+  RDF datasets as self-contained HDF5 files: dictionary-encoded, columnar quad
+  stores queried with SPARQL (Apache Jena) directly from the file, locally or
+  over HTTP range requests.
+url: https://ebremer.github.io
+baseurl: /BeakGraph   # the workflow overrides this with the deployed site's path
+
+theme: just-the-docs
+logo: /beakgraph.png
+
+# Repository documents published as pages in place (_plugins/repo_pages.rb);
+# `source` is relative to the repository root. Keep the `paths` filter in
+# .github/workflows/pages.yml in step with this list.
+repo_pages:
+  - source: docs/INSTRUCTIONS.md
+    title: Instructions
+    description: Building, the command-line reference, conversion engines, exporting, verifying, serving and programmatic use.
+    nav_order: 2
+    permalink: /instructions/
+    toc: true
+  - source: SPECIFICATIONS.md
+    title: File format
+    description: The BeakGraph on-disk format, precisely enough to write a store without the BeakGraph sources.
+    nav_order: 3
+    permalink: /specification/
+    toc: true
+  - source: RDF_1.2-compliance.md
+    title: RDF 1.2 compliance
+    description: How BeakGraph conforms to RDF 1.1, RDF 1.2 and SPARQL-CDT, and where it deliberately deviates.
+    nav_order: 4
+    permalink: /rdf-1.2-compliance/
+    toc: true
+  - source: benchmarks/README.md
+    title: Benchmarks
+    description: The JMH benchmarks for the BeakGraph read path.
+    nav_order: 5
+    permalink: /benchmarks/
+  - source: CHANGELOG.md
+    title: Changelog
+    description: Notable changes to BeakGraph and its on-disk format.
+    nav_order: 6
+    permalink: /changelog/
+repo_files:
+  - beakgraph.png
+
+exclude:
+  - INSTRUCTIONS.md   # published through repo_pages
+
+search_enabled: true
+heading_anchors: true
+back_to_top: true
+back_to_top_text: Back to top
+
+aux_links:
+  BeakGraph on GitHub: https://github.com/ebremer/BeakGraph
+# Where each repo_pages document links to its source (_includes/footer_custom.html).
+source_url: https://github.com/ebremer/BeakGraph/blob/master/
+
+kramdown:
+  toc_levels: 2..3
+
+# The theme's stylesheets use Sass features now deprecated; their warnings are
+# not actionable here.
+sass:
+  quiet_deps: true
+  silence_deprecations: [import]

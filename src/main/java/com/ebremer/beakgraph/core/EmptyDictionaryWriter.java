@@ -45,8 +45,6 @@ public class EmptyDictionaryWriter extends AbstractDictionary implements Diction
 
     @Override
     public long search(Node element) {
-        // Nothing matches; the insertion point in an empty 1-based dictionary is 1,
-        // encoded -(insertion)-1 per the search contract.
-        return -2;
+        return EMPTY.search(element); // insertion point 1 of an empty 1-based dictionary, encoded -2
     }
 }

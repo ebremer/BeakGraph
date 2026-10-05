@@ -5,7 +5,9 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.Comparator;
+import java.util.function.ToLongFunction;
 import org.apache.jena.graph.Node;
+import org.apache.jena.graph.Triple;
 
 /**
  * Record types flowing through the huge writer's spill files, with their
@@ -33,10 +35,55 @@ public final class HugeRecords {
     public record IdQuad(long g, long s, long p, long o) {}
 
     /** Term order only; equal terms may interleave rows arbitrarily (the join maps them to one id). */
-    public static final Comparator<TermRow> TERM_ORDER =
-            (a, b) -> NodeComparator.INSTANCE.compare(a.term(), b.term());
+    public static final Comparator<TermRow> TERM_ORDER = termOrder(NodeComparator.INSTANCE);
+
+    /**
+     * {@link #TERM_ORDER} on the given comparator - a per-sorter
+     * {@link com.ebremer.beakgraph.core.lib.CachingNodeComparator} in
+     * production, so a term run's parallel sort memoizes its literal
+     * conversions locally instead of contending on Jena's global cache
+     * (BG-249).
+     */
+    public static Comparator<TermRow> termOrder(NodeComparator cmp) {
+        return (a, b) -> cmp.compare(a.term(), b.term());
+    }
 
     public static final Comparator<RowId> ROW_ORDER = Comparator.comparingLong(RowId::row);
+
+    /**
+     * Retained-heap estimate of a term for the term sorters' byte budget:
+     * object headers plus two bytes per char of every lexical part
+     * (conservative for Latin-1 compact strings). Exactness is not the point -
+     * the budget bounds the buffer to within a small factor of the truth,
+     * which the record cap never did for multi-KB literals (BG-125).
+     */
+    public static long estimateBytes(Node n) {
+        if (n == null) {
+            return 8;
+        }
+        if (n.isLiteral()) {
+            long b = 96 + 2L * n.getLiteralLexicalForm().length();
+            String lang = n.getLiteralLanguage();
+            if (lang != null && !lang.isEmpty()) {
+                b += 2L * lang.length();
+            }
+            return b;
+        }
+        if (n.isURI()) {
+            return 64 + 2L * n.getURI().length();
+        }
+        if (n.isBlank()) {
+            return 64 + 2L * n.getBlankNodeLabel().length();
+        }
+        if (n.isTripleTerm()) {
+            Triple t = n.getTriple();
+            return 64 + estimateBytes(t.getSubject()) + estimateBytes(t.getPredicate()) + estimateBytes(t.getObject());
+        }
+        return 64;
+    }
+
+    /** {@link #estimateBytes} of a term row: the record plus its term. */
+    public static final ToLongFunction<TermRow> TERM_ROW_BYTES = r -> 32 + estimateBytes(r.term());
 
     public static final Comparator<IdQuad> GSPO_ORDER = Comparator
             .comparingLong(IdQuad::g)

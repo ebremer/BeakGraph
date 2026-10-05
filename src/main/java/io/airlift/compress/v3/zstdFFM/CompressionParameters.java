@@ -183,6 +183,18 @@ class CompressionParameters
         this.strategy = strategy;
     }
 
+    /** True when {@code other} would size and drive a compression context identically. */
+    boolean sameAs(CompressionParameters other)
+    {
+        return windowLog == other.windowLog
+                && chainLog == other.chainLog
+                && hashLog == other.hashLog
+                && searchLog == other.searchLog
+                && searchLength == other.searchLength
+                && targetLength == other.targetLength
+                && strategy == other.strategy;
+    }
+
     public int getWindowLog()
     {
         return windowLog;

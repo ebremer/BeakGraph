@@ -3,6 +3,8 @@ package com.ebremer.beakgraph.core.lib;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Comparator;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.xml.datatype.DatatypeConstants;
 import javax.xml.datatype.Duration;
 import javax.xml.datatype.XMLGregorianCalendar;
@@ -10,20 +12,37 @@ import org.apache.jena.graph.Node;
 import org.apache.jena.graph.TextDirection;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.expr.NodeValue;
+import org.apache.jena.sparql.expr.nodevalue.NodeValueNode;
 import org.apache.jena.sparql.util.NodeCmp;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Enforces a strict Total Ordering of RDF Nodes.
- * CRITICAL for HDF5 Binary Search:
- * Ensures the sorting order perfectly matches the Monolithic Dictionary ID assignments:
- * 1. Default Graph
- * 2. Blank Nodes
- * 3. URIs
- * 4. Literals (Sorted numerically/temporally/lexicographically by value)
+ * Enforces a strict total ordering of RDF nodes. CRITICAL for the HDF5 binary
+ * searches: dictionary ids ARE comparator ranks, so the sort order must match
+ * the dictionary's id assignment exactly (SPECIFICATIONS.md §6). Five kinds,
+ * in this order:
+ * <ol>
+ *   <li>the default-graph sentinels ({@code null}, {@code urn:x-arq:DefaultGraph},
+ *       {@code urn:x-arq:DefaultGraphNode}), before everything else;</li>
+ *   <li>blank nodes (macro kind 1), by label;</li>
+ *   <li>IRIs (2), by string;</li>
+ *   <li>literals (3), by value - numerically, temporally, lexicographically -
+ *       with an exact-term tie-break so value-equal distinct terms stay distinct;</li>
+ *   <li>RDF 1.2 triple terms (4), structurally: subject, then predicate, then
+ *       object, each through this comparator.</li>
+ * </ol>
+ * Language-tagged literals are compared on the tag as stored; see the note at
+ * {@link #compareExactLiteralTerms} for the tag-formatting precondition.
+ * See SPECIFICATIONS.md §6 (dictionary order).
  */
 public class NodeComparator implements Comparator<Node> {
 
     public static final NodeComparator INSTANCE = new NodeComparator();
+
+    private static final Logger logger = LoggerFactory.getLogger(NodeComparator.class);
+    /** Datatype IRIs whose value construction has failed - warned once each. */
+    private static final Set<String> WARNED_DATATYPES = ConcurrentHashMap.newKeySet();
 
     protected NodeComparator() {}
 
@@ -36,6 +55,32 @@ public class NodeComparator implements Comparator<Node> {
      */
     protected NodeValue nodeValue(Node n) {
         return NodeValue.makeNode(n);
+    }
+
+    /**
+     * The value of one literal, classified consistently against EVERY partner.
+     * {@code NodeValue.makeNode} never throws for an ill-formed lexical form
+     * (it yields a plain node value that compareAlways files in the last,
+     * term-ordered cluster), so an exception here is abnormal - and it used to
+     * be caught around the whole comparison, ordering that ONE pair by term
+     * while every other pair involving the same literal compared by value:
+     * exactly the pairwise value/term mix the CDT and language branches above
+     * exist to avoid, cyclic, silent, and input-order dependent. The fallback
+     * is now per literal: the literal becomes a plain node value - the same
+     * classification an unparseable literal gets - for every comparison it
+     * takes part in, and the datatype is logged once (BG-19).
+     */
+    private NodeValue valueOf(Node n) {
+        try {
+            return nodeValue(n);
+        } catch (RuntimeException e) {
+            String dt = n.getLiteralDatatypeURI();
+            if (WARNED_DATATYPES.add(dt == null ? "" : dt)) {
+                logger.warn("Cannot build a value for literal {} (datatype {}); literals of this datatype whose value "
+                        + "fails to build are ordered as unparseable literals", n, dt, e);
+            }
+            return new NodeValueNode(n);
+        }
     }
 
     @Override
@@ -58,13 +103,37 @@ public class NodeComparator implements Comparator<Node> {
         if (n1isDefault) return -1;
         if (n2isDefault) return 1;
 
-        // 2. Enforce RDF Term Macro-Ordering (BNode < URI < Literal)
+        // 2. Enforce RDF Term Macro-Ordering (BNode < URI < Literal < TripleTerm)
         // This ensures the sorted array perfectly aligns with how IDs are chunked
         int type1 = getMacroType(n1);
         int type2 = getMacroType(n2);
 
         if (type1 != type2) {
             return Integer.compare(type1, type2);
+        }
+
+        // 3a. Both are triple terms (macro type 4): compare STRUCTURALLY through
+        // this comparator, position by position. Delegating the pair to
+        // NodeCmp.compareRDFTerms (as every other same-kind pair does below)
+        // would re-import Finding 2 through the components: NodeCmp answers 0
+        // for distinct rdf:dirLangString literals, so two triple terms
+        // differing only in an embedded base direction would collapse onto one
+        // dictionary id. Recursing through compare() gives components exactly
+        // the orderings the dictionary already uses - the dirLang repair, the
+        // CDT lexical short-circuit, the temporal total orders - and stays a
+        // strict total order by induction (RDF 1.2 forbids cyclic terms).
+        if (n1.isTripleTerm() && n2.isTripleTerm()) {
+            org.apache.jena.graph.Triple t1 = n1.getTriple();
+            org.apache.jena.graph.Triple t2 = n2.getTriple();
+            int c = compare(t1.getSubject(), t2.getSubject());
+            if (c != 0) {
+                return c;
+            }
+            c = compare(t1.getPredicate(), t2.getPredicate());
+            if (c != 0) {
+                return c;
+            }
+            return compare(t1.getObject(), t2.getObject());
         }
 
         // 3. Both nodes are the SAME RDF Term Type.
@@ -93,7 +162,17 @@ public class NodeComparator implements Comparator<Node> {
             }
 
             // Language-tagged pairs (rdf:langString / rdf:dirLangString) never go
-            // through compareAlways either: Jena 6.1.0's base-direction support
+            // through compareAlways either. The tag is compared CASE-SENSITIVELY
+            // (String.compareTo), which is only a total order over terms because
+            // Jena canonicalizes every tag at construction: NodeFactory
+            // .createLiteralLang / createLiteralDirLang run LangTagX
+            // .formatLanguageTag, so "EN-us" and "en-US" are the SAME Node and
+            // case-variant spellings never reach this comparator as distinct
+            // terms. Building language-tagged Nodes any other way (LiteralLabel
+            // Factory, Node_Literal directly - writer keys, reader, probe keys)
+            // would break that precondition and with it the dictionary order;
+            // NodeComparatorDirLangTest#jenaTagFormattingStillPresent is the
+            // canary (BG-370). Jena 6.1.0's base-direction support
             // there is incoherent - same-(lex,lang) cross-kind or cross-direction
             // pairs THROW, different-language dirLangString pairs answer 0 for
             // DISTINCT terms, and mixed-kind pairs flip between lang-first and
@@ -116,10 +195,9 @@ public class NodeComparator implements Comparator<Node> {
                 }
                 return Integer.compare(directionRank(n1), directionRank(n2));
             }
+            NodeValue nv1 = valueOf(n1);
+            NodeValue nv2 = valueOf(n2);
             try {
-                NodeValue nv1 = nodeValue(n1);
-                NodeValue nv2 = nodeValue(n2);
-
                 // Timezone-sensitive value spaces cannot go through compareAlways:
                 // it answers value order for XSD-determinate pairs but silently falls
                 // back to TERM order for indeterminate ones (a timezone-less dateTime
@@ -134,9 +212,32 @@ public class NodeComparator implements Comparator<Node> {
                 // pushdown stays over-inclusive and value-equal terms stay adjacent.
                 int group = temporalGroup(nv1);
                 if (group != 0 && group == temporalGroup(nv2)) {
-                    return group == GROUP_DURATION
-                            ? compareDurationTotal(nv1, nv2, n1, n2)
-                            : compareTemporalTotal(nv1, nv2, n1, n2);
+                    if (group == GROUP_DURATION) {
+                        return compareDurationTotal(nv1, nv2, n1, n2);
+                    }
+                    if (group == GROUP_INSTANT) {
+                        // One ARQ value space holds dateTime and the g* kinds;
+                        // a fixed kind rank keeps cross-kind pairs off the
+                        // lexical fallback compareAlways would give them.
+                        int byKind = Integer.compare(instantKindRank(nv1), instantKindRank(nv2));
+                        if (byKind != 0) {
+                            return byKind;
+                        }
+                    }
+                    return compareTemporalTotal(nv1, nv2, n1, n2);
+                }
+
+                // Numbers of ANY XSD numeric datatype: exact value order. The
+                // SPARQL promotion compareAlways applies to mixed pairs (decimal
+                // vs float as floats) is lossy, and mixing it with the exact
+                // decimal-vs-decimal order and a lexical tie-break was cyclic.
+                // Value-equal terms fall to the exact-term tie-break below.
+                if (nv1.isNumber() && nv2.isNumber()) {
+                    int byNumber = NumericOrder.compare(nv1, nv2);
+                    if (byNumber != 0) {
+                        return byNumber;
+                    }
+                    return compareExactLiteralTerms(n1, n2);
                 }
 
                 // compareAlways provides a strict SPARQL "ORDER BY" ordering by VALUE,
@@ -154,9 +255,11 @@ public class NodeComparator implements Comparator<Node> {
                 // stable dictionary positions instead of collapsing onto one id (which
                 // would make locate() return the wrong term).
                 return compareExactLiteralTerms(n1, n2);
-            } catch (Exception e) {
-                // Absolute fallback if Jena fails to parse a highly malformed literal
-                return compareExactLiteralTerms(n1, n2);
+            } catch (RuntimeException e) {
+                // No silent per-pair fallback (see valueOf): a comparison that
+                // fails is an error, and a failed build beats an input-order
+                // dependent dictionary whose lookups miss stored terms.
+                throw new IllegalStateException("Cannot order literals " + n1 + " and " + n2 + ": " + e, e);
             }
         }
 
@@ -177,6 +280,14 @@ public class NodeComparator implements Comparator<Node> {
      * already considers equal, so it cannot disturb the order of any other
      * pair. Simplify when NodeCmp orders dirLangString correctly upstream -
      * NodeComparatorDirLangTest#jenaNodeCmpGapStillPresent is the canary.
+     * <p>
+     * Precondition, here and in the language branch of {@link #compare}: the
+     * language tag is compared case-sensitively, which is a strict total order
+     * over terms only because {@code NodeFactory.createLiteralLang} /
+     * {@code createLiteralDirLang} canonicalize every tag through
+     * {@code LangTagX.formatLanguageTag} at construction, so two spellings of
+     * one tag are one Node. Never build language-tagged Nodes through
+     * {@code LiteralLabelFactory} or {@code Node_Literal} directly (BG-370).
      */
     private static int compareExactLiteralTerms(Node n1, Node n2) {
         int c = NodeCmp.compareRDFTerms(n1, n2);
@@ -206,28 +317,41 @@ public class NodeComparator implements Comparator<Node> {
         return lang != null && !lang.isEmpty();
     }
 
+    private static final int GROUP_INSTANT = 1;
     private static final int GROUP_DURATION = 9;
 
     /**
      * Classifies a literal into one of the timezone-sensitive temporal value
-     * spaces (or 0 for everything else). The grouping mirrors Jena's own value
-     * spaces - dateTime and dateTimeStamp share one space, date/time/g* each
-     * have their own - so the special-cased ordering below applies exactly where
-     * compareAlways would have compared by value-or-term, and never across two
-     * spaces that compareAlways ranks by value space. Ill-formed literals answer
-     * false to all predicates and stay on the compareAlways path.
+     * spaces (or 0 for everything else), mirroring Jena's own value spaces:
+     * dateTime, dateTimeStamp and the five g* kinds share ONE space
+     * (ARQ's VSPACE_DATETIME), date and time have their own, duration its own.
+     * The grouping used to give each g* kind a space of its own, which sent a
+     * gYear-vs-dateTime pair to compareAlways; there the shared space made
+     * the pair "not comparable" and fell back to lexical order - mixed with
+     * the instant order of same-kind pairs, a cycle. Within the instant space
+     * a fixed kind rank ({@link #instantKindRank}) orders cross-kind pairs and
+     * same-kind pairs compare as instants. Ill-formed literals answer false
+     * to all predicates and stay on the compareAlways path.
      */
     private static int temporalGroup(NodeValue nv) {
-        if (nv.isDateTime())   return 1;
+        if (nv.isDateTime() || nv.isGYear() || nv.isGYearMonth()
+                || nv.isGMonth() || nv.isGMonthDay() || nv.isGDay()) {
+            return GROUP_INSTANT;
+        }
         if (nv.isDate())       return 2;
         if (nv.isTime())       return 3;
-        if (nv.isGYear())      return 4;
-        if (nv.isGYearMonth()) return 5;
-        if (nv.isGMonth())     return 6;
-        if (nv.isGMonthDay())  return 7;
-        if (nv.isGDay())       return 8;
         if (nv.isDuration())   return GROUP_DURATION;
         return 0;
+    }
+
+    /** gDay < gMonth < gMonthDay < gYear < gYearMonth < dateTime (the rank SPECIFICATIONS.md 6.2 documents). */
+    private static int instantKindRank(NodeValue nv) {
+        if (nv.isGDay())       return 0;
+        if (nv.isGMonth())     return 1;
+        if (nv.isGMonthDay())  return 2;
+        if (nv.isGYear())      return 3;
+        if (nv.isGYearMonth()) return 4;
+        return 5;
     }
 
     /**
@@ -254,11 +378,19 @@ public class NodeComparator implements Comparator<Node> {
      * Total order for durations: by total months, then by total seconds, then
      * by exact term. XSD duration equality is exactly (months, seconds)
      * equality, so value-equal durations ("P1D" vs "PT24H") stay adjacent for
-     * ValueCluster; and within each XSD-comparable kind (month-based with
-     * month-based, day/time-based with day/time-based) the order equals XSD
-     * value order. Cross-kind pairs - which SPARQL comparison rejects and
-     * compareAlways used to term-order pairwise-inconsistently - get the fixed
-     * months-first rank.
+     * ValueCluster; and within each pure kind (year/month-only with
+     * year/month-only, day/time-only with day/time-only) the order equals XSD
+     * value order. ARQ answers cross-kind pairs "not comparable" (so
+     * {@code P400D > P1Y} is false, never an exception) - compareAlways
+     * used to term-order them pairwise-inconsistently; here they get the
+     * fixed months-first rank. MIXED durations (a year/month part AND a
+     * day/time part, e.g. "P1M35D") are one XSD class of their own, which
+     * XSD orders by its four-reference-point rule: that order is
+     * determinate for pairs this (months, seconds) order disagrees with
+     * ("P1M35D" is XSD-greater than "P2M1D" yet ranks before it). The
+     * dictionary order is still a strict total order; it just is not ARQ's
+     * there, so the range pushdown must not narrow around a mixed-duration
+     * constant - see FilterBounds.orderAgreesWithArq (BG-326).
      */
     private static int compareDurationTotal(NodeValue nv1, NodeValue nv2, Node n1, Node n2) {
         Duration d1 = nv1.getDuration();
@@ -296,14 +428,18 @@ public class NodeComparator implements Comparator<Node> {
     }
 
     /**
-     * Maps a Node to an integer rank to enforce BNode < URI < Literal.
+     * Maps a Node to its macro kind: BNode (1) < URI (2) < Literal (3) <
+     * TripleTerm (4) - the order SPECIFICATIONS.md §6 fixes for the dictionary.
+     * An RDF 1.2 triple term ({@code Node_Triple}) ranks after every literal
+     * and is compared structurally in {@link #compare}. Anything else
+     * (a variable, {@code Node.ANY}) is not an RDF term and cannot be ranked.
      */
     private int getMacroType(Node n) {
         if (n.isBlank()) return 1;
         if (n.isURI()) return 2;
         if (n.isLiteral()) return 3;
-        // Should never happen in valid RDF, but safe fallback
-        return 4;
+        if (n.isTripleTerm()) return 4;
+        throw new IllegalArgumentException("Not an RDF term (blank node, IRI, literal or triple term): " + n);
     }
 
     private boolean isDefaultGraph(Node n) {

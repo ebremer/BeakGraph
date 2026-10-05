@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import com.ebremer.beakgraph.lws.LWSMetadataGenerator;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
@@ -37,6 +38,9 @@ import org.junit.jupiter.api.io.TempDir;
  * on data resources. Runs a real Jetty server so header semantics are the
  * container's, not a mock's.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class LWSReadComplianceTest {
 
     @TempDir
@@ -44,16 +48,17 @@ class LWSReadComplianceTest {
 
     private static Server server;
     private static String base;
-    private static final HttpClient http = HttpClient.newHttpClient();
+    private static final HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(10)).build();
     private static final int FILES = 45;
     /** Enough members to span 3+ pages at any PAGE_SIZE the guard admits. */
     private static final int BIGSUB_FILES = LWSStorageServlet.PAGE_SIZE * 2 + 2;
-    /** Root membership: FILES + the "sub" and "big sub" directories. */
-    private static final int ROOT_ITEMS = FILES + 2;
+    /** Root membership: FILES + the "sub", "big sub", "live" and "HalcyonStorageArchive" directories. */
+    private static final int ROOT_ITEMS = FILES + 4;
+    private static Path root;
 
     @BeforeAll
     static void startServer() throws Exception {
-        Path root = Files.createDirectories(dir.resolve("storage"));
+        root = Files.createDirectories(dir.resolve("storage"));
         for (int i = 0; i < FILES; i++) {
             Files.write(root.resolve(String.format("f%02d.txt", i)),
                     ("content-of-file-" + i).getBytes(StandardCharsets.UTF_8));
@@ -70,17 +75,20 @@ class LWSReadComplianceTest {
                     ("g-" + i).getBytes(StandardCharsets.UTF_8));
         }
 
+        // A file whose bytes a test replaces after the model is generated (BG-388).
+        Files.write(Files.createDirectories(root.resolve("live")).resolve("x.txt"), "v1".getBytes(StandardCharsets.UTF_8));
+        // An entry literally named *.meta, and a directory sharing the alias's prefix (BG-47).
+        Files.write(root.resolve("live").resolve("build.meta"), "meta-file".getBytes(StandardCharsets.UTF_8));
+        Files.write(Files.createDirectories(root.resolve("HalcyonStorageArchive")).resolve("z.txt"), "zzz".getBytes(StandardCharsets.UTF_8));
         Model model = LWSMetadataGenerator.generateLWSModel(root);
         server = new Server(0);
         ServletContextHandler ctx = new ServletContextHandler();
         ctx.setContextPath("/");
-        ctx.addServlet(new ServletHolder(new LWSStorageServlet(model)), "/*");
+        ctx.addServlet(new ServletHolder(new LWSStorageServlet(model, null, root)), "/*");
         server.setHandler(ctx);
         server.start();
         int port = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
         base = "http://localhost:" + port + "/";
-        LWSStorageServlet.setBase(base);
-        LWSStorageServlet.setStorageRoot(root);
     }
 
     @AfterAll
@@ -89,7 +97,7 @@ class LWSReadComplianceTest {
     }
 
     private static HttpResponse<String> get(String path, String... headers) throws Exception {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path));
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path)).timeout(java.time.Duration.ofSeconds(60));
         for (int i = 0; i < headers.length; i += 2) {
             b.header(headers[i], headers[i + 1]);
         }
@@ -270,6 +278,64 @@ class LWSReadComplianceTest {
         String etag = resp.headers().firstValue("ETag").orElseThrow();
         HttpResponse<String> cond = get("", "Accept", "application/lws+json", "If-None-Match", etag);
         assertEquals(304, cond.statusCode());
+        // RFC 9110: a list, a weak validator and * all match (BG-49); an unrelated tag does not.
+        assertEquals(304, get("", "Accept", "application/lws+json", "If-None-Match", "\"nope\", " + etag).statusCode());
+        assertEquals(304, get("", "Accept", "application/lws+json", "If-None-Match", "W/" + etag).statusCode());
+        assertEquals(304, get("", "Accept", "application/lws+json", "If-None-Match", "*").statusCode());
+        assertEquals(200, get("", "Accept", "application/lws+json", "If-None-Match", "\"nope\"").statusCode());
+    }
+
+    @Test
+    void aReplacedFileIsServedWithNewBytesAndANewValidator() throws Exception {
+        HttpResponse<String> before = get("live/x.txt", "Accept", "text/plain");
+        assertEquals(200, before.statusCode());
+        assertEquals("v1", before.body());
+        String oldEtag = before.headers().firstValue("ETag").orElseThrow();
+        assertEquals("no-cache", before.headers().firstValue("Cache-Control").orElse(""), "data responses must be revalidated (BG-389)");
+        Files.write(root.resolve("live").resolve("x.txt"), "version-two".getBytes(StandardCharsets.UTF_8));
+
+        HttpResponse<String> after = get("live/x.txt", "Accept", "text/plain");
+        assertEquals("version-two", after.body());
+        assertFalse(oldEtag.equals(after.headers().firstValue("ETag").orElse("")), "the validator follows the bytes");
+        // A range conditional on the OLD validator gets the whole new representation, never mixed bytes.
+        HttpResponse<String> ranged = get("live/x.txt", "Accept", "text/plain", "Range", "bytes=0-1", "If-Range", oldEtag);
+        assertEquals(200, ranged.statusCode());
+        assertEquals("version-two", ranged.body());
+        HttpResponse<String> part = get("live/x.txt", "Accept", "text/plain", "Range", "bytes=0-6");
+        assertEquals(206, part.statusCode());
+        assertEquals("version", part.body());
+        assertEquals("no-cache", part.headers().firstValue("Cache-Control").orElse(""));
+        // The listing reports the file's LIVE size (BG-388), even though the model still holds the old one.
+        JsonObject listing = parse(get("live", "Accept", "application/lws+json").body());
+        JsonObject item = listing.getJsonArray("items").getValuesAs(JsonObject.class).stream()
+                .filter(o -> o.getString("id").endsWith("/x.txt")).findFirst().orElseThrow();
+        assertEquals("version-two".length(), item.getInt("size"));
+    }
+
+    @Test
+    void literalMetaNamesAndAliasPrefixedNamesAreReachable() throws Exception {
+        HttpResponse<String> metaFile = get("live/build.meta", "Accept", "text/plain");
+        assertEquals(200, metaFile.statusCode());
+        assertEquals("meta-file", metaFile.body(), "a stored entry named *.meta is that entry, not a linkset");
+        HttpResponse<String> linkset = get("sub.meta");
+        assertEquals(200, linkset.statusCode());
+        assertTrue(contentType(linkset).startsWith("application/linkset+json"), "an absent *.meta name is still the linkset");
+        HttpResponse<String> archive = get("HalcyonStorageArchive", "Accept", "application/lws+json");
+        assertEquals(200, archive.statusCode(), archive.body());
+        assertEquals(1, parse(archive.body()).getInt("totalItems"), "a name sharing the alias prefix is its own container");
+        assertEquals("zzz", get("HalcyonStorageArchive/z.txt", "Accept", "text/plain").body());
+        assertEquals("content-of-file-7", get("HalcyonStorage/f07.txt", "Accept", "text/plain").body(), "the exact alias still works");
+    }
+
+    @Test
+    void contentDispositionCarriesBothForms() throws Exception {
+        HttpResponse<String> r = get("f07.txt", "Accept", "text/plain");
+        String cd = r.headers().firstValue("Content-Disposition").orElse("");
+        assertTrue(cd.contains("filename=\"f07.txt\"") && cd.contains("filename*=UTF-8''f07.txt"), cd);
+    }
+
+    private static String contentType(HttpResponse<?> r) {
+        return r.headers().firstValue("Content-Type").orElse("");
     }
 
     @Test
@@ -300,7 +366,7 @@ class LWSReadComplianceTest {
 
     @Test
     void headReturnsHeadersWithoutBody() throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(base))
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base)).timeout(java.time.Duration.ofSeconds(60))
                 .method("HEAD", HttpRequest.BodyPublishers.noBody())
                 .header("Accept", "application/lws+json").build();
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
@@ -337,5 +403,48 @@ class LWSReadComplianceTest {
         HttpResponse<String> ld = get("description", "Accept", "application/ld+json");
         assertTrue(ld.headers().firstValue("Content-Type").orElse("").startsWith("application/ld+json"));
         assertEquals(resp.body(), ld.body(), "negotiated flavors share one payload");
+    }
+
+    @Test
+    void advertisedIdentifiersAreValidIris() throws Exception {
+        // BG-40: "big sub" must be advertised as big%20sub everywhere - JSON-LD
+        // ids, Link targets and Turtle IRIs - not with a raw space.
+        HttpResponse<String> root = get("", "Accept", "application/lws+json");
+        assertEquals(200, root.statusCode());
+        boolean sawBigSub = false;
+        for (jakarta.json.JsonValue v : parse(root.body()).getJsonArray("items")) {
+            String id = v.asJsonObject().getString("id");
+            assertEquals(id, java.net.URI.create(id).toString(), "item id must be a valid IRI");
+            assertFalse(id.contains(" "), id);
+            if (id.endsWith("big%20sub")) sawBigSub = true;
+        }
+        assertTrue(sawBigSub, "the encoded 'big sub' container is listed on page 1");
+
+        HttpResponse<String> p1 = get("big%20sub", "Accept", "application/lws+json");
+        assertEquals(200, p1.statusCode());
+        assertEquals(base + "big%20sub", parse(p1.body()).getString("id"));
+        String linkset = linkTarget(p1, "rel=\"linkset\"");
+        assertNotNull(linkset);
+        assertTrue(linkset.contains("big%20sub.meta"), linkset);
+        assertFalse(linkset.contains(" "), linkset);
+        HttpResponse<String> child = get("big%20sub/g00.txt?format=turtle", "Accept", "text/turtle");
+        assertEquals(200, child.statusCode(), child.body());
+        String up = linkTarget(child, "rel=\"up\"");
+        assertEquals(base + "big%20sub", up);
+        org.apache.jena.rdf.model.Model desc = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        org.apache.jena.riot.RDFDataMgr.read(desc, new java.io.ByteArrayInputStream(child.body().getBytes(StandardCharsets.UTF_8)),
+                org.apache.jena.riot.Lang.TURTLE);
+        assertTrue(desc.containsResource(desc.createResource(base + "big%20sub/g00.txt")), child.body());
+
+        HttpResponse<String> ttl = get("big%20sub", "Accept", "text/turtle");
+        assertEquals(200, ttl.statusCode(), ttl.body());
+        org.apache.jena.rdf.model.Model container = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        org.apache.jena.riot.RDFDataMgr.read(container, new java.io.ByteArrayInputStream(ttl.body().getBytes(StandardCharsets.UTF_8)),
+                org.apache.jena.riot.Lang.TURTLE);
+        assertTrue(container.containsResource(container.createResource(base + "big%20sub")), ttl.body());
+        assertTrue(container.containsResource(container.createResource(base + "big%20sub/g00.txt")), ttl.body());
+        HttpResponse<String> html = get("big%20sub", "Accept", "text/html");
+        assertEquals(200, html.statusCode());
+        assertTrue(html.body().contains("href=\"" + base + "\""), "the parent link of a top-level subcontainer is the root");
     }
 }

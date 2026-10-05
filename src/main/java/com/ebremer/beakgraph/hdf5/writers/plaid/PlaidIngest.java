@@ -1,5 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers.plaid;
 
+import com.ebremer.beakgraph.core.Futures;
+import com.ebremer.beakgraph.core.lib.RelativeIris;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.huge.HugeBuildPipeline;
 import com.ebremer.beakgraph.huge.SpatialAugmenter;
@@ -14,8 +16,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import org.apache.jena.riot.lang.LabelToNode;
-import org.apache.jena.riot.system.AsyncParser;
+import java.util.stream.Stream;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import org.apache.jena.riot.system.AsyncParserBuilder;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
@@ -46,13 +49,20 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
     private static final int COMMIT_BATCH = 8192;
 
     private final int parseThreads;
+    // One fully-materialized document at a time: JSON-LD has no streaming
+    // parser, and -cores of them expanding concurrently would multiply the
+    // (already unbounded) peak (BG-425).
+    private final Semaphore materializedGate = new Semaphore(1);
+    // Set on the first failed document: the other workers, CPU-bound inside
+    // the parser where an interrupt is never checked, stop at their next quad.
+    private volatile boolean aborted = false;
 
     PlaidIngest(int parseThreads) {
         this.parseThreads = Math.max(1, parseThreads);
     }
 
     @Override
-    public void run(List<File> sources, boolean spatial, boolean features,
+    public void run(List<File> sources, File sourceRoot, boolean spatial, boolean features,
                     BGVoIDSD voidStats, BatchSink sink) throws IOException {
         int workers = Math.min(parseThreads, sources.size());
         logger.info("Plaid ingest: parsing {} document(s) on {} parse worker(s)", sources.size(), workers);
@@ -64,8 +74,9 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
                 // Same per-document blank-node scoping rule as the sequential
                 // ingest: ordinal prefix only when merging several documents.
                 final String scope = sources.size() > 1 ? (i + "/") : null;
+                final String parseBase = RelativeIris.parseBase(input, sources, sourceRoot);
                 tasks.add(parsePool.submit(() -> {
-                    parseDocument(input, scope, spatial, features, voidStats, sink);
+                    parseDocument(input, scope, parseBase, spatial, features, voidStats, sink);
                     return null;
                 }));
             }
@@ -85,6 +96,7 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
                     }
                 }
                 if (failure != null) {
+                    aborted = true;
                     tasks.forEach(t -> t.cancel(true));
                     break;
                 }
@@ -93,19 +105,49 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
                 throw failure;
             }
         } finally {
+            // DRAIN before returning: a worker still inside sink.commit() or a
+            // sorter's add() when the pipeline was closed and the workspace
+            // deleted underneath it was the BG-110 race.
             parsePool.shutdownNow();
+            boolean interrupted = false;
+            for (int attempt = 0; attempt < 5; attempt++) {
+                try {
+                    if (parsePool.awaitTermination(1, TimeUnit.MINUTES)) {
+                        break;
+                    }
+                    logger.warn("Parse workers still running {} minute(s) after the ingest ended", attempt + 1);
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
-    private void parseDocument(File input, String scope, boolean spatial, boolean features,
+    private void parseDocument(File input, String scope, String parseBase, boolean spatial, boolean features,
                                BGVoIDSD voidStats, BatchSink sink) throws IOException {
+        boolean gated = !RdfSources.isStreaming(RdfSources.langOf(input));
+        if (gated) {
+            materializedGate.acquireUninterruptibly();
+        }
+        try {
+            parseDocumentNow(input, scope, parseBase, spatial, features, voidStats, sink);
+        } finally {
+            if (gated) {
+                materializedGate.release();
+            }
+        }
+    }
+
+    private void parseDocumentNow(File input, String scope, String parseBase, boolean spatial, boolean features,
+                                  BGVoIDSD voidStats, BatchSink sink) throws IOException {
         logger.info("Parsing {} (plaid, parallel disk-based build)", input);
         final long start = System.nanoTime();
         try (RdfSources.OpenedSource opened = RdfSources.open(input)) {
-            AsyncParserBuilder parserBuilder = AsyncParser.of(opened.stream(), opened.lang(),
-                    HugeBuildPipeline.REL_BASE);
-            parserBuilder.mutateSources(rdfBuilder ->
-                    rdfBuilder.labelToNode(LabelToNode.createUseLabelAsGiven()));
+            RdfSources.warnIfMaterialized(input, opened.lang(), logger);   // JSON-LD: whole document in RAM (BG-425)
+            AsyncParserBuilder parserBuilder = RdfSources.parser(opened, parseBase, input);
             SpatialAugmenter augmenter = new SpatialAugmenter(features);
             // Batch state: source quads and their count in this batch (derived
             // spatial quads ride along but are not counted as source quads).
@@ -113,8 +155,11 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
             final long[] sourceInBatch = {0};
             final int maxInFlight = 16;
             final ArrayDeque<Future<ArrayList<Quad>>> inFlight = new ArrayDeque<>();
-            try (ExecutorService scopeExec = Executors.newVirtualThreadPerTaskExecutor()) {
-                parserBuilder.streamQuads()
+            // The quad stream closes before the executor: that aborts and joins
+            // the parser thread when the loop throws (BG-100).
+            try (ExecutorService scopeExec = Executors.newVirtualThreadPerTaskExecutor();
+                 Stream<Quad> quads = parserBuilder.streamQuads()) {
+                quads
                     .map(quad -> quad.isDefaultGraph()
                             ? new Quad(Quad.defaultGraphIRI, quad.getSubject(), quad.getPredicate(), quad.getObject())
                             : quad)
@@ -123,6 +168,9 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
                     .map(HugeBuildPipeline::canonicalizeNumericObject)
                     .forEach(quad -> {
                         try {
+                            if (aborted || Thread.currentThread().isInterrupted()) {
+                                throw new UncheckedIOException(new IOException("Aborted: another source document failed"));
+                            }
                             if (voidStats != null) {
                                 voidStats.add(quad); // thread-safe; off the sink lock
                             }
@@ -165,15 +213,7 @@ final class PlaidIngest implements HugeBuildPipeline.ParallelIngest {
                                  ArrayList<Quad> batch, File input) throws IOException {
         Future<ArrayList<Quad>> task = inFlight.poll();
         if (task == null) return;
-        ArrayList<Quad> extraQuads;
-        try {
-            extraQuads = task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while collecting spatial results: " + input, ex);
-        } catch (ExecutionException ex) {
-            throw new IOException("Spatial processing failed for " + input, ex.getCause());
-        }
+        ArrayList<Quad> extraQuads = Futures.join(task, "collecting spatial results for " + input);
         for (Quad q : extraQuads) {
             batch.add(HugeBuildPipeline.canonicalizeNumericObject(q));
         }

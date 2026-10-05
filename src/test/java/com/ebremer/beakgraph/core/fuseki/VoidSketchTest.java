@@ -93,9 +93,44 @@ class VoidSketchTest {
                 "object/predicate namespaces must land in void:vocabulary");
     }
 
+    /** BG-50: void:entities counts a typed entity once, however many classes it has. */
+    @Test
+    void multiTypedEntitiesAreCountedOnce() {
+        BGVoIDSD v = new BGVoIDSD("https://ebremer.com/void/");
+        for (int i = 0; i < 30; i++) {
+            org.apache.jena.graph.Node s = NodeFactory.createURI("http://ex.org/data/s" + i);
+            v.add(new Quad(Quad.defaultGraphIRI, s, RDF.type.asNode(), NodeFactory.createURI("http://ex.org/Article")));
+            v.add(new Quad(Quad.defaultGraphIRI, s, RDF.type.asNode(), NodeFactory.createURI("http://ex.org/Thing")));
+        }
+        Model m = v.getModel();
+        assertEquals(2, one(m, VOID.classes));
+        assertEquals(30, one(m, VOID.entities), "30 entities, not 60");
+        m.listObjectsOfProperty(VOID.classPartition).forEachRemaining(part ->
+                assertEquals(30, part.asResource().getProperty(VOID.entities).getLong(), "each class partition still counts its 30 instances"));
+    }
+
     private static long one(Model m, org.apache.jena.rdf.model.Property p) {
         var it = m.listObjectsOfProperty(p);
         assertTrue(it.hasNext(), "expected a value for " + p);
         return it.next().asLiteral().getLong();
+    }
+
+    @Test
+    void vocabularyIsBoundedByPredicatesAndClasses() {
+        // BG-43: hierarchical object IRIs (one "namespace" per entity) used to
+        // feed an unbounded set and were emitted as bogus void:vocabulary.
+        BGVoIDSD v = new BGVoIDSD("https://ebremer.com/void/");
+        for (int i = 0; i < 200_000; i++) {
+            v.add(new Quad(Quad.defaultGraphIRI,
+                    NodeFactory.createURI("http://ex.org/data/s" + (i % 1000)),
+                    NodeFactory.createURI("http://ex.org/p" + (i % 3)),
+                    NodeFactory.createURI("http://ex.org/r/" + i + "/x")));
+        }
+        v.add(new Quad(Quad.defaultGraphIRI, NodeFactory.createURI("http://ex.org/data/s1"), RDF.type.asNode(),
+                NodeFactory.createURI("http://schema.org/Thing")));
+        Model m = v.getModel();
+        java.util.Set<String> vocab = m.listObjectsOfProperty(VOID.vocabulary).mapWith(n -> n.asResource().getURI()).toSet();
+        assertEquals(java.util.Set.of("http://ex.org/", "http://www.w3.org/1999/02/22-rdf-syntax-ns#", "http://schema.org/"), vocab,
+                "predicate and class namespaces only");
     }
 }

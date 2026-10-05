@@ -17,6 +17,6 @@ public class GridCell {
 
     @Override
     public String toString() {
-        return String.format("%d/%d/%d/", scale, x, y);
+        return scale + "/" + x + "/" + y + "/";   // concatenation: ASCII digits in every locale
     }
 }

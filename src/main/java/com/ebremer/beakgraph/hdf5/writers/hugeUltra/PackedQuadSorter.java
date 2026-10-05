@@ -23,22 +23,29 @@ final class PackedQuadSorter implements RecordSorter<IdQuad> {
 
     private final PackedLongSorter sorter;
     private final boolean gspo;
-    private final int b1, b2, b3; // widths of components 1..3 in sort order (b0 needs no mask)
+    private final int b0, b1, b2, b3; // component widths in sort order (b0 needs no mask, only the guard)
 
     PackedQuadSorter(Path workDir, String tag, Index order,
                      long numEntities, long numPredicates, long numObjects,
                      int batch, int fanIn, ForkJoinPool pool, ExecutorService exec) {
+        this(workDir, tag, order, numEntities, numPredicates, numObjects, batch, fanIn, pool, exec,
+                UltraSorterProvider.defaultMergeConcurrency(fanIn, pool.getParallelism()));
+    }
+
+    PackedQuadSorter(Path workDir, String tag, Index order,
+                     long numEntities, long numPredicates, long numObjects,
+                     int batch, int fanIn, ForkJoinPool pool, ExecutorService exec, int maxConcurrentMerges) {
         this.gspo = order == Index.GSPO;
         int bG = MinBits(Math.max(1, numEntities));
         int bS = bG;
         int bP = MinBits(Math.max(1, numPredicates));
         int bO = MinBits(Math.max(1, numObjects));
-        int b0 = bG;
+        this.b0 = bG;
         this.b1 = gspo ? bS : bP;
         this.b2 = gspo ? bP : bO;
         this.b3 = gspo ? bO : bS;
         int totalBits = b0 + b1 + b2 + b3;
-        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec);
+        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec, maxConcurrentMerges);
     }
 
     @Override
@@ -47,6 +54,13 @@ final class PackedQuadSorter implements RecordSorter<IdQuad> {
         long v1 = gspo ? q.s() : q.p();
         long v2 = gspo ? q.p() : q.o();
         long v3 = gspo ? q.o() : q.s();
+        // The provider's counts are the caller's promise that every id fits
+        // its width; an id past it used to shift into its neighbour's bits and
+        // silently corrupt both the order and the decoded ids (BG-139).
+        if ((v0 >>> b0) != 0 || (v1 >>> b1) != 0 || (v2 >>> b2) != 0 || (v3 >>> b3) != 0) {
+            throw new IllegalStateException("Quad component exceeds its declared width in sorter (widths "
+                    + b0 + "/" + b1 + "/" + b2 + "/" + b3 + " bits, " + (gspo ? "g/s/p/o" : "g/p/o/s") + "): " + q);
+        }
         // Running 128-bit (shift-left, or-in) append; component widths are far
         // below 64, so the shifts are always legal.
         long lo = v0;

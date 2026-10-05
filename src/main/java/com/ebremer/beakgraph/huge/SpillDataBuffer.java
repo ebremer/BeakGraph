@@ -1,5 +1,8 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.Params;
+
+import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -14,7 +17,7 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-final class SpillDataBuffer implements AutoCloseable {
+final class SpillDataBuffer implements AutoCloseable, DictionarySinks.RealSink {
 
     private final Path file;
     private final DataOutputStream dos;
@@ -39,19 +42,19 @@ final class SpillDataBuffer implements AutoCloseable {
         dos.writeLong(v);
     }
 
-    void writeFloat(float v) throws IOException {
+    public void writeFloat(float v) throws IOException {
         numEntries++;
         bytesWritten += Float.BYTES;
         dos.writeFloat(v);
     }
 
-    void writeDouble(double v) throws IOException {
+    public void writeDouble(double v) throws IOException {
         numEntries++;
         bytesWritten += Double.BYTES;
         dos.writeDouble(v);
     }
 
-    long getNumEntries() {
+    public long getNumEntries() {
         return numEntries;
     }
 
@@ -79,7 +82,7 @@ final class SpillDataBuffer implements AutoCloseable {
         }
         try (StreamingHdf5Dataset ds = group.createByteDataset(name, bytesWritten)) {
             HugeIO.copyFileIntoDataset(file, ds);
-            ds.putAttribute("numEntries", numEntries);
+            ds.putAttribute(Params.NUM_ENTRIES, numEntries);
         }
         Files.deleteIfExists(file);
     }

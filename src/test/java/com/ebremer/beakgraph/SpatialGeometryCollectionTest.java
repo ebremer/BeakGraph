@@ -32,6 +32,8 @@ class SpatialGeometryCollectionTest {
         @prefix ex:  <http://ex.org/> .
         @prefix geo: <http://www.opengis.net/ont/geosparql#> .
         ex:mixed geo:asWKT "GEOMETRYCOLLECTION(POLYGON((0 0,10 0,10 10,0 10,0 0)), POINT(500 500))"^^geo:wktLiteral .
+        ex:nested geo:asWKT "GEOMETRYCOLLECTION(MULTIPOLYGON(((20 20,30 20,30 30,20 30,20 20)),((1000 1000,1010 1000,1010 1010,1000 1010,1000 1000))), POINT(700 700))"^^geo:wktLiteral .
+        ex:deep geo:asWKT "GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(MULTIPOINT((900 900),(950 950))))"^^geo:wktLiteral .
         """;
 
     private static final String PREFIXES = """
@@ -84,6 +86,36 @@ class SpatialGeometryCollectionTest {
     void polygonMemberIsStillFindable() {
         assertEquals(Set.of("http://ex.org/mixed"),
             intersecting("POLYGON((2 2,8 2,8 8,2 8,2 2))"));
+    }
+
+    /** BG-371: a MULTIPOLYGON nested in a GEOMETRYCOLLECTION was neither a Polygon nor a "non-areal member", so it was never indexed. */
+    @Test
+    void multiPolygonNestedInACollectionIsFindable() {
+        assertEquals(Set.of("http://ex.org/nested"),
+                intersecting("POLYGON((1002 1002,1008 1002,1008 1008,1002 1008,1002 1002))"));
+        assertEquals(Set.of("http://ex.org/nested"),
+                intersecting("POLYGON((22 22,28 22,28 28,22 28,22 22))"));
+        assertEquals(Set.of("http://ex.org/nested"),
+                intersecting("POLYGON((695 695,705 695,705 705,695 705,695 695))"));
+    }
+
+    @Test
+    void leavesOfNestedCollectionsAreIndexedIndividually() {
+        assertEquals(Set.of("http://ex.org/deep"),
+                intersecting("POLYGON((945 945,955 945,955 955,945 955,945 945))"));
+        assertEquals(Set.of("http://ex.org/deep"),
+                intersecting("POLYGON((895 895,905 895,905 905,895 905,895 895))"));
+    }
+
+    /** The variable-subject (index-seeded) answer must agree with the concrete-subject (JTS only) answer. */
+    @Test
+    void variableAndConcreteSubjectAgree() {
+        String region = "POLYGON((1002 1002,1008 1002,1008 1008,1002 1008,1002 1002))";
+        String ask = PREFIXES + "ASK { ex:nested geo:asWKT ?w FILTER(geof:sfIntersects(?w, \"" + region + "\"^^geo:wktLiteral)) }";
+        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(ask)).build()) {
+            assertEquals(true, qe.execAsk(), "the concrete subject intersects (JTS on the whole collection)");
+        }
+        assertEquals(Set.of("http://ex.org/nested"), intersecting(region), "the seeded scan must find the same subject");
     }
 
     @Test

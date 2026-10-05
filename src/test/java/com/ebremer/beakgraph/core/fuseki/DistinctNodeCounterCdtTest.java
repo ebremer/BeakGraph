@@ -11,7 +11,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * The VoID HyperLogLog hash must be TERM-distinct (PLAN C.7 / 2.6): composite
+ * The VoID HyperLogLog hash must be TERM-distinct: composite
  * (cdt:) literals have no canonical form, so value-equal lexically-distinct
  * literals are distinct terms; and rdf:dirLangString terms differing only in
  * base direction are distinct terms. Hash collisions here would make the

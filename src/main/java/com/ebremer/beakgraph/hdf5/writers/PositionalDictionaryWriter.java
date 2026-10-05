@@ -1,22 +1,17 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.Dictionary;
-import com.ebremer.beakgraph.core.GSPODictionary;
-import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.hdf5.Types;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import io.jhdf.api.WritableGroup;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.slf4j.Logger;
@@ -26,7 +21,7 @@ import org.slf4j.LoggerFactory;
  * Monolithic Entity Dictionary with Columnar ID lists for Graphs, Subjects, and Objects.
  * @author Erich Bremer
  */
-public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable, DictionaryWriter {
+public class PositionalDictionaryWriter implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(PositionalDictionaryWriter.class);
     private final DictionaryWriter entitiesdict;
     private final DictionaryWriter predicatesdict;
@@ -41,7 +36,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     private final BitPackedUnSignedLongBuffer subjects;
     private final BitPackedUnSignedLongBuffer objects;
 
-    public PositionalDictionaryWriter(PositionalDictionaryWriterBuilder builder) throws FileNotFoundException, IOException {
+    public PositionalDictionaryWriter(PositionalDictionaryWriterBuilder builder) throws IOException {
         this.name = builder.getName();
         this.numQuads = builder.getNumberOfQuads();
         this.quads = builder.getQuads();
@@ -54,7 +49,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
             .setName("entities")
             .setNodes(builder.getEntities())
             .setStats(builder.getStats())
-            .enable(Types.IRI, Types.BNODE)
+            .section(DictionarySection.ENTITIES)
             .build();
             
         // 2. Build the Isolated Predicate Dictionary (P URIs)
@@ -62,30 +57,36 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
             .setName("predicates")
             .setNodes(builder.getPredicates())
             .setStats(builder.getStats())
-            .enable(Types.IRI)
+            .section(DictionarySection.PREDICATES)
             .build();
             
-        // 3. Build the Isolated Literal Dictionary (O Native Literals)
+        // Cache this for fast offset math in locateObject. Assigned BEFORE the
+        // literals build: the triple-term encoder below resolves object-space
+        // ids, which are literal-section ranks offset by this value.
+        this.maxEntityId = entitiesdict.getNumberOfNodes();
+
+        // 3. Build the Isolated Literal Dictionary (O native literals + RDF 1.2
+        // triple terms, which macro-rank after every literal and so form a
+        // contiguous suffix of this section - CHANGELOG.md "Format v5 design notes").
         literalsdict = new MultiTypeDictionaryWriter.Builder()
             .setName("literals")
             .setNodes(builder.getLiterals())
             .setDataTypes(builder.getDataTypes())
             .setStats(builder.getStats())
-            .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING)
+            .section(DictionarySection.LITERALS)
+            .setTripleTermEncoder(this::encodeTripleTerm)
+            .setTripleTermComponentIdBound(maxEntityId + builder.getLiterals().size())
             .build();
-            
-        // Cache this for fast offset math in locateObject
-        this.maxEntityId = entitiesdict.getNumberOfNodes();
 
         // 4. Initialize Bit-Packed Buffers for columnar ID lists
         // Determine required bit-widths based on the dictionary sizes
-        int gBits = (int) (Math.ceil(MinBits(getNumberOfGraphs() + 1) / 8.0) * 8);
-        int sBits = (int) (Math.ceil(MinBits(getNumberOfSubjects() + 1) / 8.0) * 8);
-        int oBits = (int) (Math.ceil(MinBits(getNumberOfObjects() + 1) / 8.0) * 8);
+        int gBits = byteRoundedWidth(getNumberOfGraphs() + 1);
+        int sBits = byteRoundedWidth(getNumberOfSubjects() + 1);
+        int oBits = byteRoundedWidth(getNumberOfObjects() + 1);
 
-        this.graphs = new BitPackedUnSignedLongBuffer(Path.of("graphs"), null, 0, gBits);
-        this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), null, 0, sBits);
-        this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), null, 0, oBits);
+        this.graphs = new BitPackedUnSignedLongBuffer(Path.of("graphs"), gBits);
+        this.subjects = new BitPackedUnSignedLongBuffer(Path.of("subjects"), sBits);
+        this.objects = new BitPackedUnSignedLongBuffer(Path.of("objects"), oBits);
 
         // 5. Populate ID lists from the unique sets collected by the Builder
         logger.info("Populating columnar ID lists...");
@@ -110,9 +111,7 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
     }
     
     private static ArrayList<Node> parallelSort(Set<Node> nodes) {
-        return nodes.parallelStream()
-            .sorted(NodeComparator.INSTANCE)
-            .collect(Collectors.toCollection(ArrayList::new));
+        return NodeSorter.parallelSort(nodes);   // per-sort memoizing comparator (BG-249)
     }
    
     public Quad[] getQuads() {
@@ -139,42 +138,36 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         return maxEntityId + literalsdict.getNumberOfNodes();
     }
    
-    @Override
     public long locateGraph(Node element) {
-        long c = ((Dictionary) entitiesdict).locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
+        return DictionaryIds.require(entitiesdict.locate(element), "Graph", element);
     }
    
-    @Override
     public long locateSubject(Node element) {
-        long c = ((Dictionary) entitiesdict).locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
+        return DictionaryIds.require(entitiesdict.locate(element), "Subject", element);
     }
    
-    @Override
     public long locatePredicate(Node element) {
-        long c = ((Dictionary) predicatesdict).locate(element);
-        if (c > 0) return c;
-        throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
+        return DictionaryIds.require(predicatesdict.locate(element), "Predicate", element);
     }
    
-    @Override
+    /**
+     * Component-id resolution for the literals section's triple terms (PLAN
+     * Part IV §IV.3). Entities and predicates are fully built by the time the
+     * literals section encodes; literal and nested-triple-term objects resolve
+     * through the section's OWN already-sorted ranks (passed in as
+     * {@code ownSection}, since this runs while literalsdict is still under
+     * construction), offset into the object space.
+     */
+    private long[] encodeTripleTerm(Node tt, Dictionary ownSection) {
+        return DictionaryIds.encodeTripleTerm(tt, entitiesdict::locate, predicatesdict::locate, ownSection::locate, maxEntityId);
+    }
+
     public long locateObject(Node element) {
-        if (element.isLiteral()) {
-            long c = ((Dictionary) literalsdict).locate(element);
-            if (c > 0) return c + maxEntityId; // Offset by Entity block size
-        } else {
-            long c = ((Dictionary) entitiesdict).locate(element);
-            if (c > 0) return c;
-        }
-        // Consistent with the other locate* methods: during a write every quad's nodes
-        // are already in the dictionary, so a miss is a build-invariant violation.
-        throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
+        return DictionaryIds.require(
+                DictionaryIds.objectId(element, literalsdict::locate, entitiesdict::locate, maxEntityId), "Object", element);
     }
+
    
-    @Override
     public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);
         
@@ -185,8 +178,8 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         
         // Add columnar ID lists whenever any quads are stored. Gating on the
         // SOURCE quad count (numQuads) left an empty-source file internally
-        // inconsistent: the always-written VoID metadata graph was present in the
-        // indexes, but with no graphs list, containsGraph answered false and ARQ
+        // inconsistent: the VoID metadata graph (when VoidMode != NONE) was
+        // present in the indexes, but with no graphs list, containsGraph answered false and ARQ
         // refused to execute GRAPH queries against rows that are demonstrably there.
         if (graphs.getNumEntries() > 0) {
             graphs.add(dictionary);
@@ -200,20 +193,4 @@ public class PositionalDictionaryWriter implements GSPODictionary, AutoCloseable
         // Implementation for AutoCloseable if needed
     }
 
-    // --- Interface Boilerplate / Unsupported Methods ---
-
-    @Override public Object extractGraph(long id) { throw new UnsupportedOperationException(); }
-    @Override public Object extractSubject(long id) { throw new UnsupportedOperationException(); }
-    @Override public Object extractPredicate(long id) { throw new UnsupportedOperationException(); }
-    @Override public Object extractObject(long id) { throw new UnsupportedOperationException(); }
-    @Override public long getNumberOfNodes() { throw new UnsupportedOperationException(); }
-    @Override public List<Node> getNodes() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamSubjects() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamPredicates() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamObjects() { throw new UnsupportedOperationException(); }
-    @Override public Stream<Node> streamGraphs() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getGraphs() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getSubjects() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getPredicates() { throw new UnsupportedOperationException(); }
-    @Override public Dictionary getObjects() { throw new UnsupportedOperationException(); }
 }

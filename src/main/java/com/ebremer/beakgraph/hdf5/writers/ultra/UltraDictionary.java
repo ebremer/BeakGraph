@@ -1,17 +1,19 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
+import com.ebremer.beakgraph.hdf5.writers.DictionaryIds;
+import com.ebremer.beakgraph.core.Futures;
+import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
-import com.ebremer.beakgraph.hdf5.Types;
+import com.ebremer.beakgraph.core.lib.NodeSorter;
+import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
-import static com.ebremer.beakgraph.utils.UTIL.MinBits;
 import io.jhdf.api.WritableGroup;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
 import org.apache.jena.graph.Node;
@@ -48,9 +50,12 @@ final class UltraDictionary {
     private final long numPredicates;
     private final long numLiterals;
 
-    private final ConcurrentHashMap<Node, Long> entityIds;
-    private final ConcurrentHashMap<Node, Long> predicateIds;
-    private final ConcurrentHashMap<Node, Long> literalIds;
+    // Released by releaseRankMaps() once the packing pass and the column
+    // fills are done: ~50-60 bytes per term of overhead that otherwise stayed
+    // live through the whole HDF5 emission (BG-115).
+    private ConcurrentHashMap<Node, Long> entityIds;
+    private ConcurrentHashMap<Node, Long> predicateIds;
+    private ConcurrentHashMap<Node, Long> literalIds;
 
     private final ForkJoinTask<DictionaryWriter> entitiesTask;
     private final ForkJoinTask<DictionaryWriter> predicatesTask;
@@ -92,20 +97,26 @@ final class UltraDictionary {
                 .setName("entities")
                 .setSortedNodes(new ArrayList<>(Arrays.asList(ents)))
                 .setStats(ingest.getStats())
-                .enable(Types.IRI, Types.BNODE)
+                .section(DictionarySection.ENTITIES)
                 .build());
         predicatesTask = pool.submit(() -> new MultiTypeDictionaryWriter.Builder()
                 .setName("predicates")
                 .setSortedNodes(new ArrayList<>(Arrays.asList(preds)))
                 .setStats(ingest.getStats())
-                .enable(Types.IRI)
+                .section(DictionarySection.PREDICATES)
                 .build());
         literalsTask = pool.submit(() -> new MultiTypeDictionaryWriter.Builder()
                 .setName("literals")
                 .setSortedNodes(new ArrayList<>(Arrays.asList(lits)))
                 .setDataTypes(ingest.getDataTypes())
                 .setStats(ingest.getStats())
-                .enable(Types.DOUBLE, Types.FLOAT, Types.LONG, Types.INTEGER, Types.STRING)
+                .section(DictionarySection.LITERALS)
+                // Component ids resolve against the SORTED ARRAYS, not the rank
+                // maps: this task is submitted before those maps are built and
+                // would race them. Binary search over the same arrays yields
+                // identical ids (ids ARE ranks in these arrays).
+                .setTripleTermEncoder((tt, own) -> encodeTripleTerm(tt, ents, preds, lits))
+                .setTripleTermComponentIdBound((long) ents.length + lits.length)
                 .build());
 
         // ---- id maps from sorted rank (the only thing the index stage needs) ----
@@ -119,9 +130,9 @@ final class UltraDictionary {
 
         // ---- columnar id lists: async, positional-parallel fills ----
         logger.info("Columnar id list population (graphs/subjects/objects) started in the background");
-        int gBits = (int) (Math.ceil(MinBits(getNumberOfGraphs() + 1) / 8.0) * 8);
-        int sBits = (int) (Math.ceil(MinBits(getNumberOfSubjects() + 1) / 8.0) * 8);
-        int oBits = (int) (Math.ceil(MinBits(getNumberOfObjects() + 1) / 8.0) * 8);
+        int gBits = byteRoundedWidth(getNumberOfGraphs() + 1);
+        int sBits = byteRoundedWidth(getNumberOfSubjects() + 1);
+        int oBits = byteRoundedWidth(getNumberOfObjects() + 1);
         graphsTask = pool.submit(() -> populate("graphs", ingest.getUniqueGraphs(), this::locateGraph, gBits, pool));
         subjectsTask = pool.submit(() -> populate("subjects", ingest.getUniqueSubjects(), this::locateSubject, sBits, pool));
         objectsTask = pool.submit(() -> populate("objects", ingest.getUniqueObjects(), this::locateObject, oBits, pool));
@@ -129,8 +140,23 @@ final class UltraDictionary {
 
     private static Node[] sortedArray(Set<Node> nodes) {
         Node[] arr = nodes.toArray(Node[]::new);
-        Arrays.parallelSort(arr, NodeComparator.INSTANCE);
+        NodeSorter.parallelSort(arr);   // per-sort memoizing comparator (BG-249)
         return arr;
+    }
+
+    /**
+     * Triple-term component resolution for the literals encoder (CHANGELOG.md "Format v5 design notes", ultra flavor): s in the entity space, p in the predicate space,
+     * o in the object space - entity id, or maxEntityId + literals-section
+     * rank for literals and nested triple terms.
+     */
+    private static long[] encodeTripleTerm(Node tt, Node[] ents, Node[] preds, Node[] lits) {
+        return DictionaryIds.encodeTripleTerm(tt, n -> rankOf(ents, n), n -> rankOf(preds, n), n -> rankOf(lits, n), ents.length);
+    }
+
+    /** 1-based rank of {@code n} in the NodeComparator-sorted array, or -1. */
+    private static long rankOf(Node[] sorted, Node n) {
+        int i = Arrays.binarySearch(sorted, n, NodeComparator.INSTANCE);
+        return (i >= 0) ? i + 1 : -1;
     }
 
     /** id(node) = 1 + rank in NodeComparator order; built with zero locate() calls. */
@@ -149,7 +175,7 @@ final class UltraDictionary {
     private UltraPackedBuffer populate(String bufferName, Set<Node> nodes, java.util.function.ToLongFunction<Node> locator,
                                        int bits, ForkJoinPool pool) {
         Node[] sorted = nodes.toArray(Node[]::new);
-        Arrays.parallelSort(sorted, NodeComparator.INSTANCE);
+        NodeSorter.parallelSort(sorted);   // per-sort memoizing comparator (BG-249)
         UltraPackedBuffer target = new UltraPackedBuffer(bufferName, sorted.length, bits);
         ParallelRadixSort.runChunks(pool, Math.max(1, Math.min(pool.getParallelism() * 2, sorted.length)),
                 sorted.length, (c, from, to) -> {
@@ -164,33 +190,46 @@ final class UltraDictionary {
     // id resolution (O(1) map lookups)
     // ------------------------------------------------------------------
 
+    /**
+     * Drops the rank maps. Legal only after {@link #awaitStorage()}: the
+     * asynchronous column fills resolve ids through them until then. The
+     * writer calls this right after the storage join so the maps are
+     * collectable during the HDF5 emission (BG-115).
+     */
+    void releaseRankMaps() {
+        entityIds = null;
+        predicateIds = null;
+        literalIds = null;
+    }
+
+    private ConcurrentHashMap<Node, Long> map(ConcurrentHashMap<Node, Long> m) {
+        if (m == null) {
+            throw new IllegalStateException("Rank maps already released (releaseRankMaps)");
+        }
+        return m;
+    }
+
     long locateGraph(Node element) {
-        Long c = entityIds.get(element);
-        if (c != null) return c;
-        throw new IllegalStateException("Cannot resolve Graph (not in dictionary): " + element);
+        return DictionaryIds.require(idOf(map(entityIds), element), "Graph", element);
     }
 
     long locateSubject(Node element) {
-        Long c = entityIds.get(element);
-        if (c != null) return c;
-        throw new IllegalStateException("Cannot resolve Subject (not in dictionary): " + element);
+        return DictionaryIds.require(idOf(map(entityIds), element), "Subject", element);
     }
 
     long locatePredicate(Node element) {
-        Long c = predicateIds.get(element);
-        if (c != null) return c;
-        throw new IllegalStateException("Cannot resolve Predicate (not in dictionary): " + element);
+        return DictionaryIds.require(idOf(map(predicateIds), element), "Predicate", element);
     }
 
     long locateObject(Node element) {
-        if (element.isLiteral()) {
-            Long c = literalIds.get(element);
-            if (c != null) return c + maxEntityId; // literals sit above the entity id block
-        } else {
-            Long c = entityIds.get(element);
-            if (c != null) return c;
-        }
-        throw new IllegalStateException("Cannot resolve Object (not in dictionary): " + element);
+        return DictionaryIds.require(DictionaryIds.objectId(element,
+                n -> idOf(map(literalIds), n), n -> idOf(map(entityIds), n), maxEntityId), "Object", element);
+    }
+
+    /** The map's id, or -1 for a miss (the shared rule reports it). */
+    private static long idOf(ConcurrentHashMap<Node, Long> m, Node element) {
+        Long c = m.get(element);
+        return (c == null) ? -1 : c;
     }
 
     long getNumberOfQuads() { return numQuads; }
@@ -251,17 +290,6 @@ final class UltraDictionary {
     }
 
     private static <T> T join(ForkJoinTask<T> task, String what) throws IOException {
-        try {
-            return task.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while trying to " + what, ex);
-        } catch (ExecutionException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof IOException io) throw io;
-            if (cause instanceof RuntimeException re) throw re;
-            if (cause instanceof Error err) throw err;
-            throw new IOException("Failed to " + what, cause);
-        }
+        return Futures.join(task, what);
     }
 }

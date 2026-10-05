@@ -10,8 +10,6 @@ import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
-import org.apache.jena.sparql.expr.Expr;
-import org.apache.jena.sparql.expr.ExprFunction2;
 import org.apache.jena.sparql.expr.ExprList;
 
 /**
@@ -34,6 +32,15 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     private long gId, pId, oId;
 
     public BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
         this.parentBinding = bnid;
 
         // GPOS Structure
@@ -48,10 +55,14 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         HDTBitmapDirectory dirO = reader.getDirectory('O');
         HDTBitmapDirectory dirS = reader.getDirectory('S');
 
-        if (filter != null && !filter.isEmpty()) analyzeFilters(filter, dict, quad);
+        RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+        minSubId = bounds.minS;
+        maxSubId = bounds.maxS;
 
         // Resolve Graph
-        if (quad.getGraph().isVariable()) {
+        if (presetGi >= 1) {
+            gi = presetGi;
+        } else if (quad.getGraph().isVariable()) {
             long bound = (bnid != null) ? bnid.get(Var.alloc(quad.getGraph())) : NodeId.NONE;
             if (bound == NodeId.NONE) return;
             gi = NodeId.id(bound);
@@ -137,7 +148,18 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
                 hasNext = true;
             }
         } else {
-            advanceToNextValid();
+            // A subject-range hint (FILTER(?s > <x>)) narrows the block with the
+            // same binary searches the other iterators use: the subject list
+            // under one (G,P,O) group is ascending, so [lo, hi] is exact and
+            // no per-row test is needed. The former linear walk skipped every
+            // row below the minimum one by one and kept walking to the end of
+            // the block after the maximum (BG-258).
+            long lo = (minSubId <= 1) ? sStart : Ss.lowerBound(sStart, sEnd, minSubId);
+            long hi = (maxSubId == Long.MAX_VALUE) ? sEnd : Ss.upperBound(sStart, sEnd, maxSubId);
+            if (lo < 0 || hi < 0 || lo > hi) return;
+            i = lo;
+            j = hi + 1;
+            hasNext = true;
         }
 
         if (hasNext) {
@@ -176,69 +198,6 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         }
     }
 
-    private void advanceToNextValid() {
-        hasNext = false;
-        while (i < j) {
-            long subId = Ss.get(i);
-
-            if (subId < minSubId) {
-                i++;
-                continue;
-            }
-            if (subId > maxSubId) {
-                i++;
-                continue;
-            }
-            hasNext = true;
-            return;
-        }
-    }
-
-    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        for (Expr expr : filter.getList()) {
-            if (expr instanceof ExprFunction2 func) {
-                Expr left = func.getArg1();
-                Expr right = func.getArg2();
-                String opcode = func.getOpName();
-                if (left.isVariable() && right.isConstant()) {
-                    applyBound(left.asVar(), opcode, right.getConstant().asNode(), dict, quad);
-                } else if (left.isConstant() && right.isVariable()) {
-                    applyBound(right.asVar(), flipOp(opcode), left.getConstant().asNode(), dict, quad);
-                }
-            }
-        }
-    }
-
-    private String flipOp(String op) {
-        return switch (op) {
-            case ">" -> "<"; case "<" -> ">"; case ">=" -> "<="; case "<=" -> ">="; default -> op;
-        };
-    }
-
-    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        if (!var.equals(quad.getSubject())) return;
-        // Snap the bound to the edges of the whole value-equal cluster (degenerates
-        // to the plain insertion point for non-literal constants); see ValueCluster.
-        long[] c = ValueCluster.of(dict.getSubjects(), value);
-        switch (op) {
-            case ">" -> {
-                 long target = c[1] + 1;
-                 if (Long.compareUnsigned(target, minSubId) > 0) minSubId = target;
-            }
-            case ">=" -> {
-                 if (Long.compareUnsigned(c[0], minSubId) > 0) minSubId = c[0];
-            }
-            case "<" -> {
-                 long target = c[0] - 1;
-                 if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
-            }
-            case "<=" -> {
-                 long target = c[1];
-                 if (Long.compareUnsigned(target, maxSubId) < 0) maxSubId = target;
-            }
-        }
-    }
-
     @Override
     public boolean hasNext() {
         return hasNext;
@@ -254,12 +213,9 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (oVar != null) result.put(oVar, oId);
         if (sVar != null) result.put(sVar, NodeId.pack(NodeType.SUBJECT, currentSubjectId));
         i++;
-        if (i < j) {
-            if (subBound) hasNext = false;
-            else advanceToNextValid();
-        } else {
-            hasNext = false;
-        }
+        // The range [i, j) is exact (a located subject, or the clamped block),
+        // so the next row is deliverable whenever one remains.
+        hasNext = !subBound && i < j;
         return result;
     }
 }

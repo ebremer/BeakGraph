@@ -3,35 +3,18 @@ package com.ebremer.beakgraph;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.ebremer.beakgraph.features.ShapeAnalysis;
-import com.ebremer.halcyon.geometry.Point;
-import com.ebremer.halcyon.geometry.Vector2D;
 import java.awt.image.BufferedImage;
 import org.junit.jupiter.api.Test;
 
 /**
  * Regression tests for feature-math defects:
  * <ul>
- *   <li>Vector2D.Magnitude(Point) computed sqrt(x*x + y+y) - addition instead
- *       of multiplication - and overflowed int for coordinates above ~46340.</li>
  *   <li>ShapeAnalysis.isEdge read the four neighbours without bounds checks, so
  *       a filled pixel on the image border threw ArrayIndexOutOfBoundsException
  *       out of Circumference.</li>
  * </ul>
  */
 class FeatureMathTest {
-
-    @Test
-    void magnitudeUsesSquaresNotSums() {
-        assertEquals(5.0, Vector2D.Magnitude(new Point(3, 4)), 1e-9);
-        assertEquals(13.0, Vector2D.Magnitude(new Point(5, 12)), 1e-9);
-    }
-
-    @Test
-    void magnitudeSurvivesLargeCoordinates() {
-        // 50000^2 overflows int; slide-scale coordinates routinely exceed 46340.
-        double expected = Math.sqrt(2.0 * 50000.0 * 50000.0);
-        assertEquals(expected, Vector2D.Magnitude(new Point(50000, 50000)), 1e-3);
-    }
 
     @Test
     void circumferenceHandlesShapesTouchingTheBorder() {

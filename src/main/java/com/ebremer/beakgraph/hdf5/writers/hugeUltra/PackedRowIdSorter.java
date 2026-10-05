@@ -18,20 +18,33 @@ import java.util.concurrent.ForkJoinPool;
 final class PackedRowIdSorter implements RecordSorter<RowId> {
 
     private final PackedLongSorter sorter;
+    private final int rowBits;
     private final int idBits;
     private final boolean twoWords;
 
     PackedRowIdSorter(Path workDir, String tag, long maxRow, long maxId,
                       int batch, int fanIn, ForkJoinPool pool, ExecutorService exec) {
-        int rowBits = MinBits(Math.max(1, maxRow));
+        this(workDir, tag, maxRow, maxId, batch, fanIn, pool, exec,
+                UltraSorterProvider.defaultMergeConcurrency(fanIn, pool.getParallelism()));
+    }
+
+    PackedRowIdSorter(Path workDir, String tag, long maxRow, long maxId,
+                      int batch, int fanIn, ForkJoinPool pool, ExecutorService exec, int maxConcurrentMerges) {
+        this.rowBits = MinBits(Math.max(1, maxRow));
         this.idBits = MinBits(Math.max(1, maxId));
         int totalBits = rowBits + idBits;
         this.twoWords = totalBits > 63;
-        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec);
+        this.sorter = new PackedLongSorter(workDir, tag, totalBits, batch, fanIn, pool, exec, maxConcurrentMerges);
     }
 
     @Override
     public void add(RowId r) throws IOException {
+        // A row or id past its declared width would overlap the other
+        // component's bits and decode as a different record (BG-139).
+        if ((r.row() >>> rowBits) != 0 || (r.id() >>> idBits) != 0) {
+            throw new IllegalStateException("Row/id exceeds its declared width in sorter (row " + rowBits
+                    + " bits, id " + idBits + " bits): " + r);
+        }
         long lo = (r.row() << idBits) | r.id();
         long hi = twoWords ? (r.row() >>> (64 - idBits)) : 0;
         sorter.add(hi, lo);

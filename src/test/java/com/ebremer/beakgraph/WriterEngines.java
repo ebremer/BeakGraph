@@ -7,10 +7,8 @@ import com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.plaid.PlaidHDF5Writer;
 import com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer;
 import com.ebremer.beakgraph.huge.HugeHDF5Writer;
-import com.ebremer.beakgraph.huge.NativeHdf5File;
 import java.io.File;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.Assumptions;
 
 /**
  * Test-support enumeration of all six writer engines, so cross-engine suites
@@ -28,8 +26,9 @@ public final class WriterEngines {
 
     public record Engine(String name, boolean needsNative, Factory factory) {
         public void assumeAvailable() {
-            Assumptions.assumeTrue(!needsNative || NativeHdf5File.isAvailable(),
-                    "native HDF5 library unavailable");
+            if (needsNative) {
+                NativeTestSupport.assumeNative();
+            }
         }
 
         public void buildStore(File src, File dest) throws Exception {
@@ -40,6 +39,24 @@ public final class WriterEngines {
         public String toString() {
             return name;
         }
+    }
+
+    /** Names the engine the W3C suites and the triple-term tests build with. */
+    public static final String ENGINE_PROPERTY = "beakgraph.test.engine";
+
+    /**
+     * The engine named by {@code -Dbeakgraph.test.engine} (a name from
+     * {@link #all()}, or its {@code methodN} prefix; default method 0). The
+     * vendored RDF 1.2 / SPARQL 1.2 suites and RDF12TripleTermTest build
+     * through this, so CI can re-run them on the disk and parallel engines
+     * (BG-293) instead of asserting six-engine conformance from method 0 alone.
+     */
+    public static Engine selected() {
+        String name = System.getProperty(ENGINE_PROPERTY, "method0");
+        return all().filter(e -> e.name().equals(name) || e.name().startsWith(name + "-"))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown " + ENGINE_PROPERTY + " '" + name
+                        + "'; one of " + all().map(Engine::name).toList()));
     }
 
     public static Stream<Engine> all() {

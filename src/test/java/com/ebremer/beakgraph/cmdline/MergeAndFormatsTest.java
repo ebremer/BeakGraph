@@ -141,6 +141,39 @@ class MergeAndFormatsTest {
         // must stay distinct in the merged store.
         write(src.resolve("bn1.ttl"), "_:b0 <http://ex.org/bp> \"v1\" .\n");
         write(src.resolve("bn2.ttl"), "_:b0 <http://ex.org/bp> \"v2\" .\n");
+        // BG-390: the SAME relative references in two documents are distinct
+        // resources; stored relative to -src they must stay apart, while
+        // <../shared.png> from both lands on the one root-level resource.
+        Files.createDirectories(src.resolve("a"));
+        Files.createDirectories(src.resolve("b"));
+        write(src.resolve("a").resolve("x.ttl"), "<> <http://ex.org/label> \"doc a\" ; <http://ex.org/thumb> <img.png> ; <http://ex.org/up> <../shared.png> .\n");
+        write(src.resolve("b").resolve("y.ttl"), "<> <http://ex.org/label> \"doc b\" ; <http://ex.org/thumb> <img.png> ; <http://ex.org/up> <../shared.png> .\n");
+        // BG-429: JSON-LD with an inline context, a @list container, a @graph
+        // block and a blank node; RDF/XML with parseType="Collection" and
+        // rdf:nodeID - every engine's merge parses them (one parser
+        // configuration, RdfSources.parser).
+        write(src.resolve("m4.jsonld"), """
+            {
+              "@context": {"ex": "http://ex.org/", "items": {"@id": "ex:items", "@container": "@list"}},
+              "@graph": [
+                {"@id": "ex:jdoc", "items": [{"@id": "ex:i1"}, {"@id": "ex:i2"}], "ex:anon": {"ex:tag": "from jsonld"}},
+                {"@id": "ex:gjson", "@graph": [{"@id": "ex:s", "ex:p": {"@id": "ex:o4"}}]}
+              ]
+            }
+            """);
+        write(src.resolve("m5.rdf"), """
+            <?xml version="1.0"?>
+            <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:ex="http://ex.org/">
+              <rdf:Description rdf:about="http://ex.org/xdoc">
+                <ex:parts rdf:parseType="Collection">
+                  <rdf:Description rdf:about="http://ex.org/x1"/>
+                  <rdf:Description rdf:about="http://ex.org/x2"/>
+                </ex:parts>
+                <ex:anon rdf:nodeID="n1"/>
+              </rdf:Description>
+              <rdf:Description rdf:nodeID="n1"><ex:tag>from rdfxml</ex:tag></rdf:Description>
+            </rdf:RDF>
+            """);
         return src;
     }
 
@@ -153,6 +186,30 @@ class MergeAndFormatsTest {
         assertTrue(ask(h5, "ASK { ?b <http://ex.org/bp> \"v2\" }"), "bnode statement from bn2.ttl");
         assertEquals(2, count(h5, "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/bp> ?o }"),
                 "_:b0 from two documents must remain two distinct blank nodes");
+        // Relative references are stored relative to -src (STR() compares the
+        // stored relative form; a <...> in the query would resolve absolutely).
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/label> \"doc a\" FILTER(STR(?s) = \"a/x.ttl\") }"), "<> of a/x.ttl");
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/label> \"doc b\" FILTER(STR(?s) = \"b/y.ttl\") }"), "<> of b/y.ttl");
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/thumb> ?o FILTER(STR(?s) = \"a/x.ttl\" && STR(?o) = \"a/img.png\") }"), "<img.png> of a/x.ttl");
+        assertTrue(ask(h5, "ASK { ?s <http://ex.org/thumb> ?o FILTER(STR(?s) = \"b/y.ttl\" && STR(?o) = \"b/img.png\") }"), "<img.png> of b/y.ttl");
+        assertEquals(2, count(h5, "SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s <http://ex.org/label> ?l }"),
+                "<> from two documents must remain two distinct subjects");
+        assertEquals(1, count(h5, "SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { ?s <http://ex.org/up> ?o FILTER(STR(?o) = \"shared.png\") }"),
+                "<../shared.png> from both documents is the one root-level resource");
+        // JSON-LD: named graph from @graph, RDF list from the @list container, blank node.
+        String rdf = "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> ";
+        assertTrue(ask(h5, "ASK { GRAPH <http://ex.org/gjson> { <http://ex.org/s> <http://ex.org/p> <http://ex.org/o4> } }"), "@graph block from m4.jsonld");
+        assertTrue(ask(h5, rdf + "ASK { <http://ex.org/jdoc> <http://ex.org/items> ?l . ?l rdf:first <http://ex.org/i1> ; rdf:rest ?r . ?r rdf:first <http://ex.org/i2> ; rdf:rest rdf:nil }"),
+                "@list container from m4.jsonld");
+        assertTrue(ask(h5, "ASK { <http://ex.org/jdoc> <http://ex.org/anon> ?b . ?b <http://ex.org/tag> \"from jsonld\" FILTER(isBlank(?b)) }"), "blank node from m4.jsonld");
+        // RDF/XML: parseType="Collection" list, rdf:nodeID blank node.
+        assertTrue(ask(h5, rdf + "ASK { <http://ex.org/xdoc> <http://ex.org/parts> ?l . ?l rdf:first <http://ex.org/x1> ; rdf:rest ?r . ?r rdf:first <http://ex.org/x2> ; rdf:rest rdf:nil }"),
+                "parseType=Collection from m5.rdf");
+        assertTrue(ask(h5, "ASK { <http://ex.org/xdoc> <http://ex.org/anon> ?b . ?b <http://ex.org/tag> \"from rdfxml\" FILTER(isBlank(?b)) }"), "rdf:nodeID from m5.rdf");
+        assertEquals(2, count(h5, "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { ?b <http://ex.org/tag> ?t }"),
+                "the JSON-LD and RDF/XML blank nodes are distinct from each other (and from bn1/bn2's)");
+        assertEquals(4, count(h5, "SELECT (COUNT(DISTINCT ?b) AS ?n) WHERE { { ?b <http://ex.org/tag> ?t } UNION { ?b <http://ex.org/bp> ?v } }"),
+                "four documents, four blank nodes");
     }
 
     @Test
@@ -166,7 +223,7 @@ class MergeAndFormatsTest {
         BeakGraphCLI cli = new BeakGraphCLI(p);
         cli.merge();
 
-        assertEquals(5, cli.getFileCounter().getRDFFileCount());
+        assertEquals(9, cli.getFileCounter().getRDFFileCount());
         assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the merge must succeed");
         assertMerged(p.dest);
         assertEquals(1, p.dest.getParentFile().listFiles().length, "exactly one output file, no per-source .h5");
@@ -208,9 +265,7 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithHugeWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergehuge");
         Parameters p = new Parameters();
         p.src = src.toFile();
@@ -228,9 +283,7 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithHugeUltraWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergehugeultra");
         Parameters p = new Parameters();
         p.src = src.toFile();
@@ -249,9 +302,7 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithPlaidWriter() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-                com.ebremer.beakgraph.huge.NativeHdf5File.isAvailable(),
-                "native HDF5 library unavailable");
+        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergeplaid");
         Parameters p = new Parameters();
         p.src = src.toFile();
@@ -266,6 +317,45 @@ class MergeAndFormatsTest {
 
         assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), "the -method 5 merge must succeed");
         assertMerged(p.dest);
+    }
+
+    /**
+     * BG-422: -dest names a directory by INTENT, not only when it already
+     * exists - a trailing separator or a name without a store suffix means
+     * "put merged.h5 in there"; a name ending in .h5 is the file, and its
+     * missing parent directories are created.
+     */
+    @Test
+    void mergeDestinationIntentIsHonouredForDirectoriesThatDoNotExistYet() throws Exception {
+        Path src = mergeSourceTree("srcmergeintent");
+        String[][] cases = {
+            {dir.resolve("outA").toString() + File.separator, "outA/merged.h5"},
+            {dir.resolve("outB").toString(), "outB/merged.h5"},
+            {dir.resolve("outC").resolve("store.h5").toString(), "outC/store.h5"},
+            {dir.resolve("outD").resolve("store.HDF5").toString(), "outD/store.HDF5"},
+        };
+        for (String[] c : cases) {
+            Parameters p = new Parameters();
+            com.beust.jcommander.JCommander.newBuilder().addObject(p).build()
+                    .parse("-src", src.toString(), "-dest", c[0], "-merge");
+            assertTrue(p.dest instanceof Parameters.DestinationFile, "the -dest converter keeps the raw argument");
+            BeakGraphCLI cli = new BeakGraphCLI(p);
+            cli.merge();
+            assertEquals(0, cli.getFileCounter().getFailedConversionFileCount(), c[0]);
+            File expected = dir.resolve(c[1]).toFile();
+            assertMerged(expected);
+            if (c[1].endsWith("merged.h5")) {
+                assertFalse(new File(c[0].replaceAll("[/\\\\]+$", "")).isFile(), c[0] + " must not be written as a suffix-less file");
+            }
+        }
+        assertTrue(((Parameters.DestinationFile) parseDest(dir.resolve("x").toString() + "/")).trailingSeparator());
+        assertFalse(((Parameters.DestinationFile) parseDest(dir.resolve("x").toString())).trailingSeparator());
+    }
+
+    private static File parseDest(String arg) {
+        Parameters p = new Parameters();
+        com.beust.jcommander.JCommander.newBuilder().addObject(p).build().parse("-dest", arg);
+        return p.dest;
     }
 
     @Test

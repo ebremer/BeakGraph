@@ -1,6 +1,9 @@
 package com.ebremer.beakgraph.utils;
 
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.GeometryCollection;
+import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.CoordinateSequence;
 import org.locationtech.jts.io.WKTReader;
@@ -29,66 +32,7 @@ public class ImageTools {
     // that JTS < 1.19 kept the tokenizer in an instance field and was NOT thread-safe.
     private static final WKTReader WKT_READER = new WKTReader();
 
-    public static void drawPolygonsOnImage(List<Polygon> polygons, BufferedImage image, Color strokeColor, int offX, int offY) {
-        if (polygons == null || polygons.isEmpty() || image == null) {
-            return;
-        }
-        Graphics2D g2d = image.createGraphics();
-        try {
-            if (strokeColor != null) {
-                g2d.setColor(strokeColor);
-                g2d.setStroke(new BasicStroke(1f));
-            }
-            for (Polygon polygon : polygons) {
-                if (polygon == null || polygon.isEmpty()) {
-                    continue;
-                }
-                Shape exterior = coordinateSequenceToShape(polygon.getExteriorRing().getCoordinateSequence(), offX, offY);
-                Path2D.Double path = new Path2D.Double();
-                path.append(exterior, false);
-                for (int h = 0; h < polygon.getNumInteriorRing(); h++) {
-                    Shape hole = coordinateSequenceToShape(polygon.getInteriorRingN(h).getCoordinateSequence(), offX, offY);
-                    path.append(hole, false);
-                }
-                if (strokeColor != null) {
-                    g2d.draw(path);
-                }
-            }
-        } finally {
-            g2d.dispose();
-        }
-    }
 
-    public static void drawWktPolygonsOnImage(List<String> wktList, BufferedImage image, Color strokeColor, int offX, int offY) throws Exception {
-        if (wktList == null || wktList.isEmpty() || image == null) {
-            return;
-        }
-        Graphics2D g2d = image.createGraphics();
-        try {
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-            if (strokeColor != null) {
-                g2d.setColor(strokeColor);
-                g2d.setStroke(new BasicStroke(2f));
-            }
-            for (String wkt : wktList) {
-                List<Polygon> polygons = wktToPolygons(wkt);
-                for (Polygon p : polygons) {
-                    Shape exterior = coordinateSequenceToShape(p.getExteriorRing().getCoordinateSequence(), offX, offY);
-                    Path2D.Double path = new Path2D.Double();
-                    path.append(exterior, false);
-                    for (int h = 0; h < p.getNumInteriorRing(); h++) {
-                        path.append(coordinateSequenceToShape(p.getInteriorRingN(h).getCoordinateSequence(), offX, offY), false);
-                    }
-                    if (strokeColor != null) {
-                        g2d.draw(path);
-                    }
-                }
-            }
-        } finally {
-            g2d.dispose();
-        }
-    }
 
     public static Polygon wktToPolygon(String wkt) throws Exception {
         List<Polygon> polygons = wktToPolygons(wkt);
@@ -116,36 +60,77 @@ public class ImageTools {
         if (wkt == null || wkt.trim().isEmpty()) {
             return Collections.emptyList();
         }
-        Geometry geom = WKT_READER.read(stripCrs(wkt));
+        return toPolygons(WKT_READER.read(stripCrs(wkt)));
+    }
+
+    /**
+     * The polygonal parts of an already-parsed geometry at ANY depth (see
+     * {@link #wktToPolygons}): a MULTIPOLYGON nested inside a
+     * GEOMETRYCOLLECTION, or a collection inside a collection, contributes
+     * every polygon it holds. The one-level walk this replaced saw a nested
+     * MultiPolygon as neither a Polygon nor a leaf and dropped it (BG-371).
+     */
+    public static List<Polygon> toPolygons(Geometry geom) {
         if (geom.isEmpty()) {
             return Collections.emptyList();
         }
         List<Polygon> result = new ArrayList<>();
-        if (geom instanceof Polygon polygon) {
-            result.add(polygon);
-        } else {
-            for (int i = 0; i < geom.getNumGeometries(); i++) {
-                Geometry part = geom.getGeometryN(i);
-                if (part instanceof Polygon p) {
-                    result.add(p);
-                }
-            }
-        }
+        collectPolygons(geom, result);
         return result;
     }
 
-    private static Shape coordinateSequenceToShape(CoordinateSequence seq, int offX, int offY) {
-        Path2D.Double path = new Path2D.Double();
-        if (seq.size() == 0) {
-            return path;
+    private static void collectPolygons(Geometry g, List<Polygon> out) {
+        if (g instanceof Polygon p) {
+            // POLYGON EMPTY as a MULTIPOLYGON / GEOMETRYCOLLECTION member: no
+            // rings, a null envelope - nothing to render or index (BG-375).
+            if (!p.isEmpty()) {
+                out.add(p);
+            }
+            return;
         }
-        org.locationtech.jts.geom.Coordinate c = seq.getCoordinate(0);
-        path.moveTo(c.x - offX, c.y - offY);
-        for (int i = 1; i < seq.size(); i++) {
-            c = seq.getCoordinate(i);
-            path.lineTo(c.x - offX, c.y - offY);
+        for (int i = 0; i < g.getNumGeometries(); i++) {
+            collectPolygons(g.getGeometryN(i), out);
         }
-        path.closePath();
-        return path;
     }
+
+    /**
+     * Everything the spatial index must cover for a geometry, as polygons:
+     * every polygon leaf (any depth), plus the expanded envelope of every
+     * NON-polygonal leaf (POINT, LINESTRING, ... - again at any depth, so the
+     * members of a MULTIPOINT or of a nested collection count individually).
+     * Empty leaves contribute nothing. THE walk both the RAM builder and the
+     * disk pipeline index through ({@code SpatialAugmenter.addSpatial}), so
+     * the engines cannot drift (BG-371).
+     */
+    public static List<Polygon> spatialParts(Geometry geom) {
+        List<Polygon> parts = new ArrayList<>();
+        if (geom.isEmpty()) {
+            return parts;
+        }
+        collectSpatialParts(geom, parts, new GeometryFactory());
+        return parts;
+    }
+
+    private static void collectSpatialParts(Geometry g, List<Polygon> out, GeometryFactory gf) {
+        if (g instanceof Polygon p) {
+            // An empty member's null envelope floors to Long.MIN_VALUE, clamps
+            // to 0 and used to emit a spurious hilbertCell0 = 0 entry (BG-375).
+            if (!p.isEmpty()) {
+                out.add(p);
+            }
+            return;
+        }
+        if (g instanceof GeometryCollection) {
+            for (int i = 0; i < g.getNumGeometries(); i++) {
+                collectSpatialParts(g.getGeometryN(i), out, gf);
+            }
+            return;
+        }
+        if (!g.isEmpty()) {
+            Envelope env = g.getEnvelopeInternal();
+            env.expandBy(0.5);
+            out.add((Polygon) gf.toGeometry(env));
+        }
+    }
+
 }

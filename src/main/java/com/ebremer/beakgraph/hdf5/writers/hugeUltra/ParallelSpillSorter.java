@@ -18,11 +18,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.function.ToLongFunction;
 
 /**
  * The -method 4 object-record external sorter (used for the term columns,
@@ -31,7 +28,8 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  * <li><b>background spilling</b> - a full buffer is sorted and written by a
- *     worker while ingestion continues into a fresh buffer;</li>
+ *     worker while ingestion continues into a fresh buffer (one spill in
+ *     flight; see {@link AbstractSpillingSorter});</li>
  * <li><b>concurrent intermediate merges</b> - independent run groups collapse
  *     in parallel;</li>
  * <li><b>pluggable run format</b> - the term sorter's format groups
@@ -40,9 +38,7 @@ import org.slf4j.LoggerFactory;
  *     this the single biggest I/O reduction of the build).</li>
  * </ul>
  */
-final class ParallelSpillSorter<T> implements RecordSorter<T> {
-
-    private static final Logger logger = LoggerFactory.getLogger(ParallelSpillSorter.class);
+final class ParallelSpillSorter<T> extends AbstractSpillingSorter implements RecordSorter<T> {
 
     /** Serializes a whole SORTED run and streams it back record by record. */
     interface RunFormat<T> {
@@ -57,42 +53,56 @@ final class ParallelSpillSorter<T> implements RecordSorter<T> {
         }
     }
 
-    private final Path workDir;
-    private final String tag;
     private final Comparator<? super T> comparator;
     private final RunFormat<T> format;
     private final int batch;
-    private final int fanIn;
-    private final ExecutorService exec;
+    // Optional byte budget: a run also spills when the sizer's estimates of
+    // the buffered records reach maxBytes - the record cap alone let a batch
+    // of multi-KB literals grow to gigabytes (BG-125). With background
+    // spilling two batches can be live per sorter; the callers' default
+    // budget accounts for that.
+    private final ToLongFunction<? super T> sizer;
+    private final long maxBytes;
 
     private Object[] buffer;
     private int fill = 0;
+    private long bufferedBytes = 0;
     private long size = 0;
-    private final List<Path> runs = new ArrayList<>();
-    private int runCounter = 0;
-    private Future<?> pendingSpill;
-    private boolean consumed = false;
+    private int runsSpilled = 0;
 
     ParallelSpillSorter(Path workDir, String tag, Comparator<? super T> comparator,
                         RunFormat<T> format, int batch, int fanIn, ExecutorService exec) {
-        this.workDir = workDir;
-        this.tag = tag;
+        this(workDir, tag, comparator, format, batch, fanIn, exec, null, Long.MAX_VALUE);
+    }
+
+    ParallelSpillSorter(Path workDir, String tag, Comparator<? super T> comparator,
+                        RunFormat<T> format, int batch, int fanIn, ExecutorService exec,
+                        ToLongFunction<? super T> sizer, long maxBytes) {
+        this(workDir, tag, comparator, format, batch, fanIn, exec, sizer, maxBytes,
+                UltraSorterProvider.defaultMergeConcurrency(fanIn, Runtime.getRuntime().availableProcessors()));
+    }
+
+    ParallelSpillSorter(Path workDir, String tag, Comparator<? super T> comparator,
+                        RunFormat<T> format, int batch, int fanIn, ExecutorService exec,
+                        ToLongFunction<? super T> sizer, long maxBytes, int maxConcurrentMerges) {
+        super(workDir, tag, ".orun", fanIn, exec, maxConcurrentMerges);
         this.comparator = comparator;
         this.format = format;
         this.batch = batch;
-        this.fanIn = Math.max(2, fanIn);
-        this.exec = exec;
+        this.sizer = sizer;
+        this.maxBytes = maxBytes;
         this.buffer = new Object[batch];
     }
 
     @Override
     public void add(T record) throws IOException {
-        if (consumed) {
-            throw new IllegalStateException("Sorter '" + tag + "' already consumed");
-        }
+        requireNotConsumed();
         buffer[fill++] = record;
         size++;
-        if (fill == batch) {
+        if (sizer != null) {
+            bufferedBytes += sizer.applyAsLong(record);
+        }
+        if (fill == batch || bufferedBytes >= maxBytes) {
             spillAsync();
         }
     }
@@ -102,18 +112,21 @@ final class ParallelSpillSorter<T> implements RecordSorter<T> {
         return size;
     }
 
+    /** Runs written so far by a full buffer (not counting intermediate merges). */
+    int runsSpilled() {
+        return runsSpilled;
+    }
+
     private void spillAsync() throws IOException {
         awaitSpill();
         final Object[] arr = buffer;
         final int n = fill;
         buffer = new Object[batch];
         fill = 0;
-        final Path run = workDir.resolve(tag + ".orun" + (runCounter++));
-        runs.add(run);
-        pendingSpill = exec.submit(() -> {
-            writeSortedRun(run, arr, n);
-            return null;
-        });
+        bufferedBytes = 0;
+        runsSpilled++;
+        final Path run = registerRun(n);
+        spillInBackground(() -> writeSortedRun(run, arr, n));
     }
 
     @SuppressWarnings("unchecked")
@@ -129,35 +142,12 @@ final class ParallelSpillSorter<T> implements RecordSorter<T> {
         }
     }
 
-    private void awaitSpill() throws IOException {
-        if (pendingSpill == null) {
-            return;
-        }
-        try {
-            pendingSpill.get();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while spilling sorter '" + tag + "'", ex);
-        } catch (ExecutionException ex) {
-            Throwable c = ex.getCause();
-            if (c instanceof UncheckedIOException uio) throw uio.getCause();
-            if (c instanceof RuntimeException re) throw re;
-            if (c instanceof Error err) throw err;
-            throw new IOException("Spill failed for sorter '" + tag + "'", c);
-        } finally {
-            pendingSpill = null;
-        }
-    }
-
     @Override
     @SuppressWarnings("unchecked")
     public SortedCursor<T> sorted() throws IOException {
-        if (consumed) {
-            throw new IllegalStateException("Sorter '" + tag + "' already consumed");
-        }
-        consumed = true;
+        markConsumed();
         awaitSpill();
-        if (runs.isEmpty()) {
+        if (!hasRuns()) {
             final Object[] arr = buffer;
             final int n = fill;
             buffer = null;
@@ -176,98 +166,72 @@ final class ParallelSpillSorter<T> implements RecordSorter<T> {
             };
         }
         if (fill > 0) {
-            final Path run = workDir.resolve(tag + ".orun" + (runCounter++));
-            runs.add(run);
+            final Path run = registerRun(fill);
             writeSortedRun(run, buffer, fill);
         }
         buffer = null;
-        while (runs.size() > fanIn) {
-            logger.info("Sorter '{}': merging {} runs (fan-in {}, groups in parallel)", tag, runs.size(), fanIn);
-            List<Path> next = new ArrayList<>();
-            List<Future<Path>> merging = new ArrayList<>();
-            for (int i = 0; i < runs.size(); i += fanIn) {
-                final List<Path> group = new ArrayList<>(runs.subList(i, Math.min(runs.size(), i + fanIn)));
-                if (group.size() == 1) {
-                    next.add(group.get(0));
-                    continue;
-                }
-                final Path merged = workDir.resolve(tag + ".orun" + (runCounter++));
-                merging.add(exec.submit(() -> {
-                    // Intermediate merges re-buffer the stream so the grouped
-                    // run format can re-group the (now globally consecutive)
-                    // equal records of the merged run.
-                    try (MergeIterator mi = new MergeIterator(group);
-                         DataOutputStream out = new DataOutputStream(
-                                 new BufferedOutputStream(Files.newOutputStream(merged), 1 << 17))) {
-                        Object[] chunk = new Object[batch];
-                        int k = 0;
-                        while (mi.hasNext()) {
-                            chunk[k++] = mi.next();
-                            if (k == chunk.length) {
-                                format.writeRun(out, chunk, k);
-                                k = 0;
-                            }
-                        }
-                        if (k > 0) {
-                            format.writeRun(out, chunk, k);
-                        }
-                    }
-                    return merged;
-                }));
-            }
-            for (Future<Path> f : merging) {
-                try {
-                    next.add(f.get());
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Interrupted while merging sorter '" + tag + "'", ex);
-                } catch (ExecutionException ex) {
-                    Throwable c = ex.getCause();
-                    if (c instanceof IOException io) throw io;
-                    if (c instanceof UncheckedIOException uio) throw uio.getCause();
-                    if (c instanceof RuntimeException re) throw re;
-                    throw new IOException("Merge failed for sorter '" + tag + "'", c);
+        return new MergeIterator(mergeDownToFanIn());
+    }
+
+    @Override
+    protected void mergeGroup(List<Path> group, Path merged) throws IOException {
+        // Intermediate merges re-buffer the stream so the grouped run format
+        // can re-group the (now globally consecutive) equal records of the
+        // merged run.
+        try (MergeIterator mi = new MergeIterator(group);
+             DataOutputStream out = new DataOutputStream(
+                     new BufferedOutputStream(Files.newOutputStream(merged), 1 << 17))) {
+            Object[] chunk = new Object[batch];
+            int k = 0;
+            long written = 0;
+            while (mi.hasNext()) {
+                chunk[k++] = mi.next();
+                written++;
+                if (k == chunk.length) {
+                    format.writeRun(out, chunk, k);
+                    k = 0;
+                    com.ebremer.beakgraph.huge.HugeBuildPipeline.checkCancelled("merging sorter '" + tag + "'");
                 }
             }
-            runs.clear();
-            runs.addAll(next);
+            if (k > 0) {
+                format.writeRun(out, chunk, k);
+            }
+            recordCount(merged, written);
         }
-        List<Path> finalRuns = new ArrayList<>(runs);
-        runs.clear();
-        return new MergeIterator(finalRuns);
     }
 
     @Override
     public void close() {
         buffer = null;
-        for (Path run : runs) {
-            try {
-                Files.deleteIfExists(run);
-            } catch (IOException e) {
-                logger.warn("Failed to delete spill run {}", run, e);
-            }
-        }
-        runs.clear();
+        super.close();
     }
 
     private final class RunReader {
         final Path path;
         final DataInputStream in;
         final RunFormat.RunStream<T> stream = format.newStream();
+        final Long expected;
+        long read = 0;
         T head;
 
         RunReader(Path path) throws IOException {
             this.path = path;
+            this.expected = expectedCount(path);
             this.in = new DataInputStream(new BufferedInputStream(Files.newInputStream(path), 1 << 17));
         }
 
         boolean advance() throws IOException {
             try {
                 head = stream.read(in);
+                read++;
                 return true;
             } catch (EOFException eof) {
                 head = null;
                 closeAndDelete();
+                if (expected != null && read != expected) {
+                    throw new IOException("Spill run " + path + " of sorter '" + tag + "' truncated: read "
+                            + read + " of " + expected + " records");
+                }
                 return false;
             }
         }

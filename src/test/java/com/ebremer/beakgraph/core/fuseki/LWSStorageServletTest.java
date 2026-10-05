@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.core.fuseki;
 
+import org.junit.jupiter.api.io.TempDir;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
@@ -53,7 +54,7 @@ class LWSStorageServletTest {
             doc.getJsonArray("service").getJsonObject(0).getString("type"));
         assertEquals("https://base.example/description",
             doc.getJsonArray("service").getJsonObject(0).getString("serviceEndpoint"));
-        assertEquals("https://base.example/sparql",
+        assertEquals("https://base.example/rdf",
             doc.getJsonArray("service").getJsonObject(1).getString("serviceEndpoint"));
     }
 
@@ -80,8 +81,8 @@ class LWSStorageServletTest {
     }
 
     @Test
-    void resolveWithinRejectsTraversalAndAbsolutePaths() throws Exception {
-        Path root = Files.createTempDirectory("lws-test").toRealPath();
+    void resolveWithinRejectsTraversalAndAbsolutePaths(@TempDir Path tmp) throws Exception {
+        Path root = tmp.toRealPath();
         Path base = root.toAbsolutePath().normalize();
 
         // A normal relative path resolves inside the root.
@@ -148,6 +149,64 @@ class LWSStorageServletTest {
     }
 
     @Test
+    void negotiationHonoursQualityAndWildcards() {
+        java.util.List<String> offered = LWSStorageServlet.CONTAINER_TYPES;
+        assertEquals("text/html", LWSStorageServlet.negotiate(null, offered), "no Accept: the first offered type");
+        assertEquals("text/html", LWSStorageServlet.negotiate("*/*", offered), "curl's default");
+        assertEquals("application/ld+json", LWSStorageServlet.negotiate("text/turtle;q=0.1, application/ld+json", offered));
+        assertEquals("application/json", LWSStorageServlet.negotiate("application/json", offered),
+                "a plain application/json request is answered as application/json, not ld+json");
+        assertEquals("application/ld+json", LWSStorageServlet.negotiate("application/ld+json;profile=user-profile", offered),
+                "parameters other than q are ignored");
+        assertNull(LWSStorageServlet.negotiate("text/turtle;q=0", java.util.List.of("text/turtle")), "q=0 excludes");
+        assertEquals("text/html", LWSStorageServlet.negotiate("text/turtle;q=0, */*", offered), "excluded, then anything else");
+        assertEquals("text/turtle", LWSStorageServlet.negotiate("text/turtle, */*;q=0.1", offered), "Jena's shape: the exact type wins over */*");
+        assertEquals("text/turtle", LWSStorageServlet.negotiate("text/*", java.util.List.of("application/json", "text/turtle")));
+        assertNull(LWSStorageServlet.negotiate("image/png", offered), "nothing acceptable: 406");
+        assertEquals("application/lws+json", LWSStorageServlet.negotiate("application/json;q=0.5, application/lws+json;q=0.9", offered));
+    }
+
+    @Test
+    void contentDispositionEscapesAndEncodes() {
+        assertEquals("attachment; filename=\"a\\\\b\\\"c.txt\"; filename*=UTF-8''a%5Cb%22c.txt",
+                LWSStorageServlet.contentDisposition("a\\b\"c.txt"));
+        assertEquals("attachment; filename=\"_bersicht.pdf\"; filename*=UTF-8''%C3%9Cbersicht.pdf",
+                LWSStorageServlet.contentDisposition("\u00dcbersicht.pdf"));
+        assertEquals("attachment; filename=\"trailing\\\\\"; filename*=UTF-8''trailing%5C",
+                LWSStorageServlet.contentDisposition("trailing\\"));
+        assertEquals("attachment; filename=\"plain file.txt\"; filename*=UTF-8''plain%20file.txt",
+                LWSStorageServlet.contentDisposition("plain file.txt"));
+    }
+
+    @Test
+    void ifNoneMatchIsAWeakListComparison() {
+        String etag = "\"abc\"";
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"abc\""), etag));
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"nope\", \"abc\""), etag), "a list");
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("W/\"abc\""), etag), "a weak validator");
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("*"), etag), "the wildcard");
+        assertTrue(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"x\"", "\"abc\""), etag), "a repeated field");
+        assertFalse(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of("\"nope\""), etag));
+        assertFalse(LWSStorageServlet.ifNoneMatchMatches(java.util.List.of(""), etag));
+    }
+
+    @Test
+    void aliasIsOnlyTheExactSegment() {
+        assertEquals("", LWSStorageServlet.stripAlias("HalcyonStorage"));
+        assertEquals("x/y", LWSStorageServlet.stripAlias("HalcyonStorage/x/y"));
+        assertEquals("HalcyonStorageArchive/z", LWSStorageServlet.stripAlias("HalcyonStorageArchive/z"), "a name sharing the prefix is not the alias");
+        assertEquals("plain", LWSStorageServlet.stripAlias("plain"));
+    }
+
+    @Test
+    void configuredBaseIsNormalizedPerInstance() {
+        assertNull(LWSStorageServlet.normalizeBase(null));
+        assertNull(LWSStorageServlet.normalizeBase("  "));
+        assertEquals("https://x.example/", LWSStorageServlet.normalizeBase("https://x.example"));
+        assertEquals("https://x.example/", LWSStorageServlet.normalizeBase("https://x.example/"));
+    }
+
+    @Test
     void fileUrisAreNotExposableToClients() {
         org.apache.jena.rdf.model.Model m = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
         assertFalse(LWSStorageServlet.exposableToClient(
@@ -170,9 +229,11 @@ class LWSStorageServletTest {
     }
 
     @Test
-    void resolveWithinRejectsSymlinkEscape() throws Exception {
-        Path root = Files.createTempDirectory("lws-sym").toRealPath();
-        Path outside = Files.createTempFile("lws-outside", ".txt");   // a real file outside the root
+    void resolveWithinRejectsSymlinkEscape(@TempDir Path tmp) throws Exception {
+        // Both inside the @TempDir (cleaned up by JUnit, BG-187), the file
+        // OUTSIDE the servlet root so the containment check is still exercised.
+        Path root = Files.createDirectories(tmp.resolve("root")).toRealPath();
+        Path outside = Files.writeString(tmp.resolve("outside.txt"), "");
         Path link = root.resolve("escape");
         try {
             Files.createSymbolicLink(link, outside);
@@ -181,5 +242,18 @@ class LWSStorageServletTest {
         }
         // The link is lexically inside the root but really points outside, so it must be rejected.
         assertNull(LWSStorageServlet.resolveWithin(root, "escape"));
+    }
+
+    @Test
+    void toLiveUriPercentEncodesRawNames() {
+        // BG-40: the canonical model holds raw file names; every advertised
+        // id, Link target and RDF subject must be a valid IRI.
+        String canonicalRoot = com.ebremer.beakgraph.lws.LWSMetadataGenerator.CANONICAL_BASE;
+        assertEquals("http://example:9999/big%20sub/a%20b.h5",
+                LWSStorageServlet.toLiveUri(canonicalRoot + "/big sub/a b.h5", "http://example:9999/"));
+        assertEquals("http://example:9999/100%25%20sure%23tag",
+                LWSStorageServlet.toLiveUri(canonicalRoot + "/100% sure#tag", "http://example:9999/"));
+        assertEquals("http://example:9999/plain/file.h5",
+                LWSStorageServlet.toLiveUri(canonicalRoot + "/plain/file.h5", "http://example:9999/"), "nothing to encode: unchanged");
     }
 }

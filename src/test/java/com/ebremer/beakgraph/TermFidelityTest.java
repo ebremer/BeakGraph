@@ -21,7 +21,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Term-fidelity harness (PLAN Phase 1.4): parse -> write -> read -> assert
+ * Term-fidelity harness: parse -> write -> read -> assert
  * DATASET ISOMORPHISM against the source, for every writer engine. Isomorphism
  * is the RDF-correct form of "term set equality": it catches a store that
  * silently rewrites terms (the dirLangString corruption built "successfully"
@@ -56,6 +56,10 @@ class TermFidelityTest {
         :s :str "plain string" .
         :s :long "this string is deliberately longer than the sixty-four byte zstd compression threshold used by the FCD writer" .
         :s :uni "caf\\u00E9 \\u00FCn\\u00EFcode \\U0001F426" .
+        :s :uniIri <http://ex.org/\\u540D\\u524D/\\u0100> .
+        :s :uniIri <http://ex.org/\\u00FF> .
+        _:b\u00E9 :label "non-Latin-1 blank node label" .
+        _:b\u0100 :label "label beyond 0xFF" .
         :s :lang "hello"@en .
         :s :lang "hello"@en-GB .
         :s :lang "bonjour"@fr .
@@ -79,11 +83,19 @@ class TermFidelityTest {
         :s :list "[9]"^^cdt:List .
         :s :list "[10]"^^cdt:List .
         :s :map "{\\"k\\": 5}"^^cdt:Map .
+        :s :tt <<( :a2 :b2 :c2 )>> .
+        :s :tt2 <<( :a2 :b2 <<( :nx :ny "nested" )>> )>> .
+        :s :tt3 <<( _:shared :inTerm "bnode co-refers inside and out" )>> .
+        :s :tt4 <<( :a2 :b2 "hello"@en--ltr )>> .
+        :s :tt5 <<( :a2 :b2 "hello"@en--rtl )>> .
+        :s :tt6 <<( :onlyInsideS :onlyInsideP :onlyInsideO )>> .
+        :s :tt7 <<( :a2 :b2 "42"^^xsd:int )>> .
 
         :g1 {
             :a :b :c .
             _:shared :in "g1" .
             :a :val "1"^^xsd:int .
+            :a :ttg <<( :a2 :b2 :c2 )>> .
         }
 
         _:gname {

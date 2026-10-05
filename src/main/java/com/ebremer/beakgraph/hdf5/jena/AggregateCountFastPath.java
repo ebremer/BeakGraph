@@ -73,6 +73,7 @@ public final class AggregateCountFastPath {
      */
     public static QueryIterator tryExecute(OpGroup opGroup, QueryIterPeek input, ExecutionContext execCxt) {
         if (!(execCxt.getActiveGraph() instanceof BeakGraph bg)) return null;
+        if (bg.isGraphSetView()) return null; // several graphs: the count is a de-duplicated union, not an index level
         if (!(bg.getReader() instanceof HDF5Reader reader)) return null;
 
         // --- Algebra shape ---

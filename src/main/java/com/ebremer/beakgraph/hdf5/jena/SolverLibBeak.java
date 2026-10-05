@@ -35,7 +35,14 @@ public class SolverLibBeak {
     }
 
     public static BindingNodeId convert(Binding binding, BeakGraph bGraph) {
-        if ( binding instanceof BindingBG bindingRaptor ) {
+        // Reuse the id layer only when it was produced against THIS store's
+        // dictionary. Ids are dictionary ranks, so a row from another store
+        // (GRAPH <a> joined with GRAPH <b> in one dataset - the stage generator
+        // is global) would feed rank 4711 of A's terms straight into B's
+        // iterators as an unrelated term. Compare readers, not graphs:
+        // BGDatasetGraph.getGraph mints a fresh view per call over one reader.
+        if ( binding instanceof BindingBG bindingRaptor
+                && bindingRaptor.getGraph().getReader() == bGraph.getReader() ) {
             return bindingRaptor.getBindingId();
         }
         BindingNodeId b = new BindingNodeId(binding);
@@ -51,6 +58,12 @@ public class SolverLibBeak {
             // Rely on the node table cache for efficency - we will likely be
             // repeatedly looking up the same node in different bindings.
             long id = bGraph.getReader().getNodeTable().getNodeIdForNode(n);
+            // A layer holds four bindings; an incoming Jena binding can carry
+            // more (VALUES with many columns, joins re-entering a BGP, embedded
+            // triple-term vars) - chain layers rather than overflow.
+            if (b.isFull()) {
+                b = new BindingNodeId(b);
+            }
             // Record even a "does not exist" id: HDF5Reader.Read short-circuits a pattern
             // bound to it to no rows, and BindingBG falls back to the parent term for output.
             b.put(v, id);

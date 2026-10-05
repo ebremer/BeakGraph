@@ -1,12 +1,13 @@
 package com.ebremer.beakgraph.w3c;
 
+import java.nio.file.Files;
+import java.io.OutputStream;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
-
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
-import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
+import com.ebremer.beakgraph.WriterEngines;
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -36,13 +37,12 @@ import org.junit.jupiter.api.io.TempDir;
  * Manifest-driven runner for the vendored W3C RDF 1.2 test suites
  * (src/test/resources/w3c/rdf12 - see its README for provenance).
  *
- * <p>BeakGraph rejects the RDF 1.2 terms it cannot yet store (triple terms -
- * base-direction literals are storable as of format v4), so the runner asserts
- * CONTAINMENT semantics for those: a test input containing unsupported terms
- * must abort the build loudly; everything else must build and round-trip
- * isomorphically. When Phase 3 lands triple-term storage,
- * {@link #containsUnsupportedTerms} empties and the same manifests become the
- * conformance oracle - no test code changes needed for new manifest entries.
+ * <p>Format v5 stores every RDF 1.2 term kind - base-direction literals since
+ * v4, triple terms since v5 - so {@link #containsUnsupportedTerms} is empty
+ * and every manifest entry runs the full build-and-round-trip branch: this
+ * suite is the RDF 1.2 CONFORMANCE ORACLE. (The containment machinery in
+ * containmentSplit is kept for any future term kind that repeats the
+ * reject-loudly-first lifecycle.)
  *
  * <p>Per test type:
  * <ul>
@@ -105,8 +105,12 @@ class W3CRdf12SuiteTest {
                             .getObject().asResource().getURI())
                     : null;
             String label = entry.getLocalName() + ": " + name;
+            // Suite-qualified artifact id: several suites reuse entry names
+            // (trig12-bnode-1 exists in both trig syntax and trig eval), and on
+            // Windows the first store's mapped file blocks a same-named rebuild.
+            String artifactId = suite.dir().replace('/', '-') + "." + entry.getLocalName();
             tests.add(DynamicTest.dynamicTest(label,
-                    () -> runEntry(type, suite.lang(), assumedBase, action, result, entry.getLocalName())));
+                    () -> runEntry(type, suite.lang(), assumedBase, action, result, artifactId)));
         }
         return DynamicContainer.dynamicContainer(suite.dir() + " (" + tests.size() + ")", tests);
     }
@@ -161,7 +165,9 @@ class W3CRdf12SuiteTest {
         // relative IRIs, which BeakGraph deliberately stores unresolved), then
         // the store must hold an isomorphic dataset.
         Path absolutized = tmp.resolve(id + ".nq");
-        RDFDataMgr.write(java.nio.file.Files.newOutputStream(absolutized), parsed, Lang.NQUADS);
+        try (OutputStream os = Files.newOutputStream(absolutized)) {
+            RDFDataMgr.write(os, parsed, Lang.NQUADS);
+        }
         build(absolutized.toFile(), dest);
         DatasetGraph reference = (expectedOrNull != null) ? expectedOrNull : parsed;
         try (BeakGraph bg = BG.getBeakGraph(dest)) {
@@ -174,8 +180,11 @@ class W3CRdf12SuiteTest {
 
     // ---- helpers ----
 
+    /** Builds with the engine named by -Dbeakgraph.test.engine (method 0 by default; see WriterEngines.selected). */
     private static void build(File src, File dest) throws Exception {
-        HDF5Writer.Builder().setSource(src).setDestination(dest).build().write();
+        WriterEngines.Engine engine = WriterEngines.selected();
+        engine.assumeAvailable();
+        engine.buildStore(src, dest);
     }
 
     private static DatasetGraph parse(Path file, Lang lang, String base) {
@@ -193,18 +202,9 @@ class W3CRdf12SuiteTest {
     }
 
     private static boolean containsUnsupportedTerms(DatasetGraph dsg) {
-        // Base-direction literals became storable in format v4 (Phase 2), so
-        // only triple terms remain unsupported; Phase 3 empties this method and
-        // the whole suite becomes a pure conformance oracle.
-        Iterator<Quad> it = dsg.find(Node.ANY, Node.ANY, Node.ANY, Node.ANY);
-        while (it.hasNext()) {
-            Quad q = it.next();
-            for (Node n : new Node[]{q.getGraph(), q.getSubject(), q.getPredicate(), q.getObject()}) {
-                if (n != null && n.isTripleTerm()) {
-                    return true;
-                }
-            }
-        }
+        // Empty since format v5: base-direction literals became storable in v4
+        // (Phase 2) and triple terms in v5 (Phase 3), so every RDF 1.2 term
+        // kind stores and the whole suite asserts round-trip conformance.
         return false;
     }
 

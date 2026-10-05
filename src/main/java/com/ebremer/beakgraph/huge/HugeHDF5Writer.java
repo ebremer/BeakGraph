@@ -1,17 +1,12 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
-import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,8 +18,12 @@ import org.slf4j.LoggerFactory;
  * spilled to a temp workspace, dictionaries are derived by external merge sort,
  * ids are assigned by sort-merge joins, and every dataset streams into the file
  * through the {@link StreamingHdf5} backend. Peak heap stays bounded by the
- * configured spill batch sizes; the size ceiling moves from RAM to free disk in
- * the workspace (roughly a few times the source size, transiently).
+ * configured spill batches - a record cap per sorter plus a byte budget per
+ * term sorter ({@link Builder#setTermSpillBytes}), so multi-KB literals
+ * cannot blow the bound (BG-125); the size ceiling moves from RAM to free
+ * disk in the workspace (roughly a few times the source size, transiently).
+ * The one exception is a JSON-LD source, which Jena parses whole in memory
+ * (see {@link com.ebremer.beakgraph.utils.RdfSources#isStreaming}).
  *
  * <p>Usage mirrors HDF5Writer:
  * <pre>{@code
@@ -60,98 +59,50 @@ public class HugeHDF5Writer implements BeakGraphWriter {
     @Override
     public void write() throws IOException {
         logger.info("Writing BeakGraph (huge/disk-based) to {}", builder.getDestination());
+        // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
+        StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
-        // Same publish discipline as HDF5Writer: build into a sibling temp file,
-        // swap in atomically on success, never disturb a previous good artifact.
-        Path tmp = dest.resolveSibling(dest.getFileName() + ".tmp");
-        Path workBase = (builder.workDir != null) ? builder.workDir
-                : (dest.toAbsolutePath().getParent() != null ? dest.toAbsolutePath().getParent() : Path.of("."));
-        Path workspace = Files.createTempDirectory(workBase, ".bghuge-");
+        Path workspace = Files.createTempDirectory(builder.workspaceBase(dest), ".bghuge-");
         // -merge: every source in the list is parsed into this one store
         // (blank nodes stay distinct per document); otherwise the single src.
         List<File> inputs = builder.getSources().isEmpty()
                 ? List.of(builder.getSource())
                 : builder.getSources();
         try {
-            try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
-                    inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
-                    workspace, builder.termSpillBatch, builder.idSpillBatch, builder.mergeFanIn)) {
-                pipeline.run(tmp);
-            }
-            try {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException e) {
-                Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException | RuntimeException ex) {
-            try {
-                Files.deleteIfExists(tmp);
-            } catch (IOException cleanup) {
-                logger.warn("Failed to remove temp output {}", tmp, cleanup);
-            }
-            throw ex;
+            // AtomicPublish.build: a unique sibling temp file, published only
+            // on success, removed on ANY failure - an OutOfMemoryError included,
+            // the realistic failure of this engine - with dest untouched; the
+            // one publish discipline for every engine (BG-119, BG-140, BG-314).
+            AtomicPublish.build(dest, tmp -> {
+                // Prove the installed backend (native, or a replaced provider) can
+                // write a file here before any work is done (BG-135).
+                StreamingHdf5.requireWritable(workspace);
+                StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
+                try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
+                        inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
+                        workspace, builder.getTermSpillBatch(), builder.getIdSpillBatch(), builder.getMergeFanIn(),
+                        builder.getTermSpillBytes())) {
+                    pipeline.setSourceRoot(builder.getSourceRoot());
+                    pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
+                    pipeline.run(tmp);
+                }
+            });
         } finally {
-            deleteRecursively(workspace);
+            Workspaces.deleteTree(workspace, logger);
         }
         logger.info("Write complete: {}", builder.getDestination());
     }
 
-    private static void deleteRecursively(Path dir) {
-        try {
-            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.deleteIfExists(file);
-                    return FileVisitResult.CONTINUE;
-                }
+    /**
+     * Sequential-engine defaults ({@link AbstractDiskWriterBuilder}):
+     * {@code 1 << 18} term and {@code 1 << 21} id records per run, fan-in 64,
+     * term byte budget heap / 8 - one batch live per sorter, merges one at a
+     * time.
+     */
+    public static class Builder extends AbstractDiskWriterBuilder<Builder> {
 
-                @Override
-                public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
-                    Files.deleteIfExists(d);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException e) {
-            logger.warn("Failed to remove workspace {}", dir, e);
-        }
-    }
-
-    public static class Builder extends AbstractGraphBuilder<Builder> {
-
-        private Path workDir;
-        private int termSpillBatch = 1 << 18;  // 262144 (term, row) records per column before a run spills
-        private int idSpillBatch = 1 << 21;    // 2M numeric records per run for the id/quad sorts
-        private int mergeFanIn = 64;
-
-        /**
-         * Directory for the build workspace (spill runs, staged buffers).
-         * Defaults to the destination's directory - the workspace transiently
-         * needs disk on the order of a few times the (uncompressed) source.
-         */
-        public Builder setWorkDirectory(Path dir) {
-            this.workDir = dir;
-            return this;
-        }
-
-        /** Records buffered in RAM per term column before spilling a sorted run. */
-        public Builder setTermSpillBatch(int records) {
-            if (records < 1) throw new IllegalArgumentException("termSpillBatch must be >= 1");
-            this.termSpillBatch = records;
-            return this;
-        }
-
-        /** Records buffered in RAM per numeric (id/quad) sorter before spilling. */
-        public Builder setIdSpillBatch(int records) {
-            if (records < 1) throw new IllegalArgumentException("idSpillBatch must be >= 1");
-            this.idSpillBatch = records;
-            return this;
-        }
-
-        /** Maximum spill runs merged in one pass. */
-        public Builder setMergeFanIn(int fanIn) {
-            if (fanIn < 2) throw new IllegalArgumentException("mergeFanIn must be >= 2");
-            this.mergeFanIn = fanIn;
-            return this;
+        public Builder() {
+            super(1 << 18, 1 << 21, 64, SorterProvider.defaultTermSpillBytes(1));
         }
 
         @Override
@@ -166,6 +117,7 @@ public class HugeHDF5Writer implements BeakGraphWriter {
 
         @Override
         public HugeHDF5Writer build() {
+            requireSourceAndDestination();
             return new HugeHDF5Writer(this);
         }
     }

@@ -37,10 +37,16 @@ import org.slf4j.LoggerFactory;
  *       ({@link BGIteratorPOS}).</li>
  * </ul>
  * Anything else - union graph (serialized dedup), bound/repeated variables,
- * concrete s/o (index lookups, not scans), sub-threshold ranges - stays
- * sequential. Range FILTERs remain eligible: every chunk applies the same
- * value-bound narrowing internally, and chunks that fall outside the bounds
- * simply produce nothing.
+ * concrete s/o (index lookups, not scans), sub-threshold ranges, a store read
+ * through a channel (HTTP: one lock, one cache) - stays sequential; so does a
+ * pattern re-executed per outer row (see {@code PatternMatchBG.solveFirst}).
+ * Range FILTERs remain eligible, but only bounds on the CHUNKED position prune
+ * chunks (object bounds for the POS route, which narrows each chunk's object
+ * slice by binary search; subject bounds for the SPO route); bounds on the
+ * other positions are applied per row inside every chunk, so such a filtered
+ * scan costs the same total work as the sequential scan, spread across
+ * threads. The bounds themselves are resolved once per store and pattern
+ * shape ({@link RangeBounds}), not once per chunk.
  *
  * <p>Sizing: parallelize when the chunkable position range is at least
  * {@code -Dbeakgraph.scan.parallel.threshold} (default 65536; 0 or negative
@@ -59,9 +65,13 @@ final class ScanChunks {
         long threshold = Long.getLong("beakgraph.scan.parallel.threshold", 65_536L);
         if (threshold <= 0) return null;
         if (!(bg.getReader() instanceof HDF5Reader reader)) return null;
+        // A channel-backed (HTTP) store serializes every read behind one lock
+        // and one block cache: chunk workers would only contend on it while
+        // thrashing the cache across their disjoint regions (BG-247).
+        if (reader.isChannelBacked()) return null;
         if (!(reader.getDictionary() instanceof PositionalDictionaryReader dict)) return null;
         Node ng = bg.getNamedGraph();
-        if (ng == null || Quad.isUnionGraph(ng)) return null; // union dedup is a serial point
+        if (ng == null || Quad.isUnionGraph(ng) || bg.isGraphSetView()) return null; // union dedup is a serial point
         Node g = Quad.isDefaultGraph(ng) ? Quad.defaultGraphIRI : ng;
 
         Node s = triple.getSubject();
@@ -116,19 +126,9 @@ final class ScanChunks {
         return n.isVariable() && (b0 == null || !b0.containsKey(Var.alloc(n)));
     }
 
-    /**
-     * The graph's block at an index's first level, or null when absent/empty
-     * (a padding block's first id is 0 - the writer pads empty slots with one
-     * all-zero dummy row).
-     */
+    /** The graph's block at an index's first level, or null when absent / empty / padding (see RangeSelect). */
     private static long[] levelRange(IndexReader ir, char component, long gi) {
-        BitPackedUnSignedLongBuffer bitmap = ir.getBitmapBuffer(component);
-        long start = RangeSelect.blockStart(ir.getDirectory(component), bitmap, gi);
-        if (start == -1) return null;
-        long end = RangeSelect.blockEnd(ir.getDirectory(component), bitmap, gi, start);
-        if (start > end) return null;
-        if (ir.getIDBuffer(component).get(start) == 0) return null;
-        return new long[]{start, end};
+        return RangeSelect.firstLevelRange(ir, component, gi);
     }
 
     private interface ChunkFactory {
@@ -138,7 +138,11 @@ final class ScanChunks {
     private static ParallelScan build(String kind, long[] range, ChunkFactory factory, ExecutionContext execCxt) {
         long size = range[1] - range[0] + 1;
         int procs = Runtime.getRuntime().availableProcessors();
-        long chunkSize = Math.max(MIN_CHUNK, size / (2L * procs));
+        // -Dbeakgraph.scan.parallel.minchunk lowers the floor so a small store
+        // still splits into several chunks (the two-scan operator shapes and the
+        // cancel path in ParallelScanTest need more than one worker per scan).
+        long minChunk = Long.getLong("beakgraph.scan.parallel.minchunk", MIN_CHUNK);
+        long chunkSize = Math.max(Math.max(1, minChunk), size / (2L * procs));
         int chunks = (int) Math.min(4L * procs, (size + chunkSize - 1) / chunkSize);
         List<Supplier<Iterator<BindingNodeId>>> suppliers = new ArrayList<>(chunks);
         long per = (size + chunks - 1) / chunks;

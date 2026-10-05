@@ -11,8 +11,6 @@ import java.util.NoSuchElementException;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.core.Var;
-import org.apache.jena.sparql.expr.Expr;
-import org.apache.jena.sparql.expr.ExprFunction2;
 import org.apache.jena.sparql.expr.ExprList;
 
 /**
@@ -22,6 +20,7 @@ import org.apache.jena.sparql.expr.ExprList;
 public class BGIteratorSO implements Iterator<BindingNodeId> {
     private final BindingNodeId parentBinding;
     private final BitPackedUnSignedLongBuffer So;
+    private final NodeTable nodeTable;
 
     private long i;  // current object index
     private long j;  // end object index (inclusive)
@@ -31,13 +30,30 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
 
+    // Triple-term pattern in the object position (<<( ?a :b ?c )>>): candidates
+    // in the (already triple-term-suffix-clamped) range unify per row; failures
+    // are skipped through the ttPending look-ahead. Null for every other shape,
+    // keeping the ordinary emit path branch-identical.
+    private TripleTermMatcher ttMatcher;
+    private BindingNodeId ttPending;
+
     // Row-emission plan, computed once: which variables each row binds, with the
     // constant G/S/P packed NodeIds pre-built (only the object id varies per row).
     private Var gVar, sVar, pVar, oVar;
     private long gId, sId, pId;
 
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1);
+    }
+
+    /**
+     * @param presetGi the graph's dictionary id when the caller already holds
+     *                 it (a walk over the columnar graph list, BG-259); -1 to
+     *                 resolve the graph from the pattern and binding
+     */
+    BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
         this.parentBinding = bnid;
+        this.nodeTable = nodeTable;
 
         // GSPO Structure mapping
         BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
@@ -51,12 +67,12 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         HDTBitmapDirectory dirP = reader.getDirectory('P');
         HDTBitmapDirectory dirO = reader.getDirectory('O');
 
-        if (filter != null && !filter.isEmpty()) {
-            analyzeFilters(filter, dict, quad);
-        }
+        RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+        minObjId = bounds.minO;
+        maxObjId = bounds.maxO;
 
         // Resolve Graph
-        gi = resolveNode(quad.getGraph(), dict.getGraphs(), bnid);
+        gi = (presetGi >= 1) ? presetGi : resolveNode(quad.getGraph(), dict.getGraphs(), bnid);
         if (gi < 1) return;
 
         // Resolve Subject
@@ -98,7 +114,19 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         // yield no match - not a full range scan (which fabricated phantom rows,
         // e.g. ASK with a non-existent object answered true).
         Node oNode = quad.getObject();
-        boolean oUnbound = oNode.isVariable() && (bnid == null || !bnid.containsKey(Var.alloc(oNode)));
+        boolean oTTPattern = TripleTermMatcher.isPattern(oNode);
+        if (oTTPattern) {
+            ttMatcher = TripleTermMatcher.compile(oNode, dict);
+            if (ttMatcher == null) {
+                return; // pattern cannot match anything in this store
+            }
+            // Stored triple terms are the object space's contiguous suffix -
+            // clamp the scan to it (a triple-term-free store empties the range
+            // immediately via the lowerBound below).
+            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
+        }
+        boolean oUnbound = oTTPattern
+                || (oNode.isVariable() && (bnid == null || !bnid.containsKey(Var.alloc(oNode))));
 
         if (oUnbound) {
             // Case: Object is a variable, apply min/max ID range filters
@@ -173,60 +201,24 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         return dictionary.locate(node);
     }
 
-    private void analyzeFilters(ExprList filter, PositionalDictionaryReader dict, Quad quad) {
-        for (Expr expr : filter.getList()) {
-            if (expr instanceof ExprFunction2 func) {
-                Expr left = func.getArg1();
-                Expr right = func.getArg2();
-                String opcode = func.getOpName();
-                if (left.isVariable() && right.isConstant()) {
-                    applyBound(left.asVar(), opcode, right.getConstant().asNode(), dict, quad);
-                } else if (left.isConstant() && right.isVariable()) {
-                    applyBound(right.asVar(), flipOp(opcode), left.getConstant().asNode(), dict, quad);
-                }
-            }
-        }
-    }
-
-    private String flipOp(String op) {
-        return switch (op) {
-            case ">" -> "<"; case "<" -> ">"; case ">=" -> "<="; case "<=" -> ">="; default -> op;
-        };
-    }
-
-    private void applyBound(Var var, String op, Node value, PositionalDictionaryReader dict, Quad quad) {
-        if (!var.equals(quad.getObject())) return;
-        // Snap the bound to the edges of the whole value-equal cluster: value-equal
-        // but term-distinct literals ("5"^^xsd:int vs "5"^^xsd:integer) occupy
-        // adjacent distinct ids, and the raw exact-term insertion point can land
-        // inside that cluster, silently dropping qualifying boundary rows.
-        long[] c = ValueCluster.of(dict.getObjects(), value);
-        switch (op) {
-            case ">" -> {
-                long target = c[1] + 1;
-                if (Long.compareUnsigned(target, minObjId) > 0) minObjId = target;
-            }
-            case ">=" -> {
-                if (Long.compareUnsigned(c[0], minObjId) > 0) minObjId = c[0];
-            }
-            case "<" -> {
-                long target = c[0] - 1;
-                if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-            }
-            case "<=" -> {
-                long target = c[1];
-                if (Long.compareUnsigned(target, maxObjId) < 0) maxObjId = target;
-            }
-        }
-    }
-
     @Override
     public boolean hasNext() {
-        return hasNext;
+        if (ttMatcher == null) {
+            return hasNext;
+        }
+        primeTT();
+        return ttPending != null;
     }
 
     @Override
     public BindingNodeId next() {
+        if (ttMatcher != null) {
+            primeTT();
+            if (ttPending == null) throw new NoSuchElementException();
+            BindingNodeId r = ttPending;
+            ttPending = null;
+            return r;
+        }
         if (!hasNext) throw new NoSuchElementException();
         BindingNodeId result = new BindingNodeId(this.parentBinding);
         if (gVar != null) result.put(gVar, gId);
@@ -236,5 +228,24 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         i++;
         hasNext = (i <= j);
         return result;
+    }
+
+    /**
+     * Look-ahead for triple-term patterns: walks the clamped object range and
+     * keeps the first candidate that unifies (embedded variables bound into
+     * chained layers); non-unifying candidates are skipped so hasNext() only
+     * answers true when next() really has a row.
+     */
+    private void primeTT() {
+        while (ttPending == null && hasNext) {
+            long oid = So.get(i);
+            i++;
+            hasNext = (i <= j);
+            BindingNodeId row = new BindingNodeId(this.parentBinding);
+            if (gVar != null) row.put(gVar, gId);
+            if (sVar != null) row.put(sVar, sId);
+            if (pVar != null) row.put(pVar, pId);
+            ttPending = ttMatcher.matchAndBind(oid, row, nodeTable);
+        }
     }
 }

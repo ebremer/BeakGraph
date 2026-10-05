@@ -18,22 +18,19 @@
 
 package com.ebremer.ns;
 
-import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
-import org.apache.jena.rdf.model.ResourceFactory; // Import added
-
-public class GEO {
+import org.apache.jena.rdf.model.ResourceFactory;
 
 /**
- * GeoSPARQL 1.1 is an OGC Standard.
+ * GeoSPARQL 1.1 (an OGC Standard) ontology vocabulary.
  * <p>
- * See <a href="http://www.opengis.net/ont/geosparql">GeoSPARQL 1.1 is an OGC Standard</a>.
- * <p>
- * <a href="http://www.opengis.net/ont/geosparql#>Base URI and namepace</a>.
+ * See <a href="http://www.opengis.net/ont/geosparql">GeoSPARQL 1.1</a>;
+ * <a href="http://www.opengis.net/ont/geosparql#">base URI and namespace</a>.
+ * (A former unused Model field here forced Jena initialization and allocated
+ * a graph the first time any constant was touched, on the writer's hot path.)
  */
-    private static final Model m = ModelFactory.createDefaultModel();
+public class GEO {
     public static final String NS = "http://www.opengis.net/ont/geosparql#";
 
     public static final Resource Feature = ResourceFactory.createResource(NS + "Feature");

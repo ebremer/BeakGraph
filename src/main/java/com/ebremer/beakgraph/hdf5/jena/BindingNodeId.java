@@ -68,6 +68,16 @@ public class BindingNodeId implements Iterable<Var> {
         return get(v) != NodeId.NONE;
     }
 
+    /**
+     * True when this layer's four inline slots are used. Callers that need to
+     * bind more variables (triple-term unification binds embedded variables on
+     * top of a row's own) CHAIN a new layer - the struct itself is never
+     * widened, so ordinary rows keep the allocation- and branch-free shape.
+     */
+    boolean isFull() {
+        return n == 4;
+    }
+
     private void append(Var v, long id) {
         switch (n) {
             case 0 -> { v0 = v; i0 = id; }

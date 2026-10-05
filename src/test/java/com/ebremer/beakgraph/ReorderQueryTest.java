@@ -24,6 +24,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 /**
  * End-to-end check that multi-pattern BGPs - which now flow through the join-reorder transform in
@@ -100,5 +104,38 @@ class ReorderQueryTest {
         String q = "PREFIX ex: <" + NS + "> "
                  + "SELECT ?fn WHERE { ?p ex:name ?pn . ?p ex:knows ?f . ?f ex:name ?fn }";
         assertEquals(new TreeSet<>(Set.of("Bob", "Dave", "Frank")), select(q, "fn"));
+    }
+
+    @Test
+    void namedGraphViewsShareTheDatasetStatistics() {
+        // BG-1: every GRAPH ?g view used to load the VoID statistics afresh.
+        org.apache.jena.sparql.core.DatasetGraph dsg = ds.asDatasetGraph();
+        ReorderTransformation root = bg.getReorderTransform();
+        BeakGraph v1 = (BeakGraph) dsg.getGraph(org.apache.jena.graph.NodeFactory.createURI(NS + "g1"));
+        BeakGraph v2 = (BeakGraph) dsg.getGraph(org.apache.jena.graph.NodeFactory.createURI(NS + "g2"));
+        assertSame(root, v1.getReorderTransform(), "a view shares the dataset graph's transform");
+        assertSame(root, v2.getReorderTransform());
+        assertSame(root, ((BeakGraph) dsg.getGraph(org.apache.jena.sparql.core.Quad.unionGraph)).getReorderTransform());
+        // A standalone view (no dataset) still builds its own.
+        BeakGraph standalone = new BeakGraph(org.apache.jena.graph.NodeFactory.createURI(NS + "g1"), bg.getReader());
+        assertNotSame(root, standalone.getReorderTransform());
+        assertEquals(root.getClass(), standalone.getReorderTransform().getClass());
+        // And GRAPH ?g queries with multi-pattern BGPs still answer.
+        java.util.Set<String> names = select("SELECT ?g ?s WHERE { GRAPH ?g { ?s <" + NS + "knows> ?o . ?o <" + NS + "name> ?n } }", "s");
+        assertNotNull(names);
+    }
+
+    @Test
+    void graphStreamsAreTheFindBasedDefaults() {
+        // BG-263: stream() / stream(s,p,o) used to throw.
+        assertEquals(bg.size(), bg.stream().count());
+        assertEquals(bg.size(), org.apache.jena.sparql.core.DatasetGraphFactory.wrap(bg).stream().count());
+        long knows = bg.stream(org.apache.jena.graph.Node.ANY, org.apache.jena.graph.NodeFactory.createURI(NS + "knows"),
+                org.apache.jena.graph.Node.ANY).count();
+        assertEquals(bg.find(org.apache.jena.graph.Node.ANY, org.apache.jena.graph.NodeFactory.createURI(NS + "knows"),
+                org.apache.jena.graph.Node.ANY).toList().size(), knows);
+        assertTrue(knows > 0);
+        BeakGraph view = (BeakGraph) ds.asDatasetGraph().getGraph(org.apache.jena.graph.NodeFactory.createURI(NS + "g1"));
+        assertEquals(view.size(), view.stream().count());
     }
 }

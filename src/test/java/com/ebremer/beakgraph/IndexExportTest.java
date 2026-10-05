@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph;
 
+import org.junit.jupiter.api.parallel.Isolated;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.VoidMode;
 import com.ebremer.beakgraph.hdf5.jena.IndexExport;
@@ -39,6 +40,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The store is built with VoID statistics so an internal metadata graph
  * exists and must be excluded, exactly as the generic path excludes it.
  */
+// Mutates JVM-global state (system properties / ARQ modes / a shared server):
+// never interleave with other classes should parallel execution be enabled (BG-189).
+@Isolated
 class IndexExportTest {
 
     @TempDir
