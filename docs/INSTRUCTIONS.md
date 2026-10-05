@@ -418,8 +418,9 @@ the last reader closes).
   produce **isomorphic** stores (blank-node labels are rank-derived rather than
   relabelled).
 * See `SPECIFICATIONS.md` (repo root) for the precise on-disk format — enough
-  to re-create BeakGraph files without this source tree — and
-  `docs/BeakGraph-HDF5-Architecture.pptx` for the original design slides.
+  to re-create BeakGraph files without this source tree — and the architecture
+  overview (`docs/architecture/`, the "Architecture" section of
+  https://ebremer.github.io/BeakGraph/) for the original design.
 
 ## Format versions
 

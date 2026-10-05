@@ -33,24 +33,31 @@ repo_pages:
   - source: RDF_1.2-compliance.md
     title: RDF 1.2 compliance
     description: How BeakGraph conforms to RDF 1.1, RDF 1.2 and SPARQL-CDT, and where it deliberately deviates.
-    nav_order: 4
+    nav_order: 5
     permalink: /rdf-1.2-compliance/
     toc: true
   - source: benchmarks/README.md
     title: Benchmarks
     description: The JMH benchmarks for the BeakGraph read path.
-    nav_order: 5
+    nav_order: 6
     permalink: /benchmarks/
   - source: CHANGELOG.md
     title: Changelog
     description: Notable changes to BeakGraph and its on-disk format.
-    nav_order: 6
+    nav_order: 7
     permalink: /changelog/
 repo_files:
   - beakgraph.png
 
 exclude:
   - INSTRUCTIONS.md   # published through repo_pages
+
+# Every page gets the theme's layout unless it names another.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
 
 search_enabled: true
 heading_anchors: true
@@ -61,6 +68,12 @@ aux_links:
   BeakGraph on GitHub: https://github.com/ebremer/BeakGraph
 # Where each repo_pages document links to its source (_includes/footer_custom.html).
 source_url: https://github.com/ebremer/BeakGraph/blob/master/
+
+# {: .note } paragraphs (docs/architecture/).
+callouts:
+  note:
+    title: Note
+    color: blue
 
 kramdown:
   toc_levels: 2..3

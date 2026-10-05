@@ -74,7 +74,7 @@ try (BeakGraph bg = BG.getBeakGraph(new File("mydata.ttl.h5"))) {
 | [RDF 1.2 compliance](rdf-1.2-compliance/) | Conformance to RDF 1.1, RDF 1.2 and SPARQL-CDT, and the documented deviations. |
 | [Benchmarks](benchmarks/) | The JMH benchmarks for the read path. |
 | [Changelog](changelog/) | Release notes and the format version history. |
-| [Architecture slides](BeakGraph-HDF5-Architecture.pptx) | The original HDF5 design (PowerPoint). |
+| [Architecture](architecture/) | The original design of the on-disk format, slide by slide: file layout, dictionaries, indexes, rank/select, the query path and the writers. |
 
 ## Background
 
