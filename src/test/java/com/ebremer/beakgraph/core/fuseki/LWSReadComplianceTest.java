@@ -30,9 +30,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * HTTP-level conformance of the unauthenticated read surface against the LWS
- * Protocol 1.0 editor's draft of 2026-10-05 (w3c.github.io/lws-protocol/lws10-core/):
+ * Protocol 1.0 editor's draft of 2026-10-23 (w3c.github.io/lws-protocol/lws10-core/):
  * storage discovery (rel=lws#storage, the application/lws+cid storage
- * description), container representation shape and media-type negotiation,
+ * description), container representation shape and media-type negotiation
+ * (the LWS profile: profiled RDF isomorphic to application/lws+json),
  * link-based pagination (first/last/next/prev in Link headers, full totalItems
  * with page-scoped items), mandatory Link relations (type / up / linkset /
  * storage), RFC 9264 linksets, validators + conditional requests, single-range
@@ -498,6 +499,90 @@ class LWSReadComplianceTest {
         assertEquals("application/lws+json", contentType(get("sub", "Accept", "application/lws+json")),
                 "no charset parameter is appended to the echoed type");
         assertTrue(r.headers().allValues("Vary").stream().anyMatch(v -> v.contains("Accept")));
+    }
+
+    /**
+     * The LWS context's definitions of the terms a container representation
+     * uses, as lws10-vocab/vocabulary.yml declares them (format, modified and
+     * size are dcterms / schema.org terms; modified is an xsd:dateTime and
+     * size an xsd:long). Inlined: https://www.w3.org/ns/lws/v1 does not
+     * resolve yet, and a test must not fetch a context anyway.
+     */
+    private static final String LWS_CONTEXT_TERMS = """
+        {
+          "id": "@id",
+          "type": "@type",
+          "Container": "https://www.w3.org/ns/lws#Container",
+          "DataResource": "https://www.w3.org/ns/lws#DataResource",
+          "items": {"@id": "https://www.w3.org/ns/lws#items", "@type": "@id"},
+          "totalItems": "https://www.w3.org/ns/lws#totalItems",
+          "format": "http://purl.org/dc/terms/format",
+          "modified": {"@id": "http://purl.org/dc/terms/modified", "@type": "http://www.w3.org/2001/XMLSchema#dateTime"},
+          "size": {"@id": "https://schema.org/size", "@type": "http://www.w3.org/2001/XMLSchema#long"}
+        }""";
+
+    /** The RDF a container's {@code application/lws+json} body encodes: the JSON-LD read under {@link #LWS_CONTEXT_TERMS}. */
+    private static Model lwsJsonAsRdf(String body) {
+        JsonObject doc = parse(body);
+        assertEquals(LWSStorageServlet.LWS_CONTEXT, doc.getString("@context"), body);
+        String inlined = Json.createObjectBuilder(doc).add("@context", parse(LWS_CONTEXT_TERMS)).build().toString();
+        Model m = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        org.apache.jena.riot.RDFParser.fromString(inlined, org.apache.jena.riot.Lang.JSONLD).parse(m);
+        return m;
+    }
+
+    private static Model turtle(String body) {
+        Model m = org.apache.jena.rdf.model.ModelFactory.createDefaultModel();
+        org.apache.jena.riot.RDFParser.fromString(body, org.apache.jena.riot.Lang.TURTLE).parse(m);
+        return m;
+    }
+
+    @Test
+    void rdfInTheLwsProfileIsIsomorphicToTheLwsJson() throws Exception {
+        String profile = "; profile=\"" + LWSStorageServlet.LWS_CONTEXT + "\"";
+        // A small container, the paginated root, and a later page below it.
+        for (String path : new String[] {"sub", "", "big%20sub?page=2"}) {
+            Model expected = lwsJsonAsRdf(get(path, "Accept", "application/lws+json").body());
+            assertFalse(expected.isEmpty(), path);
+            for (String type : new String[] {"text/turtle", "application/ld+json"}) {
+                HttpResponse<String> r = get(path, "Accept", type + profile);
+                assertEquals(200, r.statusCode(), path + " as " + type);
+                assertEquals(type + profile, contentType(r), "a response in the LWS profile carries that profile");
+                Model got = type.equals("text/turtle") ? turtle(r.body()) : lwsJsonAsRdf(r.body());
+                assertTrue(got.isIsomorphicWith(expected), path + " as " + type + " is not isomorphic to its lws+json:\n" + r.body());
+                assertTrue(r.headers().allValues("Vary").stream().anyMatch(v -> v.contains("Accept")));
+            }
+        }
+
+        // The datatypes the LWS context gives: a JSON integer is xsd:integer,
+        // size is coerced to xsd:long, modified to xsd:dateTime.
+        Model sub = turtle(get("sub", "Accept", "text/turtle" + profile).body());
+        org.apache.jena.rdf.model.Resource a = sub.getResource(base + "sub/a.txt");
+        assertEquals(org.apache.jena.vocabulary.XSD.xlong.getURI(), a.getProperty(com.ebremer.ns.LWS.size).getLiteral().getDatatypeURI());
+        assertEquals(3L, a.getProperty(com.ebremer.ns.LWS.size).getLong());
+        assertEquals("text/plain", a.getProperty(com.ebremer.ns.LWS.format).getString());
+        assertEquals(org.apache.jena.vocabulary.XSD.dateTime.getURI(), a.getProperty(com.ebremer.ns.LWS.modified).getLiteral().getDatatypeURI());
+        assertEquals(org.apache.jena.vocabulary.XSD.integer.getURI(),
+                sub.getResource(base + "sub").getProperty(com.ebremer.ns.LWS.totalItems).getLiteral().getDatatypeURI());
+
+        // Plain Turtle is the model listing with navigation, which is not in the
+        // profile and is not labelled with it: a distinct representation.
+        HttpResponse<String> plain = get("sub", "Accept", "text/turtle");
+        HttpResponse<String> profiled = get("sub", "Accept", "text/turtle" + profile);
+        assertEquals("text/turtle", contentType(plain));
+        assertFalse(turtle(plain.body()).isIsomorphicWith(lwsJsonAsRdf(get("sub", "Accept", "application/lws+json").body())),
+                "the plain listing says more than the profile allows, so it must not claim the profile");
+        assertFalse(plain.headers().firstValue("ETag").orElseThrow().equals(profiled.headers().firstValue("ETag").orElseThrow()),
+                "plain and profiled Turtle have distinct ETags");
+        HttpResponse<String> head = http.send(HttpRequest.newBuilder(URI.create(base + "sub"))
+                .timeout(java.time.Duration.ofSeconds(60))
+                .header("Accept", "text/turtle" + profile)
+                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, head.statusCode());
+        assertEquals("text/turtle" + profile, contentType(head));
+        assertEquals(profiled.headers().firstValue("ETag"), head.headers().firstValue("ETag"));
+        assertEquals("", head.body());
     }
 
     @Test

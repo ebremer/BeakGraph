@@ -124,13 +124,16 @@ file's live size and modification time; a file replaced since the last scan is p
 scan. In single-file mode the LWS surface is empty (every path but `/rdf` and `/sparql` answers 404).
 
 The storage follows the read side of the
-[LWS Protocol 1.0](https://w3c.github.io/lws-protocol/lws10-core/) editor's draft of 2026-10-05.
+[LWS Protocol 1.0](https://w3c.github.io/lws-protocol/lws10-core/) editor's draft of 2026-10-23.
 `/description` is the storage URI: it serves the storage description (`application/lws+cid`,
 whose `StorageRoot` service is `/`), and every response links it with
-`rel="https://www.w3.org/ns/lws#storage"`. Containers answer `application/lws+json` (or the
-equivalent `application/ld+json` / `application/json`; HTML for browsers, Turtle on request) with
+`rel="https://www.w3.org/ns/lws#storage"`. Containers answer `application/lws+json` (the same
+body as `application/ld+json` / `application/json`; HTML for browsers, Turtle on request) with
 `id`, `type`, `totalItems` and `items` - each with `id`, `type`, `format`, `size` and `modified` -
-and paginate through `first` / `next` / `prev` / `last` Link headers above 5 members. Each
+and paginate through `first` / `next` / `prev` / `last` Link headers above 5 members. Asked for
+in the LWS profile (`text/turtle; profile="https://www.w3.org/ns/lws/v1"`, or the same for
+`application/ld+json`), a container answers exactly the RDF of its `application/lws+json` body and
+echoes the profile; plain Turtle is the metadata model's listing plus navigation. Each
 resource's links (`type`, `up`, `linkset`, storage) are also an RFC 9264 linkset at
 `<resource>.meta`. Every response carries an ETag and Last-Modified, conditional requests are
 honoured, and errors are RFC 9457 problem details. The storage is read-only by design: PUT, PATCH,
@@ -146,7 +149,10 @@ The endpoint is **unauthenticated and read-only by design**: every route serves 
 POST) only, no SPARQL Update or Graph Store write is registered in either mode, and SPARQL
 `SERVICE` federation is enabled so queries can join against other endpoints. Run it behind
 whatever authenticates and authorises your users (a reverse proxy, the application that embeds
-it); those concerns are deliberately not built in here. Put only data you are willing to serve
+it); those concerns are deliberately not built in here. If such a front end answers 401 on the LWS
+surface, the current LWS draft requires that response to carry `WWW-Authenticate` with a
+`resource_metadata` parameter (RFC 9728 protected resource metadata) and the
+`rel="https://www.w3.org/ns/lws#storage"` Link. Put only data you are willing to serve
 under `-endpoint`: everything not hidden or reserved is listed and downloadable, and every `.h5`
 answers arbitrary read queries (bounded by `-timeout`). The server listens on all interfaces.
 

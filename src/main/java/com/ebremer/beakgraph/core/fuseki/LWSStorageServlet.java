@@ -10,6 +10,7 @@ import org.eclipse.jetty.server.HttpConnectionFactory;
 import org.eclipse.jetty.server.Server;
 import com.ebremer.beakgraph.pool.BeakGraphPool;
 import com.ebremer.ns.LWS;
+import org.apache.jena.datatypes.xsd.XSDDatatype;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.riot.RDFDataMgr;
@@ -46,20 +47,24 @@ import org.slf4j.LoggerFactory;
 /**
  * Read-only LWS (W3C Linked Web Storage) storage endpoint over a generated
  * metadata model + on-disk files. The unauthenticated read surface follows the
- * LWS Protocol 1.0 editor's draft of 2026-10-05
+ * LWS Protocol 1.0 editor's draft of 2026-10-23
  * (w3c.github.io/lws-protocol/lws10-core/):
  *
  * <ul>
  *   <li>The storage URI ({@code <base>description}) serves the storage
  *       description - a Controlled Identifier document, {@code application/lws+cid}
- *       by default - whose StorageRoot service is the root container.</li>
+ *       by default - whose StorageRoot service is the root container. It
+ *       describes no MoveResource capability: no {@code up} link can change.</li>
  *   <li>Container GETs return the LWS container representation (JSON-LD with
  *       the {@code https://www.w3.org/ns/lws/v1} context: id / type /
  *       totalItems / items, each item with id / type / format / size /
- *       modified) negotiated among {@code application/lws+json},
- *       {@code application/ld+json} (optionally with the LWS profile) and
- *       {@code application/json} with an identical body; Turtle and HTML
- *       remain as additional representations.</li>
+ *       modified) as {@code application/lws+json}, and the same body as
+ *       {@code application/ld+json} and {@code application/json}. A request
+ *       for an RDF media type with the LWS profile ({@code application/ld+json}
+ *       or {@code text/turtle} with {@code profile="https://www.w3.org/ns/lws/v1"})
+ *       gets a representation RDF isomorphic to the {@code application/lws+json}
+ *       one, labelled with that profile. Plain Turtle and HTML remain as
+ *       additional representations.</li>
  *   <li>Pagination is link-based per the spec: when membership exceeds
  *       {@link #PAGE_SIZE}, responses carry {@code Link} headers with
  *       {@code rel="first"/"last"/"next"/"prev"}; the body's {@code items}
@@ -105,8 +110,9 @@ public class LWSStorageServlet extends HttpServlet {
     private static final Property FORMAT = LWS.format;
     private static final Property SCHEMA_SIZE = LWS.size;
     private static final Property MODIFIED = LWS.modified;
-    // Turtle-body pagination navigation, mirroring the normative Link headers.
-    // The JSON body carries none: the LWS context defines no term for them.
+    // Plain-Turtle pagination navigation, mirroring the normative Link headers.
+    // The JSON body and the LWS-profile RDF carry none: the LWS context
+    // defines no term for them.
     private static final Property AS_FIRST = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#first");
     private static final Property AS_LAST = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#last");
     private static final Property AS_NEXT = ResourceFactory.createProperty("https://www.w3.org/ns/activitystreams#next");
@@ -117,8 +123,18 @@ public class LWSStorageServlet extends HttpServlet {
     static final String LWS_JSON = "application/lws+json";
     /** LWS media type for the storage description (a Controlled Identifier document). */
     static final String LWS_CID = "application/lws+cid";
-    /** The LWS JSON-LD context; as a profile it makes {@code application/ld+json} equivalent to {@link #LWS_JSON}. */
+    /**
+     * The LWS JSON-LD context. The same URI identifies the LWS profile (RFC
+     * 6906): a container representation in an RDF media type conforms to it
+     * when it is RDF isomorphic to the {@link #LWS_JSON} one.
+     */
     static final String LWS_CONTEXT = "https://www.w3.org/ns/lws/v1";
+    /**
+     * The offered container media types a client can ask for in the LWS
+     * profile: RDF media types that define a {@code profile} parameter
+     * (LWS Content Negotiation lists JSON-LD, Turtle, TriG, N-Triples, N-Quads).
+     */
+    static final Set<String> LWS_PROFILE_TYPES = Set.of("application/ld+json", "text/turtle");
     /** The Controlled Identifier context, first in the storage description's {@code @context}. */
     static final String CID_CONTEXT = "https://www.w3.org/ns/cid/v1";
     /** rel of the Link to the storage URI that every GET/HEAD response carries (LWS Discovery and Binding). */
@@ -675,31 +691,39 @@ public class LWSStorageServlet extends HttpServlet {
     static final List<String> DESCRIPTION_TYPES = List.of(LWS_CID, "application/ld+json", "application/json");
 
     /**
-     * The Content-Type a negotiated container representation is served as. LWS
-     * treats {@code application/ld+json; profile="https://www.w3.org/ns/lws/v1"}
-     * as equivalent to {@code application/lws+json} and requires the response
-     * to carry the requested media type, so a request for the profiled type
-     * gets the profile back; every other choice is served as negotiated.
+     * Whether the negotiated container media type is to be served in the LWS
+     * profile: it is one of {@link #LWS_PROFILE_TYPES} and the request asked
+     * for it with that profile.
+     */
+    static boolean inLwsProfile(String chosen, String accept) {
+        return chosen != null && LWS_PROFILE_TYPES.contains(chosen) && requestsLwsProfile(accept, chosen);
+    }
+
+    /**
+     * The Content-Type a negotiated container representation is served as.
+     * LWS requires a response in the LWS profile to carry the same
+     * {@code profile} parameter the request named, so a profiled choice gets
+     * it back; every other choice is served as negotiated.
      */
     static String containerContentType(String chosen, String accept) {
-        return "application/ld+json".equals(chosen) && requestsLwsProfile(accept)
-                ? "application/ld+json; profile=\"" + LWS_CONTEXT + "\""
+        return inLwsProfile(chosen, accept)
+                ? chosen + "; profile=\"" + LWS_CONTEXT + "\""
                 : chosen;
     }
 
     /**
-     * Whether an Accept header asks for {@code application/ld+json} with the LWS
+     * Whether an Accept header asks for {@code mediaType} with the LWS
      * profile: a media range of that type, not excluded by {@code q=0}, whose
      * {@code profile} parameter (a space-separated list of URIs, quoted or not)
      * names {@link #LWS_CONTEXT}.
      */
-    static boolean requestsLwsProfile(String accept) {
+    static boolean requestsLwsProfile(String accept, String mediaType) {
         if (accept == null) {
             return false;
         }
         for (String range : accept.split(",")) {
             String[] parts = range.trim().split(";");
-            if (!parts[0].trim().equalsIgnoreCase("application/ld+json")) {
+            if (!parts[0].trim().equalsIgnoreCase(mediaType)) {
                 continue;
             }
             boolean profiled = false;
@@ -1133,36 +1157,82 @@ public class LWSStorageServlet extends HttpServlet {
     }
 
     /**
+     * One entry of a container representation's {@code items}: the live id,
+     * whether it is a container, its format (DataResources only, where it is
+     * required), size and modification time. The JSON body and the LWS-profile
+     * RDF are both written from these, so they cannot disagree.
+     */
+    private record ListedItem(String id, boolean container, String format, Long size, String modified) {}
+
+    private List<ListedItem> listedItems(String base, List<Resource> pageItems) {
+        List<ListedItem> listed = new ArrayList<>(pageItems.size());
+        for (Resource it : pageItems) {
+            boolean isC = it.hasProperty(RDF.type, LWS_CONTAINER);
+            String format = null;
+            if (!isC) {
+                Statement m = it.getProperty(FORMAT);
+                format = m != null ? m.getString() : "application/octet-stream";
+            }
+            LiveItem live = liveItem(it);
+            listed.add(new ListedItem(toLiveUri(it.getURI(), base), isC, format, live.size(), live.updated()));
+        }
+        return listed;
+    }
+
+    /**
      * The LWS container representation (JSON-LD, {@code https://www.w3.org/ns/lws/v1}
      * context): id / type / totalItems reflect the full membership; {@code items}
      * holds the (possibly paginated) current page, each entry with id, type,
-     * format (DataResources only, where it is required), size and modified.
-     * Pagination travels in the Link headers alone: the LWS context defines no
-     * term for navigation, so the body carries none.
+     * format, size and modified. Pagination travels in the Link headers alone:
+     * the LWS context defines no term for navigation, so the body carries none.
      */
-    private String containerJson(String base, String liveId, long totalItems, List<Resource> pageItems) {
+    private static String containerJson(String liveId, long totalItems, List<ListedItem> pageItems) {
         JsonObjectBuilder root = Json.createObjectBuilder()
             .add("@context", LWS_CONTEXT)
             .add("id", liveId)
             .add("type", "Container")
             .add("totalItems", totalItems);
         JsonArrayBuilder arr = Json.createArrayBuilder();
-        for (Resource it : pageItems) {
+        for (ListedItem it : pageItems) {
             JsonObjectBuilder o = Json.createObjectBuilder();
-            boolean isC = it.hasProperty(RDF.type, LWS_CONTAINER);
-            o.add("id", toLiveUri(it.getURI(), base));
-            o.add("type", isC ? "Container" : "DataResource");
-            if (!isC) {
-                Statement m = it.getProperty(FORMAT);
-                o.add("format", m != null ? m.getString() : "application/octet-stream");
-            }
-            LiveItem live = liveItem(it);
-            if (live.size() != null) o.add("size", live.size());
-            if (live.updated() != null) o.add("modified", live.updated());
+            o.add("id", it.id());
+            o.add("type", it.container() ? "Container" : "DataResource");
+            if (it.format() != null) o.add("format", it.format());
+            if (it.size() != null) o.add("size", it.size());
+            if (it.modified() != null) o.add("modified", it.modified());
             arr.add(o);
         }
         root.add("items", arr);
         return writeJson(root.build());
+    }
+
+    /**
+     * The RDF that {@link #containerJson} encodes under the LWS context - the
+     * types, {@code lws:totalItems} (a JSON integer: {@code xsd:integer}),
+     * {@code lws:items}, {@code dcterms:format}, {@code schema:size}
+     * ({@code xsd:long}) and {@code dcterms:modified} ({@code xsd:dateTime}) -
+     * and nothing else, so any serialization of it is in the LWS profile. The
+     * model's own triples (owl:sameAs, a member container's own items) and the
+     * Turtle listing's navigation are not part of that RDF.
+     */
+    private static Model lwsProfileModel(String liveId, long totalItems, List<ListedItem> pageItems) {
+        Model out = ModelFactory.createDefaultModel();
+        out.setNsPrefix("lws", LWS.NS);
+        out.setNsPrefix("dcterms", org.apache.jena.vocabulary.DCTerms.NS);
+        out.setNsPrefix("schema", "https://schema.org/");
+        out.setNsPrefix("xsd", org.apache.jena.vocabulary.XSD.NS);
+        Resource self = out.createResource(liveId)
+            .addProperty(RDF.type, LWS.Container)
+            .addProperty(LWS.totalItems, out.createTypedLiteral(Long.toString(totalItems), XSDDatatype.XSDinteger));
+        for (ListedItem it : pageItems) {
+            Resource item = out.createResource(it.id())
+                .addProperty(RDF.type, it.container() ? LWS.Container : LWS.DataResource);
+            self.addProperty(LWS_ITEMS, item);
+            if (it.format() != null) item.addProperty(FORMAT, it.format());
+            if (it.size() != null) item.addProperty(SCHEMA_SIZE, out.createTypedLiteral(Long.toString(it.size()), XSDDatatype.XSDlong));
+            if (it.modified() != null) item.addProperty(MODIFIED, out.createTypedLiteral(it.modified(), XSDDatatype.XSDdateTime));
+        }
+        return out;
     }
 
     /**
@@ -1282,9 +1352,11 @@ public class LWSStorageServlet extends HttpServlet {
                         + "application/json, text/turtle or text/html");
                 return;
             }
-            // The media type the representation is served as: a request for the
-            // LWS-profiled JSON-LD type gets that type back (LWS media type equivalence).
-            String contentType = forceJsonLd ? chosen : containerContentType(chosen, req.getHeader("Accept"));
+            // The media type the representation is served as: a request for an
+            // RDF type in the LWS profile gets the profile back (LWS Content
+            // Negotiation), and the representation is then in that profile.
+            boolean lwsProfile = !forceTurtle && !forceJsonLd && inLwsProfile(chosen, req.getHeader("Accept"));
+            String contentType = lwsProfile ? containerContentType(chosen, req.getHeader("Accept")) : chosen;
             ContainerView view = containerView(r, resourceURI);
             List<Resource> items = view.items();
             int total = items.size();
@@ -1320,8 +1392,9 @@ public class LWSStorageServlet extends HttpServlet {
                 lastUri = pageUri(base, reqPath, pages);
                 if (page < pages) nextUri = pageUri(base, reqPath, page + 1);
                 if (page > 1)     prevUri = pageUri(base, reqPath, page - 1);
-                // Normative navigation (LWS): Link headers. The Turtle body
-                // mirrors them; the JSON body cannot (see containerJson).
+                // Normative navigation (LWS): Link headers. The plain Turtle
+                // body mirrors them; the JSON body and the LWS profile cannot
+                // (see containerJson).
                 resp.addHeader("Link", "<" + firstUri + ">; rel=\"first\"");
                 resp.addHeader("Link", "<" + lastUri + ">; rel=\"last\"");
                 if (nextUri != null) resp.addHeader("Link", "<" + nextUri + ">; rel=\"next\"");
@@ -1383,15 +1456,24 @@ public class LWSStorageServlet extends HttpServlet {
                 return;
             }
             if (wantJson) {
-                // LWS container representation: identical body for all three JSON
-                // flavors, only the Content-Type varies (spec MUST).
+                // LWS container representation: one body for every JSON flavour
+                // (so the profiled JSON-LD is the lws+json document itself), only
+                // the Content-Type varies.
                 writeBody(req, resp, contentType,
-                        containerJson(base, liveSelf, total, pageItems).getBytes(StandardCharsets.UTF_8));
+                        containerJson(liveSelf, total, listedItems(base, pageItems)).getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            if (wantTurtle && lwsProfile) {
+                // Turtle in the LWS profile: exactly the RDF the lws+json body
+                // encodes, so the two are isomorphic as the profile requires.
+                ByteArrayOutputStream serialized = new ByteArrayOutputStream();
+                RDFDataMgr.write(serialized, lwsProfileModel(liveSelf, total, listedItems(base, pageItems)), RDFFormat.TURTLE);
+                writeBody(req, resp, contentType, serialized.toByteArray());
                 return;
             }
             if (wantTurtle) {
-                // Additional RDF representation: the same information as the LWS
-                // shape, expressed as model triples (page-scoped items).
+                // Additional RDF representation, not in the LWS profile: the
+                // model's triples (page-scoped items) plus navigation.
                 Model out = ModelFactory.createDefaultModel();
                 Resource httpR = out.createResource(liveSelf);
                 r.listProperties().forEachRemaining(s -> {

@@ -69,23 +69,38 @@ class LWSStorageServletTest {
         JsonObject sparql = doc.getJsonArray("service").getJsonObject(1);
         assertEquals("http://www.w3.org/ns/sparql-service-description#Service", sparql.getString("type"));
         assertEquals("https://base.example/rdf", sparql.getString("serviceEndpoint"));
+        // A storage whose up links cannot change MUST NOT describe MoveResource.
+        assertFalse(doc.containsKey("capability"), "no capability is claimed: " + doc);
     }
 
     @Test
-    void theLwsProfileOfJsonLdIsEchoed() {
+    void theLwsProfileIsEchoed() {
+        String ld = "application/ld+json";
         String profiled = "application/ld+json; profile=\"https://www.w3.org/ns/lws/v1\"";
-        assertTrue(LWSStorageServlet.requestsLwsProfile(profiled));
-        assertTrue(LWSStorageServlet.requestsLwsProfile("text/html;q=0.5, application/ld+json;profile=https://www.w3.org/ns/lws/v1"));
-        assertTrue(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=\"http://ex.org/a https://www.w3.org/ns/lws/v1\""),
+        assertTrue(LWSStorageServlet.requestsLwsProfile(profiled, ld));
+        assertTrue(LWSStorageServlet.requestsLwsProfile("text/html;q=0.5, application/ld+json;profile=https://www.w3.org/ns/lws/v1", ld));
+        assertTrue(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=\"http://ex.org/a https://www.w3.org/ns/lws/v1\"", ld),
                 "profile is a space-separated list");
-        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json"));
-        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=user-profile"));
-        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=\"https://www.w3.org/ns/lws/v1\";q=0"),
+        assertFalse(LWSStorageServlet.requestsLwsProfile(ld, ld));
+        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=user-profile", ld));
+        assertFalse(LWSStorageServlet.requestsLwsProfile("application/ld+json;profile=\"https://www.w3.org/ns/lws/v1\";q=0", ld),
                 "q=0 excludes the range");
-        assertFalse(LWSStorageServlet.requestsLwsProfile(null));
-        assertEquals(profiled, LWSStorageServlet.containerContentType("application/ld+json", profiled));
-        assertEquals("application/ld+json", LWSStorageServlet.containerContentType("application/ld+json", "application/ld+json"));
+        assertFalse(LWSStorageServlet.requestsLwsProfile(null, ld));
+        assertFalse(LWSStorageServlet.requestsLwsProfile(profiled, "text/turtle"), "the profile belongs to the range that names it");
+        assertEquals(profiled, LWSStorageServlet.containerContentType(ld, profiled));
+        assertEquals(ld, LWSStorageServlet.containerContentType(ld, ld));
         assertEquals("application/lws+json", LWSStorageServlet.containerContentType("application/lws+json", profiled + ", application/lws+json"));
+
+        // Turtle defines the profile parameter too (LWS Content Negotiation).
+        String profiledTurtle = "text/turtle; profile=\"https://www.w3.org/ns/lws/v1\"";
+        assertTrue(LWSStorageServlet.inLwsProfile("text/turtle", profiledTurtle));
+        assertEquals(profiledTurtle, LWSStorageServlet.containerContentType("text/turtle", "text/turtle;profile=https://www.w3.org/ns/lws/v1"));
+        assertEquals("text/turtle", LWSStorageServlet.containerContentType("text/turtle", "text/turtle"));
+        assertEquals("text/turtle", LWSStorageServlet.containerContentType("text/turtle", "text/turtle, " + profiled),
+                "a profile on another type's range does not apply");
+        assertFalse(LWSStorageServlet.inLwsProfile("application/json", "application/json;profile=https://www.w3.org/ns/lws/v1"),
+                "application/json defines no profile parameter");
+        assertFalse(LWSStorageServlet.inLwsProfile(null, profiled));
     }
 
     @Test

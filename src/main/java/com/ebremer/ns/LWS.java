@@ -23,7 +23,7 @@ public final class LWS {
 
     // Resources
     // Classes defined by the LWS 1.0 vocabulary (https://www.w3.org/ns/lws#,
-    // W3C LWS Protocol editor's draft of 2026-10-05, lws10-vocab). Terms that are
+    // W3C LWS Protocol editor's draft of 2026-10-23, lws10-vocab). Terms that are
     // NOT in that vocabulary (ContainerPage, MetadataResource, Representation,
     // contains, tag, partOf, first/last/next/prev, mediaType, sizeInBytes) are
     // deliberately absent: clients following the spec would not recognise them.

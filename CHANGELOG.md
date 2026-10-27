@@ -7,7 +7,7 @@ brought and what a reader must rebuild.
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
 * Jena 6.2.0, jHDF 0.13.0.
-* LWS storage mode follows the LWS Protocol editor's draft of 2026-10-05 for
+* LWS storage mode follows the LWS Protocol editor's draft of 2026-10-23 for
   everything a read-only storage serves. Every GET/HEAD response links the
   storage URI (`/description`) with `rel="https://www.w3.org/ns/lws#storage"`
   (was `…#storageDescription`); the storage URI serves the storage
@@ -15,8 +15,12 @@ brought and what a reader must rebuild.
   (`@context` `[cid/v1, lws/v1]`, `id` the storage URI) with the mandatory
   `StorageRoot` service beside the SPARQL endpoint. Container items carry
   `format` (was `mediaType`) and the JSON body no longer mirrors pagination
-  as `as:first`/`as:next`/… (Link headers only); `application/ld+json` with
-  the LWS profile is echoed. Linksets hold only link relations (type, up,
+  as `as:first`/`as:next`/… (Link headers only). A request for
+  `application/ld+json` or `text/turtle` with the LWS profile
+  (`profile="https://www.w3.org/ns/lws/v1"`) gets a representation RDF
+  isomorphic to the `application/lws+json` one, with the profile in its
+  `Content-Type`; plain Turtle remains the model listing with navigation and
+  is not labelled with the profile. Linksets hold only link relations (type, up,
   linkset, storage) and, like the description, carry ETag and Last-Modified.
   PUT, PATCH, DELETE, TRACE and POST (except a SPARQL query to a store)
   answer 405 with `Allow`; OPTIONS reports it; errors are RFC 9457 problem
