@@ -557,7 +557,7 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                 long length = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
                 // A zero Content-Length on HEAD is what a proxy or handler that
                 // short-circuits HEAD answers; trusting it made an empty channel
-                // and a misleading jHDF error, while the range probe would have
+                // and a misleading HDF5 error, while the range probe would have
                 // returned the real size (BG-9).
                 if (length > 0) {
                     return new Probe(length, validatorOf(response), response.uri());

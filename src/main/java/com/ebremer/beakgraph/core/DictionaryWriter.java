@@ -1,6 +1,6 @@
 package com.ebremer.beakgraph.core;
 
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.util.List;
 import org.apache.jena.graph.Node;
 

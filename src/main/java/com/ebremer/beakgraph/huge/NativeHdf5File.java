@@ -14,8 +14,9 @@ import java.util.Deque;
 /**
  * {@link StreamingHdf5File} backed by the HDF Group's native HDF5 library
  * (https://github.com/HDFGroup/hdf5) through the official {@code hdf.hdf5lib}
- * Java API. This is the only backend that can write a dataset piecewise today;
- * jHDF's writer needs the whole dataset in memory.
+ * Java API. This is the backend the huge writers write a dataset piecewise
+ * through today. (Falcon, which the readers and the in-memory writers use,
+ * writes one piecewise too, in pure Java: see {@link StreamingHdf5}.)
  *
  * <p>This class is written against the official {@code hdf.hdf5lib.H5} API and
  * is binding-agnostic: which jar supplies that API is a build-time choice (the
@@ -50,9 +51,9 @@ import java.util.Deque;
  * <p>Reader compatibility (see {@link StreamingHdf5File}): datasets are created
  * with a fixed 1-D dataspace and the library-default CONTIGUOUS layout, then
  * filled by sequential hyperslab {@code H5Dwrite} calls; attributes are scalar
- * {@code H5T_STD_I32LE} / {@code H5T_STD_I64LE}. jHDF maps these to
- * {@code ContiguousDataset} and {@link Integer}/{@link Long} attribute values,
- * exactly what the existing BeakGraph readers expect.
+ * {@code H5T_STD_I32LE} / {@code H5T_STD_I64LE}: the contiguous layout and the
+ * attribute widths of the container profile (SPECIFICATIONS.md §3), exactly
+ * what the BeakGraph readers hold a store to.
  *
  * <p>Not thread-safe; the huge writer drives it from a single thread.
  *
@@ -293,7 +294,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
         return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
     }
 
-    /** Scalar int attribute: file type I32LE, so jHDF reads an Integer. */
+    /** Scalar int attribute: file type I32LE, the profile's 32-bit width. */
     private static void writeIntAttribute(long objId, String name, int value) throws IOException {
         try {
             long space = H5.H5Screate(HDF5Constants.H5S_SCALAR);
@@ -313,7 +314,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
         }
     }
 
-    /** Scalar long attribute: file type I64LE, so jHDF reads a Long. */
+    /** Scalar long attribute: file type I64LE, the profile's 64-bit width. */
     private static void writeLongAttribute(long objId, String name, long value) throws IOException {
         try {
             long space = H5.H5Screate(HDF5Constants.H5S_SCALAR);
@@ -376,7 +377,7 @@ public final class NativeHdf5File implements StreamingHdf5File {
         public StreamingHdf5Dataset createByteDataset(String name, long length) throws IOException {
             if (length <= 0) {
                 // The RAM writer never emits empty datasets (BitPacked/DataOutput
-                // buffers skip them), and jHDF's getBuffer() cannot map one.
+                // buffers skip them), and a reader has nothing to map of one.
                 throw new IOException("Refusing to create empty dataset '" + childPath(name) + "'");
             }
             try {

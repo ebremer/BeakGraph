@@ -55,6 +55,8 @@ Configuration:
         AppenderRef:
           - ref: STDOUT
           - ref: FileAppender
+      # jHDF is a test dependency only now (the tests' independent HDF5 reader);
+      # the tests log through this file, and this keeps it quiet there.
       - name: io.jhdf
         level: error
         additivity: false

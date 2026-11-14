@@ -6,9 +6,8 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.hdf5.Index;
-import io.jhdf.HdfFile;
-import io.jhdf.WritableHdfFile;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.concurrent.ForkJoinPool;
@@ -25,7 +24,7 @@ import org.slf4j.LoggerFactory;
  * The three sub-dictionaries build concurrently, the columnar id lists
  * populate concurrently, every quad's dictionary ids are resolved once in a
  * parallel pass, and the GSPO/GPOS indexes are then built concurrently from
- * that shared id array. Only the final jHDF write of the finished buffers is
+ * that shared id array. Only the final HDF5 write of the finished buffers is
  * sequential.
  *
  * <p>All nested parallelism (parallel sorts, parallel streams) forks into the
@@ -90,13 +89,14 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
                     ParallelBGIndex gpos = joinIndex(gposTask, Index.GPOS);
 
                     logger.info("Creating HDF5 file {}", builder.getDestination());
-                    try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
+                    try (WritableHdfFile hdfFile = WritableHdfFile.write(tmp)) {
                         final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                         hdt.putAttribute(Params.NUM_QUADS, w.getNumberOfQuads());
                         hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
                         w.add(hdt);
                         gspo.add(hdt);
                         gpos.add(hdt);
+                        hdfFile.commit();
                     }
                 }
             });

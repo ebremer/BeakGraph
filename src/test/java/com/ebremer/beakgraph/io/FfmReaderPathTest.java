@@ -1,8 +1,11 @@
 package com.ebremer.beakgraph.io;
 
 import com.ebremer.beakgraph.core.BeakGraph;
+import com.ebremer.beakgraph.hdf5.WritableHdfFile;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
+import com.ebremer.falcon.hdf5.Dataset;
+import com.ebremer.falcon.hdf5.Hdf5File;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,19 +18,21 @@ import org.apache.jena.query.QuerySolution;
 import org.apache.jena.query.ResultSet;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * End-to-end proof that the whole reader stack works over FFM-mapped segments:
- * the FFM threshold is forced to 0 so EVERY dataset - bit-packed ids and
- * bitmaps, rank/select directories, FCD string buffers (compressed and raw
- * fragments), float/double value stores, language tags - is read through
- * {@link MemorySegmentBytes} instead of jHDF's ByteBuffer, and every query
- * answer must match the default (ByteBuffer) path over the same file exactly
- * (same file, same ids, so even blank node labels must agree).
+ * End-to-end proof that the whole reader stack answers identically over both
+ * views of a mapped store. With the FFM threshold at 0, the default, EVERY
+ * dataset - bit-packed ids and bitmaps, rank/select directories, FCD string
+ * buffers (compressed and raw fragments), float/double value stores, language
+ * tags - is read through {@link MemorySegmentBytes}; with the threshold
+ * raised, through a ByteBuffer view of the same mapping
+ * ({@link ByteBufferBytes}). Every query answer must match between the two
+ * exactly (same file, same ids, so even blank node labels must agree).
  */
 class FfmReaderPathTest {
 
@@ -80,20 +85,61 @@ class FfmReaderPathTest {
         HDF5Writer.Builder().setSource(src).setDestination(h5)
                 .setSpatial(false).setFeatures(false).build().write();
 
-        // Baseline: today's ByteBuffer path.
-        Set<String>[] expected = runProbes(h5);
-
-        // Forced-FFM: every dataset larger than 0 bytes goes through MemorySegmentBytes.
+        // The default, set here all the same: every dataset goes through MemorySegmentBytes.
         long previous = DatasetBytes.setFfmThreshold(0);
         try {
-            Set<String>[] actual = runProbes(h5);
+            Set<String>[] segments = runProbes(h5);
+
+            // The option: every dataset goes through a ByteBuffer view of its segment.
+            DatasetBytes.setFfmThreshold(Long.MAX_VALUE);
+            Set<String>[] views = runProbes(h5);
             for (int i = 0; i < PROBES.length; i++) {
-                assertFalse(expected[i].isEmpty(), "probe must return rows: " + PROBES[i]);
-                assertEquals(expected[i], actual[i],
-                        "FFM path must answer identically: " + PROBES[i]);
+                assertFalse(segments[i].isEmpty(), "probe must return rows: " + PROBES[i]);
+                assertEquals(segments[i], views[i],
+                        "both views of the mapping must answer identically: " + PROBES[i]);
             }
         } finally {
             DatasetBytes.setFfmThreshold(previous);
+        }
+    }
+
+    /**
+     * Which view a mapped dataset gets. The default matters for speed, not for
+     * answers (a store older than the rank/select directories scans its
+     * bitmaps about twice as fast through the segment), so nothing else would
+     * notice it slipping back.
+     */
+    @Test
+    void aMappedDatasetIsReadThroughItsSegmentUnlessTheThresholdAsksForAView() throws Exception {
+        Path file = dir.resolve("view.h5");
+        try (WritableHdfFile out = WritableHdfFile.write(file)) {
+            out.putGroup("g").putDataset("bytes", new byte[] {1, 2, 3, 4, 5, 6, 7, 8});
+            out.commit();
+        }
+        try (Hdf5File in = Hdf5File.open(file)) {
+            Dataset bytes = in.root().dataset("g/bytes");
+            if (System.getProperty("beakgraph.ffm.threshold") == null) {
+                assertInstanceOf(MemorySegmentBytes.class, DatasetBytes.of(bytes, null), "the default");
+            }
+            long previous = DatasetBytes.setFfmThreshold(0);
+            try {
+                assertInstanceOf(MemorySegmentBytes.class, DatasetBytes.of(bytes, null), "threshold 0");
+                DatasetBytes.setFfmThreshold(7);
+                assertInstanceOf(MemorySegmentBytes.class, DatasetBytes.of(bytes, null), "8 bytes, over a threshold of 7");
+                DatasetBytes.setFfmThreshold(8);
+                assertInstanceOf(ByteBufferBytes.class, DatasetBytes.of(bytes, null), "8 bytes, within a threshold of 8");
+                DatasetBytes.setFfmThreshold(Long.MAX_VALUE);
+                RandomAccessBytes view = DatasetBytes.of(bytes, null);
+                assertInstanceOf(ByteBufferBytes.class, view, "no threshold a dataset under 2 GiB exceeds");
+                DatasetBytes.setFfmThreshold(0);
+                RandomAccessBytes segment = DatasetBytes.of(bytes, null);
+                assertEquals(8, segment.size());
+                assertEquals(8, view.size());
+                assertEquals(0x0102030405060708L, segment.getLong(0));
+                assertEquals(0x0102030405060708L, view.getLong(0));
+            } finally {
+                DatasetBytes.setFfmThreshold(previous);
+            }
         }
     }
 

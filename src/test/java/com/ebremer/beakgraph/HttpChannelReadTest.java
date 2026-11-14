@@ -3,7 +3,7 @@ package com.ebremer.beakgraph;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.HTTPSeekableByteChannel;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
-import io.jhdf.exceptions.HdfException;
+import com.ebremer.falcon.hdf5.HdfException;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;

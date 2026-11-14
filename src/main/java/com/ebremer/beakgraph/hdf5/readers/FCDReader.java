@@ -3,10 +3,8 @@ package com.ebremer.beakgraph.hdf5.readers;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
-import com.ebremer.beakgraph.io.DatasetBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
 import com.ebremer.beakgraph.utils.StringUtils;
-import io.jhdf.api.Group;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -66,9 +64,9 @@ public class FCDReader {
         return blockCache.estimatedSize();
     }
 
-    public FCDReader(Group strings) {
-        this.buffer = DatasetBytes.of(HdfProfile.requireContiguous(strings, "stringbuffer"));
-        this.offsets = DatasetBytes.of(HdfProfile.requireContiguous(strings, "offsets"));
+    public FCDReader(HdfGroup strings) {
+        this.buffer = HdfProfile.requireBytes(strings, "stringbuffer");
+        this.offsets = HdfProfile.requireBytes(strings, "offsets");
         this.compressed = HdfProfile.requirePacked(strings, "compressed");
         this.blockSize = HdfProfile.longAttr(strings, Params.BLOCK_SIZE);
         this.numEntries = HdfProfile.longAttr(strings, Params.NUM_ENTRIES);
@@ -77,7 +75,7 @@ public class FCDReader {
         // whose blockSize was 0 divided by zero on every lookup, and one whose
         // offsets or flags were short read past their end - after the open had
         // reported success (BG-81).
-        String where = "FCD group '" + strings.getPath() + "'";
+        String where = "FCD group '" + strings.path() + "'";
         if (blockSize < 1) {
             throw new IllegalStateException(where + " declares blockSize " + blockSize + " (must be at least 1)");
         }

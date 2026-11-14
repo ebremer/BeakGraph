@@ -3,7 +3,7 @@ package com.ebremer.beakgraph.hdf5.writers;
 import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Comparator;

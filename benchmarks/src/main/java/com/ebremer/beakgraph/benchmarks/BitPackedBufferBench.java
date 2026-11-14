@@ -82,7 +82,7 @@ public class BitPackedBufferBench {
             randomValues[i] = rnd.nextLong(maxVal + 1);
         }
         byte[] packed = pack(randomValues, width);
-        // The same read view the HDF5 readers build over a jHDF buffer.
+        // The same read view the HDF5 readers build over a mapped dataset.
         random = BitPackedUnSignedLongBuffer.readView(new ByteBufferBytes(ByteBuffer.wrap(packed)), ENTRIES, width);
 
         sorted = new BitPackedUnSignedLongBuffer(Path.of("bench-sorted"), width);

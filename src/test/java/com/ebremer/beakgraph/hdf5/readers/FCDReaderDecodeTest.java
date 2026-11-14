@@ -4,9 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.writers.FCDWriter;
-import io.jhdf.HdfFile;
-import io.jhdf.WritableHdfFile;
-import io.jhdf.api.Group;
+import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.falcon.hdf5.Hdf5File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -48,12 +47,13 @@ class FCDReaderDecodeTest {
         Path f = dir.resolve("fcd.h5");
         try (FCDWriter w = new FCDWriter(Path.of("strings"), Params.FCD_BLOCK_SIZE)) {
             for (String s : strings) w.add(s);
-            try (WritableHdfFile out = HdfFile.write(f)) {
+            try (WritableHdfFile out = WritableHdfFile.write(f)) {
                 w.add(out.putGroup("dict"));
+                out.commit();
             }
         }
-        try (HdfFile in = new HdfFile(f)) {
-            Group g = (Group) ((Group) in.getChild("dict")).getChild("strings");
+        try (Hdf5File in = Hdf5File.open(f)) {
+            HdfGroup g = new HdfGroup(in.root().group("dict/strings"));
             FCDReader r = new FCDReader(g);
             assertEquals(strings.size(), r.getNumEntries());
             for (int i = 0; i < strings.size(); i++) {

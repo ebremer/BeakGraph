@@ -13,12 +13,16 @@ immutable store.
 |---|---|
 | Java 25+ | The build targets current JDKs. |
 | Maven 3.9+ | Standard build. |
-| Native HDF5 library | **Only** for the disk-based writers (`-method 1`, `4` and `5`); a missing library is reported before any parsing starts. The in-memory writers (`-method 0/2/3`) use pure-Java jHDF and need nothing native. Platform matrix: the default JavaCPP preset (`org.bytedeco:hdf5-platform` 1.14.3-1.5.10) bundles natives for **linux-x86_64 and macos-x86_64** (they load automatically) and **windows-x86_64** (its JNI glue needs a `hdf5.dll` it does not ship: install HDF5 1.14 and put its `bin` directory, `hdf5.dll` + `hdf5_java.dll`, on `PATH`, or set `-Dhdf.hdf5lib.H5.hdf5lib=<path to hdf5_java.dll>`). **No preset published so far carries arm64 natives**: on Apple Silicon or aarch64 Linux either run an x86_64 JDK (Rosetta), or install HDF5 yourself and use the HDF Group's FFM bindings (`mvn -Dhdf5.ffm=true ...`, published for linux-x86_64, windows-x86_64, macos-x86_64 and macos-aarch64 - nothing for linux-aarch64 / windows-aarch64; the build refuses to guess a classifier for an unrecognised platform). A system install on the library path is always preferred over the bundled natives. |
+| Native HDF5 library | **Only** for the disk-based writers (`-method 1`, `4` and `5`); a missing library is reported before any parsing starts. The in-memory writers (`-method 0/2/3`) use pure-Java [Falcon](https://github.com/ebremer/falcon) and need nothing native. Platform matrix: the default JavaCPP preset (`org.bytedeco:hdf5-platform` 1.14.3-1.5.10) bundles natives for **linux-x86_64 and macos-x86_64** (they load automatically) and **windows-x86_64** (its JNI glue needs a `hdf5.dll` it does not ship: install HDF5 1.14 and put its `bin` directory, `hdf5.dll` + `hdf5_java.dll`, on `PATH`, or set `-Dhdf.hdf5lib.H5.hdf5lib=<path to hdf5_java.dll>`). **No preset published so far carries arm64 natives**: on Apple Silicon or aarch64 Linux either run an x86_64 JDK (Rosetta), or install HDF5 yourself and use the HDF Group's FFM bindings (`mvn -Dhdf5.ffm=true ...`, published for linux-x86_64, windows-x86_64, macos-x86_64 and macos-aarch64 - nothing for linux-aarch64 / windows-aarch64; the build refuses to guess a classifier for an unrecognised platform). A system install on the library path is always preferred over the bundled natives. |
 | Disk workspace | For `-method 1/4/5`: free space on the order of a few times the uncompressed source (see §7). |
 
 ## 2. Building
 
 ```bash
+# Falcon, the HDF5 library, is not on Maven Central yet: install it first
+# (git clone https://github.com/ebremer/falcon && cd falcon && git checkout 0.1.0)
+mvn -pl hdf5 -am install
+
 # Library + tests
 mvn clean package
 
@@ -370,7 +374,7 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.nodetable.cache.size` | `1000000` | Node ⇄ NodeId **entry-equivalents** per direction, per open reader (query bind/materialize path). Ordinary terms cost 1; an oversized literal costs 1 per 256 chars of lexical form, so composite (`cdt:`) literals — whose cached nodes retain their parsed values (~4.5× the text) — cannot silently pin unbounded heap. |
 | `beakgraph.dict.search.cache.size` | `65536` | Term → dictionary-position **entry-equivalents** per dictionary section (locate/search results, hits and misses; same oversized-literal weighting as above). |
 | `beakgraph.fcd.cache.blocks` | `4096` | Decoded front-coded string blocks per FCD section, in blocks of ordinary strings (each block holds `blockSize`, typically 16, strings). The bound is by weight: a string costs 1 plus 1 per 256 characters, so a section of large literals (WKT polygons, long text) keeps proportionally fewer blocks resident. |
-| `beakgraph.ffm.threshold` | `2147483647` | Dataset size in bytes above which BeakGraph FFM-maps the region itself instead of using jHDF's ByteBuffer. |
+| `beakgraph.ffm.threshold` | `0` | Dataset size in bytes up to which BeakGraph reads a memory-mapped dataset through a ByteBuffer view of its FFM memory segment instead of the segment itself. At `0` every dataset is read through its segment, which is as fast on current-format stores and about twice as fast on the linear scans of format v2 stores; datasets past 2 GiB always are. |
 | `beakgraph.scan.parallel.threshold` | `65536` | Minimum index position range for a scan-shaped first pattern (`?s ?p ?o`, or `?s <p> ?o`) to run as a chunked PARALLEL scan on the shared worker pool. `0` (or negative) disables parallel scanning. Chunks stop on query timeout/cancel and on early close (LIMIT), and a scan whose consumer is dropped without closing it is stopped once the iterator is garbage-collected. Only a top-level execution parallelizes: a pattern re-executed per outer row (inside `OPTIONAL`, `EXISTS`, `GRAPH ?g`) runs sequentially, and a store read through an HTTP channel is never chunked (every read is serialized behind the channel's lock). |
 | `beakgraph.scan.parallel.minchunk` | `16384` | Smallest chunk (index positions) a parallel scan is split into. Lower it only to force multi-chunk scans on small stores (tests). |
 | `beakgraph.jsonld.remote` | `false` | What `-jsonLdRemote` sets: allow JSON-LD `@context` references to be fetched over http(s) (30 s timeout). |
@@ -413,7 +417,7 @@ the last reader closes).
   error. A store containing neither feature is byte-identical in shape to v3
   output.
 * Methods 0/2/3 produce **byte-identical** stores for the same single source on
-  the same platform (one format, one jHDF write sequence; the parity tests
+  the same platform (one format, one HDF5 write sequence; the parity tests
   compare the files byte for byte - the only platform-dependent bytes are zstd
   frames, which the native and pure-Java codecs may encode differently; pass
   `-Dio.airlift.compress.v3.disable-native=true` to build with the Java codec

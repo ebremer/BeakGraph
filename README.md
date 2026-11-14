@@ -186,7 +186,7 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 ### Design decisions
 
 * **One self-contained jar.** The published library jar shades every dependency (Jena, Fuseki,
-  jHDF, JTS, the HDF5 natives, log4j and its `log4j2.yml` at the classpath root), so a consumer
+  Falcon, JTS, the HDF5 natives, log4j and its `log4j2.yml` at the classpath root), so a consumer
   gets one artifact that runs on an empty classpath. The trade-off: a consumer that also brings
   its own Jena or JTS sees duplicate, unrelocated classes, and the embedded logging
   configuration takes over that application's log4j setup (it writes a rolling

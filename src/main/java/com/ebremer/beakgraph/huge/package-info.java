@@ -25,13 +25,14 @@
  *       is a build-time choice: the JavaCPP preset with bundled natives by
  *       default, or the HDF Group's Java 25 FFM bindings with
  *       {@code -Dhdf5.ffm=true} (see the {@code hdf5-backend-*} profiles in
- *       pom.xml). When jHDF (https://github.com/jamesmudd/jhdf) gains
- *       chunked/streaming writes, a jHDF backend can be installed with
+ *       pom.xml). Falcon (https://github.com/ebremer/falcon), the library of
+ *       the readers and the in-memory writers, writes datasets a piece at a
+ *       time too: a Falcon backend can be installed with
  *       {@link com.ebremer.beakgraph.huge.StreamingHdf5#setProvider} without
  *       touching writer code.</li>
  * </ul>
  *
- * <p>Files produced here are read by the existing jHDF-based readers
+ * <p>Files produced here are read by the same readers as every other store
  * ({@code HDF5Reader}); datasets are CONTIGUOUS layout and attributes are
  * scalar 32/64-bit integers, exactly as those readers require.
  */

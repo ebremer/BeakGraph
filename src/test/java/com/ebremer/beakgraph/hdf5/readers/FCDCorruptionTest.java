@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
 import com.ebremer.beakgraph.utils.StringUtils;
+import com.ebremer.falcon.hdf5.Hdf5File;
 import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import io.jhdf.api.Attribute;
@@ -20,8 +21,11 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.function.UnaryOperator;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -112,9 +116,23 @@ class FCDCorruptionTest {
         return out;
     }
 
+    /** The stores the readers under test read: each stays mapped until its file is closed. */
+    private static final List<Hdf5File> OPENED = new ArrayList<>();
+
     private static FCDReader reader(File h5) {
-        HdfFile f = new HdfFile(h5.toPath());   // kept open for the reader's lifetime (test scope)
-        return new FCDReader((Group) f.getByPath(STRINGS));
+        Hdf5File f;
+        try {
+            f = Hdf5File.open(h5.toPath());   // kept open for the reader's lifetime
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        OPENED.add(f);
+        return new FCDReader(new HdfGroup(f.root().group(STRINGS)));
+    }
+
+    @AfterAll
+    static void closeStores() {
+        OPENED.forEach(Hdf5File::close);   // unmapped, so the temp directory can be deleted (Windows)
     }
 
     @Test

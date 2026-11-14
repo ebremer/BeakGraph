@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.hdf5;
 
-import io.jhdf.api.WritableGroup;
 import java.nio.file.Path;
 
 /**

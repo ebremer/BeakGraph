@@ -7,7 +7,7 @@ import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;

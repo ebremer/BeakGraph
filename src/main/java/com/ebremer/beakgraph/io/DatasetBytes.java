@@ -1,56 +1,58 @@
 package com.ebremer.beakgraph.io;
 
-import io.jhdf.api.dataset.ContiguousDataset;
-import io.jhdf.nio.FileChannelFromSeekableByteChannel;
-import io.jhdf.storage.HdfFileChannel;
-import java.io.IOException;
-import java.io.UncheckedIOException;
+import com.ebremer.falcon.hdf5.Dataset;
+import com.ebremer.falcon.hdf5.RangeReader;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
- * Builds the {@link RandomAccessBytes} view of a jHDF contiguous dataset.
+ * Builds the {@link RandomAccessBytes} view of a contiguous dataset of a
+ * store opened through Falcon (https://github.com/ebremer/falcon).
  *
- * <p>Datasets that fit a ByteBuffer use jHDF's own {@code MappedByteBuffer}
- * ({@code HdfFileChannel.map} over {@code FileChannel.map}). Note that
- * {@code HdfFile.close()} closes only the underlying channel; it does NOT
- * unmap - a mapped ByteBuffer has no explicit release, and jHDF holds no
- * cleaner for it. Datasets past the 2 GiB ByteBuffer ceiling (which
- * {@code getBuffer()} cannot serve at all) are FFM-mapped at
- * {@code dataAddress + userBlockSize} - the same file offset jHDF itself
- * would map - through jHDF's OWN open channel, with an automatic arena
- * ({@code Arena.ofAuto()}) managing the unmap. Both paths therefore release
- * their mapping only once the {@link RandomAccessBytes} view becomes
- * unreachable and a GC runs: on Windows the store file can stay "in use"
- * after {@code HDF5Reader.close()} whatever {@code beakgraph.ffm.threshold}
- * says (the {@code @TempDir} cleanup failures the tests work around). A
- * deterministic unmap would need a confined or shared Arena closed from
- * {@code HDF5Reader.close()} for the FFM path and an invokeCleaner-style
- * release for the ByteBuffer path (BG-353). Mapping through that
- * channel pins the same file the dataset's metadata (address, size, the
- * numEntries / width attributes) came from; re-opening the path mapped
- * whatever the path named at that moment, and index datasets are mapped
- * lazily at first use, so a store rebuilt in place between open and first
- * query decoded old metadata against new bytes (BG-448).
+ * <p>A store opened from a local file is memory-mapped once, whole, by
+ * Falcon, and each dataset is a view of that one mapping
+ * ({@code Dataset.storageSegment()}): nothing is copied or read ahead, and a
+ * dataset of any size is there at once. The view is of the very file whose
+ * metadata (address, size, the numEntries / width attributes) was read: there
+ * is no second open of the path, so a store rebuilt in place between open and
+ * first query cannot pair old metadata with new bytes (BG-448). A dataset is
+ * read through its segment itself ({@link MemorySegmentBytes}), whatever its
+ * size. A ByteBuffer view of the same segment ({@link ByteBufferBytes}) is
+ * kept as an option only: queries on a current-format store measured the
+ * same through either, but the linear bitmap scans of a store older than the
+ * rank/select directories ran about twice as fast through the segment.
  *
- * <p>Channel-backed files (an {@code HdfFile} opened over a
- * {@code SeekableByteChannel}, e.g. HTTP range requests) take neither path:
- * they cannot be memory-mapped, the FFM path's local file path does not
- * correspond to the actual bytes, and {@code getBuffer()} would materialize
- * the whole dataset up front. They are served by {@link ChannelBytes}, which
- * reads only the touched ranges through the channel.
+ * <p>The mapping lasts exactly as long as the store is open: Falcon unmaps
+ * the file when {@code HDF5Reader.close()} closes it, at once and on every
+ * OS, so the store file is free to be replaced or deleted from then on (on
+ * Windows too - there is no wait for a GC, BG-353). The other side of that:
+ * a view read after the close throws {@link IllegalStateException}, so a
+ * reader must not be closed while a query is still reading through it.
  *
- * <p>The threshold is overridable for testing and operations via the
- * {@code beakgraph.ffm.threshold} system property (bytes; datasets strictly
- * larger go through FFM). Setting it to 0 forces every dataset onto the FFM
- * path.
+ * <p>Channel-backed stores (opened over a {@code SeekableByteChannel}, e.g.
+ * HTTP range requests) cannot be memory-mapped. They are served by
+ * {@link ChannelBytes}, which reads only the touched ranges, at the dataset's
+ * offset in the file ({@code Dataset.storageOffset()}), through the same
+ * reader the store's metadata was read through.
+ *
+ * <p>The {@code beakgraph.ffm.threshold} system property (bytes, default 0)
+ * brings the ByteBuffer view back for testing and operations: a mapped
+ * dataset of at most that many bytes is read through a ByteBuffer view of
+ * its segment, a strictly larger one through the segment. A ByteBuffer
+ * cannot index past 2 GiB, so datasets beyond that use the segment whatever
+ * the property says.
  *
  * @author Erich Bremer
  */
 public final class DatasetBytes {
 
-    /** Above this many bytes a dataset is FFM-mapped instead of using getBuffer(). */
-    private static volatile long ffmThreshold =
-            Long.getLong("beakgraph.ffm.threshold", Integer.MAX_VALUE);
+    /**
+     * Up to this many bytes a mapped dataset is read through a ByteBuffer view of its MemorySegment instead of
+     * the segment itself. 0, the default: every dataset is read through its segment.
+     */
+    private static volatile long ffmThreshold = Long.getLong("beakgraph.ffm.threshold", 0L);
 
     private DatasetBytes() {}
 
@@ -61,32 +63,34 @@ public final class DatasetBytes {
         return previous;
     }
 
-    public static RandomAccessBytes of(ContiguousDataset dataset) {
-        long size = dataset.getSizeInBytes();
+    /**
+     * @param dataset a contiguous dataset of an open store
+     * @param channel what the store is read through when it is not mapped
+     *                from a local file (see {@link ChannelBytes}), else null
+     */
+    public static RandomAccessBytes of(Dataset dataset, RangeReader channel) {
+        long size = Math.multiplyExact(dataset.dataspace().elementCount(), (long) dataset.datatype().size());
         if (size == 0) {
             return new ByteBufferBytes(ByteBuffer.allocate(0));
         }
-        long address = dataset.getDataAddress();
-        HdfFileChannel hfc = dataset.getHdfFile().getHdfBackingStorage() instanceof HdfFileChannel c ? c : null;
-        if (address >= 0 && hfc != null && hfc.getFileChannel() instanceof FileChannelFromSeekableByteChannel) {
-            return new ChannelBytes(hfc.getFileChannel(),
-                    address + dataset.getHdfFile().getUserBlockSize(), size);
+        Optional<MemorySegment> mapped = dataset.storageSegment();
+        if (mapped.isPresent()) {
+            MemorySegment segment = mapped.get();
+            // The segment, unless the threshold asks for a ByteBuffer view - which cannot index past 2 GiB.
+            return (size > ffmThreshold || size > Integer.MAX_VALUE)
+                    ? new MemorySegmentBytes(segment)
+                    : new ByteBufferBytes(segment.asByteBuffer());
         }
-        if (size > ffmThreshold && address >= 0) {
-            try {
-                long fileOffset = address + dataset.getHdfFile().getUserBlockSize();
-                if (hfc != null) {
-                    // The file jHDF has open - the one the metadata describes.
-                    return MemorySegmentBytes.map(hfc.getFileChannel(), fileOffset, size);
-                }
-                return MemorySegmentBytes.map(dataset.getFileAsPath(), fileOffset, size);
-            } catch (IOException e) {
-                throw new UncheckedIOException(
-                    "Failed to FFM-map dataset '" + dataset.getPath() + "' ("
-                  + size + " bytes) from " + dataset.getFileAsPath(), e);
-            }
+        OptionalLong offset = dataset.storageOffset();
+        if (offset.isEmpty()) {
+            throw new IllegalStateException("Dataset '" + dataset.path() + "' (" + size
+                    + " bytes) has no bytes in the file: it was never written, or its data is kept in"
+                    + " external files (SPECIFICATIONS.md §3, item 2)");
         }
-        // <= 2 GiB: jHDF's own mapped buffer, exactly as before.
-        return new ByteBufferBytes(dataset.getBuffer());
+        if (channel == null) {
+            throw new IllegalStateException("Dataset '" + dataset.path() + "' cannot be memory-mapped,"
+                    + " and its store was not opened through a channel to read it by");
+        }
+        return new ChannelBytes(channel, offset.getAsLong(), size);
     }
 }

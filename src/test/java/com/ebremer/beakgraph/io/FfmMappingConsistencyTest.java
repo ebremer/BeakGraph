@@ -37,8 +37,9 @@ import org.junit.jupiter.api.io.TempDir;
  * the file path, while index datasets are mapped lazily at first use. A
  * store rebuilt in place between open and first query therefore mapped the
  * NEW file's bytes under the OLD file's metadata (address, numEntries,
- * width) - wrong ids, or an out-of-range map. The mapping now goes through
- * jHDF's own open channel, i.e. the file the metadata describes.
+ * width) - wrong ids, or an out-of-range map. A dataset is now a view of the
+ * one mapping Falcon made of the file when it opened it, i.e. of the file the
+ * metadata describes.
  * <p>
  * The witness works on every platform without replacing the file: once the
  * reader is open, the path is made unreadable (an ACL deny on Windows, mode

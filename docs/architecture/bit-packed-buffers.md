@@ -14,7 +14,7 @@ permalink: /architecture/bit-packed-buffers/
   - 1-bit width = the B bitmaps; 64-bit width carries full two's-complement longs
 - **Byte-aligned widths are what make the parallel writers possible: entry i occupies exactly bytes
   [i\*w/8, (i+1)\*w/8) — concurrent positional writes never share a byte**
-- **Readers address entries by long offsets (no 2 GiB ceiling) over jHDF-mapped, FFM-mapped, or
+- **Readers address entries by long offsets (no 2 GiB ceiling) over memory-mapped (FFM) or
   HTTP-ranged bytes**
 - **`binarySearch` / `lowerBound` / `upperBound` operate directly on the packed form with unsigned
   comparison**

@@ -27,7 +27,7 @@
     </properties>
 
     <dependencies>
-        <!-- The lib-profile artifact is a self-contained shaded jar (Jena, jHDF, and
+        <!-- The lib-profile artifact is a self-contained shaded jar (Jena, Falcon, and
              friends included), so this single dependency supplies the whole runtime. -->
         <dependency>
             <groupId>com.ebremer</groupId>

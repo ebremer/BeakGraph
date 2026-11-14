@@ -10,8 +10,8 @@ import java.util.Objects;
  *
  * <p>The default provider is {@link NativeHdf5File} (the HDF Group's native
  * hdf5 library, the only backend that currently supports writing datasets in
- * chunks). A different backend - e.g. jHDF once it supports chunked/streaming
- * writes - is installed with {@link #setProvider}.
+ * chunks). A different backend - e.g. Falcon, which writes a dataset a piece
+ * at a time in pure Java - is installed with {@link #setProvider}.
  *
  * @author Erich Bremer
  */

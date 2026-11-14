@@ -8,7 +8,7 @@ import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
 import com.ebremer.beakgraph.hdf5.writers.MultiTypeDictionaryWriter;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;

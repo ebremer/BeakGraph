@@ -13,7 +13,7 @@ import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.hdf5.DictionarySection;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
@@ -302,7 +302,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (typedLiterals != null) typedLiterals.add(subGroup);
         if (offsets != null) offsets.add(subGroup);
         // Entry-count gate (like iri/langs below): a literals section whose only
-        // rows are triple terms has NO datatype IRIs, and jHDF cannot write an
+        // rows are triple terms has NO datatype IRIs, and the writers emit no
         // empty dataset - absence already means "none" to the reader.
         if (typedLiteralsDictionary != null && typedLiteralsDictionary.getNumEntries() > 0) typedLiteralsDictionary.add(subGroup);
         if (integers != null) integers.add(subGroup);

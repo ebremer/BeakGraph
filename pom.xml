@@ -52,10 +52,17 @@
              log4j-config-yaml module is not needed and does not exist for 2.x. -->
         <log4j.version>2.26.1</log4j.version>
         <slf4j.version>2.0.18</slf4j.version>
+        <!-- Falcon (https://github.com/ebremer/falcon): the HDF5 container of every
+             reader and of the in-memory writers. Pure JDK, no dependencies of its
+             own. Not on Maven Central yet: build it at the tag of this version and
+             `mvn install` it (falcon, core and hdf5) before building BeakGraph. -->
+        <falcon.version>0.1.0</falcon.version>
+        <!-- jHDF is a TEST dependency only: the tests read and forge HDF5 files
+             with it, as a reader independent of the one under test. -->
         <jhdf.version>0.13.0</jhdf.version>
         <!-- Native HDF5 (https://github.com/HDFGroup/hdf5) backend versions for the
-             com.ebremer.beakgraph.huge writers, which need incremental (chunk-at-a-
-             time) dataset writing that jHDF does not yet support. All writer code
+             com.ebremer.beakgraph.huge writers, which write their datasets a piece
+             at a time through the native library. All writer code
              targets the official hdf.hdf5lib.H5 API, which BOTH backends provide;
              selection is a build-time dependency choice (identical class names
              cannot coexist on one classpath). See the hdf5-backend-* profiles:
@@ -82,7 +89,7 @@
              Caffeine directly (so don't rely on a transitive dep). -->
         <caffeine.version>3.2.4</caffeine.version>
         <!-- Heap of the native-image BUILDER JVM (-Pcmdlinenative): the analysis
-             of Jena + Fuseki + jHDF needs tens of GB; override with
+             of Jena + Fuseki needs tens of GB; override with
              -Dnative.build.heap=12G on smaller machines (slower, may fail). -->
         <native.build.heap>32G</native.build.heap>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
@@ -629,9 +636,15 @@
             <optional>true</optional>
         </dependency>
         <dependency>
+            <groupId>com.ebremer</groupId>
+            <artifactId>hdf5</artifactId>
+            <version>${falcon.version}</version>
+        </dependency>
+        <dependency>
             <groupId>io.jhdf</groupId>
             <artifactId>jhdf</artifactId>
             <version>${jhdf.version}</version>
+            <scope>test</scope>
         </dependency>
         <!-- The native HDF5 backend for com.ebremer.beakgraph.huge is supplied by
              one of the hdf5-backend-* profiles (JavaCPP by default, HDF Group FFM
@@ -672,8 +685,9 @@
             </exclusions>
         </dependency>
     </dependencies>
-    <!-- Every dependency and plugin is a Maven Central release, so no extra
-         resolution repositories: each one added here joins the supply-chain
+    <!-- Every dependency and plugin is a Maven Central release but Falcon, which
+         is installed locally until it is published (see falcon.version), so no
+         extra resolution repositories: each one added here joins the supply-chain
          boundary of EVERY lookup (and stalls clean builds when it is down).
          The halcyon host remains the deploy target below; the HDF Group's
          GitHub Packages repository is scoped to the hdf5-backend-ffm profile. -->

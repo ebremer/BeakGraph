@@ -4,9 +4,12 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * {@link RandomAccessBytes} over a {@link ByteBuffer} - the classic path for
- * jHDF-mapped datasets (which are capped at 2 GiB by ByteBuffer's int
- * indexing; larger datasets use {@link MemorySegmentBytes}).
+ * {@link RandomAccessBytes} over a {@link ByteBuffer} - the writers'
+ * in-memory buffers, and the classic path for mapped datasets: a ByteBuffer
+ * view of the store's mapping, capped at 2 GiB by ByteBuffer's int indexing.
+ * Mapped datasets are read through {@link MemorySegmentBytes} by default,
+ * and through this only where {@code beakgraph.ffm.threshold} asks for it
+ * (see {@link DatasetBytes}).
  *
  * <p>The source buffer is duplicated at construction (position/limit/order of
  * the original are never touched afterwards) and forced BIG-ENDIAN; only

@@ -6,7 +6,23 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
-* Jena 6.2.0, jHDF 0.13.0.
+* Jena 6.2.0.
+* The HDF5 library of every reader and of the in-memory writers (`-method
+  0/2/3`) is [Falcon](https://github.com/ebremer/falcon) 0.1.0, in place of
+  jHDF, which remains a test dependency (the tests' independent reader). The
+  on-disk format is unchanged, and stores written by either read with both.
+  A store opened from a local file is memory-mapped once, whole, and
+  unmapped when its reader closes: the file is free to replace or delete
+  from then on, on Windows too, and a reader must not be closed while a
+  query is still reading through it. Every dataset of a mapped store is read
+  through its FFM memory segment (`beakgraph.ffm.threshold` now defaults to
+  `0`; it was 2 GiB): the linear bitmap scans of format v2 stores run faster
+  that way, and current-format stores as fast as before. The in-memory
+  writers write each
+  dataset to the file as the next is added, and force the file to disk
+  before it is published. Falcon is not on Maven Central yet: install it
+  locally before building (docs/INSTRUCTIONS.md §2). The disk-based writers
+  (`-method 1/4/5`) still write through the native HDF5 library.
 * LWS storage mode follows the LWS Protocol editor's draft of 2026-10-23 for
   everything a read-only storage serves. Every GET/HEAD response links the
   storage URI (`/description`) with `rel="https://www.w3.org/ns/lws#storage"`

@@ -4,9 +4,8 @@ import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
-import io.jhdf.HdfFile;
-import io.jhdf.WritableHdfFile;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.concurrent.ForkJoinPool;
@@ -31,7 +30,7 @@ import org.slf4j.LoggerFactory;
  *              -> columnar id lists        /
  *              -> pack GSPO keys -> radix sort -> dedup once
  *                  -> GSPO emission || GPOS repack/sort/emission
- *      -> single sequential jHDF write of the finished buffers
+ *      -> single sequential HDF5 write of the finished buffers
  * </pre>
  *
  * Relative to the {@code -method 2} parallel writer this removes its three
@@ -100,13 +99,14 @@ public class UltraHDF5Writer implements BeakGraphWriter {
 
                 logger.info("Stage 4/4: writing HDF5 file {}", builder.getDestination());
                 long ioStart = System.nanoTime();
-                try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
+                try (WritableHdfFile hdfFile = WritableHdfFile.write(tmp)) {
                     final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                     hdt.putAttribute(Params.NUM_QUADS, ingest.getNumberOfQuads());
                     hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
                     dict.add(hdt);
                     indexes[0].add(hdt);
                     indexes[1].add(hdt);
+                    hdfFile.commit();
                 }
                 logger.info("HDF5 file written in {} ms", (System.nanoTime() - ioStart) / 1_000_000L);
             });

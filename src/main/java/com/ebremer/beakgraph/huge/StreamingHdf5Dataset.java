@@ -19,10 +19,10 @@ public interface StreamingHdf5Dataset extends AutoCloseable {
         write(buf, 0, buf.length);
     }
 
-    /** Writes a scalar 32-bit integer attribute (jHDF reads it as Integer). */
+    /** Writes a scalar 32-bit integer attribute (SPECIFICATIONS.md §3, item 4). */
     void putAttribute(String name, int value) throws IOException;
 
-    /** Writes a scalar 64-bit integer attribute (jHDF reads it as Long). */
+    /** Writes a scalar 64-bit integer attribute (SPECIFICATIONS.md §3, item 4). */
     void putAttribute(String name, long value) throws IOException;
 
     @Override

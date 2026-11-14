@@ -1,8 +1,8 @@
 package com.ebremer.beakgraph.hdf5.writers.ultra;
 
 import com.ebremer.beakgraph.Params;
-import io.jhdf.api.WritableDataset;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableDataset;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 

@@ -6,7 +6,6 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import io.jhdf.api.Group;
 import java.util.stream.Stream;
 import org.apache.jena.graph.Node;
 
@@ -46,10 +45,10 @@ public class PositionalDictionaryReader implements GSPODictionary {
     // of allocating a fresh wrapper on every getObjects() call in the query hot path.
     private final Dictionary objectsDict;
 
-    public PositionalDictionaryReader(Group dictionary) {
-        Group entitiesGroup = HdfProfile.group(dictionary, Params.ENTITIES);
-        Group predicatesGroup = HdfProfile.group(dictionary, Params.PREDICATES);
-        Group literalsGroup = HdfProfile.group(dictionary, Params.LITERALS);
+    public PositionalDictionaryReader(HdfGroup dictionary) {
+        HdfGroup entitiesGroup = HdfProfile.group(dictionary, Params.ENTITIES);
+        HdfGroup predicatesGroup = HdfProfile.group(dictionary, Params.PREDICATES);
+        HdfGroup literalsGroup = HdfProfile.group(dictionary, Params.LITERALS);
         this.entities = (entitiesGroup != null) ? new MultiTypeDictionaryReader(entitiesGroup) : null;
         this.predicates = (predicatesGroup != null) ? new MultiTypeDictionaryReader(predicatesGroup) : null;
         this.literals = (literalsGroup != null) ? new MultiTypeDictionaryReader(literalsGroup) : null;

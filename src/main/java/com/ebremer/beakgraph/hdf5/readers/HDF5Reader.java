@@ -12,15 +12,18 @@ import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.jena.SimpleNodeTable;
 import com.ebremer.beakgraph.turbo.Spatial;
-import io.jhdf.HdfFile;
-import io.jhdf.api.Attribute;
-import io.jhdf.api.Group;
-import io.jhdf.nio.FileChannelFromSeekableByteChannel;
-import io.jhdf.storage.HdfFileChannel;
+import com.ebremer.falcon.hdf5.Attribute;
+import com.ebremer.falcon.hdf5.ExternalFileAccess;
+import com.ebremer.falcon.hdf5.Group;
+import com.ebremer.falcon.hdf5.HdfException;
+import com.ebremer.falcon.hdf5.Hdf5File;
+import com.ebremer.falcon.hdf5.OpenOptions;
+import com.ebremer.falcon.hdf5.RangeReader;
 import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.nio.channels.SeekableByteChannel;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -45,8 +48,17 @@ public class HDF5Reader implements BGReader {
 
     private static final Logger LOG = LoggerFactory.getLogger(HDF5Reader.class);
 
-    private final HdfFile hdf;
-    private final Group hdt;
+    /**
+     * A store is ONE file (SPECIFICATIONS.md §3): the other files an HDF5
+     * file can name (external links, external raw data) are never opened, so
+     * a store cannot be made to read its neighbours.
+     */
+    private static final OpenOptions OPTIONS = OpenOptions.defaults().externalFileAccess(ExternalFileAccess.none());
+
+    private final Hdf5File hdf;
+    private final HdfGroup hdt;
+    /** The channel a channel-backed store is read through (owned: closed by close()), else null. */
+    private final SeekableByteChannel channel;
     private final PositionalDictionaryReader dict;
     private final Node defaultGraph;
     private final SimpleNodeTable nodeTable;
@@ -70,7 +82,7 @@ public class HDF5Reader implements BGReader {
     }
 
     public HDF5Reader(File src) {
-        this(new HdfFile(src.toPath()), src.toURI());
+        this(open(src.toPath()), null, null, src.toURI());
     }
 
     /**
@@ -83,49 +95,50 @@ public class HDF5Reader implements BGReader {
      * @param source  identifies the data for {@link #getURI()} and messages
      */
     public HDF5Reader(SeekableByteChannel channel, URI source) {
-        this(open(channel, source), source);
+        this(channel, RangeReader.of(channel), source);
     }
 
-    private static HdfFile open(SeekableByteChannel channel, URI source) {
+    /** One reader for the metadata and for the datasets: reads of either are serialized together. */
+    private HDF5Reader(SeekableByteChannel channel, RangeReader reader, URI source) {
+        this(open(reader, channel, source), reader, channel, source);
+    }
+
+    /** Memory-maps a local file. */
+    private static Hdf5File open(Path src) {
         try {
-            return new HdfFile(channel, jhdfDisplayUri(source));
+            return Hdf5File.open(src, OPTIONS);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot open " + src + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static Hdf5File open(RangeReader reader, SeekableByteChannel channel, URI source) {
+        try {
+            return Hdf5File.open(reader, OPTIONS);
+        } catch (IOException e) {
+            try { channel.close(); } catch (Exception ignore) {}
+            throw new UncheckedIOException("Cannot open " + source + ": " + e.getMessage(), e);
         } catch (RuntimeException | Error e) {
-            // jHDF leaves the channel open when construction fails (e.g. not an
-            // HDF5 file); the reader owns the channel, so release it here.
+            // Falcon never closes what it reads through, and a failed open
+            // (not an HDF5 file, say) leaves the channel open; the reader
+            // owns the channel, so release it here.
             try { channel.close(); } catch (Exception ignore) {}
             throw e;
         }
     }
 
-    /**
-     * jHDF derives a display {@link Path} from the URI's path component;
-     * substitute a placeholder for URIs it cannot hold (opaque URNs, path
-     * characters illegal in local paths) so such sources still open.
-     */
-    private static URI jhdfDisplayUri(URI source) {
-        try {
-            String path = source.getPath();
-            if (path != null) {
-                Path.of(path);
-                return source;
-            }
-        } catch (InvalidPathException cannotDisplay) {
-            // fall through to the placeholder
-        }
-        return URI.create("bg:/channel");
-    }
-
-    private HDF5Reader(HdfFile hdf, URI uri) {
+    private HDF5Reader(Hdf5File hdf, RangeReader reader, SeekableByteChannel channel, URI uri) {
         this.hdf = hdf;
+        this.channel = channel;
         try {
-            if (!(hdf.getChild(Params.BG) instanceof Group bg)) {
+            if (!(hdf.root().child(Params.BG).orElse(null) instanceof Group bg)) {
                 throw new IllegalStateException(
                         "Not a BeakGraph file (no '" + Params.BG + "' group): " + uri);
             }
-            this.hdt = bg;
-            this.formatVersion = readFormatVersion(hdt);
-            this.hasFormatVersionAttribute = hdt.getAttribute(Params.FORMAT_VERSION_ATTR) != null;
-            this.numQuads = readNumQuads(hdt);
+            this.hdt = new HdfGroup(bg, reader);
+            this.formatVersion = readFormatVersion(bg);
+            this.hasFormatVersionAttribute = bg.attribute(Params.FORMAT_VERSION_ATTR).isPresent();
+            this.numQuads = readNumQuads(bg);
             if (formatVersion > Params.FORMAT_VERSION) {
                 throw new IllegalStateException(
                         "BeakGraph HDF5 format version " + formatVersion + " in " + uri
@@ -140,7 +153,7 @@ public class HDF5Reader implements BGReader {
                         + " index lookup falls back to the linear select1 scan; rebuild it (format v{}) for O(log n) lookups",
                         uri, formatVersion, Params.FORMAT_VERSION);
             }
-            Group dictionary = HdfProfile.group(hdt, Params.DICTIONARY);
+            HdfGroup dictionary = HdfProfile.group(hdt, Params.DICTIONARY);
             if (dictionary == null) {
                 // A file with the .BG group but no dictionary (a foreign writer's
                 // partial output) used to surface as a bare NullPointerException
@@ -164,11 +177,19 @@ public class HDF5Reader implements BGReader {
             nodeTable = new SimpleNodeTable(dict);
             this.uri = uri;
         } catch (RuntimeException | Error e) {
-            // Close the backing storage before propagating: a leaked HdfFile pins
-            // the file handle (and on Windows, the file lock) - or the channel -
-            // with no way to release it.
-            try { hdf.close(); } catch (Exception ignore) {}
+            // Close the backing storage before propagating: a leaked file stays
+            // mapped (and on Windows, locked) - or its channel open - with no
+            // way to release it.
+            closeStorage();
             throw e;
+        }
+    }
+
+    /** Unmaps the file (or drops what was cached of a channel-backed one), then closes the channel it was read through. */
+    private void closeStorage() {
+        try { hdf.close(); } catch (Exception ignore) {}
+        if (channel != null) {
+            try { channel.close(); } catch (Exception ignore) {}
         }
     }
 
@@ -181,20 +202,22 @@ public class HDF5Reader implements BGReader {
      * and turned every lookup into a linear scan (BG-350).
      */
     private static long readFormatVersion(Group hdt) {
-        Attribute a = hdt.getAttribute(Params.FORMAT_VERSION_ATTR);
+        Attribute a = hdt.attribute(Params.FORMAT_VERSION_ATTR).orElse(null);
         if (a == null) {
             return 1L;
         }
-        Object data;
+        long version;
         try {
-            data = a.getData();
-        } catch (RuntimeException e) {
-            throw new IllegalStateException("formatVersion attribute is present but unreadable", e);
+            version = a.readLong();
+        } catch (HdfException e) {
+            // Not a scalar, not an integer, or not readable at all.
+            throw new IllegalStateException("formatVersion attribute is present but not a version number: " + a
+                    + ": " + e.getMessage());
         }
-        if (data instanceof Number n && n.longValue() >= 1) {
-            return n.longValue();
+        if (version >= 1) {
+            return version;
         }
-        throw new IllegalStateException("formatVersion attribute is present but not a version number: " + data);
+        throw new IllegalStateException("formatVersion attribute is present but not a version number: " + version);
     }
 
     /** False for a legacy (pre-versioning) file, which the reader treats as format v1. */
@@ -209,9 +232,9 @@ public class HDF5Reader implements BGReader {
 
     private static long readNumQuads(Group hdt) {
         try {
-            Attribute a = hdt.getAttribute(Params.NUM_QUADS);
-            if (a != null && a.getData() instanceof Number n) {
-                return n.longValue();
+            Attribute a = hdt.attribute(Params.NUM_QUADS).orElse(null);
+            if (a != null) {
+                return a.readLong();
             }
         } catch (RuntimeException ignore) {
             // informational only
@@ -230,9 +253,9 @@ public class HDF5Reader implements BGReader {
     }
     
     public IndexReader getIndexReader(Index indexType) {
-        checkOpen(); // the lazy load reads through the (closed) HdfFile otherwise
+        checkOpen(); // the lazy load reads through the (closed) file otherwise
         return indexCache.computeIfAbsent(indexType, type -> {
-            Group indexGroup = HdfProfile.group(hdt, type.name());
+            HdfGroup indexGroup = HdfProfile.group(hdt, type.name());
             if (indexGroup == null) {
                 return null; // index not present in this file; the caller falls back
             }
@@ -249,8 +272,8 @@ public class HDF5Reader implements BGReader {
     /**
      * The storage layer is reached directly by the executor and the stage
      * generator, which GraphBase's closed flag cannot protect: a closed reader
-     * used to keep answering from cached buffers and fail deep inside jHDF
-     * for anything uncached (BG-5).
+     * used to keep answering from cached buffers and fail deep inside the
+     * HDF5 library for anything uncached (BG-5).
      */
     private void checkOpen() {
         if (!open) {
@@ -651,19 +674,19 @@ public class HDF5Reader implements BGReader {
      * exactly these files.
      */
     public boolean isChannelBacked() {
-        return hdf.getHdfBackingStorage() instanceof HdfFileChannel hfc
-                && hfc.getFileChannel() instanceof FileChannelFromSeekableByteChannel;
+        return channel != null;
     }
 
     @Override
     public void close() {
         if (!open) return;
         open = false;
-        // Closes jHDF's channel only: the dataset mappings (jHDF's mapped
-        // ByteBuffers and the FFM auto-arena segments) are released when the
-        // RandomAccessBytes views become unreachable and a GC runs, so the
-        // file can stay "in use" on Windows for a while (DatasetBytes, BG-353).
-        hdf.close();
+        // Unmaps the file here and now: every dataset is a view of Falcon's
+        // one mapping of it, so from this point the file is free to replace
+        // or delete, on Windows too, and a RandomAccessBytes view still in
+        // use throws IllegalStateException (DatasetBytes, BG-353). The
+        // channel of a channel-backed store, which the reader owns, closes too.
+        closeStorage();
         // The node table advertises AutoCloseable and its two caches hold up to
         // a million weighted Node entries each; a closed reader that stays
         // referenced (a field, a registry) used to keep them all reachable and

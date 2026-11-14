@@ -1,6 +1,6 @@
 package com.ebremer.beakgraph.io;
 
-import java.io.EOFException;
+import com.ebremer.falcon.hdf5.RangeReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
@@ -8,17 +8,20 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 
 /**
- * {@link RandomAccessBytes} over a window of a {@link FileChannel}, using
- * absolute positional reads - the path for channel-backed HDF5 storage that
- * cannot be memory-mapped (an HTTP range-request channel, a zip/S3
- * filesystem, ...). Nothing is materialized up front: each read touches only
- * the bytes it asks for, so a remote dataset is fetched lazily, range by
- * range, by whatever block caching the underlying channel provides.
+ * {@link RandomAccessBytes} over a window of a channel, using absolute
+ * positional reads through a Falcon {@link RangeReader} - the path for
+ * channel-backed HDF5 storage that cannot be memory-mapped (an HTTP
+ * range-request channel, a zip/S3 filesystem, ...). Nothing is materialized
+ * up front: each read touches only the bytes it asks for, so a remote
+ * dataset is fetched lazily, range by range, by whatever block caching the
+ * underlying channel provides.
  *
  * <p>Multi-byte reads are assembled BIG-ENDIAN from the raw bytes, matching
- * the on-disk format. Instances are safe for concurrent readers as long as
- * the channel's positional reads are thread-safe (jHDF's channel wrapper
- * serializes them internally); the 8-byte scratch buffer is per-thread.
+ * the on-disk format. Instances are safe for concurrent readers: a
+ * {@code RangeReader} takes calls from several threads at once
+ * ({@link RangeReader#of} uses a {@link FileChannel}'s positional reads and
+ * serializes those of any other channel, which move its position); the
+ * 8-byte scratch buffer is per-thread.
  *
  * <p>{@link IOException}s surface as {@link UncheckedIOException} - this
  * interface's contract has no checked I/O failures.
@@ -30,23 +33,32 @@ public final class ChannelBytes implements RandomAccessBytes {
     private static final ThreadLocal<ByteBuffer> SCRATCH =
             ThreadLocal.withInitial(() -> ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN));
 
-    private final FileChannel channel;
+    private final RangeReader reader;
     private final long base;
     private final long size;
 
     /**
-     * @param channel source of positional reads; NOT owned (closing is the
-     *                storage's job, this view just reads through it)
+     * @param reader source of positional reads; NOT owned (closing what it
+     *               reads is the storage's job, this view just reads through it)
+     * @param base   absolute offset of this window's byte 0
+     * @param size   window length in bytes
+     */
+    public ChannelBytes(RangeReader reader, long base, long size) {
+        if (base < 0 || size < 0) {
+            throw new IllegalArgumentException("base " + base + ", size " + size);
+        }
+        this.reader = reader;
+        this.base = base;
+        this.size = size;
+    }
+
+    /**
+     * @param channel source of positional reads; NOT owned
      * @param base    absolute channel offset of this window's byte 0
      * @param size    window length in bytes
      */
     public ChannelBytes(FileChannel channel, long base, long size) {
-        if (base < 0 || size < 0) {
-            throw new IllegalArgumentException("base " + base + ", size " + size);
-        }
-        this.channel = channel;
-        this.base = base;
-        this.size = size;
+        this(RangeReader.of(channel), base, size);
     }
 
     @Override
@@ -101,16 +113,8 @@ public final class ChannelBytes implements RandomAccessBytes {
     }
 
     private void readFully(ByteBuffer bb, long offset) {
-        long channelPosition = base + offset;
-        int start = bb.position();
         try {
-            while (bb.hasRemaining()) {
-                int n = channel.read(bb, channelPosition + (bb.position() - start));
-                if (n <= 0) {
-                    throw new EOFException("Unexpected end of channel at offset " + offset
-                            + " (channel position " + (channelPosition + bb.position() - start) + ")");
-                }
-            }
+            reader.read(base + offset, bb); // fills bb, or fails with an EOFException
         } catch (IOException e) {
             throw new UncheckedIOException("Channel read failed at offset " + offset, e);
         }

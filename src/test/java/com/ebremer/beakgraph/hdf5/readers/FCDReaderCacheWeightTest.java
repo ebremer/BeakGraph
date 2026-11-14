@@ -5,8 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
-import io.jhdf.HdfFile;
-import io.jhdf.api.Group;
+import com.ebremer.falcon.hdf5.Hdf5File;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -34,7 +33,7 @@ class FCDReaderCacheWeightTest {
 
     @TempDir
     static Path dir;
-    static HdfFile file;
+    static Hdf5File file;
     static FCDReader reader;
 
     @BeforeAll
@@ -51,8 +50,8 @@ class FCDReaderCacheWeightTest {
         Files.writeString(ttl.toPath(), sb.toString(), StandardCharsets.UTF_8);
         File h5 = dir.resolve("big-literals.h5").toFile();
         HDF5Writer.Builder().setSource(ttl).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
-        file = new HdfFile(h5.toPath());
-        reader = new FCDReader((Group) file.getByPath(STRINGS));
+        file = Hdf5File.open(h5.toPath());
+        reader = new FCDReader(new HdfGroup(file.root().group(STRINGS)));
     }
 
     @AfterAll

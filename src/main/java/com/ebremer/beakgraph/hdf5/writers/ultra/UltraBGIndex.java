@@ -5,7 +5,7 @@ import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.hdf5.Index;
 import static com.ebremer.beakgraph.Params.SUPERBLOCKSIZE;
 import static com.ebremer.beakgraph.utils.UTIL.MinBits;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.concurrent.ForkJoinPool;

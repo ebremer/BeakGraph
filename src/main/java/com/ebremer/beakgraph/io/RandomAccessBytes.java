@@ -11,9 +11,10 @@ package com.ebremer.beakgraph.io;
  * same contract the readers previously relied on with absolute ByteBuffer
  * reads.
  *
- * <p>Implementations: {@link ByteBufferBytes} (wraps the jHDF-mapped buffer,
- * the default for datasets under 2 GiB), {@link MemorySegmentBytes} (an FFM
- * mapped segment for datasets beyond ByteBuffer's reach) and
+ * <p>Implementations: {@link MemorySegmentBytes} (the FFM mapped segment of
+ * a store opened from a local file, the default for datasets of any size),
+ * {@link ByteBufferBytes} (a ByteBuffer: the writers' in-memory buffers, and
+ * on request a view of a mapped dataset under 2 GiB) and
  * {@link ChannelBytes} (positional reads through a remote-backed channel).
  * The interface is sealed so the hottest call site in the read path -
  * {@code BitPackedUnSignedLongBuffer}'s word fetch, which every id lookup,

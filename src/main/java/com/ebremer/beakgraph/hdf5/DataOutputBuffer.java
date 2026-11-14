@@ -1,8 +1,6 @@
 package com.ebremer.beakgraph.hdf5;
 
 import com.ebremer.beakgraph.Params;
-import io.jhdf.api.WritableDataset;
-import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;

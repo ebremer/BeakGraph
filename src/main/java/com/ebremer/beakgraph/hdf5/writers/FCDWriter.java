@@ -8,7 +8,7 @@ import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import com.ebremer.beakgraph.utils.StringUtils;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

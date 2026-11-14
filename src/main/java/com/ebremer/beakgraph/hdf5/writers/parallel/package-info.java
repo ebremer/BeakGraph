@@ -32,7 +32,7 @@
  *       obtains by comparing nodes: ids are NodeComparator ranks).</li>
  * </ul>
  *
- * <p>Only the build is parallel; the jHDF write of the finished buffers is the
+ * <p>Only the build is parallel; the HDF5 write of the finished buffers is the
  * sequential writer's, and files are read by the same unmodified readers
  * ({@code HDF5Reader}). Given the same parsed quads, the output is
  * byte-identical to the sequential writer's; across separate writes only the

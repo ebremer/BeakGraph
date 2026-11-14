@@ -6,10 +6,10 @@ import java.io.IOException;
  * A group inside a {@link StreamingHdf5File}.
  *
  * <p>Attribute types are deliberately restricted to the two the BeakGraph
- * format uses: a 32-bit integer (read back by jHDF as {@link Integer}) and a
- * 64-bit integer (read back as {@link Long}). The existing readers cast
- * attribute values to exactly those boxed types, so an implementation must
- * preserve the width faithfully.
+ * format uses: a 32-bit integer and a 64-bit integer (SPECIFICATIONS.md §3,
+ * item 4). BeakGraph's readers take an integer attribute of either width, but
+ * other readers may expect exactly these, so an implementation must preserve
+ * the width faithfully.
  *
  * @author Erich Bremer
  */
@@ -18,10 +18,10 @@ public interface StreamingHdf5Group {
     /** Creates (and returns) a child group. */
     StreamingHdf5Group putGroup(String name) throws IOException;
 
-    /** Writes a scalar 32-bit integer attribute (jHDF reads it as Integer). */
+    /** Writes a scalar 32-bit integer attribute (SPECIFICATIONS.md §3, item 4). */
     void putAttribute(String name, int value) throws IOException;
 
-    /** Writes a scalar 64-bit integer attribute (jHDF reads it as Long). */
+    /** Writes a scalar 64-bit integer attribute (SPECIFICATIONS.md §3, item 4). */
     void putAttribute(String name, long value) throws IOException;
 
     /**

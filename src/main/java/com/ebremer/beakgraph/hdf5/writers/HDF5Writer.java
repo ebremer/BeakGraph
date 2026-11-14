@@ -6,9 +6,8 @@ import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.core.VoidMode;
 import com.ebremer.beakgraph.hdf5.Index;
-import io.jhdf.HdfFile;
-import io.jhdf.WritableHdfFile;
-import io.jhdf.api.WritableGroup;
+import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
@@ -18,7 +17,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The default (method 0) writer: parse, dictionary, GSPO/GPOS indexes, one
- * jHDF file. The writer SNAPSHOTS its builder's settings at construction:
+ * HDF5 file. The writer SNAPSHOTS its builder's settings at construction:
  * the builder stays mutable (it is reused freely by the CLI and by tests),
  * and a writer that read the builder on every {@code write()} call could be
  * redirected after the fact (BG-102).
@@ -78,13 +77,14 @@ public class HDF5Writer implements BeakGraphWriter {
                 BGIndex gpos = new BGIndex(w, Index.GPOS, ids);
 
                 logger.info("Creating HDF5 file {}", dest);
-                try (WritableHdfFile hdfFile = HdfFile.write(tmp)) {
+                try (WritableHdfFile hdfFile = WritableHdfFile.write(tmp)) {
                     final WritableGroup hdt = hdfFile.putGroup(name);
                     hdt.putAttribute(Params.NUM_QUADS, w.getNumberOfQuads());
                     hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
                     w.add(hdt);
                     gspo.add(hdt);
                     gpos.add(hdt);
+                    hdfFile.commit();
                 }
             }
         });

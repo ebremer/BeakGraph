@@ -6,8 +6,7 @@ import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
-import io.jhdf.api.Group;
-import io.jhdf.api.dataset.ContiguousDataset;
+import com.ebremer.falcon.hdf5.Dataset;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.stream.LongStream;
@@ -101,9 +100,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private record TieredIndex(long[] ids, Node[] nodes, IdentityHashMap<Node, NodeValue> values) {}
     private static final TieredIndex EMPTY_TIER = new TieredIndex(new long[0], new Node[0], new IdentityHashMap<>());
 
-    public MultiTypeDictionaryReader(Group d) {
-        setName(d.getName());
-        ContiguousDataset offsetsDS = HdfProfile.requireContiguous(d, "offsets");
+    public MultiTypeDictionaryReader(HdfGroup d) {
+        setName(d.name());
+        Dataset offsetsDS = HdfProfile.requireContiguous(d, "offsets");
         this.numEntries = HdfProfile.longAttr(offsetsDS, Params.NUM_ENTRIES);
         this.offsets = HdfProfile.requirePacked(d, "offsets");
         this.datatype = HdfProfile.requirePacked(d, "datatypes");
@@ -114,13 +113,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.longs = HdfProfile.packed(d, "longs");
         this.tripleTerms = HdfProfile.packed(d, "tripleTerms");
 
-        Group stringsG = HdfProfile.group(d, "strings");
+        HdfGroup stringsG = HdfProfile.group(d, "strings");
         this.strings = (stringsG != null) ? new FCDReader(stringsG) : null;
-        Group typedLiteralsDictionaryG = HdfProfile.group(d, "typedLiteralsDictionary");
+        HdfGroup typedLiteralsDictionaryG = HdfProfile.group(d, "typedLiteralsDictionary");
         this.typedLiteralsDictionary = (typedLiteralsDictionaryG != null) ? new FCDReader(typedLiteralsDictionaryG) : null;
-        Group iriG = HdfProfile.group(d, "iri");
+        HdfGroup iriG = HdfProfile.group(d, "iri");
         this.iri = (iriG != null) ? new FCDReader(iriG) : null;
-        Group langsG = HdfProfile.group(d, "langs");
+        HdfGroup langsG = HdfProfile.group(d, "langs");
         this.langs = (langsG != null) ? new FCDReader(langsG) : null;
         this.langTags = HdfProfile.packed(d, "langTags");
         this.langDirs = HdfProfile.packed(d, "langDirs");

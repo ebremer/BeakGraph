@@ -7,8 +7,8 @@ import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.huge.HugeIO;
 import com.ebremer.beakgraph.io.ByteBufferBytes;
+import com.ebremer.beakgraph.hdf5.WritableHdfFile;
 import io.jhdf.HdfFile;
-import io.jhdf.WritableHdfFile;
 import io.jhdf.api.Dataset;
 import io.jhdf.api.Group;
 import java.io.ByteArrayInputStream;
@@ -112,8 +112,9 @@ class BitPackedTailAndStagingTest {
             }
             assertEquals(values[n - 1], b.get(n - 1));
             Path f = dir.resolve("staged-" + width + ".h5");
-            try (WritableHdfFile out = HdfFile.write(f)) {
+            try (WritableHdfFile out = WritableHdfFile.write(f)) {
                 b.add(out.putGroup("g"));
+                out.commit();
             }
             try (HdfFile in = new HdfFile(f)) {
                 Dataset ds = (Dataset) ((Group) in.getChild("g")).getChild("v" + width);

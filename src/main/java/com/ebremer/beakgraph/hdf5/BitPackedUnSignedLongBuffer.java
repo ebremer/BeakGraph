@@ -5,8 +5,6 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.io.ByteBufferBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
 import com.ebremer.beakgraph.utils.UTIL;
-import io.jhdf.api.WritableDataset;
-import io.jhdf.api.WritableGroup;
 import java.io.ByteArrayOutputStream;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
@@ -22,7 +20,7 @@ import java.util.stream.StreamSupport;
  *
  * <p>All read paths go through {@link RandomAccessBytes} with long offsets, so
  * a read view is no longer capped at 2 GiB by ByteBuffer's int indexing - the
- * backing bytes may be a jHDF-mapped buffer, an FFM-mapped segment, or (for
+ * backing bytes may be a ByteBuffer view of the mapped store, its FFM segment, or (for
  * the write side after {@link #prepareForReading()}) the internally
  * accumulated bytes.
  */
@@ -130,7 +128,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
 
     // The one RandomAccessBytes call site every id fetch, bitmap probe and
     // binary-search step lands on. Its receiver-type profile is process-wide:
-    // a JVM that has opened small (ByteBufferBytes), FFM-mapped
+    // a JVM that has read ByteBuffer-backed (ByteBufferBytes), FFM-mapped
     // (MemorySegmentBytes) and remote (ChannelBytes) datasets turns the plain
     // interface call megamorphic, measured at +57% on randomGet and +42% on
     // binarySearch (benchmarks/BitPackedBufferBench, profile=mixed vs mono).

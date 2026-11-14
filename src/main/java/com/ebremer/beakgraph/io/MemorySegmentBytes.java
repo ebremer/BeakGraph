@@ -11,20 +11,21 @@ import java.nio.file.StandardOpenOption;
 
 /**
  * {@link RandomAccessBytes} over an FFM {@link MemorySegment} - the path for
- * datasets past ByteBuffer's 2 GiB ceiling (and, at parity performance, an
- * alternative below it). Since JDK 22 a file region of any size can be mapped
- * straight to a segment; absolute segment reads JIT to the same machine code
- * as direct-ByteBuffer access.
+ * every dataset of a store opened from a local file, past ByteBuffer's 2 GiB
+ * ceiling or not. Since JDK 22 a file region of any size can be mapped
+ * straight to a segment.
  *
- * <p>Mappings use an automatic {@link Arena}: the region unmaps when the
- * segment becomes unreachable, so no close() plumbing is needed through the
- * reader stack (a mapping survives the close of the channel it was made
- * from). Windows caveat: as with any mapping, the file stays in-use until
- * the unmap actually happens.
+ * <p>A segment handed to the constructor lives as its owner decides: a
+ * store's datasets are slices of the one mapping Falcon makes of the file,
+ * unmapped when the store is closed (see {@link DatasetBytes}). The
+ * {@code map} methods here use an automatic {@link Arena} instead: the
+ * region unmaps when the segment becomes unreachable, and survives the close
+ * of the channel it was made from. Windows caveat: as with any mapping, the
+ * file stays in-use until the unmap actually happens.
  *
  * <p>All reads are absolute and the layouts are unaligned BIG-ENDIAN (the
- * bit-packed data honors no alignment). Auto arenas are shared, so instances
- * are safe for concurrent readers.
+ * bit-packed data honors no alignment). Both kinds of arena are shared, so
+ * instances are safe for concurrent readers.
  *
  * @author Erich Bremer
  */
