@@ -121,7 +121,6 @@ class LocaleIndependentIdentifiersTest {
         // BG-355: the disk engines' SpatialAugmenter carried its own copy of the
         // grid-URN format. Both engines now share Params.gridGraph; under the
         // Arabic-digit locale they must agree name for name.
-        NativeTestSupport.assumeNative();
         File src = dir.resolve("locale.ttl").toFile();
         File huge = dir.resolve("locale-huge.h5").toFile();
         com.ebremer.beakgraph.huge.HugeHDF5Writer.Builder b = com.ebremer.beakgraph.huge.HugeHDF5Writer.Builder().setDestination(huge);

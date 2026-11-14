@@ -650,18 +650,6 @@
       "type": "float[]"
     },
     {
-      "type": "hdf.hdf5lib.structs.H5O_token_t",
-      "jniAccessible": true,
-      "methods": [
-        {
-          "name": "<init>",
-          "parameterTypes": [
-            "byte[]"
-          ]
-        }
-      ]
-    },
-    {
       "type": "int"
     },
     {

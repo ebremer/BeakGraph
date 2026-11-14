@@ -13,7 +13,7 @@ immutable store.
 |---|---|
 | Java 25+ | The build targets current JDKs. |
 | Maven 3.9+ | Standard build. |
-| Native HDF5 library | **Only** for the disk-based writers (`-method 1`, `4` and `5`); a missing library is reported before any parsing starts. The in-memory writers (`-method 0/2/3`) use pure-Java [Falcon](https://github.com/ebremer/falcon) and need nothing native. Platform matrix: the default JavaCPP preset (`org.bytedeco:hdf5-platform` 1.14.3-1.5.10) bundles natives for **linux-x86_64 and macos-x86_64** (they load automatically) and **windows-x86_64** (its JNI glue needs a `hdf5.dll` it does not ship: install HDF5 1.14 and put its `bin` directory, `hdf5.dll` + `hdf5_java.dll`, on `PATH`, or set `-Dhdf.hdf5lib.H5.hdf5lib=<path to hdf5_java.dll>`). **No preset published so far carries arm64 natives**: on Apple Silicon or aarch64 Linux either run an x86_64 JDK (Rosetta), or install HDF5 yourself and use the HDF Group's FFM bindings (`mvn -Dhdf5.ffm=true ...`, published for linux-x86_64, windows-x86_64, macos-x86_64 and macos-aarch64 - nothing for linux-aarch64 / windows-aarch64; the build refuses to guess a classifier for an unrecognised platform). A system install on the library path is always preferred over the bundled natives. |
+| Native HDF5 library | Not needed. Every engine, the disk-based ones (`-method 1`, `4` and `5`) included, reads and writes HDF5 through pure-Java [Falcon](https://github.com/ebremer/falcon), on any platform Java 25 runs on. |
 | Disk workspace | For `-method 1/4/5`: free space on the order of a few times the uncompressed source (see §7). |
 
 ## 2. Building
@@ -270,11 +270,11 @@ touches the damaged region (index loading is lazy).
 | `-method` | Engine | Memory | Parallelism | Use when |
 |---|---|---|---|---|
 | `0` | Sequential in-memory | Whole input on heap | none | Small files, maximum simplicity. |
-| `1` | Disk-based (`huge`) | **Bounded** by spill batches (records *and* bytes; JSON-LD sources excepted, §5) | none | Input too big for RAM; native HDF5 required. |
+| `1` | Disk-based (`huge`) | **Bounded** by spill batches (records *and* bytes; JSON-LD sources excepted, §5) | none | Input too big for RAM. |
 | `2` | Parallel in-memory | Whole input on heap | `-cores` | Medium files, faster than 0. |
 | `3` | **Ultra** in-memory | Whole input on heap | `-cores` | Fastest option **for data that fits in RAM**: parallel parse, O(1) id maps, radix-sorted packed keys, parallel index emission. |
-| `4` | **hugeUltra** disk-based | **Bounded** by spill batches (records *and* bytes; JSON-LD sources excepted, §5) | `-cores` | Multi-billion-quad builds: the `-method 1` pipeline on parallel machinery — background radix-sorted spills, packed primitive keys, grouped term runs, concurrent stages. Native HDF5 required. |
-| `5` | **plaid** disk-based | **Bounded** by spill batches (records *and* bytes; JSON-LD sources excepted, §5) | `-cores` | Method 4 **plus parallel multi-file ingest**: up to `-cores` source documents parse concurrently. The fastest option for `-merge` over many files. Native HDF5 required. |
+| `4` | **hugeUltra** disk-based | **Bounded** by spill batches (records *and* bytes; JSON-LD sources excepted, §5) | `-cores` | Multi-billion-quad builds: the `-method 1` pipeline on parallel machinery — background radix-sorted spills, packed primitive keys, grouped term runs, concurrent stages. |
+| `5` | **plaid** disk-based | **Bounded** by spill batches (records *and* bytes; JSON-LD sources excepted, §5) | `-cores` | Method 4 **plus parallel multi-file ingest**: up to `-cores` source documents parse concurrently. The fastest option for `-merge` over many files. |
 
 Rules of thumb: fits comfortably in heap → `-method 3`. Doesn't fit and merging many files →
 `-method 5`; doesn't fit, single giant file → `-method 4`.
@@ -305,10 +305,9 @@ java -Xmx32g -jar BeakGraph.jar \
   (`setMergeConcurrency`), so open files stay near 1024 and live records near
   `concurrency x termSpillBatch` however many runs a level holds.
 * **Shard your input**: `-merge` over many files is the natural way to feed 100B quads.
-* **Paths**: the native HDF5 library receives the output path through JNI. Keep `-dest` and
-  `-workdir` to characters of the Basic Multilingual Plane (accents are fine, emoji and CJK
-  Extension B are not) and, on Windows, under 260 characters; the writers probe the exact
-  output path before parsing and refuse to start otherwise, instead of failing after the sort.
+* **Paths**: `-dest` and `-workdir` may be any path the file system takes. The writers probe
+  the exact output path before parsing and refuse to start if it cannot be written, instead
+  of failing after the sort.
 * **Statistics are opt-in**: no VoID/SD graph is written unless you pass `-void` (exact,
   in-memory) or `-voidsketch` (bounded memory via HyperLogLog). Readers use the VoID
   statistics for join reordering when present and fall back to a fixed heuristic when
@@ -317,9 +316,9 @@ java -Xmx32g -jar BeakGraph.jar \
   `sd:Dataset` resource is `urn:x-beakgraph:dataset` unless `-voidbase <iri>` names it.
 * Blank nodes are scoped per source document (labels are not preserved in the output format;
   readers regenerate labels from dictionary ranks).
-* **Native binary** (`mvn -Pcmdlinenative`): it supports the in-memory engines only
-  (`-method 0/2/3`) and takes Substrate VM's default heap; raise it per run with
-  `beakgraph -XX:MaxHeapSize=16g ...` (the equivalent of `java -Xmx16g`).
+* **Native binary** (`mvn -Pcmdlinenative`): it runs every engine and takes Substrate VM's
+  default heap; raise it per run with `beakgraph -XX:MaxHeapSize=16g ...` (the equivalent of
+  `java -Xmx16g`).
 
 ## 8. Programmatic use
 

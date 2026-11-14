@@ -1,6 +1,8 @@
 package com.ebremer.beakgraph.cmdline;
 
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
+import com.ebremer.falcon.hdf5.Hdf5Writer;
+import com.ebremer.falcon.hdf5.datatype.Datatype;
 import io.jhdf.HdfFile;
 import io.jhdf.WritableHdfFile;
 import java.io.ByteArrayOutputStream;
@@ -357,38 +359,39 @@ class VerifyCommandTest {
                 () -> com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer.readView(new com.ebremer.beakgraph.io.ByteBufferBytes(eight), -1, 8));
     }
 
-    /** Copies the healthy store and applies an edit through the native HDF5 library (jHDF cannot write). */
-    private Path nativeEdit(String name, java.util.function.LongConsumer edit) throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
-        Path copy = dir.resolve(name);
-        Files.copy(good.toPath(), copy, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        long fid = hdf.hdf5lib.H5.H5Fopen(copy.toString(), hdf.hdf5lib.HDF5Constants.H5F_ACC_RDWR, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-        try {
-            edit.accept(fid);
-        } finally {
-            hdf.hdf5lib.H5.H5Fclose(fid);
-        }
-        return copy;
+    /** A change to a store's HDF5 container. */
+    @FunctionalInterface
+    private interface Edit {
+        void apply(Hdf5Writer file) throws Exception;
     }
 
-    private static void unlink(long fid, String path) {
-        try {
-            hdf.hdf5lib.H5.H5Ldelete(fid, path, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+    private static final long[] SCALAR = new long[0];
+
+    /** Changes a store in place, through Falcon's writer (jHDF, the independent reader of these tests, cannot write). */
+    private static void edit(Path store, Edit edit) throws Exception {
+        try (Hdf5Writer file = Hdf5Writer.open(store)) {
+            edit.apply(file);
         }
+    }
+
+    /** Copies the healthy store and changes the copy. */
+    private Path edited(String name, Edit edit) throws Exception {
+        Path copy = dir.resolve(name);
+        Files.copy(good.toPath(), copy, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        edit(copy, edit);
+        return copy;
     }
 
     @Test
     void aMissingGposIndexFailsStructurally() throws Exception {
-        Path copy = nativeEdit("no-gpos.h5", fid -> unlink(fid, "/.BG/GPOS"));
+        Path copy = edited("no-gpos.h5", file -> file.group(".BG").delete("GPOS"));
         for (boolean deep : new boolean[]{false, true}) {
             Result r = verify(copy.toFile(), deep);
             assertEquals(2, r.code(), r.output());
             assertTrue(r.output().contains("index GPOS absent"), r.output());
         }
         // Symmetric: the file is not "half usable" without GSPO either.
-        Path noGspo = nativeEdit("no-gspo.h5", fid -> unlink(fid, "/.BG/GSPO"));
+        Path noGspo = edited("no-gspo.h5", file -> file.group(".BG").delete("GSPO"));
         Result r = verify(noGspo.toFile(), false);
         assertEquals(2, r.code(), r.output());
         assertTrue(r.output().contains("index GSPO absent"), r.output());
@@ -396,52 +399,25 @@ class VerifyCommandTest {
 
     @Test
     void aMissingLevelDatasetFailsStructurally() throws Exception {
-        Path copy = nativeEdit("no-so.h5", fid -> unlink(fid, "/.BG/GPOS/So"));
+        Path copy = edited("no-so.h5", file -> file.group(".BG").group("GPOS").delete("So"));
         Result r = verify(copy.toFile(), false);
         assertEquals(2, r.code(), r.output());
         assertTrue(r.output().contains("index GPOS: dataset So missing"), r.output());
     }
 
-    private static void scalarAttribute(long objId, String name, long fileType, byte[] value) throws Exception {
-        long space = hdf.hdf5lib.H5.H5Screate(hdf.hdf5lib.HDF5Constants.H5S_SCALAR);
-        long attr = hdf.hdf5lib.H5.H5Acreate(objId, name, fileType, space,
-                hdf.hdf5lib.HDF5Constants.H5P_DEFAULT, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-        try {
-            hdf.hdf5lib.H5.H5Awrite(attr, fileType, value);
-        } finally {
-            hdf.hdf5lib.H5.H5Aclose(attr);
-            hdf.hdf5lib.H5.H5Sclose(space);
-        }
-    }
-
     /**
      * GPOS/Ss is replaced by an 8-byte dataset that CLAIMS 2^40 x 32-bit
-     * entries (the native library refuses to rewrite a jHDF-written
-     * attribute in place, so the dataset is rebuilt). The reader used to
-     * store the attributes verbatim and fail at query time.
+     * entries. The reader used to store the attributes verbatim and fail at
+     * query time.
      */
     @Test
     void anOversizedNumEntriesFailsStructurally() throws Exception {
-        Path copy = nativeEdit("big-numentries.h5", fid -> {
-            try {
-                unlink(fid, "/.BG/GPOS/Ss");
-                long space = hdf.hdf5lib.H5.H5Screate_simple(1, new long[]{8}, null);
-                long dset = hdf.hdf5lib.H5.H5Dcreate(fid, "/.BG/GPOS/Ss", hdf.hdf5lib.HDF5Constants.H5T_STD_I8LE, space,
-                        hdf.hdf5lib.HDF5Constants.H5P_DEFAULT, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-                try {
-                    hdf.hdf5lib.H5.H5Dwrite(dset, hdf.hdf5lib.HDF5Constants.H5T_NATIVE_INT8, hdf.hdf5lib.HDF5Constants.H5S_ALL,
-                            hdf.hdf5lib.HDF5Constants.H5S_ALL, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT, new byte[8]);
-                    scalarAttribute(dset, "numEntries", hdf.hdf5lib.HDF5Constants.H5T_STD_I64LE,
-                            java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putLong(1L << 40).array());
-                    scalarAttribute(dset, "width", hdf.hdf5lib.HDF5Constants.H5T_STD_I32LE,
-                            java.nio.ByteBuffer.allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(32).array());
-                } finally {
-                    hdf.hdf5lib.H5.H5Dclose(dset);
-                    hdf.hdf5lib.H5.H5Sclose(space);
-                }
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
+        Path copy = edited("big-numentries.h5", file -> {
+            Hdf5Writer.GroupWriter gpos = file.group(".BG").group("GPOS");
+            gpos.delete("Ss");
+            gpos.byteDataset("Ss", new byte[8], new long[]{8})
+                    .attribute("numEntries", Datatype.int64(), SCALAR, new long[]{1L << 40})
+                    .intAttribute("width", new int[]{32}, SCALAR);
         });
         Result r = verify(copy.toFile(), false);
         assertEquals(2, r.code(), r.output());
@@ -479,9 +455,8 @@ class VerifyCommandTest {
 
     // --- BG-350: the format version and numQuads are checked, not merely printed ---
 
-    /** A store whose attributes the native library can rewrite (jHDF-written attributes it refuses to touch). */
-    private Path nativeStore(String name, String nq) throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
+    /** A store built by the disk-based engine, to change the attributes of. */
+    private Path diskBuiltStore(String name, String nq) throws Exception {
         File src = dir.resolve(name + ".nq").toFile();
         Files.writeString(src.toPath(), nq, StandardCharsets.UTF_8);
         File h5 = dir.resolve(name + ".h5").toFile();
@@ -489,29 +464,6 @@ class VerifyCommandTest {
                 .setSpatial(false).setFeatures(false)
                 .setWorkDirectory(Files.createDirectories(dir.resolve("work-" + name))).build().write();
         return h5.toPath();
-    }
-
-    /** Deletes and re-creates a scalar attribute (the library refuses to write into an existing one here). */
-    private static void rewriteAttribute(long fid, String object, String attr, long fileType, byte[] value) {
-        try {
-            hdf.hdf5lib.H5.H5Adelete_by_name(fid, object, attr, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-            long obj = hdf.hdf5lib.H5.H5Oopen(fid, object, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-            try {
-                long space = hdf.hdf5lib.H5.H5Screate(hdf.hdf5lib.HDF5Constants.H5S_SCALAR);
-                long a = hdf.hdf5lib.H5.H5Acreate(obj, attr, fileType, space,
-                        hdf.hdf5lib.HDF5Constants.H5P_DEFAULT, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-                try {
-                    hdf.hdf5lib.H5.H5Awrite(a, fileType, value);
-                } finally {
-                    hdf.hdf5lib.H5.H5Aclose(a);
-                    hdf.hdf5lib.H5.H5Sclose(space);
-                }
-            } finally {
-                hdf.hdf5lib.H5.H5Oclose(obj);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private static final String FIVE_QUADS = "<http://ex.org/s1> <http://ex.org/p> <http://ex.org/o1> .\n"
@@ -522,14 +474,9 @@ class VerifyCommandTest {
 
     @Test
     void aLostFormatVersionAttributeIsReportedNotTreatedAsLegacy() throws Exception {
-        Path store = nativeStore("fv-missing", FIVE_QUADS);
+        Path store = diskBuiltStore("fv-missing", FIVE_QUADS);
         assertEquals(0, verify(store.toFile(), true).code());
-        long fid = hdf.hdf5lib.H5.H5Fopen(store.toString(), hdf.hdf5lib.HDF5Constants.H5F_ACC_RDWR, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-        try {
-            hdf.hdf5lib.H5.H5Adelete_by_name(fid, "/.BG", "formatVersion", hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-        } finally {
-            hdf.hdf5lib.H5.H5Fclose(fid);
-        }
+        edit(store, file -> file.group(".BG").deleteAttribute("formatVersion"));
         Result r = verify(store.toFile(), false);
         assertEquals(2, r.code(), r.output());
         assertTrue(r.output().contains("formatVersion attribute is missing"), r.output());
@@ -539,14 +486,9 @@ class VerifyCommandTest {
 
     @Test
     void anUnreadableFormatVersionIsCorruptionNotLegacy() throws Exception {
-        Path store = nativeStore("fv-zero", FIVE_QUADS);
-        long fid = hdf.hdf5lib.H5.H5Fopen(store.toString(), hdf.hdf5lib.HDF5Constants.H5F_ACC_RDWR, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-        try {
-            rewriteAttribute(fid, "/.BG", "formatVersion", hdf.hdf5lib.HDF5Constants.H5T_STD_I32LE,
-                    java.nio.ByteBuffer.allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(0).array());
-        } finally {
-            hdf.hdf5lib.H5.H5Fclose(fid);
-        }
+        Path store = diskBuiltStore("fv-zero", FIVE_QUADS);
+        edit(store, file -> file.group(".BG").deleteAttribute("formatVersion")
+                .intAttribute("formatVersion", new int[]{0}, SCALAR));
         Result r = verify(store.toFile(), false);
         assertEquals(2, r.code(), r.output());
         assertTrue(r.output().contains("cannot open") && r.output().contains("not a version number"), r.output());
@@ -554,14 +496,9 @@ class VerifyCommandTest {
 
     @Test
     void deepPassChecksTheNumQuadsBound() throws Exception {
-        Path store = nativeStore("numquads", FIVE_QUADS);
-        long fid = hdf.hdf5lib.H5.H5Fopen(store.toString(), hdf.hdf5lib.HDF5Constants.H5F_ACC_RDWR, hdf.hdf5lib.HDF5Constants.H5P_DEFAULT);
-        try {
-            rewriteAttribute(fid, "/.BG", "numQuads", hdf.hdf5lib.HDF5Constants.H5T_STD_I64LE,
-                    java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putLong(2L).array());
-        } finally {
-            hdf.hdf5lib.H5.H5Fclose(fid);
-        }
+        Path store = diskBuiltStore("numquads", FIVE_QUADS);
+        edit(store, file -> file.group(".BG").deleteAttribute("numQuads")
+                .attribute("numQuads", Datatype.int64(), SCALAR, new long[]{2L}));
         assertEquals(0, verify(store.toFile(), false).code(), "numQuads is informational for the structural pass");
         Result deep = verify(store.toFile(), true);
         assertEquals(2, deep.code(), deep.output());

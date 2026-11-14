@@ -85,7 +85,7 @@ class AlgebraShapeParityTest {
     static Dataset reference;
 
     static Stream<String> engines() {
-        return WriterEngines.all().filter(e -> !e.needsNative()).map(WriterEngines.Engine::name);
+        return WriterEngines.all().filter(e -> !e.diskBased()).map(WriterEngines.Engine::name);
     }
 
     @BeforeAll
@@ -95,7 +95,7 @@ class AlgebraShapeParityTest {
         DatasetGraph dsg = DatasetGraphFactory.create();
         RDFParser.create().source(src.toUri().toString()).lang(Lang.TRIG).parse(dsg);
         reference = DatasetFactory.wrap(dsg);
-        for (WriterEngines.Engine e : WriterEngines.all().filter(x -> !x.needsNative()).toList()) {
+        for (WriterEngines.Engine e : WriterEngines.all().filter(x -> !x.diskBased()).toList()) {
             File h5 = dir.resolve(e.name() + ".h5").toFile();
             e.buildStore(src.toFile(), h5);
             BeakGraph bg = BG.getBeakGraph(h5);

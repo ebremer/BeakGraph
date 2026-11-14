@@ -32,7 +32,23 @@ public final class WritableGroup {
      * is kept until the next object is added to the file: do not change it.
      */
     public WritableDataset putDataset(String name, byte[] data) {
-        return new WritableDataset(group.byteDataset(name, data, new long[]{data.length}));
+        return new WritableDataset(group.byteDataset(name, data, new long[]{data.length}), data.length, data.length);
+    }
+
+    /**
+     * Creates a 1-D dataset of {@code length} 8-bit signed integers, in
+     * contiguous layout and without filters like one made by
+     * {@link #putDataset}, whose bytes follow in order, a piece at a time
+     * ({@link WritableDataset#write}). Falcon puts each piece in the file as it
+     * is given, so a dataset of any size passes through a buffer of the
+     * caller's choosing: this is how the disk-based writers
+     * ({@code com.ebremer.beakgraph.huge}) hand over arrays that never fit the
+     * heap. Bytes never written would read as zeros; write them all.
+     *
+     * @param length how many bytes the dataset holds; not negative
+     */
+    public WritableDataset createDataset(String name, long length) {
+        return new WritableDataset(group.createDataset(name, Datatype.int8(), length), length, 0);
     }
 
     /** Writes a scalar 32-bit signed integer attribute. */

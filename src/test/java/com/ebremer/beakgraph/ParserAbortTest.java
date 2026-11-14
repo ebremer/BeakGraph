@@ -72,7 +72,6 @@ class ParserAbortTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void aFailedIngestAbortsTheParserThread(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         awaitNoParserThread(); // a clean baseline
         StringBuilder ttl = new StringBuilder("""
             @prefix : <http://ex.org/> .

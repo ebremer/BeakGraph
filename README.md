@@ -15,8 +15,8 @@ Documentation: **[ebremer.github.io/BeakGraph](https://ebremer.github.io/BeakGra
 
 ## Building
 
-Requires Java 25 and Maven 3.9 (see [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §1-2 for the
-native HDF5 library the disk-based engines need).
+Requires Java 25 and Maven 3.9, and no HDF5 install: every engine reads and writes HDF5 in pure
+Java (see [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §1-2).
 
 ```
 mvn -Plib clean package             # self-contained library jar: target/BeakGraph-<version>.jar
@@ -24,10 +24,9 @@ mvn -Pcmdlinejar clean package      # the same jar, as the command-line tool
 mvn -Pcmdlinenative clean package   # GraalVM native binary: target/beakgraph
 ```
 
-The native binary runs the in-memory engines only (`-method 0/2/3`; the disk engines need JNI
-metadata for the HDF5 library that the image does not carry) and takes Substrate VM's default
-heap - raise it per run with `beakgraph -XX:MaxHeapSize=16g ...` (the equivalent of
-`java -Xmx16g`). The builder JVM needs a large heap (`-Dnative.build.heap=32G` by default).
+The native binary runs every engine (`-method 0..5`) and takes Substrate VM's default heap -
+raise it per run with `beakgraph -XX:MaxHeapSize=16g ...` (the equivalent of `java -Xmx16g`).
+The builder JVM needs a large heap (`-Dnative.build.heap=32G` by default).
 Its reachability metadata under `src/main/resources/META-INF/native-image` is generated with the
 tracing agent and must be regenerated after CLI or dependency changes (`NativeImageMetadataDriftTest`
 fails the build when a command-line option is missing from it). Trace into a copy of
@@ -118,9 +117,9 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 ### Limitations
 
 * BeakGraph files are read-only. The in-memory engines (`-method 0/2/3`) hold
-  the whole input on the heap; the disk-based engines (`-method 1/4/5`, native
-  HDF5 library required, spill space under `-workdir`) bound RAM by spilling and
-  are the way to build stores larger than memory
+  the whole input on the heap; the disk-based engines (`-method 1/4/5`, spill
+  space under `-workdir`) bound RAM by spilling and are the way to build stores
+  larger than memory
   ([docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §6-7).
 * GeoSPARQL support covers `geof:sfIntersects` only. It is fully functional: a
   recall-safe Hilbert cell-cover index produces candidate geometries and every

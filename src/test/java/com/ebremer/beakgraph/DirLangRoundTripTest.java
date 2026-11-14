@@ -49,7 +49,6 @@ class DirLangRoundTripTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void baseDirectionLiteralsRoundTripTermExactly(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path src = dir.resolve(engine.name() + ".ttl");
         Files.writeString(src, TTL);
         File dest = dir.resolve(engine.name() + ".h5").toFile();

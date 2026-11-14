@@ -107,9 +107,9 @@ the reference reader bypasses most of the HDF5 data model and reads dataset byte
 5. Group and dataset **names are case-sensitive** and exactly as given in this document.
 6. Anything else in the HDF5 file outside the `.BG` group is ignored by readers.
 
-The reference writer uses [Falcon](https://github.com/ebremer/falcon) 0.1.0 for the in-memory engines
-(jHDF, up to BeakGraph 0.18.0); files from the "huge" engines are written with the native HDF5 library.
-Both stay inside this profile. The reference reader reads every store through Falcon.
+The reference writer writes every store through [Falcon](https://github.com/ebremer/falcon) 0.1.0 (up to
+BeakGraph 0.18.0: jHDF for the in-memory engines, the native HDF5 library for the "huge" ones). All of
+them stay inside this profile. The reference reader reads every store through Falcon.
 
 ---
 

@@ -30,7 +30,8 @@ import org.slf4j.LoggerFactory;
  * <p>Single-source builds work too (the one document parses on one worker,
  * i.e. method-4 behaviour). Output is identical to methods 1/4: row numbers
  * interleave differently, but rows are internal - all sorted artifacts, and
- * therefore the store, are the same. Requires the native HDF5 backend.
+ * therefore the store, are the same. Like methods 1/4 it needs no native HDF5
+ * library: the file is written through Falcon.
  *
  * @author Erich Bremer
  */
@@ -48,8 +49,6 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
     public void write() throws IOException {
         logger.info("Writing BeakGraph (plaid: parallel-ingest disk-based, {} cores) to {}",
                 builder.cores, builder.getDestination());
-        // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
-        com.ebremer.beakgraph.huge.StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
         Path workspace = Files.createTempDirectory(builder.workspaceBase(dest), ".bgplaid-");
         List<File> inputs = builder.getSources().isEmpty()
@@ -62,7 +61,7 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
             // the realistic failure of this engine - with dest untouched; the
             // one publish discipline for every engine (BG-119, BG-140, BG-314).
             AtomicPublish.build(dest, tmp -> {
-                // Prove the installed backend (native, or a replaced provider) can
+                // Prove the installed backend (Falcon, or a replaced provider) can
                 // write a file here before any work is done (BG-135).
                 com.ebremer.beakgraph.huge.StreamingHdf5.requireWritable(workspace);
                 com.ebremer.beakgraph.huge.StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)

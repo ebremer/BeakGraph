@@ -47,7 +47,6 @@ class FailedBuildCleanupTest {
 
     @Test
     void aBuildFailingMidSpillLeavesNoWorkspaceBehind() throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         File src = dir.resolve("broken.nq").toFile();
         Files.writeString(src.toPath(), goodLines(6000) + "this is not an n-quads line @@@\n", StandardCharsets.UTF_8);
         Path work = Files.createDirectories(dir.resolve("work"));

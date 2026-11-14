@@ -38,9 +38,9 @@ import org.slf4j.LoggerFactory;
  * </ul>
  *
  * Output is isomorphic to the other writers' (same divergence -method 1 has:
- * blank nodes keep parsed labels rather than being relabelled). Requires the
- * native HDF5 backend, like -method 1. Bigger spill batches = fewer merge
- * levels = less disk churn; size them to your heap
+ * blank nodes keep parsed labels rather than being relabelled). Like -method 1
+ * it needs no native HDF5 library: the file is written through Falcon. Bigger
+ * spill batches = fewer merge levels = less disk churn; size them to your heap
  * ({@code setIdSpillBatch(1 << 26)} at 16 GiB+ is reasonable for
  * 10B+ quad builds).
  *
@@ -60,8 +60,6 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
     public void write() throws IOException {
         logger.info("Writing BeakGraph (hugeUltra: disk-based, {} cores) to {}",
                 builder.cores, builder.getDestination());
-        // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
-        com.ebremer.beakgraph.huge.StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
         Path workspace = Files.createTempDirectory(builder.workspaceBase(dest), ".bghugeultra-");
         List<File> inputs = builder.getSources().isEmpty()
@@ -74,7 +72,7 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
             // the realistic failure of this engine - with dest untouched; the
             // one publish discipline for every engine (BG-119, BG-140, BG-314).
             AtomicPublish.build(dest, tmp -> {
-                // Prove the installed backend (native, or a replaced provider) can
+                // Prove the installed backend (Falcon, or a replaced provider) can
                 // write a file here before any work is done (BG-135).
                 com.ebremer.beakgraph.huge.StreamingHdf5.requireWritable(workspace);
                 com.ebremer.beakgraph.huge.StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)

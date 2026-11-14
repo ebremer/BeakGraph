@@ -20,7 +20,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * A failed build must leave nothing behind and destroy nothing that was
  * there - on EVERY engine (BG-421): the tmp/move/cleanup sequence is written
  * six times (HDF5Writer, Ultra, Parallel, Huge, HugeUltra, Plaid), the
- * native ones additionally own a workspace directory, and only method 0 was
+ * disk-based ones additionally own a workspace directory, and only method 0 was
  * covered. Each engine builds into the destination's directory, so that
  * directory is the whole observable surface: no partial .h5, no .tmp, no
  * retained .new, no .bghuge-* / .bghugeultra-* / .bgplaid-* workspace.
@@ -46,7 +46,6 @@ class WriteErrorHandlingTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void malformedRdfAbortsTheWriteInsteadOfSwallowing(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         File ttl = dir.resolve("bad.ttl").toFile();
         File h5 = dir.resolve("bad.ttl.h5").toFile();
         Files.write(ttl.toPath(), "this is not valid turtle at all @@@ }}}".getBytes(StandardCharsets.UTF_8));
@@ -62,7 +61,6 @@ class WriteErrorHandlingTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void failedRebuildPreservesThePreviousGoodArtifact(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         File ttl = dir.resolve("data.ttl").toFile();
         File h5 = dir.resolve("data.ttl.h5").toFile();
         Files.write(ttl.toPath(),

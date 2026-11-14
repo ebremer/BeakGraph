@@ -90,7 +90,6 @@ class NumericEdgeCasesTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void outOfRangeAndSpecialValuesRoundTrip(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         File src = dir.resolve(engine.name() + ".ttl").toFile();
         Files.writeString(src.toPath(), TTL);
         File h5 = dir.resolve(engine.name() + ".h5").toFile();

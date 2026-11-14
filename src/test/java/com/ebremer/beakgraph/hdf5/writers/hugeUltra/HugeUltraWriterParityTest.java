@@ -11,7 +11,6 @@ import java.nio.file.Path;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryFactory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -30,11 +29,6 @@ class HugeUltraWriterParityTest {
 
     @TempDir
     static Path dir;
-
-    @BeforeAll
-    static void requireNativeHdf5() {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
-    }
 
     private static Path writeBoth(String name, String content) throws Exception {
         return writeBoth(name, content, false, false);

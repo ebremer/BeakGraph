@@ -14,7 +14,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,11 +30,6 @@ class PlaidWriterParityTest {
 
     @TempDir
     static Path dir;
-
-    @BeforeAll
-    static void requireNativeHdf5() {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
-    }
 
     @Test
     void manyFileMergeMatchesSequentialMerge() throws Exception {

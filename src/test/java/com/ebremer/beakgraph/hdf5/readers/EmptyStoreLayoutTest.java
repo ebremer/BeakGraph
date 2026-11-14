@@ -45,7 +45,6 @@ class EmptyStoreLayoutTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void theEmptyStoreHasTheDocumentedLayoutOnEveryEngine(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path src = dir.resolve(engine.name() + "-empty.ttl");
         Files.writeString(src, "");
         File h5 = dir.resolve(engine.name() + "-empty.h5").toFile();

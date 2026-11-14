@@ -265,7 +265,6 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithHugeWriter() throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergehuge");
         Parameters p = new Parameters();
         p.src = src.toFile();
@@ -283,7 +282,6 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithHugeUltraWriter() throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergehugeultra");
         Parameters p = new Parameters();
         p.src = src.toFile();
@@ -302,7 +300,6 @@ class MergeAndFormatsTest {
 
     @Test
     void mergeWithPlaidWriter() throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Path src = mergeSourceTree("srcmergeplaid");
         Parameters p = new Parameters();
         p.src = src.toFile();

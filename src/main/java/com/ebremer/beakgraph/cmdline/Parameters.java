@@ -168,7 +168,7 @@ public class Parameters {
     @Parameter(names = "-method", validateWith = MethodValidator.class,
             description = "Conversion engine: 0 = sequential in-memory writer (default), "
                         + "1 = disk-based writer for sources too large for the heap "
-                        + "(com.ebremer.beakgraph.huge; needs the native HDF5 backend, see -workdir), "
+                        + "(com.ebremer.beakgraph.huge; see -workdir), "
                         + "2 = multi-threaded in-memory writer "
                         + "(com.ebremer.beakgraph.hdf5.writers.parallel) on -cores threads, "
                         + "3 = ultra in-memory writer (com.ebremer.beakgraph.hdf5.writers.ultra): "
@@ -178,7 +178,7 @@ public class Parameters {
                         + "(com.ebremer.beakgraph.hdf5.writers.hugeUltra) for multi-billion-quad "
                         + "builds: bounded RAM like -method 1, but with radix-sorted bit-packed "
                         + "spill runs, background spilling, and concurrent pipeline stages on "
-                        + "-cores threads (needs the native HDF5 backend; honors -workdir), "
+                        + "-cores threads (honors -workdir), "
                         + "5 = plaid (com.ebremer.beakgraph.hdf5.writers.plaid): method 4 plus "
                         + "PARALLEL MULTI-FILE INGEST - up to -cores source documents parse "
                         + "concurrently; the fastest option for -merge over many files")

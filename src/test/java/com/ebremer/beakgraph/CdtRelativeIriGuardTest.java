@@ -67,7 +67,6 @@ class CdtRelativeIriGuardTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void everyEngineRejectsARelativeIriInsideAList(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path src = ttl(engine.name() + "-bad.ttl", BAD_TTL);
         File dest = dir.resolve(engine.name() + "-bad.h5").toFile();
         assertGuardFires(() -> engine.buildStore(src.toFile(), dest));

@@ -123,7 +123,6 @@ class DictionaryContractTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void everyEngineStoresTheGraphListInAscendingIdOrder(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path src = dir.resolve(engine.name() + "-graphs.trig");
         Files.copy(dir.resolve("graphs.trig"), src);
         File h5 = dir.resolve(engine.name() + "-graphs.h5").toFile();

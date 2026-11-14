@@ -183,7 +183,6 @@ class W3CRdf12SuiteTest {
     /** Builds with the engine named by -Dbeakgraph.test.engine (method 0 by default; see WriterEngines.selected). */
     private static void build(File src, File dest) throws Exception {
         WriterEngines.Engine engine = WriterEngines.selected();
-        engine.assumeAvailable();
         engine.buildStore(src, dest);
     }
 

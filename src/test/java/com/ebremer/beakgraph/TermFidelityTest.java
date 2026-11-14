@@ -113,7 +113,6 @@ class TermFidelityTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void datasetSurvivesRoundTripIsomorphically(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path src = dir.resolve(engine.name() + ".trig");
         Files.writeString(src, FIXTURE);
         File dest = dir.resolve(engine.name() + ".h5").toFile();

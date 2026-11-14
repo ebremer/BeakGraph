@@ -68,7 +68,6 @@ class EmptyStoreParityTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void anEmptySourceBuildsAnEmptyStore(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         File src = dir.resolve(engine.name() + ".ttl").toFile();
         Files.write(src.toPath(), new byte[0]);
         File h5 = dir.resolve(engine.name() + ".h5").toFile();

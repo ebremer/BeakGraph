@@ -25,8 +25,8 @@ import org.slf4j.LoggerFactory;
  * multi-hour sorts. BG-124: after a failure every workspace file - the
  * materialized columns, the dictionaries, the predicate column - is closed
  * by close(), so the workspace can be removed (on Windows an open stream
- * makes its file undeletable). No native HDF5 needed: the failures are
- * injected before the file is assembled.
+ * makes its file undeletable). The failures are injected before the file is
+ * assembled.
  */
 class PipelineFailureTest {
 

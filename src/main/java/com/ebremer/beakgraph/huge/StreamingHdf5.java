@@ -8,22 +8,23 @@ import java.util.Objects;
 /**
  * Factory for {@link StreamingHdf5File} backends.
  *
- * <p>The default provider is {@link NativeHdf5File} (the HDF Group's native
- * hdf5 library, the only backend that currently supports writing datasets in
- * chunks). A different backend - e.g. Falcon, which writes a dataset a piece
- * at a time in pure Java - is installed with {@link #setProvider}.
+ * <p>The default provider is {@link FalconHdf5File}: Falcon
+ * (https://github.com/ebremer/falcon), the pure-Java HDF5 library of the
+ * readers and the in-memory writers, which writes a dataset a piece at a time.
+ * It needs nothing installed. A different backend is
+ * installed with {@link #setProvider} (the tests fail a build through one).
  *
  * @author Erich Bremer
  */
 public final class StreamingHdf5 {
 
-    /** Creates a new writable HDF5 file at the given path (truncating). */
+    /** Creates a new writable HDF5 file at the given path (replacing a file there). */
     @FunctionalInterface
     public interface Provider {
         StreamingHdf5File create(Path path) throws IOException;
     }
 
-    private static final Provider DEFAULT = NativeHdf5File::create;
+    private static final Provider DEFAULT = FalconHdf5File::create;
     private static volatile Provider provider = DEFAULT;
 
     private StreamingHdf5() {}
@@ -38,26 +39,14 @@ public final class StreamingHdf5 {
         return provider.create(path);
     }
 
-    /** Reinstalls the native backend (tests that swapped it). */
+    /** Reinstalls the Falcon backend (tests that swapped it). */
     public static void resetProvider() {
         provider = DEFAULT;
     }
 
-    /** True while the native {@link NativeHdf5File} backend is installed. */
+    /** True while the {@link FalconHdf5File} backend is installed. */
     public static boolean isDefaultProvider() {
         return provider == DEFAULT;
-    }
-
-    /**
-     * Fails fast, before any parsing, when the installed backend cannot work
-     * at all: for the default backend that is the native library check
-     * ({@link NativeHdf5File#requireAvailable}); a replaced provider is
-     * trusted here and probed by {@link #requireWritable} (BG-441, BG-135).
-     */
-    public static void requireBackend() throws IOException {
-        if (isDefaultProvider()) {
-            NativeHdf5File.requireAvailable();
-        }
     }
 
     /**
@@ -73,10 +62,9 @@ public final class StreamingHdf5 {
     /**
      * Proves the installed backend can create, write and close EXACTLY
      * {@code file}, then removes it. The disk writers probe their output's
-     * temp path with it before any parsing, so a path the native library
-     * cannot spell (non-BMP characters cross JNI as CESU-8, MAX_PATH) or
-     * cannot write (ACLs) fails in the first second of the build, not after
-     * the whole sort (BG-419).
+     * temp path with it before any parsing, so a path that cannot be written
+     * (ACLs, a read-only volume, a name the file system refuses) fails in the
+     * first second of the build, not after the whole sort (BG-419).
      */
     public static void probeFile(Path file) throws IOException {
         try {
@@ -87,7 +75,7 @@ public final class StreamingHdf5 {
                 throw new IOException("the file was created under a different name");
             }
         } catch (IOException | RuntimeException | Error e) {
-            throw new IOException("The streaming HDF5 backend (" + (isDefaultProvider() ? "native library" : provider)
+            throw new IOException("The streaming HDF5 backend (" + (isDefaultProvider() ? "Falcon" : provider)
                     + ") cannot write a file in " + file.toAbsolutePath().getParent() + ": " + e.getMessage(), e);
         } finally {
             try {

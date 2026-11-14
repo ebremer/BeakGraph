@@ -140,7 +140,6 @@ class NumericCanonicalizationTest {
     @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
     @org.junit.jupiter.params.provider.MethodSource("engines")
     void everyEngineCanonicalizesByValue(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         File src = dir.resolve(engine.name() + ".ttl").toFile();
         File h5 = dir.resolve(engine.name() + ".h5").toFile();
         Files.write(src.toPath(), TTL.getBytes(StandardCharsets.UTF_8));

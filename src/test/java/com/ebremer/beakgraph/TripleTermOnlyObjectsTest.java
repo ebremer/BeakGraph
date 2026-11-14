@@ -60,7 +60,6 @@ class TripleTermOnlyObjectsTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void literalFreeTripleTermStoreBuildsOnEveryEngine(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         File src = dir.resolve(engine.name() + ".ttl").toFile();
         File h5 = dir.resolve(engine.name() + ".h5").toFile();
         Files.writeString(src.toPath(), TTL, StandardCharsets.UTF_8);
@@ -69,7 +68,7 @@ class TripleTermOnlyObjectsTest {
         File ramSrc = dir.resolve("ram-ref.ttl").toFile();
         File ramH5 = dir.resolve("ram-ref-" + engine.name() + ".h5").toFile();
         Files.writeString(ramSrc.toPath(), TTL, StandardCharsets.UTF_8);
-        WriterEngines.all().filter(e -> !e.needsNative()).findFirst().orElseThrow().buildStore(ramSrc, ramH5);
+        WriterEngines.all().filter(e -> !e.diskBased()).findFirst().orElseThrow().buildStore(ramSrc, ramH5);
 
         try (BeakGraph bg = new BeakGraph(new HDF5Reader(h5)); BeakGraph ref = new BeakGraph(new HDF5Reader(ramH5))) {
             Dataset ds = bg.getDataset();

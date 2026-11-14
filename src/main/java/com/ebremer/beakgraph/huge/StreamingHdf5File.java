@@ -9,11 +9,10 @@ import java.io.IOException;
  * <p>This is the backend seam of the huge (disk-based) BeakGraph writer. The
  * in-memory writers hand each dataset over whole
  * ({@code WritableGroup.putDataset(name, data)}), which is exactly the limit
- * the huge writer removes, so the default implementation is
- * {@link NativeHdf5File}, backed by the HDF Group's native library
- * (https://github.com/HDFGroup/hdf5), which writes a dataset in pieces. Falcon
- * (https://github.com/ebremer/falcon) writes one in pieces too, in pure Java:
- * a Falcon-backed implementation of these interfaces can be swapped in via
+ * the huge writer removes. The implementation is {@link FalconHdf5File}:
+ * Falcon (https://github.com/ebremer/falcon), the pure-Java HDF5 library of
+ * the readers and the in-memory writers, writes a dataset in pieces as well as
+ * whole. Another implementation of these interfaces can be swapped in via
  * {@link StreamingHdf5#setProvider} without touching any writer code.
  *
  * <p>Implementations MUST produce files the readers can open: 1-D 8-bit

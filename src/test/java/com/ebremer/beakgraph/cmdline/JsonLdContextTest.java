@@ -74,7 +74,6 @@ class JsonLdContextTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void aSiblingContextLoadsFromTheSourceTree(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path src = dir.resolve("sib-" + engine.name());
         write(src.resolve("context.jsonld"), CONTEXT);
         Path data = write(src.resolve("data.jsonld"), """

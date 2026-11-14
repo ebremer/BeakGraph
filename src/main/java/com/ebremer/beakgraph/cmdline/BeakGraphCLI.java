@@ -657,11 +657,6 @@ public class BeakGraphCLI {
         }
     }
 
-    /** True inside a GraalVM native image (the runtime sets this property; tests may set it too). */
-    static boolean inNativeImage() {
-        return System.getProperty("org.graalvm.nativeimage.imagecode") != null;
-    }
-
     /**
      * Builds the writer selected by {@link #effectiveMethod()} for one
      * source-or-sources -> destination conversion. Shared by the per-file
@@ -670,20 +665,13 @@ public class BeakGraphCLI {
     /** Package-private so tests can substitute a writer (e.g. one that fails with an Error). */
     BeakGraphWriter newWriter(File source, List<File> sources, File dest) throws IOException {
         int method = effectiveMethod();
-        if ((method == 1 || method == 4 || method == 5) && inNativeImage()) {
-            // The GraalVM binary carries no JNI metadata for hdf.hdf5lib and no
-            // natives: the disk engines would fail only after the parse and
-            // sort stages. Say so before any work is done (BG-442).
-            throw new IOException("-method " + method + " (disk-based, native HDF5) is not available in the "
-                    + "native binary; use -method 0/2/3 here, or run the jar with java for the disk engines");
-        }
         switch (method) {
             case 1 -> {
                 // Disk-based build: same output format, but sorting/indexing
-                // spill to a workspace instead of the heap. Needs the native
-                // HDF5 backend on the classpath (the hdf5-backend-* profiles);
-                // with -threads N, N builds run concurrently, each with its
-                // own workspace.
+                // spill to a workspace instead of the heap, and the file is
+                // assembled through Falcon a piece at a time (pure Java, so
+                // the native binary runs it too); with -threads N, N builds
+                // run concurrently, each with its own workspace.
                 HugeHDF5Writer.Builder builder = HugeHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
@@ -733,7 +721,7 @@ public class BeakGraphCLI {
             case 4 -> {
                 // hugeUltra: the disk-based pipeline (bounded RAM, any quad
                 // count) on parallel primitive sorting machinery - the engine
-                // for multi-billion-quad builds. Needs the native HDF5 backend.
+                // for multi-billion-quad builds.
                 HugeUltraHDF5Writer.Builder builder = HugeUltraHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())
@@ -757,7 +745,7 @@ public class BeakGraphCLI {
             case 5 -> {
                 // plaid: hugeUltra plus parallel multi-file ingest - up to
                 // -cores documents parse concurrently. The engine of choice
-                // for -merge over many files. Needs the native HDF5 backend.
+                // for -merge over many files.
                 PlaidHDF5Writer.Builder builder = PlaidHDF5Writer.Builder()
                         .setDestination(dest)
                         .setVoidMode(voidMode())

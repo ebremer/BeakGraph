@@ -69,7 +69,6 @@ class UltraTermSpillBudgetTest {
 
     @Test
     void wholeBuildWithATinyByteBudgetMatchesTheRamWriter() throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         Random rnd = new Random(4);
         StringBuilder nq = new StringBuilder();
         for (int i = 0; i < 200; i++) {

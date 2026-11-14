@@ -80,7 +80,6 @@ class RDF12TripleTermTest {
         Files.writeString(src, TRIG);
         dest = dir.resolve("tripleterms.h5").toFile();
         // The engine named by -Dbeakgraph.test.engine (method 0 by default).
-        WriterEngines.selected().assumeAvailable();
         WriterEngines.selected().buildStore(src.toFile(), dest);
         bg = BG.getBeakGraph(dest);
         ds = bg.getDataset();

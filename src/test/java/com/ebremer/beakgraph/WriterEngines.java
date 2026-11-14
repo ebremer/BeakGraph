@@ -24,13 +24,11 @@ public final class WriterEngines {
         BeakGraphWriter create(File src, File dest) throws Exception;
     }
 
-    public record Engine(String name, boolean needsNative, Factory factory) {
-        public void assumeAvailable() {
-            if (needsNative) {
-                NativeTestSupport.assumeNative();
-            }
-        }
-
+    /**
+     * @param diskBased true for the engines that sort and index in a workspace on disk
+     *                  (-method 1/4/5); none needs a native HDF5 library to be found
+     */
+    public record Engine(String name, boolean diskBased, Factory factory) {
         public void buildStore(File src, File dest) throws Exception {
             factory.create(src, dest).write();
         }

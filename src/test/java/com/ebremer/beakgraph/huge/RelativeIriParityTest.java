@@ -34,7 +34,6 @@ class RelativeIriParityTest {
 
     @Test
     void relativeReferencesStoreIdenticallyOnBothEngines() throws Exception {
-        com.ebremer.beakgraph.NativeTestSupport.assumeNative();
         String ttl = "@prefix : <http://ex.org/> .\n"
                 + "<> :p <x.png>, <#frag>, <?q=1>, <../up.png>, <../../up2.png>, </root.png>, <a/b.png> .\n"
                 + "<> :tt <<( <> :q <#f> )>> .\n";

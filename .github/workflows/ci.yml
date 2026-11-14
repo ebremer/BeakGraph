@@ -35,11 +35,9 @@ jobs:
       - name: Build, test and package the library jar
         # 'verify' (not 'test') so the lib profile's shade execution runs and
         # an overlapping-resource regression is at least visible in the log.
-        # Linux must load the bundled JavaCPP HDF5 natives (no system install
-        # on the runner): requireNative turns a silent skip of -method 1/4/5
-        # coverage into a failure. Windows cannot: the preset's Windows jar
-        # ships a JNI glue that imports hdf5.dll without shipping it.
-        run: mvn -B -Plib clean verify ${{ matrix.os == 'ubuntu-latest' && '-Dbeakgraph.test.requireNative=true' || '' }}
+        # No engine needs a native HDF5 library, so the -method 1/4/5 tests run
+        # on every leg: there is none to find, and none to skip for.
+        run: mvn -B -Plib clean verify
       - name: Package the command-line jar
         run: mvn -B -Pcmdlinejar -DskipTests package
       - name: Build the benchmarks module against the installed root artifact
@@ -54,14 +52,15 @@ jobs:
         # (method 3) so the six-engine conformance claim is tested, not assumed.
         if: matrix.os == 'ubuntu-latest'
         run: |
-          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest' -Dbeakgraph.test.engine=method1 -Dbeakgraph.test.requireNative=true
+          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest' -Dbeakgraph.test.engine=method1
           mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest' -Dbeakgraph.test.engine=method3
 
   native-image:
     # Manual / weekly: builds the GraalVM native binary and runs a conversion
     # through it, so the reachability metadata and the cmdlinenative profile
-    # are exercised at all (they never were). Methods 0/2/3 only - the disk
-    # engines need JNI metadata for hdf.hdf5lib that the image does not carry.
+    # are exercised at all (they never were): an in-memory engine and a
+    # disk-based one, which the binary runs too now that it needs no native
+    # HDF5 library.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -82,3 +81,5 @@ jobs:
           ./target/beakgraph -src tiny.h5 -export NT
           ./target/beakgraph -verify tiny.h5 -deep
           test -s tiny.nt
+          ./target/beakgraph -src tiny.ttl -dest disk.h5 -method 4 -cores 2 -workdir work
+          ./target/beakgraph -verify disk.h5 -deep

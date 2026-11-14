@@ -268,7 +268,6 @@ class W3CSparql12SuiteTest {
         File dest = tmp.resolve("store-" + Math.abs(key.hashCode()) + ".h5").toFile();
         // The engine named by -Dbeakgraph.test.engine (method 0 by default).
         WriterEngines.Engine engine = WriterEngines.selected();
-        engine.assumeAvailable();
         engine.buildStore(nq.toFile(), dest);
         STORES.put(key, dest);
         return dest;

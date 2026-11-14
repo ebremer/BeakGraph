@@ -5,19 +5,23 @@ import java.io.IOException;
 import java.nio.file.Path;
 
 /**
- * An HDF5 file being written by an in-memory writer, in BeakGraph's container
- * profile (SPECIFICATIONS.md §3): groups, 1-D datasets of bytes in contiguous
- * layout, and scalar 32-bit / 64-bit integer attributes. With
- * {@link WritableGroup} and {@link WritableDataset} it is the writers' one door
- * into the HDF5 library (Falcon, https://github.com/ebremer/falcon), as
- * {@code HdfProfile} is the readers'.
+ * An HDF5 file being written, in BeakGraph's container profile
+ * (SPECIFICATIONS.md §3): groups, 1-D datasets of bytes in contiguous layout,
+ * and scalar 32-bit / 64-bit integer attributes. With {@link WritableGroup}
+ * and {@link WritableDataset} it is every writer's one door into the HDF5
+ * library (Falcon, https://github.com/ebremer/falcon), as {@code HdfProfile}
+ * is the readers': the in-memory writers hand each dataset over whole
+ * ({@link WritableGroup#putDataset}), the disk-based ones a piece at a time
+ * ({@link WritableGroup#createDataset}, through
+ * {@code com.ebremer.beakgraph.huge.FalconHdf5File}).
  *
- * <p>Falcon writes each dataset to a temporary file beside {@code path} once
- * the next object is added, so a dataset's bytes are held only until then, and
- * moves the finished file to {@code path} on {@link #commit()}, forced to disk
- * first. A build that fails leaves nothing behind: {@link #close()} without a
- * commit discards the temporary file. So write inside try-with-resources, and
- * commit as its last statement:
+ * <p>Falcon writes to a temporary file beside {@code path} - a dataset given
+ * whole once the next object is added, so its bytes are held only until then;
+ * a piece of a dataset as it is given - and moves the finished file to
+ * {@code path} on {@link #commit()}, forced to disk first. A build that fails
+ * leaves nothing behind: {@link #close()} without a commit discards the
+ * temporary file. So write inside try-with-resources, and commit as its last
+ * statement:
  *
  * <pre>{@code
  * try (WritableHdfFile file = WritableHdfFile.write(tmp)) {
@@ -41,6 +45,11 @@ public final class WritableHdfFile implements AutoCloseable {
     /** Begins writing the file at {@code path}; a file already there is replaced by {@link #commit()}. */
     public static WritableHdfFile write(Path path) {
         return new WritableHdfFile(Hdf5Writer.create(path));
+    }
+
+    /** The file's root group. */
+    public WritableGroup root() {
+        return new WritableGroup(writer.root());
     }
 
     /** Creates (and returns) a group in the file's root group. */

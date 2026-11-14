@@ -42,8 +42,8 @@ HTTP range requests — without loading the graph into memory.
 
 ## Quick start
 
-Requires Java 25 and Maven 3.9. The disk-based engines also need the native HDF5 library —
-see [Requirements](instructions/#1-requirements).
+Requires Java 25 and Maven 3.9, and no HDF5 install — see
+[Requirements](instructions/#1-requirements).
 
 ```bash
 # Build the self-contained command-line jar

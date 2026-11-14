@@ -7,10 +7,14 @@ brought and what a reader must rebuild.
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
 * Jena 6.2.0.
-* The HDF5 library of every reader and of the in-memory writers (`-method
-  0/2/3`) is [Falcon](https://github.com/ebremer/falcon) 0.1.0, in place of
-  jHDF, which remains a test dependency (the tests' independent reader). The
-  on-disk format is unchanged, and stores written by either read with both.
+* The HDF5 library of every reader and every writer is
+  [Falcon](https://github.com/ebremer/falcon) 0.1.0, in place of jHDF for the
+  readers and the in-memory writers (`-method 0/2/3`) and of the native HDF5
+  library for the disk-based ones (`-method 1/4/5`). No HDF5 library has to
+  be installed on any platform, and none is bundled. jHDF remains a test
+  dependency (the tests' independent reader). The on-disk format is
+  unchanged: earlier releases read the stores written now, and the other
+  way round.
   A store opened from a local file is memory-mapped once, whole, and
   unmapped when its reader closes: the file is free to replace or delete
   from then on, on Windows too, and a reader must not be closed while a
@@ -21,8 +25,23 @@ brought and what a reader must rebuild.
   writers write each
   dataset to the file as the next is added, and force the file to disk
   before it is published. Falcon is not on Maven Central yet: install it
-  locally before building (docs/INSTRUCTIONS.md §2). The disk-based writers
-  (`-method 1/4/5`) still write through the native HDF5 library.
+  locally before building (docs/INSTRUCTIONS.md §2).
+* The disk-based writers (`-method 1/4/5`, `-huge`) assemble their store
+  through Falcon, a piece of a dataset at a time, where they called the
+  native HDF5 library (`hdf.hdf5lib`, the JavaCPP preset or the HDF Group's
+  FFM bindings). They no longer depend on a platform's native library (the
+  JavaCPP preset had none for arm64 and needed a system `hdf5.dll` on
+  Windows), and they run in the GraalVM native binary, which now runs every
+  engine. `-dest` and `-workdir` may be any path the file system takes
+  (the library took paths across JNI: no characters beyond the Basic
+  Multilingual Plane, 260 characters on Windows). The store is written
+  beside its path and forced to disk before it is published, like the
+  in-memory writers'. Their stores hold the same bytes in every dataset
+  as before; only the HDF5 metadata around them differs. Gone with the
+  library: the `org.bytedeco:hdf5-platform` dependency and its natives in
+  the shaded jars, the `hdf5-backend-*` and `hdf5-ffm-*` build profiles,
+  `-Dhdf5.ffm`, and `com.ebremer.beakgraph.huge.NativeHdf5File`
+  (`FalconHdf5File` takes its place behind `StreamingHdf5`).
 * LWS storage mode follows the LWS Protocol editor's draft of 2026-10-23 for
   everything a read-only storage serves. Every GET/HEAD response links the
   storage URI (`/description`) with `rel="https://www.w3.org/ns/lws#storage"`

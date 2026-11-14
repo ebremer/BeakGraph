@@ -27,7 +27,6 @@ import org.junit.jupiter.api.io.TempDir;
  * layouts with tiny batches and fan-in - many spill runs, several merge
  * levels - and requires the exact multiset in exact comparator order, with
  * every component round-tripping (maxima, 2^k-1 / 2^k values, duplicates).
- * No native HDF5 needed, so it runs on every CI leg.
  */
 class PackedSortersTest {
 

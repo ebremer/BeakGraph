@@ -53,7 +53,6 @@ class RelativeDatatypeIriTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     void relativeDatatypesAreStoredRelativeAndServedResolved(WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path ttl = dir.resolve(engine.name() + ".ttl");
         Files.writeString(ttl, TTL);
         File h5 = dir.resolve(engine.name() + ".h5").toFile();

@@ -32,7 +32,7 @@
  * The independent pipeline stages (three column sorts, three dictionary
  * encodes, three id joins) run concurrently on the same pool, and GPOS sorts
  * only the deduplicated quads teed out of the GSPO scan. Output format and
- * readers are unchanged; like -method 1 the native HDF5 backend is required
- * and output is isomorphic (bnode labels are kept as parsed).
+ * readers are unchanged; like -method 1 the file is written through Falcon,
+ * in pure Java, and output is isomorphic (bnode labels are kept as parsed).
  */
 package com.ebremer.beakgraph.hdf5.writers.hugeUltra;

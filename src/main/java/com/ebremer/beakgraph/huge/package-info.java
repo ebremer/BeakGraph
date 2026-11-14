@@ -17,17 +17,14 @@
  *   <li>{@code Spill*} buffers - file-backed twins of the bit-packed /
  *       front-coded / primitive buffers, byte-identical on disk;</li>
  *   <li>{@link com.ebremer.beakgraph.huge.StreamingHdf5File} and friends - the
- *       backend seam for writing HDF5 datasets incrementally. The default
- *       backend is {@link com.ebremer.beakgraph.huge.NativeHdf5File}, the HDF
- *       Group's native library (https://github.com/HDFGroup/hdf5) via the
- *       official {@code hdf.hdf5lib} API - today the only implementation that
- *       supports chunk-at-a-time writing. Which jar supplies {@code hdf.hdf5lib}
- *       is a build-time choice: the JavaCPP preset with bundled natives by
- *       default, or the HDF Group's Java 25 FFM bindings with
- *       {@code -Dhdf5.ffm=true} (see the {@code hdf5-backend-*} profiles in
- *       pom.xml). Falcon (https://github.com/ebremer/falcon), the library of
- *       the readers and the in-memory writers, writes datasets a piece at a
- *       time too: a Falcon backend can be installed with
+ *       backend seam for writing HDF5 datasets incrementally. The backend is
+ *       {@link com.ebremer.beakgraph.huge.FalconHdf5File}: Falcon
+ *       (https://github.com/ebremer/falcon), the pure-Java HDF5 library of the
+ *       readers and the in-memory writers, which puts each piece of a dataset
+ *       in the file as it is given. No native HDF5 library is involved, so
+ *       these writers run wherever Java does, the GraalVM native binary
+ *       included.
+ *       Another backend can be installed with
  *       {@link com.ebremer.beakgraph.huge.StreamingHdf5#setProvider} without
  *       touching writer code.</li>
  * </ul>

@@ -59,8 +59,6 @@ public class HugeHDF5Writer implements BeakGraphWriter {
     @Override
     public void write() throws IOException {
         logger.info("Writing BeakGraph (huge/disk-based) to {}", builder.getDestination());
-        // Fail before any parsing or sorting if the HDF5 backend is missing (BG-441).
-        StreamingHdf5.requireBackend();
         Path dest = builder.getDestination().toPath();
         Path workspace = Files.createTempDirectory(builder.workspaceBase(dest), ".bghuge-");
         // -merge: every source in the list is parsed into this one store
@@ -74,7 +72,7 @@ public class HugeHDF5Writer implements BeakGraphWriter {
             // the realistic failure of this engine - with dest untouched; the
             // one publish discipline for every engine (BG-119, BG-140, BG-314).
             AtomicPublish.build(dest, tmp -> {
-                // Prove the installed backend (native, or a replaced provider) can
+                // Prove the installed backend (Falcon, or a replaced provider) can
                 // write a file here before any work is done (BG-135).
                 StreamingHdf5.requireWritable(workspace);
                 StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)

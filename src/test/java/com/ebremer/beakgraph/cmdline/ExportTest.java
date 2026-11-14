@@ -412,7 +412,6 @@ class ExportTest {
     @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
     @org.junit.jupiter.params.provider.MethodSource("com.ebremer.beakgraph.WriterEngines#all")
     void emptyStoreFastPathExportsAreEmptyOnEveryEngine(com.ebremer.beakgraph.WriterEngines.Engine engine) throws Exception {
-        engine.assumeAvailable();
         Path sub = Files.createDirectories(dir.resolve("empty-" + engine.name()));
         File src = sub.resolve("empty.nt").toFile();
         Files.write(src.toPath(), new byte[0]);
