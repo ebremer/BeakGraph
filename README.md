@@ -29,10 +29,14 @@ metadata for the HDF5 library that the image does not carry) and takes Substrate
 heap - raise it per run with `beakgraph -XX:MaxHeapSize=16g ...` (the equivalent of
 `java -Xmx16g`). The builder JVM needs a large heap (`-Dnative.build.heap=32G` by default).
 Its reachability metadata under `src/main/resources/META-INF/native-image` is generated with the
-tracing agent and must be regenerated after CLI or dependency changes:
+tracing agent and must be regenerated after CLI or dependency changes (`NativeImageMetadataDriftTest`
+fails the build when a command-line option is missing from it). Trace into a copy of
+`reachability-metadata.json` in a directory of its own and copy the result back - with
+`resource-config.json` beside it, the agent of GraalVM 25 moves every resource entry into that file:
 
 ```
-java -agentlib:native-image-agent=config-merge-dir=src/main/resources/META-INF/native-image \
+mkdir meta && cp src/main/resources/META-INF/native-image/reachability-metadata.json meta/
+java -agentlib:native-image-agent=config-merge-dir=meta \
      -jar target/BeakGraph-<version>.jar <a representative run: -method 0..5, -merge, -export, -verify, -endpoint>
 ```
 

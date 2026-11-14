@@ -91,6 +91,15 @@
       ]
     },
     {
+      "type": "com.ebremer.beakgraph.cmdline.AtLeastOne",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "com.ebremer.beakgraph.cmdline.BeakGraphCLI",
       "jniAccessible": true,
       "methods": [
@@ -145,13 +154,25 @@
           "name": "features"
         },
         {
+          "name": "force"
+        },
+        {
           "name": "help"
         },
         {
           "name": "huge"
         },
         {
+          "name": "idSpillBatch"
+        },
+        {
+          "name": "jsonLdRemote"
+        },
+        {
           "name": "merge"
+        },
+        {
+          "name": "mergeFanIn"
         },
         {
           "name": "method"
@@ -166,10 +187,16 @@
           "name": "spatial"
         },
         {
+          "name": "spillMB"
+        },
+        {
           "name": "src"
         },
         {
           "name": "status"
+        },
+        {
+          "name": "termSpillBatch"
         },
         {
           "name": "threads"
@@ -184,6 +211,9 @@
           "name": "version"
         },
         {
+          "name": "voidBase"
+        },
+        {
           "name": "voidExact"
         },
         {
@@ -191,6 +221,42 @@
         },
         {
           "name": "workdir"
+        }
+      ]
+    },
+    {
+      "type": "com.ebremer.beakgraph.cmdline.Parameters$DestinationConverter",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.ebremer.beakgraph.cmdline.PortRange",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "com.ebremer.beakgraph.core.fuseki.SPARQLEndPoint$HDF5SparqlServlet"
+    },
+    {
+      "type": "com.ebremer.beakgraph.lws.CustomFileTypeDetector"
+    },
+    {
+      "type": "com.ebremer.beakgraph.pool.BeakGraphKeyedPool"
+    },
+    {
+      "type": "com.ebremer.beakgraph.turbo.Intersects",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
         }
       ]
     },
@@ -317,6 +383,15 @@
       "fields": [
         {
           "name": "tableBusy"
+        }
+      ]
+    },
+    {
+      "type": "com.google.gson.internal.bind.JavaTimeTypeAdapters",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
         }
       ]
     },
@@ -1273,6 +1348,9 @@
       "type": "java.lang.management.ThreadInfo"
     },
     {
+      "type": "java.lang.reflect.RecordComponent"
+    },
+    {
       "type": "java.math.BigDecimal"
     },
     {
@@ -1404,6 +1482,21 @@
     },
     {
       "type": "long[]"
+    },
+    {
+      "type": "org.apache.commons.pool2.impl.DefaultEvictionPolicy",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "org.apache.commons.pool2.impl.DefaultPooledObjectInfo"
+    },
+    {
+      "type": "org.apache.commons.pool2.impl.GenericKeyedObjectPoolMXBean"
     },
     {
       "type": "org.apache.jena.cmd.InitCmds"
@@ -3838,6 +3931,15 @@
       ]
     },
     {
+      "type": "sun.security.provider.MD5",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "sun.security.provider.SHA",
       "methods": [
         {
@@ -4113,10 +4215,16 @@
       "glob": "META-INF/services/java.nio.charset.spi.CharsetProvider"
     },
     {
+      "glob": "META-INF/services/java.nio.file.spi.FileTypeDetector"
+    },
+    {
       "glob": "META-INF/services/java.time.zone.ZoneRulesProvider"
     },
     {
       "glob": "META-INF/services/java.util.spi.ResourceBundleControlProvider"
+    },
+    {
+      "glob": "META-INF/services/javax.script.ScriptEngineFactory"
     },
     {
       "glob": "META-INF/services/javax.xml.parsers.DocumentBuilderFactory"
@@ -4165,6 +4273,15 @@
     },
     {
       "glob": "META-INF/services/org/jline/terminal/provider/jni"
+    },
+    {
+      "glob": "META-INF/sparql/index.html"
+    },
+    {
+      "glob": "META-INF/sparql/yasgui.min.css"
+    },
+    {
+      "glob": "META-INF/sparql/yasgui.min.js"
     },
     {
       "glob": "beakgraph-version.properties"
