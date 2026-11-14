@@ -1,19 +1,21 @@
 package com.ebremer.beakgraph.hdf5;
 
+import com.ebremer.beakgraph.store.Container;
+import com.ebremer.beakgraph.store.WritableStore;
 import com.ebremer.falcon.hdf5.Hdf5Writer;
+import com.ebremer.falcon.hdf5.datatype.Datatype;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Objects;
 
 /**
- * An HDF5 file being written, in BeakGraph's container profile
- * (SPECIFICATIONS.md §3): groups, 1-D datasets of bytes in contiguous layout,
- * and scalar 32-bit / 64-bit integer attributes. With {@link WritableGroup}
- * and {@link WritableDataset} it is every writer's one door into the HDF5
- * library (Falcon, https://github.com/ebremer/falcon), as {@code HdfProfile}
- * is the readers': the in-memory writers hand each dataset over whole
- * ({@link WritableGroup#putDataset}), the disk-based ones a piece at a time
- * ({@link WritableGroup#createDataset}, through
- * {@code com.ebremer.beakgraph.huge.FalconHdf5File}).
+ * A store being written into one HDF5 file, in BeakGraph's HDF5 container
+ * profile (SPECIFICATIONS.md §3): groups, 1-D datasets of 8-bit signed
+ * integers in contiguous layout and without filters, and scalar 32-bit /
+ * 64-bit integer attributes ({@code int} is 32-bit, {@code long} 64-bit). The
+ * HDF5 implementation of {@link WritableStore}, on Falcon
+ * (https://github.com/ebremer/falcon).
  *
  * <p>Falcon writes to a temporary file beside {@code path} - a dataset given
  * whole once the next object is added, so its bytes are held only until then;
@@ -33,7 +35,9 @@ import java.nio.file.Path;
  *
  * @author Erich Bremer
  */
-public final class WritableHdfFile implements AutoCloseable {
+public final class WritableHdfFile implements WritableStore {
+
+    private static final long[] SCALAR = new long[0];
 
     private final Hdf5Writer writer;
     private boolean finished;
@@ -47,14 +51,21 @@ public final class WritableHdfFile implements AutoCloseable {
         return new WritableHdfFile(Hdf5Writer.create(path));
     }
 
+    @Override
+    public Container container() {
+        return Container.HDF5;
+    }
+
     /** The file's root group. */
+    @Override
     public WritableGroup root() {
-        return new WritableGroup(writer.root());
+        return new Hdf5Group(writer.root());
     }
 
     /** Creates (and returns) a group in the file's root group. */
+    @Override
     public WritableGroup putGroup(String name) {
-        return new WritableGroup(writer.group(name));
+        return new Hdf5Group(writer.group(name));
     }
 
     /**
@@ -62,6 +73,7 @@ public final class WritableHdfFile implements AutoCloseable {
      * metadata, forces it to disk, and moves it to its path. A failure
      * discards the temporary file before it propagates.
      */
+    @Override
     public void commit() throws IOException {
         finished = true;
         try {
@@ -86,6 +98,86 @@ public final class WritableHdfFile implements AutoCloseable {
             } catch (RuntimeException ignored) {
                 // the build has already failed; its own exception is the one to report
             }
+        }
+    }
+
+    private record Hdf5Group(Hdf5Writer.GroupWriter group) implements WritableGroup {
+
+        @Override
+        public WritableGroup putGroup(String name) {
+            return new Hdf5Group(group.group(name));
+        }
+
+        /** The array is kept until the next object is added to the file. */
+        @Override
+        public WritableDataset putDataset(String name, byte[] data) {
+            return new Hdf5Dataset(group.byteDataset(name, data, new long[]{data.length}), data.length, data.length);
+        }
+
+        /** Falcon puts each piece in the file as it is given, at its place in the dataset. */
+        @Override
+        public WritableDataset createDataset(String name, long length) {
+            return new Hdf5Dataset(group.createDataset(name, Datatype.int8(), length), length, 0);
+        }
+
+        @Override
+        public void putAttribute(String name, int value) {
+            group.intAttribute(name, new int[]{value}, SCALAR);
+        }
+
+        @Override
+        public void putAttribute(String name, long value) {
+            group.attribute(name, Datatype.int64(), SCALAR, new long[]{value});
+        }
+    }
+
+    private static final class Hdf5Dataset implements WritableDataset {
+
+        private final Hdf5Writer.DatasetWriter dataset;
+        /** How many bytes the dataset holds. */
+        private final long length;
+        /** How many of them have been written: all of them, for a dataset given its bytes whole. */
+        private long written;
+
+        Hdf5Dataset(Hdf5Writer.DatasetWriter dataset, long length, long written) {
+            this.dataset = dataset;
+            this.length = length;
+            this.written = written;
+        }
+
+        @Override
+        public void write(byte[] buf, int off, int len) {
+            Objects.checkFromIndexSize(off, len, buf.length);
+            if (len > length - written) {
+                throw new IllegalStateException((written + len) + " bytes written to a dataset of " + length);
+            }
+            if (len == 0) {
+                return;
+            }
+            // Falcon takes a piece as an array of exactly its bytes.
+            byte[] piece = (off == 0 && len == buf.length) ? buf : Arrays.copyOfRange(buf, off, off + len);
+            dataset.writeRaw(new long[]{written}, new long[]{len}, piece);
+            written += len;
+        }
+
+        @Override
+        public long length() {
+            return length;
+        }
+
+        @Override
+        public long written() {
+            return written;
+        }
+
+        @Override
+        public void putAttribute(String name, int value) {
+            dataset.intAttribute(name, new int[]{value}, SCALAR);
+        }
+
+        @Override
+        public void putAttribute(String name, long value) {
+            dataset.attribute(name, Datatype.int64(), SCALAR, new long[]{value});
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.huge;
 
+import com.ebremer.beakgraph.store.Container;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +40,17 @@ public final class StreamingHdf5 {
         return provider.create(path);
     }
 
+    /**
+     * Creates a new writable store at {@code path} in {@code container}: an
+     * HDF5 file through the current backend, a Zarr store through Falcon -
+     * unless a backend was installed with {@link #setProvider}, which then
+     * writes whatever it writes (the tests fail a build through one).
+     */
+    public static StreamingHdf5File create(Path path, Container container) throws IOException {
+        Provider p = provider;
+        return (p != DEFAULT || container == Container.HDF5) ? p.create(path) : FalconHdf5File.create(path, container);
+    }
+
     /** Reinstalls the Falcon backend (tests that swapped it). */
     public static void resetProvider() {
         provider = DEFAULT;
@@ -56,7 +68,12 @@ public final class StreamingHdf5 {
      * probe file is removed again.
      */
     public static void requireWritable(Path dir) throws IOException {
-        probeFile(dir.resolve(".probe-" + System.nanoTime() + ".h5"));
+        requireWritable(dir, Container.HDF5);
+    }
+
+    /** {@link #requireWritable(Path)} for a store in {@code container}. */
+    public static void requireWritable(Path dir, Container container) throws IOException {
+        probeFile(dir.resolve(".probe-" + System.nanoTime() + "." + container.extension()), container);
     }
 
     /**
@@ -67,21 +84,37 @@ public final class StreamingHdf5 {
      * first second of the build, not after the whole sort (BG-419).
      */
     public static void probeFile(Path file) throws IOException {
+        probeFile(file, Container.HDF5);
+    }
+
+    /** {@link #probeFile(Path)} for a store in {@code container}: a Zarr store is a directory at {@code file}. */
+    public static void probeFile(Path file, Container container) throws IOException {
+        // The probe removes what it made, and nothing that was there before it.
+        boolean taken = Files.exists(file, java.nio.file.LinkOption.NOFOLLOW_LINKS);
         try {
-            try (StreamingHdf5File f = create(file)) {
+            if (taken && container == Container.ZARR) {
+                throw new IOException(file.getFileName() + " is already there"); // a Zarr store would replace it whole
+            }
+            try (StreamingHdf5File f = create(file, container)) {
                 f.rootGroup().putAttribute("probe", 1);
             }
             if (!Files.exists(file)) {
                 throw new IOException("the file was created under a different name");
             }
         } catch (IOException | RuntimeException | Error e) {
-            throw new IOException("The streaming HDF5 backend (" + (isDefaultProvider() ? "Falcon" : provider)
+            throw new IOException("The streaming " + (container == Container.HDF5 ? "HDF5" : "Zarr") + " backend ("
+                    + (isDefaultProvider() ? "Falcon" : provider)
                     + ") cannot write a file in " + file.toAbsolutePath().getParent() + ": " + e.getMessage(), e);
         } finally {
-            try {
-                Files.deleteIfExists(file);
-            } catch (IOException ignored) {
-                // a leftover probe is harmless; the workspace is deleted after the build
+            if (taken) {
+                try {
+                    Files.deleteIfExists(file); // a file the probe replaced; never a directory with anything in it
+                } catch (IOException ignored) {
+                    // what was there stays
+                }
+            } else {
+                // a leftover probe is harmless (the workspace is deleted after the build), so this never fails
+                com.ebremer.beakgraph.core.AtomicPublish.discard(file);
             }
         }
     }

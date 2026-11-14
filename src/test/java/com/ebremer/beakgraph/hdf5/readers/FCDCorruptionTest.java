@@ -127,7 +127,7 @@ class FCDCorruptionTest {
             throw new java.io.UncheckedIOException(e);
         }
         OPENED.add(f);
-        return new FCDReader(new HdfGroup(f.root().group(STRINGS)));
+        return new FCDReader(com.ebremer.beakgraph.store.Hdf5Store.group(f.root().group(STRINGS)));
     }
 
     @AfterAll

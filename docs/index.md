@@ -21,7 +21,8 @@ BeakGraph is an [Apache Jena](https://jena.apache.org/) graph implementation of
 [HDF5](https://www.hdfgroup.org/solutions/hdf5/) file and extended to a full RDF dataset. It
 converts RDF into **dictionary-encoded, columnar quad stores**: one `.h5` file is one
 self-contained, immutable store, queried with SPARQL directly from the file — locally or over
-HTTP range requests — without loading the graph into memory.
+HTTP range requests — without loading the graph into memory. The same store can be written as a
+[Zarr](https://zarr.dev/) v3 directory store (`-zarr`), which is read the same way.
 
 ## Highlights
 
@@ -70,7 +71,7 @@ try (BeakGraph bg = BG.getBeakGraph(new File("mydata.ttl.h5"))) {
 | Page | What it covers |
 |---|---|
 | [Instructions](instructions/) | Building, the command-line reference, choosing a conversion engine, very large builds, exporting, verifying, serving, and using BeakGraph from Java. |
-| [File format](specification/) | The on-disk format of a BeakGraph store: HDF5 profile, encodings, term order, dictionary, quad indexes and ingest rules. |
+| [File format](specification/) | The on-disk format of a BeakGraph store: the HDF5 and Zarr container profiles, encodings, term order, dictionary, quad indexes and ingest rules. |
 | [RDF 1.2 compliance](rdf-1.2-compliance/) | Conformance to RDF 1.1, RDF 1.2 and SPARQL-CDT, and the documented deviations. |
 | [Benchmarks](benchmarks/) | The JMH benchmarks for the read path. |
 | [Changelog](changelog/) | Release notes and the format version history. |

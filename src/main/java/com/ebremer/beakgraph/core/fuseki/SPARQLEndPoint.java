@@ -56,7 +56,9 @@ public class SPARQLEndPoint {
         Path endpointPath = params.sparqlendpoint.toPath().normalize().toAbsolutePath();
         Dataset ds;
 
-        if (Files.isDirectory(endpointPath)) {
+        // A directory is served as LWS storage - unless it is itself ONE store, in the Zarr container.
+        boolean storage = Files.isDirectory(endpointPath) && !com.ebremer.beakgraph.store.Container.isZarrStore(endpointPath);
+        if (storage) {
             logger.info("Directory mode (LWS) – metadata becomes default graph");
             storageRoot = endpointPath;
             lwsModel = loadOrGenerate(endpointPath, endpointPath.resolve(LWSMetadataGenerator.CACHE_FILE_NAME));
@@ -86,7 +88,7 @@ public class SPARQLEndPoint {
                 ds.getContext().set(ARQ.queryTimeout, Long.toString(timeoutSeconds * 1000L));
             }
         } else {
-            logger.info("Single-file mode (HDF5)");
+            logger.info("Single-store mode ({})", com.ebremer.beakgraph.store.Container.ofExisting(endpointPath));
             // A single-file endpoint serves one graph for the whole server lifetime, so open
             // it directly and close it on shutdown - rather than borrowing it from the pool and
             // never returning it (which leaks the handle and permanently ties up a pool slot).
@@ -101,7 +103,7 @@ public class SPARQLEndPoint {
         }
         this.dataset = ds;
 
-        boolean singleFile = !Files.isDirectory(endpointPath);
+        boolean singleFile = !storage;
         var serverBuilder = FusekiServer.create()
                 .addFilter("/*", new ProfileInterceptorFilter())
                 .port(params.port)

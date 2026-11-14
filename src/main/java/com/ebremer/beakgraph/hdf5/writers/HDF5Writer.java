@@ -6,7 +6,8 @@ import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.core.VoidMode;
 import com.ebremer.beakgraph.hdf5.Index;
-import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.beakgraph.store.Container;
+import com.ebremer.beakgraph.store.WritableStore;
 import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.File;
 import java.io.IOException;
@@ -17,7 +18,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The default (method 0) writer: parse, dictionary, GSPO/GPOS indexes, one
- * HDF5 file. The writer SNAPSHOTS its builder's settings at construction:
+ * store - an HDF5 file, or a Zarr store when the destination is named
+ * {@code *.zarr}. The writer SNAPSHOTS its builder's settings at construction:
  * the builder stays mutable (it is reused freely by the CLI and by tests),
  * and a writer that read the builder on every {@code write()} call could be
  * redirected after the fact (BG-102).
@@ -76,8 +78,10 @@ public class HDF5Writer implements BeakGraphWriter {
                 BGIndex gspo = new BGIndex(w, Index.GSPO, ids.clone());
                 BGIndex gpos = new BGIndex(w, Index.GPOS, ids);
 
-                logger.info("Creating HDF5 file {}", dest);
-                try (WritableHdfFile hdfFile = WritableHdfFile.write(tmp)) {
+                // The destination's name says the container: *.zarr a Zarr store, else one HDF5 file.
+                Container container = Container.ofDestination(dest.toPath());
+                logger.info("Creating {} store {}", container, dest);
+                try (WritableStore hdfFile = WritableStore.create(tmp, container)) {
                     final WritableGroup hdt = hdfFile.putGroup(name);
                     hdt.putAttribute(Params.NUM_QUADS, w.getNumberOfQuads());
                     hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);

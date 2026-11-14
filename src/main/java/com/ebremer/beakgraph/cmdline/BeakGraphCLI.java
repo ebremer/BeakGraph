@@ -235,6 +235,9 @@ public class BeakGraphCLI {
                         fc.incrementUnreadableCount();
                         return FileVisitResult.SKIP_SUBTREE;
                     }
+                    if (!dir.equals(root) && com.ebremer.beakgraph.core.BeakGraphFiles.isZarrStoreDirectory(dir)) {
+                        return FileVisitResult.SKIP_SUBTREE; // a store, not a tree of sources
+                    }
                     realAncestors.push(real);
                     fc.incrementDirectoryCount();
                     return FileVisitResult.CONTINUE;
@@ -292,7 +295,7 @@ public class BeakGraphCLI {
                 }
                 accepted.clear();
             }
-            for (var entry : planDestinations(accepted, params.src, params.dest).entrySet()) {
+            for (var entry : planDestinations(accepted, params.src, params.dest, storeExtension()).entrySet()) {
                 java.util.List<Path> sources = entry.getValue();
                 if (sources.size() > 1) {
                     logger.error("{} sources map to the same destination {}: converting {} only, the others fail: {}",
@@ -351,13 +354,16 @@ public class BeakGraphCLI {
         // not exist yet used to write a store named "out" with no .h5, which
         // -verify, -export and the LWS servlet then all ignored (BG-422).
         boolean trailingSeparator = dest instanceof Parameters.DestinationFile d && d.trailingSeparator();
-        if (dest.isDirectory() || trailingSeparator
-                || !com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(dest.getName())) {
+        // A *.zarr name is a store even where it exists as a directory: a Zarr store is one, and is rebuilt.
+        boolean zarrStore = !trailingSeparator && com.ebremer.beakgraph.core.BeakGraphFiles.isZarrStoreName(dest.getName());
+        if (!zarrStore && (dest.isDirectory() || trailingSeparator
+                || !com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(dest.getName()))) {
+            String merged = "merged." + storeExtension();
             if (!dest.isDirectory()) {
-                logger.info("-dest {} names a directory (no .h5/.hdf5 suffix): the merged store is {}/merged.h5", dest, dest);
+                logger.info("-dest {} names a directory (no .h5/.hdf5/.zarr suffix): the merged store is {}/{}", dest, dest, merged);
             }
             dest.mkdirs();
-            dest = new File(dest, "merged.h5");
+            dest = new File(dest, merged);
         }
         if (dest.getParentFile() != null) {
             dest.getParentFile().mkdirs();
@@ -391,21 +397,21 @@ public class BeakGraphCLI {
      */
     public void export() {
         final List<File> inputs = new ArrayList<>();
-        if (params.src.isDirectory()) {
-            try (var walk = Files.walk(params.src.toPath())) {
-                walk.filter(p -> p.toFile().isFile()
-                                && com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(p.getFileName().toString())
-                                && p.toFile().length() > 0)
-                    .sorted()
-                    .forEach(p -> inputs.add(p.toFile()));
+        if (params.src.isDirectory() && !com.ebremer.beakgraph.store.Container.isZarrStore(params.src.toPath())) {
+            try {
+                for (Path p : com.ebremer.beakgraph.core.BeakGraphFiles.findStores(params.src.toPath())) {
+                    if (com.ebremer.beakgraph.core.BeakGraphFiles.storeExists(p)) {
+                        inputs.add(p.toFile());
+                    }
+                }
             } catch (IOException ex) {
                 logger.error("Failed to scan source tree {}", params.src, ex);
             }
         } else {
-            inputs.add(params.src);
+            inputs.add(params.src); // one store: an HDF5 file, or a Zarr store's directory
         }
         if (inputs.isEmpty()) {
-            System.err.println("No BeakGraph (.h5/.hdf5) files found under " + params.src);
+            System.err.println("No BeakGraph (.h5/.hdf5/.zarr) stores found under " + params.src);
             return;
         }
         for (File h5 : inputs) {
@@ -809,15 +815,31 @@ public class BeakGraphCLI {
      * holding a file named ".h5".
      */
     public static Path destinationFor(Path src, File srcRoot, File dest) {
+        return destinationFor(src, srcRoot, dest, "h5");
+    }
+
+    /**
+     * {@link #destinationFor(Path, File, File)} with the extension the made-up
+     * names get: {@code h5}, or {@code zarr} for the Zarr container. A
+     * single-file {@code -dest} that names the output keeps its own name, and
+     * that name says its container; an existing {@code *.zarr} directory is
+     * such an output (a Zarr store, to rebuild), not a directory to fill.
+     */
+    public static Path destinationFor(Path src, File srcRoot, File dest, String extension) {
         if (srcRoot.isFile()) {
-            if (dest.isDirectory()) {
+            if (dest.isDirectory() && !com.ebremer.beakgraph.core.BeakGraphFiles.isZarrStoreName(dest.getName())) {
                 String name = src.getFileName().toString();
                 int dot = name.lastIndexOf('.');
-                return dest.toPath().resolve((dot == -1 ? name : name.substring(0, dot)) + ".h5");
+                return dest.toPath().resolve((dot == -1 ? name : name.substring(0, dot)) + "." + extension);
             }
             return dest.toPath().toAbsolutePath().normalize();
         }
-        return mapToDestinationWithNewExtension(src, srcRoot.toPath(), dest.toPath(), "h5");
+        return mapToDestinationWithNewExtension(src, srcRoot.toPath(), dest.toPath(), extension);
+    }
+
+    /** The extension of the store names this run makes up: {@code zarr} with {@code -zarr}, else {@code h5}. */
+    private String storeExtension() {
+        return (params.zarr ? com.ebremer.beakgraph.store.Container.ZARR : com.ebremer.beakgraph.store.Container.HDF5).extension();
     }
 
     /**
@@ -829,9 +851,13 @@ public class BeakGraphCLI {
      * same file at once.
      */
     static java.util.Map<Path, java.util.List<Path>> planDestinations(java.util.List<Path> sources, File srcRoot, File dest) {
+        return planDestinations(sources, srcRoot, dest, "h5");
+    }
+
+    static java.util.Map<Path, java.util.List<Path>> planDestinations(java.util.List<Path> sources, File srcRoot, File dest, String extension) {
         java.util.Map<Path, java.util.List<Path>> byDest = new java.util.TreeMap<>();
         for (Path p : sources) {
-            byDest.computeIfAbsent(destinationFor(p, srcRoot, dest), k -> new ArrayList<>()).add(p);
+            byDest.computeIfAbsent(destinationFor(p, srcRoot, dest, extension), k -> new ArrayList<>()).add(p);
         }
         return byDest;
     }
@@ -856,7 +882,7 @@ public class BeakGraphCLI {
             // from an in-RAM engine on a big file used to be dropped on the
             // floor, the file reported as converted and the run exiting 0.
             try {
-                if (dest.toFile().exists() && dest.toFile().length() > 0) {
+                if (com.ebremer.beakgraph.core.BeakGraphFiles.storeExists(dest)) {
                     if (!params.force) {
                         fc.incrementSkippedExistingCount();
                         logger.info("Skipping {}: destination {} exists (use -force to rebuild)", src, dest);

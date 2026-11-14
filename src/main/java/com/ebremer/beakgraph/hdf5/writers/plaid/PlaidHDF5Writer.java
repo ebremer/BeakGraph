@@ -63,8 +63,9 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
             AtomicPublish.build(dest, tmp -> {
                 // Prove the installed backend (Falcon, or a replaced provider) can
                 // write a file here before any work is done (BG-135).
-                com.ebremer.beakgraph.huge.StreamingHdf5.requireWritable(workspace);
-                com.ebremer.beakgraph.huge.StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
+                com.ebremer.beakgraph.store.Container container = com.ebremer.beakgraph.store.Container.ofDestination(dest);
+                com.ebremer.beakgraph.huge.StreamingHdf5.requireWritable(workspace, container);
+                com.ebremer.beakgraph.huge.StreamingHdf5.probeFile(tmp, container);   // the output path itself (BG-419)
                 UltraSorterProvider provider = new UltraSorterProvider(
                         builder.getTermSpillBatch(), builder.getIdSpillBatch(), builder.getMergeFanIn(), builder.getTermSpillBytes(),
                         builder.effectiveMergeConcurrency(), pool);
@@ -73,7 +74,7 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
                         provider, pool, new PlaidIngest(builder.cores))) {
                     pipeline.setSourceRoot(builder.getSourceRoot());
                     pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
-                    pipeline.run(tmp);
+                    pipeline.run(tmp, container);
                 }
             });
         } finally {

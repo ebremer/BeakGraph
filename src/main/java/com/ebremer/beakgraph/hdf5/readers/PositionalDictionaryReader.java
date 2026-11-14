@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.core.GSPODictionary;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
+import com.ebremer.beakgraph.store.StoreGroup;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import java.util.stream.Stream;
@@ -45,18 +46,18 @@ public class PositionalDictionaryReader implements GSPODictionary {
     // of allocating a fresh wrapper on every getObjects() call in the query hot path.
     private final Dictionary objectsDict;
 
-    public PositionalDictionaryReader(HdfGroup dictionary) {
-        HdfGroup entitiesGroup = HdfProfile.group(dictionary, Params.ENTITIES);
-        HdfGroup predicatesGroup = HdfProfile.group(dictionary, Params.PREDICATES);
-        HdfGroup literalsGroup = HdfProfile.group(dictionary, Params.LITERALS);
+    public PositionalDictionaryReader(StoreGroup dictionary) {
+        StoreGroup entitiesGroup = StoreProfile.group(dictionary, Params.ENTITIES);
+        StoreGroup predicatesGroup = StoreProfile.group(dictionary, Params.PREDICATES);
+        StoreGroup literalsGroup = StoreProfile.group(dictionary, Params.LITERALS);
         this.entities = (entitiesGroup != null) ? new MultiTypeDictionaryReader(entitiesGroup) : null;
         this.predicates = (predicatesGroup != null) ? new MultiTypeDictionaryReader(predicatesGroup) : null;
         this.literals = (literalsGroup != null) ? new MultiTypeDictionaryReader(literalsGroup) : null;
         this.maxEntityId = (entities != null) ? entities.getNumberOfNodes() : 0;
         
-        this.graphs = HdfProfile.packed(dictionary, Params.GRAPHS);
-        this.subjects = HdfProfile.packed(dictionary, Params.SUBJECTS);
-        this.objects = HdfProfile.packed(dictionary, Params.OBJECTS);
+        this.graphs = StoreProfile.packed(dictionary, Params.GRAPHS);
+        this.subjects = StoreProfile.packed(dictionary, Params.SUBJECTS);
+        this.objects = StoreProfile.packed(dictionary, Params.OBJECTS);
         this.objectsDict = makeObjectsDictionary();
 
         // Wire the cross-dictionary triple-term resolver (CHANGELOG.md "Format v5 design notes"):

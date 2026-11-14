@@ -74,15 +74,16 @@ public class HugeHDF5Writer implements BeakGraphWriter {
             AtomicPublish.build(dest, tmp -> {
                 // Prove the installed backend (Falcon, or a replaced provider) can
                 // write a file here before any work is done (BG-135).
-                StreamingHdf5.requireWritable(workspace);
-                StreamingHdf5.probeFile(tmp);   // the output path itself (BG-419)
+                com.ebremer.beakgraph.store.Container container = com.ebremer.beakgraph.store.Container.ofDestination(dest);
+                StreamingHdf5.requireWritable(workspace, container);
+                StreamingHdf5.probeFile(tmp, container);   // the output path itself (BG-419)
                 try (HugeBuildPipeline pipeline = new HugeBuildPipeline(
                         inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
                         workspace, builder.getTermSpillBatch(), builder.getIdSpillBatch(), builder.getMergeFanIn(),
                         builder.getTermSpillBytes())) {
                     pipeline.setSourceRoot(builder.getSourceRoot());
                     pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
-                    pipeline.run(tmp);
+                    pipeline.run(tmp, container);
                 }
             });
         } finally {

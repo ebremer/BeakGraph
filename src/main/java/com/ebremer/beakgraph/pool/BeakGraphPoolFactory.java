@@ -56,6 +56,11 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
      */
     record FileSignature(Object fileKey, long size, long modifiedMillis) {
         static FileSignature of(Path path) throws IOException {
+            if (Files.isDirectory(path)) {
+                // A Zarr store: the document its reader opened it from stands for it. A rebuilt
+                // store is a new directory moved into place, so this is a new file.
+                path = path.resolve("zarr.json");
+            }
             BasicFileAttributes a = Files.readAttributes(path, BasicFileAttributes.class);
             return new FileSignature(a.fileKey(), a.size(), a.lastModifiedTime().toMillis());
         }

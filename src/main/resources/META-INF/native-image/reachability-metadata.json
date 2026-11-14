@@ -221,6 +221,9 @@
         },
         {
           "name": "workdir"
+        },
+        {
+          "name": "zarr"
         }
       ]
     },
@@ -280,6 +283,22 @@
     },
     {
       "type": "com.fasterxml.jackson.dataformat.yaml.YAMLFactory"
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.BBHeader$ReadAndWriteCounterRef",
+      "fields": [
+        {
+          "name": "writeCounter"
+        }
+      ]
+    },
+    {
+      "type": "com.github.benmanes.caffeine.cache.BBHeader$ReadCounterRef",
+      "fields": [
+        {
+          "name": "readCounter"
+        }
+      ]
     },
     {
       "type": "com.github.benmanes.caffeine.cache.BLCHeader$DrainStatusRef",
@@ -4426,6 +4445,10 @@
     },
     {
       "glob": "org/jline/utils/dumb.caps"
+    },
+    {
+      "module": "java.base",
+      "glob": "jdk/internal/icu/impl/data/icudt76b/nfkc.nrm"
     },
     {
       "module": "java.desktop",

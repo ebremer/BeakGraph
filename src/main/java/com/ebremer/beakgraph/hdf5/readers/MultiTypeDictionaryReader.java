@@ -6,7 +6,8 @@ import com.ebremer.beakgraph.core.lib.DataType;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
-import com.ebremer.falcon.hdf5.Dataset;
+import com.ebremer.beakgraph.store.StoreArray;
+import com.ebremer.beakgraph.store.StoreGroup;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.stream.LongStream;
@@ -100,29 +101,29 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private record TieredIndex(long[] ids, Node[] nodes, IdentityHashMap<Node, NodeValue> values) {}
     private static final TieredIndex EMPTY_TIER = new TieredIndex(new long[0], new Node[0], new IdentityHashMap<>());
 
-    public MultiTypeDictionaryReader(HdfGroup d) {
+    public MultiTypeDictionaryReader(StoreGroup d) {
         setName(d.name());
-        Dataset offsetsDS = HdfProfile.requireContiguous(d, "offsets");
-        this.numEntries = HdfProfile.longAttr(offsetsDS, Params.NUM_ENTRIES);
-        this.offsets = HdfProfile.requirePacked(d, "offsets");
-        this.datatype = HdfProfile.requirePacked(d, "datatypes");
-        this.typedLiterals = HdfProfile.packed(d, "typedLiterals");
-        this.doubles = HdfProfile.bytes(d, "doubles");
-        this.floats = HdfProfile.bytes(d, "floats");
-        this.integers = HdfProfile.packed(d, "integers");
-        this.longs = HdfProfile.packed(d, "longs");
-        this.tripleTerms = HdfProfile.packed(d, "tripleTerms");
+        StoreArray offsetsDS = StoreProfile.requireArray(d, "offsets");
+        this.numEntries = StoreProfile.longAttr(offsetsDS, Params.NUM_ENTRIES);
+        this.offsets = StoreProfile.requirePacked(d, "offsets");
+        this.datatype = StoreProfile.requirePacked(d, "datatypes");
+        this.typedLiterals = StoreProfile.packed(d, "typedLiterals");
+        this.doubles = StoreProfile.bytes(d, "doubles");
+        this.floats = StoreProfile.bytes(d, "floats");
+        this.integers = StoreProfile.packed(d, "integers");
+        this.longs = StoreProfile.packed(d, "longs");
+        this.tripleTerms = StoreProfile.packed(d, "tripleTerms");
 
-        HdfGroup stringsG = HdfProfile.group(d, "strings");
+        StoreGroup stringsG = StoreProfile.group(d, "strings");
         this.strings = (stringsG != null) ? new FCDReader(stringsG) : null;
-        HdfGroup typedLiteralsDictionaryG = HdfProfile.group(d, "typedLiteralsDictionary");
+        StoreGroup typedLiteralsDictionaryG = StoreProfile.group(d, "typedLiteralsDictionary");
         this.typedLiteralsDictionary = (typedLiteralsDictionaryG != null) ? new FCDReader(typedLiteralsDictionaryG) : null;
-        HdfGroup iriG = HdfProfile.group(d, "iri");
+        StoreGroup iriG = StoreProfile.group(d, "iri");
         this.iri = (iriG != null) ? new FCDReader(iriG) : null;
-        HdfGroup langsG = HdfProfile.group(d, "langs");
+        StoreGroup langsG = StoreProfile.group(d, "langs");
         this.langs = (langsG != null) ? new FCDReader(langsG) : null;
-        this.langTags = HdfProfile.packed(d, "langTags");
-        this.langDirs = HdfProfile.packed(d, "langDirs");
+        this.langTags = StoreProfile.packed(d, "langTags");
+        this.langDirs = StoreProfile.packed(d, "langDirs");
         this.langTable = (langs == null) ? null : readLanguageTags(langs, getName());
 
         // Parallel columns must cover every row: a shorter one used to be read

@@ -15,7 +15,7 @@ public class Parameters {
     public boolean help = false;
 
     @Parameter(names = "-endpoint",
-            description = "Serve instead of converting: a single .h5 file as a SPARQL endpoint at "
+            description = "Serve instead of converting: a single store (an .h5 file, or a .zarr store) as a SPARQL endpoint at "
                         + "/rdf, or a directory served in full as W3C LWS storage (every .h5 in it "
                         + "answers SPARQL at its own URL; the metadata model is served at /rdf and "
                         + "written into the directory as beakgraph.ttl.gz on first start)",
@@ -43,7 +43,7 @@ public class Parameters {
     
     @Parameter(names = "-src",
             description = "Source RDF file, or a directory tree walked recursively (convert); with "
-                        + "-export, the .h5/.hdf5 store or directory of stores to dump", required = false)
+                        + "-export, the .h5/.hdf5/.zarr store or directory of stores to dump", required = false)
     public File src = null;
 
     /**
@@ -75,9 +75,10 @@ public class Parameters {
 
     @Parameter(names = "-dest", converter = DestinationConverter.class,
             description = "Destination: in per-file mode the directory mirroring the -src tree with .h5 "
-                        + "files; with -merge the ONE store to write - a name ending in .h5/.hdf5 is the "
-                        + "file, anything else (an existing directory, a trailing separator, or no "
-                        + "such suffix) is a directory that receives merged.h5", required = false)
+                        + "files (.zarr stores with -zarr); with -merge the ONE store to write - a name ending "
+                        + "in .h5/.hdf5 is the HDF5 file, one ending in .zarr the Zarr store, anything else (an "
+                        + "existing directory, a trailing separator, or no such suffix) is a directory that "
+                        + "receives merged.h5 (merged.zarr with -zarr)", required = false)
     public File dest = null;
     
     @Parameter(names = {"-void"}, converter = BooleanConverter.class,
@@ -152,6 +153,13 @@ public class Parameters {
                         + "(default: 64 for -method 1, 128 for -method 4/5)")
     public Integer mergeFanIn = null;
 
+    @Parameter(names = {"-zarr"}, converter = BooleanConverter.class,
+            description = "Write each store in the Zarr container - a Zarr v3 directory store, <name>.zarr - "
+                        + "instead of one HDF5 file, <name>.h5. The store is the same, and every command reads "
+                        + "either. Not needed when -dest itself ends in .zarr: a destination's name says its "
+                        + "container")
+    public boolean zarr = false;
+
     @Parameter(names = {"-force"}, converter = BooleanConverter.class,
             description = "Per-file mode: rebuild destination .h5 files that already exist instead of "
                         + "skipping them (the default skip is what makes a re-run resume)")
@@ -209,7 +217,7 @@ public class Parameters {
                         + "file, loads the dictionaries and every index structure, and "
                         + "enumerates its graphs - catching truncated, partially copied, or "
                         + "otherwise damaged files before they are served. The path may be one "
-                        + "file or a directory (scanned recursively for *.h5/*.hdf5). Prints one "
+                        + "store or a directory (scanned recursively for *.h5/*.hdf5 files and *.zarr stores). Prints one "
                         + "verdict line per file plus a summary; exit code 2 if any file is "
                         + "damaged. Add -deep for a data-level pass")
     public File verify = null;

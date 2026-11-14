@@ -6,7 +6,8 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
 import com.ebremer.beakgraph.hdf5.Index;
-import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.beakgraph.store.Container;
+import com.ebremer.beakgraph.store.WritableStore;
 import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -88,8 +89,9 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
                     ParallelBGIndex gspo = joinIndex(gspoTask, Index.GSPO);
                     ParallelBGIndex gpos = joinIndex(gposTask, Index.GPOS);
 
-                    logger.info("Creating HDF5 file {}", builder.getDestination());
-                    try (WritableHdfFile hdfFile = WritableHdfFile.write(tmp)) {
+                    Container container = Container.ofDestination(dest);
+                    logger.info("Creating {} store {}", container, builder.getDestination());
+                    try (WritableStore hdfFile = WritableStore.create(tmp, container)) {
                         final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                         hdt.putAttribute(Params.NUM_QUADS, w.getNumberOfQuads());
                         hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);

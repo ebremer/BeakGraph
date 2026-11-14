@@ -3,6 +3,7 @@ package com.ebremer.beakgraph.hdf5.readers;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
+import com.ebremer.beakgraph.store.StoreGroup;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,7 +22,7 @@ public class IndexReader {
     private final char[] positions;
     private boolean directoryDatasets = false;
     
-    public IndexReader(HdfGroup index, Index indexType, long formatVersion) {
+    public IndexReader(StoreGroup index, Index indexType, long formatVersion) {
         this.indexType = indexType;
         String indexName = indexType.name();
         this.positions = new char[4];
@@ -62,8 +63,8 @@ public class IndexReader {
         }
     }
     
-    private static BitPackedUnSignedLongBuffer loadBuffer(HdfGroup index, String name) {
-        return HdfProfile.packed(index, name); // null when absent; a profile violation names the dataset
+    private static BitPackedUnSignedLongBuffer loadBuffer(StoreGroup index, String name) {
+        return StoreProfile.packed(index, name); // null when absent; a profile violation names the dataset
     }
     
     public HDTBitmapDirectory getDirectory(char component) {

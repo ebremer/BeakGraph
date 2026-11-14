@@ -13,15 +13,15 @@ immutable store.
 |---|---|
 | Java 25+ | The build targets current JDKs. |
 | Maven 3.9+ | Standard build. |
-| Native HDF5 library | Not needed. Every engine, the disk-based ones (`-method 1`, `4` and `5`) included, reads and writes HDF5 through pure-Java [Falcon](https://github.com/ebremer/falcon), on any platform Java 25 runs on. |
+| Native HDF5 library | Not needed. Every engine, the disk-based ones (`-method 1`, `4` and `5`) included, reads and writes HDF5 - and Zarr - through pure-Java [Falcon](https://github.com/ebremer/falcon), on any platform Java 25 runs on. |
 | Disk workspace | For `-method 1/4/5`: free space on the order of a few times the uncompressed source (see §7). |
 
 ## 2. Building
 
 ```bash
-# Falcon, the HDF5 library, is not on Maven Central yet: install it first
-# (git clone https://github.com/ebremer/falcon && cd falcon && git checkout 0.1.0)
-mvn -pl hdf5 -am install
+# Falcon, the HDF5 and Zarr library, is not on Maven Central yet: install it first, at the
+# version the pom names as falcon.version (git clone https://github.com/ebremer/falcon && cd falcon)
+mvn -pl hdf5,zarr -am install
 
 # Library + tests
 mvn clean package
@@ -49,6 +49,10 @@ java -jar BeakGraph.jar -src data/example.ttl.gz -dest out/example.h5
 # Merge an entire tree into ONE store
 java -jar BeakGraph.jar -src data/ -dest all.h5 -merge
 
+# The same stores in the Zarr container: one .zarr directory store per file, or one named *.zarr
+java -jar BeakGraph.jar -src data/ -dest out/ -zarr
+java -jar BeakGraph.jar -src data/ -dest all.zarr -merge
+
 # Serve a store as a SPARQL endpoint on port 8888
 java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 
@@ -67,6 +71,7 @@ java -jar BeakGraph.jar -endpoint out/ -port 8888
 | `-threads <n>` | `1` | Number of conversions run **at once** (per-file mode). Each conversion gets its own `-cores` budget — total CPU ≈ `threads × cores`, plus the parser and spatial threads noted under `-cores`. |
 | `-merge` | off | Merge **all** sources under `-src` into ONE store at `-dest` (if `-dest` is an existing directory, writes `<dest>/merged.h5`). Blank nodes stay distinct per source document, and so do relative references: each document's `<>` and relative links are stored relative to `-src` (`<>` in `a/x.ttl` becomes `a/x.ttl`, its `<img.png>` becomes `a/img.png`), so the merged store serves them below its own URL as the source tree was laid out. Works with every `-method`. |
 | `-force` | off | Per-file mode: rebuild destination `.h5` files that already exist instead of skipping them. |
+| `-zarr` | off | Write each store in the **Zarr container** - a Zarr v3 directory store, `<name>.zarr` - instead of one HDF5 file, `<name>.h5`. It decides the names this run makes up (per-file mode, `<dest>/merged.zarr`, `<name>.zarr` in an existing directory); a `-dest` that itself ends in `.zarr` is a Zarr store without it, and one that ends in `.h5`/`.hdf5` an HDF5 file with it. Works with every `-method`. See §4a. |
 | `-void` | off | Generate the VoID/SD statistics graph (`urn:x-beakgraph:void`) with **exact** in-memory counting (RAM grows with distinct terms). Mutually exclusive with `-voidsketch`. |
 | `-voidsketch` | off | Generate the statistics graph with **bounded memory**: exact up to 65,536 distinct nodes per counter, then HyperLogLog estimates (~0.8% error, deterministic). Recommended for `-method 1/4/5`. Mutually exclusive with `-void`. |
 | `-voidbase <iri>` | `urn:x-beakgraph:dataset` | With `-void`/`-voidsketch`: the IRI of the `sd:Dataset` resource the statistics graph describes (programmatic builders: `setVoidDatasetIri`). |
@@ -108,6 +113,47 @@ same `a.h5`: the first in path order is converted and the rest are reported and 
 the move — the finished build is kept as `<dest>.new` and the error says so; move it into place once
 the reader is closed) —
 a failed or interrupted build never corrupts a previous good store.
+
+## 4a. Containers: HDF5 or Zarr
+
+A store is groups, named byte arrays and integer attributes. It is kept in one of two containers, and
+it is the same store in either - the same arrays byte for byte, the same attribute values, the same
+format version (SPECIFICATIONS.md §3 and §3a):
+
+| | HDF5 (the default) | Zarr (`-zarr`, or a destination named `*.zarr`) |
+|---|---|---|
+| On disk | one file, `name.h5` | one directory, `name.zarr`: about 130 files for a store, a `zarr.json` and one chunk file per array |
+| An array | a contiguous dataset | a Zarr v3 array of `uint8`, uncompressed, in one chunk (several of at most 1 GiB past 1 GiB) |
+| Local reads | the file memory-mapped once | every chunk file memory-mapped when the store is opened |
+| Readable by | any HDF5 tool (HDFView, h5py) | any Zarr v3 tool (zarr-python, Falcon), as arrays of bytes |
+
+Every command takes either: `-verify`, `-export` and `-endpoint` accept a `*.zarr` directory as one
+store, and where they walk a tree they find the `.h5`/`.hdf5` files and the `*.zarr` directories
+(which hold a `zarr.json`) and do not walk into a store. The API is the same too:
+`BG.getBeakGraph(path)` opens a file or a directory, and a writer given a destination named `*.zarr`
+writes Zarr.
+
+What to know about the Zarr container:
+
+* **Same answers, same speed.** The readers work on the same memory-mapped bytes in both.
+  Opening a Zarr store maps one file per array instead of one file, which costs a few
+  milliseconds more.
+* **A store is replaced whole**, as a file is: it is built in a directory beside its destination
+  and moved into place complete, so there is never half a store at the destination. A directory
+  cannot be swapped for another in one step, so for an instant during a rebuild there is no store
+  there. On Windows a store that a reader has open cannot be replaced (its files are mapped): the
+  finished build is kept as `<dest>.new`, as for a file.
+* **A build only ever replaces a Zarr store or an empty directory.** A destination that is a directory
+  of anything else is refused before the build starts.
+* **Arrays past 1 GiB** are cut into several chunks (most Zarr implementations, Falcon among them,
+  hold a chunk in one buffer of under 2 GiB) and are read through their mappings a range at a time,
+  which is slower than the single mapping of an HDF5 dataset. Stores whose arrays stay under 1 GiB -
+  a few GB in all - are not affected; for larger ones prefer HDF5.
+* **Not there yet:** `-endpoint` on a *directory* of stores (LWS storage mode) serves its `.h5` files
+  as stores, and lists a `*.zarr` directory as a directory, not as a store; and a Zarr store is read from
+  the local file system - not over HTTP or from an object store through the pool, where an HDF5 file
+  is read over range requests. `com.ebremer.beakgraph.store.ZarrStore.open(store, name)` reads a
+  store from any Falcon `Store` (a ZIP archive, HTTP, S3) a range at a time, without a cache.
 
 ### Serving a directory (LWS storage mode)
 
@@ -204,10 +250,12 @@ relatively.
 java -jar BeakGraph.jar -src data.h5 -export NQ                 # -> data.nq
 java -jar BeakGraph.jar -src data.h5 -export TTL -compress      # -> data.ttl.gz
 java -jar BeakGraph.jar -src stores/ -export NT                 # every .h5 under stores/
+java -jar BeakGraph.jar -src data.zarr -export NQ               # a Zarr store: -> data.nq beside it
 ```
 
-* `-src` may be one `.h5`/`.hdf5` file or a directory tree (every `.h5`/`.hdf5` under it exports,
-  the same rule `-verify` uses).
+* `-src` may be one `.h5`/`.hdf5` file, one `*.zarr` store, or a directory tree (every `.h5`/`.hdf5`
+  file and every `*.zarr` store under it exports, the same rule `-verify` uses). `a.h5` and `a.zarr`
+  in one directory export to the same `a.nq`: keep them apart.
 * **Automatic quad upgrade**: if `TTL` or `NT` is requested but the store holds named
   graphs beyond the default graph, the format silently upgrades to its quad form
   (`TTL -> TRIG`, `NT -> NQ`) and the extension follows.
@@ -233,7 +281,8 @@ are never exported and never force a triples store up to a quads syntax.
 
 ```bash
 java -jar BeakGraph.jar -verify data.h5                 # one file
-java -jar BeakGraph.jar -verify stores/                 # every .h5/.hdf5 under stores/, recursive
+java -jar BeakGraph.jar -verify stores/                 # every .h5/.hdf5 file and *.zarr store under stores/, recursive
+java -jar BeakGraph.jar -verify data.zarr -deep         # one Zarr store
 java -jar BeakGraph.jar -verify stores/ -deep           # + full data-level pass
 ```
 
@@ -333,6 +382,9 @@ new / *Writer*.Builder()
     .write();
 ```
 
+A destination named `*.zarr` is written in the Zarr container (§4a), by every engine; any other
+name is an HDF5 file. The classes keep the names of the container they were first written for.
+
 Classes: `hdf5.writers.HDF5Writer` (0) · `huge.HugeHDF5Writer` (1) ·
 `hdf5.writers.parallel.ParallelHDF5Writer` (2) · `hdf5.writers.ultra.UltraHDF5Writer` (3) ·
 `hdf5.writers.hugeUltra.HugeUltraHDF5Writer` (4) · `hdf5.writers.plaid.PlaidHDF5Writer` (5).
@@ -406,9 +458,16 @@ still mapping the old file are discarded on their next borrow or after `beakgrap
 `store.old.h5` may be deleted at any point (Windows lets the delete proceed and removes the file once
 the last reader closes).
 
+A Zarr store is replaced the same way, as a directory: `mv store.zarr store.old.zarr && mv
+store.new.zarr store.zarr`. A reader maps every file of a store when it opens it, so one that was
+open goes on reading the old store whole, and is discarded on its next borrow (the pool compares the
+identity of the store's root `zarr.json`). On Windows the directory of a store that a reader has open
+cannot be renamed: stop or drain the readers first.
+
 ## 9. Output guarantees
 
-* One HDF5 format, one reader stack, for every method (format version 6:
+* One format, one reader stack, for every method and for both containers - an HDF5 file
+  or a Zarr store hold the same arrays, byte for byte (§4a) - (format version 6:
   the id sequences are block-structured, SPECIFICATIONS.md §5.1a).
   v4 added the optional `langDirs` dataset for RDF 1.2 base-direction literals
   (`"x"@en--ltr`); v5 adds the optional `tripleTerms` component store for

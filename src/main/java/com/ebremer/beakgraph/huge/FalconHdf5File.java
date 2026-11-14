@@ -3,6 +3,8 @@ package com.ebremer.beakgraph.huge;
 import com.ebremer.beakgraph.hdf5.WritableDataset;
 import com.ebremer.beakgraph.hdf5.WritableGroup;
 import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.beakgraph.store.Container;
+import com.ebremer.beakgraph.store.WritableStore;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -28,6 +30,11 @@ import java.util.List;
  * close fails. So a build that fails while a dataset is being transferred
  * publishes nothing, whatever its caller then does with the path.
  *
+ * <p>The same class writes the Zarr container ({@link #create(Path, Container)}):
+ * the door is {@link WritableStore}, which is either, and a Zarr store is as
+ * all-or-nothing as an HDF5 file - a directory written beside its path and
+ * moved there complete.
+ *
  * <p>Not thread-safe; the disk-based writers assemble a file from one thread.
  *
  * @author Erich Bremer
@@ -35,23 +42,32 @@ import java.util.List;
 public final class FalconHdf5File implements StreamingHdf5File {
 
     private final Path path;
-    private final WritableHdfFile file;
+    /** "HDF5 file" or "Zarr store": what the messages call it. */
+    private final String what;
+    private final WritableStore file;
     private final FalconGroup root;
     private final List<FalconDataset> datasets = new ArrayList<>();
     private boolean closed;
 
-    private FalconHdf5File(Path path, WritableHdfFile file) {
+    private FalconHdf5File(Path path, WritableStore file) {
         this.path = path;
+        this.what = file.container() == Container.HDF5 ? "HDF5 file" : "Zarr store";
         this.file = file;
         this.root = new FalconGroup(file.root(), "/");
     }
 
     /** Begins a new file at {@code path}; a file already there is replaced when this one is closed complete. */
     public static StreamingHdf5File create(Path path) throws IOException {
+        return create(path, Container.HDF5);
+    }
+
+    /** Begins a new store at {@code path} in {@code container}; what is already there is replaced when this one is closed complete. */
+    public static StreamingHdf5File create(Path path, Container container) throws IOException {
         try {
-            return new FalconHdf5File(path, WritableHdfFile.write(path));
+            return new FalconHdf5File(path, WritableStore.create(path, container));
         } catch (RuntimeException e) {
-            throw new IOException("Cannot create HDF5 file " + path + ": " + e.getMessage(), e);
+            throw new IOException("Cannot create " + (container == Container.HDF5 ? "HDF5 file " : "Zarr store ") + path
+                    + ": " + e.getMessage(), e);
         }
     }
 
@@ -69,14 +85,14 @@ public final class FalconHdf5File implements StreamingHdf5File {
         try (file) {    // discards the file beside the path unless it is committed below
             for (FalconDataset d : datasets) {
                 if (!d.complete()) {
-                    throw new IOException("HDF5 file " + path + " closed with dataset '" + d.name + "' at "
+                    throw new IOException(what + " " + path + " closed with dataset '" + d.name + "' at "
                             + d.dataset.written() + " of " + d.dataset.length() + " bytes: nothing was written to the path");
                 }
             }
             try {
                 file.commit();
             } catch (RuntimeException e) {
-                throw new IOException("Cannot complete HDF5 file " + path + ": " + e.getMessage(), e);
+                throw new IOException("Cannot complete " + what + " " + path + ": " + e.getMessage(), e);
             }
         }
     }

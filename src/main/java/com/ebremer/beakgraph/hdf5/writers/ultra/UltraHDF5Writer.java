@@ -4,7 +4,8 @@ import com.ebremer.beakgraph.core.AtomicPublish;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.AbstractGraphBuilder;
 import com.ebremer.beakgraph.core.BeakGraphWriter;
-import com.ebremer.beakgraph.hdf5.WritableHdfFile;
+import com.ebremer.beakgraph.store.Container;
+import com.ebremer.beakgraph.store.WritableStore;
 import com.ebremer.beakgraph.hdf5.WritableGroup;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -97,9 +98,10 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 dict.releaseRankMaps();
                 ingest.releaseNodeSets();
 
-                logger.info("Stage 4/4: writing HDF5 file {}", builder.getDestination());
+                Container container = Container.ofDestination(dest);
+                logger.info("Stage 4/4: writing {} store {}", container, builder.getDestination());
                 long ioStart = System.nanoTime();
-                try (WritableHdfFile hdfFile = WritableHdfFile.write(tmp)) {
+                try (WritableStore hdfFile = WritableStore.create(tmp, container)) {
                     final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                     hdt.putAttribute(Params.NUM_QUADS, ingest.getNumberOfQuads());
                     hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);

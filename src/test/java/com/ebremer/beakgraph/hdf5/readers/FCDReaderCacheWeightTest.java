@@ -51,7 +51,7 @@ class FCDReaderCacheWeightTest {
         File h5 = dir.resolve("big-literals.h5").toFile();
         HDF5Writer.Builder().setSource(ttl).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
         file = Hdf5File.open(h5.toPath());
-        reader = new FCDReader(new HdfGroup(file.root().group(STRINGS)));
+        reader = new FCDReader(com.ebremer.beakgraph.store.Hdf5Store.group(file.root().group(STRINGS)));
     }
 
     @AfterAll

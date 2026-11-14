@@ -81,7 +81,7 @@ public final class VerifyCommand {
             return 1;
         }
         if (files.isEmpty()) {
-            out.println("No BeakGraph (.h5/.hdf5) files found under " + root);
+            out.println("No BeakGraph (.h5/.hdf5/.zarr) stores found under " + root);
             return 1;
         }
         int failed = 0;
@@ -108,20 +108,13 @@ public final class VerifyCommand {
 
     private List<Path> collect() throws IOException {
         Path path = root.toPath();
-        if (Files.isRegularFile(path)) {
-            // An explicitly named file is verified regardless of its extension.
+        if (Files.isRegularFile(path) || com.ebremer.beakgraph.store.Container.isZarrStore(path)) {
+            // An explicitly named file is verified regardless of its extension,
+            // and so is a directory that is a Zarr store, whatever its name.
             return List.of(path);
         }
-        try (Stream<Path> walk = Files.walk(path)) {
-            return walk.filter(Files::isRegularFile)
-                    .filter(VerifyCommand::isHdf5Name)
-                    .sorted()
-                    .toList();
-        }
-    }
-
-    private static boolean isHdf5Name(Path p) {
-        return com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(p.getFileName().toString());
+        // The .h5/.hdf5 files and the *.zarr stores of the tree; a store's own directories are not walked.
+        return com.ebremer.beakgraph.core.BeakGraphFiles.findStores(path);
     }
 
     /** One file's verdict: its problems (none = passed) and its format version (-1 when it could not be opened). */
@@ -131,16 +124,18 @@ public final class VerifyCommand {
     private Verdict verifyOne(Path f) {
         List<String> problems = new ArrayList<>();
         long formatVersion = -1;
-        long size;
-        try {
-            size = Files.size(f);
-        } catch (IOException e) {
-            problems.add("unreadable: " + rootMessage(e));
-            return new Verdict(problems, formatVersion);
-        }
-        if (size == 0) {
-            problems.add("empty file");
-            return new Verdict(problems, formatVersion);
+        if (!Files.isDirectory(f)) { // a Zarr store is a directory: its files are checked as they are read
+            long size;
+            try {
+                size = Files.size(f);
+            } catch (IOException e) {
+                problems.add("unreadable: " + rootMessage(e));
+                return new Verdict(problems, formatVersion);
+            }
+            if (size == 0) {
+                problems.add("empty file");
+                return new Verdict(problems, formatVersion);
+            }
         }
         try (HDF5Reader reader = new HDF5Reader(f.toFile())) {
             formatVersion = reader.getFormatVersion();

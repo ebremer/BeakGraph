@@ -4,6 +4,7 @@ import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.lib.VByte;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
+import com.ebremer.beakgraph.store.StoreGroup;
 import com.ebremer.beakgraph.utils.StringUtils;
 import java.nio.charset.StandardCharsets;
 
@@ -64,13 +65,13 @@ public class FCDReader {
         return blockCache.estimatedSize();
     }
 
-    public FCDReader(HdfGroup strings) {
-        this.buffer = HdfProfile.requireBytes(strings, "stringbuffer");
-        this.offsets = HdfProfile.requireBytes(strings, "offsets");
-        this.compressed = HdfProfile.requirePacked(strings, "compressed");
-        this.blockSize = HdfProfile.longAttr(strings, Params.BLOCK_SIZE);
-        this.numEntries = HdfProfile.longAttr(strings, Params.NUM_ENTRIES);
-        this.numBlocks = HdfProfile.longAttr(strings, Params.NUM_BLOCKS);
+    public FCDReader(StoreGroup strings) {
+        this.buffer = StoreProfile.requireBytes(strings, "stringbuffer");
+        this.offsets = StoreProfile.requireBytes(strings, "offsets");
+        this.compressed = StoreProfile.requirePacked(strings, "compressed");
+        this.blockSize = StoreProfile.longAttr(strings, Params.BLOCK_SIZE);
+        this.numEntries = StoreProfile.longAttr(strings, Params.NUM_ENTRIES);
+        this.numBlocks = StoreProfile.longAttr(strings, Params.NUM_BLOCKS);
         // The attributes must describe each other and the datasets: a file
         // whose blockSize was 0 divided by zero on every lookup, and one whose
         // offsets or flags were short read past their end - after the open had

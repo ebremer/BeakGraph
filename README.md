@@ -7,7 +7,7 @@
   alt="BeakGraph"
   title="BeakGraph">
 
-BeakGraph is an [Apache Jena](https://jena.apache.org/) Graph implementation of [RDF HDT](https://www.rdfhdt.org/) technology pumped into a [HDF5](https://www.hdfgroup.org/solutions/hdf5/) file and extended to support a full RDF Dataset.
+BeakGraph is an [Apache Jena](https://jena.apache.org/) Graph implementation of [RDF HDT](https://www.rdfhdt.org/) technology pumped into a [HDF5](https://www.hdfgroup.org/solutions/hdf5/) file - or, the same store, a [Zarr](https://zarr.dev/) directory store - and extended to support a full RDF Dataset.
 
 Documentation: **[ebremer.github.io/BeakGraph](https://ebremer.github.io/BeakGraph/)**
 
@@ -15,8 +15,9 @@ Documentation: **[ebremer.github.io/BeakGraph](https://ebremer.github.io/BeakGra
 
 ## Building
 
-Requires Java 25 and Maven 3.9, and no HDF5 install: every engine reads and writes HDF5 in pure
-Java (see [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §1-2).
+Requires Java 25 and Maven 3.9, and no HDF5 install: every engine reads and writes HDF5 and Zarr in
+pure Java, through [Falcon](https://github.com/ebremer/falcon) (see
+[docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §1-2).
 
 ```
 mvn -Plib clean package             # self-contained library jar: target/BeakGraph-<version>.jar
@@ -46,6 +47,8 @@ java -agentlib:native-image-agent=config-merge-dir=meta \
 
 * `-src <file|dir> -dest <file|dir>` converts RDF to `.h5` (`-method 0..5` selects the engine:
   in-memory 0/2/3, disk-based 1/4/5 for inputs larger than RAM; `-merge` folds a tree into one store).
+  `-zarr`, or a `-dest` named `*.zarr`, writes the same store as a Zarr v3 directory store instead of an
+  HDF5 file; every command below takes either.
 * `-src <file.h5|dir> -export NT|NQ|TTL|TRIG|JSON-LD` dumps stores back to RDF.
 * `-verify <file.h5|dir> [-deep]` integrity-checks stores before publishing them.
 * `-endpoint <file.h5|dir> -port 8888` serves one store, or a whole directory as W3C LWS storage,
@@ -80,6 +83,10 @@ BG.getBGWriterBuilder()
     .build()
     .write();
 ```
+
+A destination named `*.zarr` (`new File("mydata.ttl.zarr")`) is written as a Zarr v3 directory store
+instead: the same groups, arrays and attributes, in a directory tree any Zarr reader can open. It is read
+the same way - `BG.getBeakGraph` takes the directory.
 
 ### Using a BeakGraph with Apache Jena
 
@@ -188,6 +195,15 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 
 ### Design decisions
 
+* **One store, two containers.** A store is groups, named byte arrays and integer attributes
+  (SPECIFICATIONS.md §3-§4). It is kept in one HDF5 file, each array a contiguous dataset, or in a Zarr
+  v3 directory store, each array one uncompressed chunk: the same bytes either way, memory-mapped where
+  they lie, so a query reads both the same and at the same speed. HDF5 is one file to copy, publish and
+  serve over HTTP range requests; Zarr is a directory of some 130 small files that Zarr tools open, and
+  that can sit inside a larger Zarr hierarchy. The code above the container
+  (`com.ebremer.beakgraph.store`) does not know which it has. Not there yet for Zarr: reading a store
+  over HTTP or from an object store through the endpoint and the pool, and serving Zarr stores from
+  inside an LWS storage directory.
 * **One self-contained jar.** The published library jar shades every dependency (Jena, Fuseki,
   Falcon, JTS, the HDF5 natives, log4j and its `log4j2.yml` at the classpath root), so a consumer
   gets one artifact that runs on an empty classpath. The trade-off: a consumer that also brings

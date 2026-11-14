@@ -53,7 +53,7 @@ class FCDReaderDecodeTest {
             }
         }
         try (Hdf5File in = Hdf5File.open(f)) {
-            HdfGroup g = new HdfGroup(in.root().group("dict/strings"));
+            com.ebremer.beakgraph.store.StoreGroup g = com.ebremer.beakgraph.store.Hdf5Store.group(in.root().group("dict/strings"));
             FCDReader r = new FCDReader(g);
             assertEquals(strings.size(), r.getNumEntries());
             for (int i = 0; i < strings.size(); i++) {

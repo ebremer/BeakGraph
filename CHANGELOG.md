@@ -6,6 +6,26 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **One store, two containers: Zarr beside HDF5** (SPECIFICATIONS.md §3a). A store
+  - groups, named byte arrays, integer attributes - can be written as a Zarr v3
+  directory store instead of an HDF5 file: `-zarr`, or a destination named
+  `*.zarr`, with every engine. It is the same store, the same arrays byte for
+  byte and the same attributes, so the format version does not change; a test
+  holds the two containers to each other through Falcon's general HDF5 and Zarr
+  readers. Each array is a `uint8` Zarr array stored with the `bytes` codec
+  alone, in one chunk up to 1 GiB (several beyond), which a reader memory-maps
+  as it maps an HDF5 dataset, so queries read both alike. `BG.getBeakGraph`,
+  `-verify`, `-export`, `-endpoint` (one store) and the pool take a `*.zarr`
+  directory as one store. The readers and writers now work on
+  `com.ebremer.beakgraph.store` (`OpenStore`, `StoreGroup`, `StoreArray`,
+  `WritableStore`, `Container`) and no longer see an HDF5 library. A Zarr
+  store is built beside its destination and moved into place whole, and a
+  build replaces no directory but a Zarr store or an empty one. Not there
+  yet: Zarr stores read over HTTP or from an object store through the
+  endpoint and the pool; Zarr stores served from inside an LWS storage
+  directory; and an array past 1 GiB is read slower than in HDF5. Needs
+  Falcon 0.2.0 (`Store.map`, `ZarrArray.chunkSegment`).
+  docs/INSTRUCTIONS.md §4a.
 * **Format v6: block-structured id sequences** (SPECIFICATIONS.md §5.1a). The id
   sequences of both indexes (`Ss`/`Sp`/`So`) and the dictionary's role lists
   (`graphs`, `subjects`, `objects`) are stored in blocks of 1,024 entries

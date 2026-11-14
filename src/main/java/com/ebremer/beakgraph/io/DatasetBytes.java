@@ -64,6 +64,24 @@ public final class DatasetBytes {
     }
 
     /**
+     * The view of a mapped array's bytes, whatever container they were mapped
+     * from: an HDF5 dataset's slice of its file's mapping, or a Zarr array's
+     * mapped chunk.
+     *
+     * @param segment the array's bytes, exactly
+     */
+    public static RandomAccessBytes of(MemorySegment segment) {
+        long size = segment.byteSize();
+        if (size == 0) {
+            return new ByteBufferBytes(ByteBuffer.allocate(0));
+        }
+        // The segment, unless the threshold asks for a ByteBuffer view - which cannot index past 2 GiB.
+        return (size > ffmThreshold || size > Integer.MAX_VALUE)
+                ? new MemorySegmentBytes(segment)
+                : new ByteBufferBytes(segment.asByteBuffer());
+    }
+
+    /**
      * @param dataset a contiguous dataset of an open store
      * @param channel what the store is read through when it is not mapped
      *                from a local file (see {@link ChannelBytes}), else null
@@ -75,11 +93,7 @@ public final class DatasetBytes {
         }
         Optional<MemorySegment> mapped = dataset.storageSegment();
         if (mapped.isPresent()) {
-            MemorySegment segment = mapped.get();
-            // The segment, unless the threshold asks for a ByteBuffer view - which cannot index past 2 GiB.
-            return (size > ffmThreshold || size > Integer.MAX_VALUE)
-                    ? new MemorySegmentBytes(segment)
-                    : new ByteBufferBytes(segment.asByteBuffer());
+            return of(mapped.get());
         }
         OptionalLong offset = dataset.storageOffset();
         if (offset.isEmpty()) {

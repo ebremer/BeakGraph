@@ -1,63 +1,46 @@
 package com.ebremer.beakgraph.hdf5;
 
-import com.ebremer.falcon.hdf5.Hdf5Writer;
-import com.ebremer.falcon.hdf5.datatype.Datatype;
-
 /**
- * A group of a {@link WritableHdfFile}. It offers exactly what BeakGraph's
- * container profile holds (SPECIFICATIONS.md §3): child groups, 1-D byte
- * datasets, and scalar integer attributes whose HDF5 width is the Java type's
- * ({@code int} is 32-bit, {@code long} 64-bit - the widths §3 item 4 lists).
+ * A group of a store being written ({@code com.ebremer.beakgraph.store.WritableStore}),
+ * in either container. It offers exactly what a BeakGraph store holds
+ * (SPECIFICATIONS.md §3): child groups, 1-D byte arrays, and scalar integer
+ * attributes. In HDF5 an attribute's width is the Java type's ({@code int} is
+ * 32-bit, {@code long} 64-bit - the widths §3 item 4 lists); in Zarr both
+ * are JSON integers.
  *
  * @author Erich Bremer
  */
-public final class WritableGroup {
-
-    static final long[] SCALAR = new long[0];
-
-    private final Hdf5Writer.GroupWriter group;
-
-    WritableGroup(Hdf5Writer.GroupWriter group) {
-        this.group = group;
-    }
+public interface WritableGroup {
 
     /** Creates (and returns) a child group. */
-    public WritableGroup putGroup(String name) {
-        return new WritableGroup(group.group(name));
-    }
+    WritableGroup putGroup(String name);
 
     /**
-     * Creates a 1-D dataset of 8-bit signed integers holding {@code data}, in
-     * contiguous layout and without filters, as the readers require. The array
-     * is kept until the next object is added to the file: do not change it.
+     * Creates a 1-D array of bytes holding {@code data}, stored as the
+     * readers require: contiguous and without filters in HDF5, uncompressed
+     * in Zarr. The array may be kept until the next object is added to the
+     * store: do not change it.
      */
-    public WritableDataset putDataset(String name, byte[] data) {
-        return new WritableDataset(group.byteDataset(name, data, new long[]{data.length}), data.length, data.length);
-    }
+    WritableDataset putDataset(String name, byte[] data);
 
     /**
-     * Creates a 1-D dataset of {@code length} 8-bit signed integers, in
-     * contiguous layout and without filters like one made by
+     * Creates a 1-D array of {@code length} bytes, stored like one made by
      * {@link #putDataset}, whose bytes follow in order, a piece at a time
-     * ({@link WritableDataset#write}). Falcon puts each piece in the file as it
-     * is given, so a dataset of any size passes through a buffer of the
-     * caller's choosing: this is how the disk-based writers
+     * ({@link WritableDataset#write}). Each piece goes to the store as it is
+     * given, so an array of any size passes through a buffer of the caller's
+     * choosing: this is how the disk-based writers
      * ({@code com.ebremer.beakgraph.huge}) hand over arrays that never fit the
-     * heap. Bytes never written would read as zeros; write them all.
+     * heap. Write them all: the HDF5 container would read bytes never written
+     * as zeros, and the Zarr container refuses to complete a store with an
+     * array short of its length.
      *
-     * @param length how many bytes the dataset holds; not negative
+     * @param length how many bytes the array holds; not negative
      */
-    public WritableDataset createDataset(String name, long length) {
-        return new WritableDataset(group.createDataset(name, Datatype.int8(), length), length, 0);
-    }
+    WritableDataset createDataset(String name, long length);
 
-    /** Writes a scalar 32-bit signed integer attribute. */
-    public void putAttribute(String name, int value) {
-        group.intAttribute(name, new int[]{value}, SCALAR);
-    }
+    /** Writes a scalar integer attribute (32-bit in HDF5). */
+    void putAttribute(String name, int value);
 
-    /** Writes a scalar 64-bit signed integer attribute. */
-    public void putAttribute(String name, long value) {
-        group.attribute(name, Datatype.int64(), SCALAR, new long[]{value});
-    }
+    /** Writes a scalar integer attribute (64-bit in HDF5). */
+    void putAttribute(String name, long value);
 }

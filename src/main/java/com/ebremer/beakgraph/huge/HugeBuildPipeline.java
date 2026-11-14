@@ -309,6 +309,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
 
     /** Runs the whole build, producing the finished HDF5 file at {@code tmpH5}. */
     public void run(Path tmpH5) throws IOException {
+        run(tmpH5, com.ebremer.beakgraph.store.Container.HDF5);
+    }
+
+    /** Runs the whole build, producing the finished store at {@code tmpH5} in {@code container}. */
+    public void run(Path tmpH5, com.ebremer.beakgraph.store.Container container) throws IOException {
         ingest();
 
         // ---- Predicates: final rank ids from the in-RAM population ----
@@ -490,9 +495,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
             gpos.build(it);
         }
 
-        // ---- Assemble the HDF5 file (same names/attributes as HDF5Writer) ----
-        logger.info("Writing HDF5 file {}", tmpH5);
-        try (StreamingHdf5File hdf = StreamingHdf5.create(tmpH5)) {
+        // ---- Assemble the store (same names/attributes as HDF5Writer) ----
+        logger.info("Writing {} store {}", container, tmpH5);
+        try (StreamingHdf5File hdf = StreamingHdf5.create(tmpH5, container)) {
             StreamingHdf5Group hdt = hdf.rootGroup().putGroup(Params.BG);
             hdt.putAttribute(Params.NUM_QUADS, parsedQuads);
             hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
@@ -509,7 +514,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
             gspo.transferTo(hdt);
             gpos.transferTo(hdt);
         }
-        logger.info("HDF5 assembly complete");
+        logger.info("{} assembly complete", container);
     }
 
     // ------------------------------------------------------------------

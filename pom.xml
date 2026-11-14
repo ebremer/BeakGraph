@@ -52,12 +52,12 @@
              log4j-config-yaml module is not needed and does not exist for 2.x. -->
         <log4j.version>2.26.1</log4j.version>
         <slf4j.version>2.0.18</slf4j.version>
-        <!-- Falcon (https://github.com/ebremer/falcon): the HDF5 container of every
-             reader and every writer, the disk-based ones (-method 1/4/5) included.
-             Pure JDK: no dependencies of its own and no native code. Not on Maven
-             Central yet: build it at the tag of this version and
-             `mvn install` it (falcon, core and hdf5) before building BeakGraph. -->
-        <falcon.version>0.1.0</falcon.version>
+        <!-- Falcon (https://github.com/ebremer/falcon): the HDF5 and the Zarr
+             container of every reader and every writer, the disk-based ones
+             (-method 1/4/5) included. Pure JDK: no dependencies of its own and no
+             native code. Not on Maven Central yet: build it at this version and
+             `mvn install` it (falcon, core, hdf5 and zarr) before building BeakGraph. -->
+        <falcon.version>0.2.0</falcon.version>
         <!-- jHDF is a TEST dependency only: the tests read and forge HDF5 files
              with it, as a reader independent of the one under test. -->
         <jhdf.version>0.13.0</jhdf.version>
@@ -461,6 +461,11 @@
         <dependency>
             <groupId>com.ebremer</groupId>
             <artifactId>hdf5</artifactId>
+            <version>${falcon.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.ebremer</groupId>
+            <artifactId>zarr</artifactId>
             <version>${falcon.version}</version>
         </dependency>
         <dependency>

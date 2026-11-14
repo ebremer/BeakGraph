@@ -1,17 +1,19 @@
 # BeakGraph File Format Specification
 
-**Format version 6 — derived from and verified against BeakGraph 0.18.0+ (2026-11-14; v6 stores the id sequences block-structured, §5.1a; v5 added RDF 1.2 triple terms).**
+**Format version 6 — derived from and verified against BeakGraph 0.18.0+ (2026-11-14; v6 stores the id sequences block-structured, §5.1a; v5 added RDF 1.2 triple terms). A store is kept in an HDF5 file (§3) or, the same store, in a Zarr hierarchy (§3a).**
 
-This document specifies the on-disk format of a BeakGraph store (`.h5`) precisely enough that an
-independent implementation — in Rust, C, Python, or any other language, with no access to the Java
-source — can **create** files that the reference reader accepts and answers queries from correctly,
-and can read files the reference writer produces.
+This document specifies the on-disk format of a BeakGraph store (an `.h5` file, or a `.zarr` directory
+store) precisely enough that an independent implementation — in Rust, C, Python, or any other language,
+with no access to the Java source — can **create** files that the reference reader accepts and answers
+queries from correctly, and can read files the reference writer produces.
 
 What this document does **not** cover, because it is specified elsewhere:
 
 * The HDF5 container format itself ([HDF Group specification](https://www.hdfgroup.org/solutions/hdf5/)).
   §3 defines the narrow *profile* of HDF5 that BeakGraph uses; everything below that profile is any
   conformant HDF5 library's job.
+* The Zarr format ([Zarr v3 core specification](https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html)).
+  §3a defines the profile of it that holds the same store.
 * RDF concepts, RDF 1.1/1.2 syntax, SPARQL semantics (W3C specifications).
 * Zstandard compression ([RFC 8878](https://www.rfc-editor.org/rfc/rfc8878)).
 * The SPARQL-CDT composite-datatype proposal ([spec](https://awslabs.github.io/SPARQL-CDTs/spec/latest.html)).
@@ -31,8 +33,10 @@ format they all target.
 A BeakGraph is a **read-only, indexed RDF Dataset** (default graph + named graphs), heavily inspired
 by [RDF HDT](https://www.rdfhdt.org/): terms are replaced by integer ids from sorted dictionaries,
 and the quads are stored as two sorted orderings (GSPO and GPOS) encoded as succinct
-bitmap-plus-sequence level structures. The whole store is a tree of HDF5 groups and small,
-individually meaningful datasets.
+bitmap-plus-sequence level structures. The whole store is a tree of groups and small, individually
+meaningful datasets - byte arrays - with integer attributes: HDF5 groups and datasets in an HDF5 file
+(§3), or Zarr groups and arrays in a Zarr hierarchy (§3a). Everything from §4 on describes that tree
+once, in HDF5's words; it is the same tree, byte for byte, in either container.
 
 The single most important design fact, from which most of the format follows:
 
@@ -108,16 +112,71 @@ the reference reader bypasses most of the HDF5 data model and reads dataset byte
 5. Group and dataset **names are case-sensitive** and exactly as given in this document.
 6. Anything else in the HDF5 file outside the `.BG` group is ignored by readers.
 
-The reference writer writes every store through [Falcon](https://github.com/ebremer/falcon) 0.1.0 (up to
+The reference writer writes every store through [Falcon](https://github.com/ebremer/falcon) (up to
 BeakGraph 0.18.0: jHDF for the in-memory engines, the native HDF5 library for the "huge" ones). All of
 them stay inside this profile. The reference reader reads every store through Falcon.
+
+---
+
+## 3a. Zarr container profile
+
+The same store can be kept in a [Zarr v3](https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html)
+hierarchy instead of an HDF5 file. Nothing from §4 on changes: where this document says *group*,
+*dataset* and *attribute*, read Zarr group, Zarr array, and a member of the node's `attributes`. Every
+dataset holds the same bytes in both containers and every attribute the same value, so `formatVersion`
+is the same too: the container is not part of the format version. A store can be moved from one
+container to the other dataset by dataset, without decoding anything.
+
+As with HDF5, the profile is narrow because the reference reader reads dataset bytes where they lie:
+
+1. **The store is a Zarr v3 hierarchy whose root group holds the `.BG` group** (§4). The reference
+   writer writes a *directory store* - one directory, by convention named `*.zarr` - with the default
+   chunk key encoding and `/` as its separator, so the dataset `/.BG/GSPO/So` is the two files
+   `.BG/GSPO/So/zarr.json` and `.BG/GSPO/So/c/0`.
+2. **A dataset is a 1-dimensional array of `uint8`** in a `regular` chunk grid, whose `codecs` are
+   exactly `[{"name": "bytes"}]`: no compression, no checksum, no sharding, no transposition. A chunk's
+   stored value is then that part of the dataset's bytes, unchanged, and can be memory-mapped or read a
+   range at a time. An array of any other shape, element type or codecs is **not readable**; the
+   reference reader rejects it with a message naming it and this rule (it accepts `int8` elements too,
+   as HDF5 stores them). As in HDF5 (§3, item 3), compression happens inside BeakGraph's own encodings.
+3. **Chunks.** The array's `shape` is `[n]`, the dataset's length in bytes. A dataset of up to 2^30
+   bytes SHOULD be **one chunk** (`chunk_shape` `[n]`), whose stored value is exactly the dataset: the
+   reference reader then reads it through one memory mapping, as it reads an HDF5 dataset. A longer
+   dataset is cut into the fewest equal chunks of at most 2^30 bytes - `k = ceil(n / 2^30)` chunks of
+   `ceil(n / k)` bytes - because a Zarr chunk has to fit one buffer of under 2 GiB in most
+   implementations, Falcon among them. Zarr stores every chunk at its full declared length, so the last
+   chunk is padded with zeros beyond the dataset's end. A reader MUST accept any regular chunking. A
+   dataset of length 0 has `shape` `[0]`, `chunk_shape` `[1]` and no chunk.
+4. **`fill_value` is 0, and a writer SHOULD store every chunk.** A reader MUST read a chunk that is not
+   stored as zeros: a general Zarr tool that copies a store may leave out a chunk that holds only the
+   fill value. The reference reader rejects such a chunk of an array whose fill value is not 0.
+5. **Attributes are JSON integers** in the node's `attributes`, under the names of §3, item 4. JSON has
+   one number type, so the widths listed there do not apply; a value up to 2^63-1 is written exactly.
+6. Names are as in §3, item 5 (`.BG` is a legal Zarr node name), and anything else in the hierarchy
+   outside the `.BG` group is ignored by readers: a store can share a hierarchy with other data.
+7. **Consolidated metadata.** The reference writer consolidates the metadata of the whole hierarchy
+   into the root group's `zarr.json` (its `consolidated_metadata` member, kind `inline`, as zarr-python 3
+   writes it), and the reference reader opens a store from that one document when it is there, without
+   reading the other `zarr.json` files. It is optional. Where it is present it MUST agree with the nodes'
+   own documents: a hierarchy changed after it was consolidated has to be consolidated again.
+
+For the store of §4 (rank directories and block directories included) that is about 60 arrays: some 130
+small files in one directory tree, where the HDF5 container is one file. The reference writer builds the
+tree beside its destination and moves it into place complete, as it does a file.
+
+The reference writer writes this profile through [Falcon](https://github.com/ebremer/falcon)'s Zarr
+module; all six engines write it, and the same directory tree, file for file, for a source without
+blank nodes. The reference reader memory-maps each chunk of a local directory store through Falcon; it
+reads an array of several chunks, and a store in anything but a local directory, a range of a chunk at
+a time. Any other Zarr v3 reader can open the hierarchy and read each dataset as an array of bytes; what
+the bytes mean is the rest of this document.
 
 ---
 
 ## 4. Top-level layout and versioning
 
 ```
-/                          HDF5 root
+/                          HDF5 root (§3), or the Zarr root group (§3a)
 └── .BG                    group ("the store")
     ├── @numQuads          int64   — count of SOURCE quads only (§9.6)
     ├── @formatVersion     int32   — 6
@@ -1068,6 +1127,9 @@ as over a reference-built store. Practical gates, in order:
 5. **Round-trip isomorphism**: source dataset ≅ exported dataset (blank-node isomorphism, §7.6).
 6. The reference CLI's `-verify` / `-verify -deep` command validates structural invariants of a
    finished file and is the cheapest end-to-end oracle.
+7. **Container parity**, for a writer that offers both containers: the same source gives the same
+   groups, the same dataset bytes and the same attribute values in the HDF5 file (§3) and in the Zarr
+   hierarchy (§3a). The reference test compares the two through general HDF5 and Zarr readers.
 
 ---
 
