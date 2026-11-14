@@ -212,7 +212,8 @@ public class ParallelBGIndex {
 
     public void add(WritableGroup hdt) {
         WritableGroup index = hdt.putGroup(type.name());
-        S1.add(index); S2.add(index); S3.add(index);
+        // The id sequences go block-structured (SPECIFICATIONS.md §5.1a), the bitmaps and their directories as they are.
+        S1.addBlocked(index); S2.addBlocked(index); S3.addBlocked(index);
         B1.add(index); B2.add(index); B3.add(index);
         SB1.add(index); SB2.add(index); SB3.add(index);
         BB1.add(index); BB2.add(index); BB3.add(index);

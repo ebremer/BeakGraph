@@ -182,9 +182,10 @@ public class PositionalDictionaryWriter implements AutoCloseable {
         // present in the indexes, but with no graphs list, containsGraph answered false and ARQ
         // refused to execute GRAPH queries against rows that are demonstrably there.
         if (graphs.getNumEntries() > 0) {
-            graphs.add(dictionary);
-            subjects.add(dictionary);
-            objects.add(dictionary);
+            // Block-structured, like the index id sequences (SPECIFICATIONS.md §5.1a).
+            graphs.addBlocked(dictionary);
+            subjects.addBlocked(dictionary);
+            objects.addBlocked(dictionary);
         }
     }
 

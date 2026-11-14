@@ -408,7 +408,8 @@ the last reader closes).
 
 ## 9. Output guarantees
 
-* One HDF5 format, one reader stack, for every method (format version 5).
+* One HDF5 format, one reader stack, for every method (format version 6:
+  the id sequences are block-structured, SPECIFICATIONS.md §5.1a).
   v4 added the optional `langDirs` dataset for RDF 1.2 base-direction literals
   (`"x"@en--ltr`); v5 adds the optional `tripleTerms` component store for
   RDF 1.2 triple terms (`<<( s p o )>>`). v3/v4 files remain fully readable,
@@ -434,7 +435,7 @@ the last reader closes).
 ## Format versions
 
 Every store records its on-disk format version (`formatVersion` on the `.BG` group; files written
-before versioning count as v1). `-verify` prints it on each verdict line (`OK    path  (format v5)`),
+before versioning count as v1). `-verify` prints it on each verdict line (`OK    path  (format v6)`),
 which is how to find stores that predate a change and must be rebuilt from source. A newer version
 than the running build supports is refused at open.
 
@@ -444,3 +445,4 @@ than the running build supports is refused at open.
 | v3 | 0.17.0 | corrected rank/select directory, wider superblock entries | never for correctness; rebuild for speed |
 | v4 | 0.18.0 | `langDirs` for `rdf:dirLangString`; composite (`cdt:`) literals ordered lexically | the source contained base-direction literals (a v3 store holds them as plain `"x"@en`) or `cdt:` literals (a pre-v4 store holding them is refused at open) |
 | v5 | 0.18.0 | RDF 1.2 triple terms (`tripleTerms` component store) | the source contained triple terms (a pre-v5 build could not store them) |
+| v6 | unreleased | id sequences stored in blocks, each with its own width, with an in-memory directory (SPECIFICATIONS.md §5.1a) | never for correctness: v3-v5 stores read as before; rebuild for the smaller indexes. A v6 store is refused by earlier builds |

@@ -21,6 +21,10 @@ public class Params {
     public static final String NUM_ENTRIES = "numEntries";
     public static final String WIDTH = "width";
     public static final String BLOCK_SIZE = "blockSize";
+    /** On a block-structured sequence (SPECIFICATIONS.md §5.1a): entries per block. Its presence is what marks one. */
+    public static final String BLOCK_ENTRIES = "blockEntries";
+    /** The directory of the block-structured sequence {@code X} is the dataset {@code X_blocks} beside it. */
+    public static final String BLOCKS_SUFFIX = "_blocks";
     public static final String NUM_BLOCKS = "numBlocks";
     public static final String ENTITIES = "entities";
     public static final String PREDICATES = "predicates";
@@ -59,7 +63,7 @@ public class Params {
     // Absence means "no triple terms", so v3/v4 files read unchanged; the gate
     // converts an old build's would-be "Corrupt HDF5: Unknown DataType ordinal
     // 13" into the intended "Upgrade BeakGraph".
-    public static final int FORMAT_VERSION = 5;
+    public static final int FORMAT_VERSION = 6;
     // First format version whose dictionary orders composite (cdt) literals the
     // way the current NodeComparator does. Older files containing them are
     // refused at open (see the v4 note above).

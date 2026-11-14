@@ -501,9 +501,10 @@ public final class HugeBuildPipeline implements AutoCloseable {
             if (predicatesDict != null) predicatesDict.transferTo(dictionary);
             if (literalsDict != null) literalsDict.transferTo(dictionary);
             if (graphsList.getNumEntries() > 0) {
-                graphsList.transferTo(dictionary, "graphs");
-                subjectsList.transferTo(dictionary, "subjects");
-                objectsList.transferTo(dictionary, "objects");
+                // Block-structured, like the index id sequences (SPECIFICATIONS.md §5.1a).
+                graphsList.transferBlockedTo(dictionary, "graphs");
+                subjectsList.transferBlockedTo(dictionary, "subjects");
+                objectsList.transferBlockedTo(dictionary, "objects");
             }
             gspo.transferTo(hdt);
             gpos.transferTo(hdt);

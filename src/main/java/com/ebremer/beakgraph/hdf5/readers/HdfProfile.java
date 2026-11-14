@@ -75,7 +75,19 @@ final class HdfProfile {
         if (ds == null) {
             return null;
         }
-        return BitPackedUnSignedLongBuffer.readView(DatasetBytes.of(ds, g.channel()), longAttr(ds, Params.NUM_ENTRIES), intAttr(ds, Params.WIDTH));
+        RandomAccessBytes data = DatasetBytes.of(ds, g.channel());
+        long numEntries = longAttr(ds, Params.NUM_ENTRIES);
+        int width = intAttr(ds, Params.WIDTH);
+        if (hasAttr(ds, Params.BLOCK_ENTRIES)) {
+            // Block-structured (SPECIFICATIONS.md §5.1a): its directory is the dataset beside it.
+            RandomAccessBytes directory = bytes(g, name + Params.BLOCKS_SUFFIX);
+            if (directory == null) {
+                throw new IllegalStateException("Missing dataset '" + name + Params.BLOCKS_SUFFIX + "' in '" + g.path()
+                        + "': the directory of the block-structured '" + name + "' (SPECIFICATIONS.md §5.1a)");
+            }
+            return BitPackedUnSignedLongBuffer.readBlocked(data, directory, numEntries, intAttr(ds, Params.BLOCK_ENTRIES), width);
+        }
+        return BitPackedUnSignedLongBuffer.readView(data, numEntries, width);
     }
 
     static BitPackedUnSignedLongBuffer requirePacked(HdfGroup g, String name) {
@@ -84,6 +96,15 @@ final class HdfProfile {
             throw new IllegalStateException("Missing dataset '" + name + "' in '" + g.path() + "' (SPECIFICATIONS.md §7)");
         }
         return b;
+    }
+
+    /** Whether {@code on} carries attribute {@code name}. */
+    static boolean hasAttr(Hdf5Object on, String name) {
+        try {
+            return on.attribute(name).isPresent();
+        } catch (HdfException e) {
+            throw new IllegalStateException("Attribute '" + name + "' on '" + on.path() + "' is unreadable", e);
+        }
     }
 
     /** Integer attribute {@code name} of group {@code on}, whatever its stored width. */

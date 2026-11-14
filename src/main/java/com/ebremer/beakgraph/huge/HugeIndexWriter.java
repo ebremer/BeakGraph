@@ -133,9 +133,10 @@ final class HugeIndexWriter implements AutoCloseable {
     /** Writes the index group, mirroring BGIndex.add() (names and order). */
     void transferTo(StreamingHdf5Group hdt) throws IOException {
         StreamingHdf5Group index = hdt.putGroup(type.name());
-        S1.transferTo(index, "S" + names[1]);
-        S2.transferTo(index, "S" + names[2]);
-        S3.transferTo(index, "S" + names[3]);
+        // The id sequences go block-structured (SPECIFICATIONS.md §5.1a), the bitmaps and their directories as they are.
+        S1.transferBlockedTo(index, "S" + names[1]);
+        S2.transferBlockedTo(index, "S" + names[2]);
+        S3.transferBlockedTo(index, "S" + names[3]);
         B1.transferTo(index, "B" + names[1]);
         B2.transferTo(index, "B" + names[2]);
         B3.transferTo(index, "B" + names[3]);

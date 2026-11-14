@@ -283,9 +283,10 @@ final class UltraDictionary {
         if (predicatesdict.getNumberOfNodes() > 0) predicatesdict.add(dictionary);
         if (literalsdict.getNumberOfNodes() > 0) literalsdict.add(dictionary);
         if (graphs.getNumEntries() > 0) {
-            graphs.add(dictionary);
-            subjects.add(dictionary);
-            objects.add(dictionary);
+            // Block-structured, like the index id sequences (SPECIFICATIONS.md §5.1a).
+            graphs.addBlocked(dictionary);
+            subjects.addBlocked(dictionary);
+            objects.addBlocked(dictionary);
         }
     }
 

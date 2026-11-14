@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.huge;
 
 import com.ebremer.beakgraph.Params;
 
+import com.ebremer.beakgraph.hdf5.BlockedEncoder;
 import com.ebremer.beakgraph.hdf5.DictionarySinks;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -138,6 +139,84 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
             ds.putAttribute(Params.NUM_ENTRIES, numEntries);
         }
         Files.deleteIfExists(file);
+    }
+
+    /**
+     * As {@link #transferTo}, in the block-structured form (SPECIFICATIONS.md §5.1a)
+     * the index id sequences take: dataset {@code name} and its directory
+     * {@code name + "_blocks"}, the bytes the in-memory writers write for the same
+     * values. The temp file is read twice - once to size the blocks, once to write
+     * them - a block's worth of values at a time, so the heap holds the directory
+     * and a transfer buffer, whatever the sequence's length.
+     */
+    void transferBlockedTo(StreamingHdf5Group group, String name) throws IOException {
+        complete();
+        if (numEntries == 0) {
+            Files.deleteIfExists(file);
+            return;
+        }
+        BlockedEncoder.Layout layout;
+        try (Unpacker values = new Unpacker()) {
+            layout = BlockedEncoder.layout(numEntries, values);
+        }
+        try (StreamingHdf5Dataset ds = group.createByteDataset(name, layout.dataBytes); Unpacker values = new Unpacker()) {
+            byte[] pending = new byte[HugeIO.TRANSFER_BUFFER_BYTES];
+            int[] held = {0};
+            BlockedEncoder.encode(layout, values, (buf, off, len) -> {
+                while (len > 0) {
+                    int n = Math.min(len, pending.length - held[0]);
+                    System.arraycopy(buf, off, pending, held[0], n);
+                    held[0] += n;
+                    off += n;
+                    len -= n;
+                    if (held[0] == pending.length) {
+                        ds.write(pending, 0, held[0]);
+                        held[0] = 0;
+                    }
+                }
+            });
+            ds.write(pending, 0, held[0]);
+            ds.putAttribute(Params.WIDTH, layout.maxWidth);
+            ds.putAttribute(Params.NUM_ENTRIES, numEntries);
+            ds.putAttribute(Params.BLOCK_ENTRIES, layout.blockEntries);
+        }
+        try (StreamingHdf5Dataset directory = group.createByteDataset(name + Params.BLOCKS_SUFFIX, layout.directory.length)) {
+            directory.write(layout.directory);
+        }
+        Files.deleteIfExists(file);
+    }
+
+    /** The values of the completed temp file, in order: the inverse of {@link #putValue}. */
+    private final class Unpacker implements BlockedEncoder.Values, AutoCloseable {
+        private final java.io.InputStream in;
+        private long acc;
+        private int accCount;
+
+        Unpacker() throws IOException {
+            this.in = new java.io.BufferedInputStream(Files.newInputStream(file), 1 << 20);
+        }
+
+        @Override
+        public long next() throws IOException {
+            while (accCount < bitWidth) {
+                int b = in.read();
+                if (b < 0) {
+                    throw new java.io.EOFException("Spill buffer " + file + " ends before its " + numEntries + " entries");
+                }
+                acc = (acc << 8) | b;
+                accCount += 8;
+            }
+            int shift = accCount - bitWidth;
+            long value = acc >>> shift;
+            acc &= (1L << shift) - 1;
+            accCount -= bitWidth;
+            return value;
+        }
+
+        @Override
+        public void close() throws IOException {
+            in.close();
+        }
     }
 
     @Override

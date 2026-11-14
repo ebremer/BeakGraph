@@ -406,6 +406,19 @@ class VerifyCommandTest {
     }
 
     /**
+     * Format v6: an id sequence is two datasets, its blocks and their directory
+     * (SPECIFICATIONS.md §5.1a). One without the other cannot be read, and the
+     * verdict names the dataset that is missing.
+     */
+    @Test
+    void aBlockStructuredSequenceWithoutItsDirectoryFailsStructurally() throws Exception {
+        Path copy = edited("no-directory.h5", file -> file.group(".BG").group("GSPO").delete("So_blocks"));
+        Result r = verify(copy.toFile(), false);
+        assertEquals(2, r.code(), r.output());
+        assertTrue(r.output().contains("So_blocks"), r.output());
+    }
+
+    /**
      * GPOS/Ss is replaced by an 8-byte dataset that CLAIMS 2^40 x 32-bit
      * entries. The reader used to store the attributes verbatim and fail at
      * query time.

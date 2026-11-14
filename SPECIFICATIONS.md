@@ -1,6 +1,6 @@
 # BeakGraph File Format Specification
 
-**Format version 5 — derived from and verified against BeakGraph 0.18.0+ (2026-07-18; v5 adds RDF 1.2 triple terms).**
+**Format version 6 — derived from and verified against BeakGraph 0.18.0+ (2026-11-14; v6 stores the id sequences block-structured, §5.1a; v5 added RDF 1.2 triple terms).**
 
 This document specifies the on-disk format of a BeakGraph store (`.h5`) precisely enough that an
 independent implementation — in Rust, C, Python, or any other language, with no access to the Java
@@ -95,7 +95,8 @@ the reference reader bypasses most of the HDF5 data model and reads dataset byte
    | `formatVersion` | 32-bit signed int | the `.BG` group |
    | `numQuads` | 64-bit signed int | the `.BG` group |
    | `numEntries` | 64-bit signed int | every bit-packed / raw-value dataset, FCD groups |
-   | `width` | 32-bit signed int | every bit-packed dataset |
+   | `width` | 32-bit signed int | every bit-packed dataset (on a block-structured one: its widest block's, §5.1a) |
+   | `blockEntries` | 32-bit signed int | every block-structured dataset - its presence is what marks one (§5.1a) |
    | `blockSize` | 32-bit signed int | FCD groups |
    | `numBlocks` | 64-bit signed int | FCD groups |
    | `compression_threshold` | 32-bit signed int | FCD groups |
@@ -119,14 +120,14 @@ them stay inside this profile. The reference reader reads every store through Fa
 /                          HDF5 root
 └── .BG                    group ("the store")
     ├── @numQuads          int64   — count of SOURCE quads only (§9.6)
-    ├── @formatVersion     int32   — 5
+    ├── @formatVersion     int32   — 6
     ├── dictionary/        group   (§7)
     │   ├── entities/      group   — multi-type section (may be absent, §7.9)
     │   ├── predicates/    group   — multi-type section
     │   ├── literals/      group   — multi-type section
-    │   ├── graphs         bit-packed id list (§7.8)
-    │   ├── subjects       bit-packed id list
-    │   └── objects        bit-packed id list
+    │   ├── graphs         block-structured id list (§7.8, §5.1a), with graphs_blocks
+    │   ├── subjects       block-structured id list, with subjects_blocks
+    │   └── objects        block-structured id list, with objects_blocks
     ├── GSPO/              group   — quad index, Graph-Subject-Predicate-Object order (§8)
     └── GPOS/              group   — quad index, Graph-Predicate-Object-Subject order
 ```
@@ -143,15 +144,16 @@ them stay inside this profile. The reference reader reads every store through Fa
   | 1–2 | Historic. The rank/select directory (§8.4) in these files is **incorrectly seeded**; readers ignore it and fall back to linear bitmap scans. |
   | 3 | Rank/select directory corrected: `BB` seeded so `BB[k]` = ones-before-block-*k*, `SB` entries widened to cover the bitmap length. Directory is trusted from v3 (`RANK_DIRECTORY_MIN_VERSION = 3`). |
   | 4 | Optional `langDirs` dataset (base direction for `rdf:dirLangString`, §7.5.3). Absence = "no directional literals", which is why v3 files read unchanged. |
+  | 6 | The id sequences - `S<c>` of both indexes (§8.1) and the role lists `graphs`, `subjects`, `objects` (§7.8) - are **block-structured** (§5.1a): blocks of `blockEntries` entries, each with a base and a width of its own, and a directory dataset `<name>_blocks` beside each. A dataset says which form it is in (the `blockEntries` attribute), so a v6 reader reads v3-v5 files unchanged; a v5 reader refuses a v6 file by its version, as it must. The values and their order are those of v5: only their encoding changed. |
   | 5 | RDF 1.2 triple terms: `DataType.TRIPLE_TERM` (ordinal 13) and the optional `tripleTerms` component store in the literals section (§7.6a). Triple terms occupy that section's contiguous suffix of the object id space. Absence = "no triple terms"; v3/v4 files read unchanged, and a triple-term-free v5 store is shape-identical to v4 output. |
 
-* **A new writer MUST stamp `formatVersion = 5`** and produce a correct directory (§8.4).
+* **A new writer MUST stamp `formatVersion = 6`**, write the id sequences block-structured (§5.1a) and produce a correct directory (§8.4).
 
 ---
 
 ## 5. Primitive encodings
 
-Everything in the store is built from five primitives.
+Everything in the store is built from six primitives.
 
 ### 5.1 Bit-packed unsigned integer sequence
 
@@ -173,6 +175,54 @@ A sequence of `numEntries` fixed-width unsigned integers packed **MSB-first** in
 * 1-bit sequences are the store's **bitmaps**. `select1(r)` (1-based rank *r* → 0-based position of
   the *r*-th set bit) is the operation the indexes are designed around; §8.4 defines its
   acceleration directory.
+
+### 5.1a Block-structured unsigned integer sequence (format v6)
+
+The form of the store's **id sequences**: `S<c>` of both indexes (§8.1) and the role lists of §7.8. The
+same logical thing as §5.1 - `numEntries` unsigned integers, entry `i` addressable in constant time -
+cut into blocks so that each block is as wide as *its own* values need, and so that a reader can keep a
+small directory of the blocks in memory.
+
+A block-structured sequence named `X` is two datasets:
+
+* `X` - the blocks. Attributes: `numEntries` (int64, ≥ 1), `blockEntries` (int32, entries per block, a
+  **power of two**), `width` (int32, the width of its widest block - informative; a reader MUST reject a
+  block that declares more).
+* `X_blocks` - the directory, no attributes: one **9-byte entry** per block, in block order - the block's
+  `base` as an 8-byte big-endian unsigned integer, then its `width` as one byte.
+
+With `K = blockEntries`, the sequence has `ceil(numEntries / K)` blocks; block `b` holds entries
+`[b*K, min((b+1)*K, numEntries))` (every block is full but the last).
+
+* **Base and width of a block.** `base` is the block's **smallest entry** (unsigned). `width` is the
+  number of bits of `max − base` (0 when every entry equals `base`). Legal widths: **0…57, or exactly
+  64**; a block that would need 58…63 bits takes width 64. `base` stays the block's smallest entry in
+  every case.
+* **Bytes of a block.** For width 1…57: each entry's `entry − base`, packed MSB-first exactly as §5.1
+  packs a sequence of that width. For width 64: each entry itself (not its difference), 8 bytes
+  big-endian. For width 0: nothing. The block is zero-padded to a **whole number of 64-bit words**
+  (`8 * ceil(count * width / 64)` bytes), so every block starts on an 8-byte boundary of the dataset and
+  the byte offset of block `b` is the sum of the sizes of the blocks before it.
+* **Tail.** After the last block the dataset holds **8 zero bytes**. (With them, the 8-byte read below
+  never runs past the dataset, whatever the entry.) The dataset's size is exactly the blocks plus the
+  tail; a sequence whose blocks all have width 0 is the 8-byte tail alone.
+* **Decoding entry `i`.** Let `b = i / K`, `j = i mod K`, and `(base, width)` be directory entry `b`.
+  Width 0: `base`. Otherwise read the (unaligned) 64-bit big-endian word at byte
+  `offset(b) + ((j*width) >> 3)`; width 64: that word; else
+  `base + ((word >>> (64 − (j*width & 7) − width)) & ((1 << width) − 1))`.
+* **Block size.** A writer picks the smallest `K` in 1024, 4096, 16384, … (×4 each step) for which the
+  sequence has at most `2^22` blocks - a function of `numEntries` alone, which is what keeps the six
+  engines byte-identical. A reader MUST accept any power of two.
+* An empty sequence is **not written** (neither dataset), as in §5.1.
+
+What the form is for (informative). The directory is 9 bytes per `K` entries - a few megabytes for a
+sequence of billions - so a reader holds it in memory, and then: an entry costs one read of the data, as
+in §5.1; a search for a value inside a **sorted run** that spans whole blocks is narrowed to one block
+without reading the data at all, because a block lying wholly inside an ascending run starts with its
+smallest entry, its `base` (the reference reader does this in `binarySearch` / `lowerBound` /
+`upperBound`; the run's first and last block may be shared with a neighbouring run, so their bases say
+nothing and are not used); a block decodes into an array from whole 64-bit words; and a run of nearby
+ids costs the bits of their spread, not of the largest id in the store.
 
 ### 5.2 VByte (variable-length unsigned integer)
 
@@ -629,8 +679,10 @@ For validation, this is how a row becomes a term again (given row index `idx` = 
 
 ### 7.8 Columnar role lists: `graphs`, `subjects`, `objects`
 
-Three bit-packed id lists directly under `dictionary/`, recording **which ids actually occur in each
-role** (the sections themselves pool roles):
+Three id lists directly under `dictionary/`, recording **which ids actually occur in each role** (the
+sections themselves pool roles). Since format v6 each is block-structured (§5.1a), with its directory
+`graphs_blocks` / `subjects_blocks` / `objects_blocks` beside it; the Width column is that of the
+single-width lists (§5.1) of earlier versions:
 
 | Dataset | Contents | Width |
 |---|---|---|
@@ -676,9 +728,10 @@ is defined over *terms*), and **drop exact duplicates**.
 
 The result is a 4-level trie flattened into per-level arrays. Level 0 (the first letter — G for both
 indexes) is **implicit**: it is materialized as *runs* at level 1. Levels 1–3 each store, per index
-group, two parallel bit-packed datasets:
+group, two parallel datasets:
 
-* `S<c>` — the sequence of ids at that level (`c` = the position's lowercase letter);
+* `S<c>` — the sequence of ids at that level (`c` = the position's lowercase letter), block-structured
+  (§5.1a) with its directory `S<c>_blocks` since format v6, a single-width sequence (§5.1) before;
 * `B<c>` — a bitmap of the same length: **bit set = this row starts a new run** (a new parent
   above it).
 
@@ -760,6 +813,11 @@ that superblock's blocks binary-search `BB` for the greatest `k` with `SB[j] + B
 words from bit `k·64` for the `(rank − SB[j] − BB[k])`-th set bit. Readers only trust the directory
 when `formatVersion ≥ 3` (§4.1); the datasets are optional for correctness (absent → linear scan)
 but a new writer SHOULD always emit them.
+
+(Informative.) The reference reader copies `SB` into memory at a level's first `select1` - 8 bytes per
+512 bits of bitmap, and only up to 2^24 entries, beyond which it is read where it lies - so that
+finding the superblock touches no file, and the two reads that remain, a superblock's `BB` entries
+and a word of the bitmap, are each in one place.
 
 ### 8.5 Traversal contract (what queries assume)
 
@@ -1037,9 +1095,11 @@ _:bg  { ex:s3 ex:p "in-bnode-graph" . }
 
 ### A.1 File inventory (as built by the reference writer)
 
-`.BG` attrs: `numQuads=24`, `formatVersion=4` — the dump was captured at v4; current builds stamp
-`5` and are otherwise byte-identical for this triple-term-free fixture. Dataset shapes/attrs
-abridged to the noteworthy:
+`.BG` attrs: `numQuads=24`, `formatVersion=4` — the dump was captured at v4. A v5 build wrote the same
+bytes for this triple-term-free fixture; a **v6** build stamps `6` and writes the id sequences shown
+here (`S*` of both indexes, and `graphs` / `subjects` / `objects`) block-structured (§5.1a), with the
+same values in the same order - this appendix still shows their single-width form. Dataset
+shapes/attrs abridged to the noteworthy:
 
 ```
 dictionary/entities:    offsets(w=5,n=10) datatypes(w=5,n=10) iri(FCD n=8)

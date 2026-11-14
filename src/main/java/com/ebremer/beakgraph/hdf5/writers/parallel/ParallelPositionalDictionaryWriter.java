@@ -231,9 +231,10 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
         // Add columnar ID lists whenever any quads are stored (see the
         // sequential writer for why this gates on the lists, not numQuads).
         if (graphs.getNumEntries() > 0) {
-            graphs.add(dictionary);
-            subjects.add(dictionary);
-            objects.add(dictionary);
+            // Block-structured, like the index id sequences (SPECIFICATIONS.md §5.1a).
+            graphs.addBlocked(dictionary);
+            subjects.addBlocked(dictionary);
+            objects.addBlocked(dictionary);
         }
     }
 

@@ -95,10 +95,12 @@ class RDF12TripleTermTest {
     // ---------------------------------------------------------------- storage
 
     @Test
-    void storeStampsFormatVersion5() {
+    void storeStampsTheCurrentFormatVersion() {
         try (HdfFile hdf = new HdfFile(dest.toPath())) {
             Group bgGroup = (Group) hdf.getChild(".BG");
-            assertEquals(5, ((Number) bgGroup.getAttribute("formatVersion").getData()).intValue());
+            int stamped = ((Number) bgGroup.getAttribute("formatVersion").getData()).intValue();
+            assertEquals(com.ebremer.beakgraph.Params.FORMAT_VERSION, stamped);
+            assertTrue(stamped >= 5, "triple terms need format v5 or later");
         }
     }
 

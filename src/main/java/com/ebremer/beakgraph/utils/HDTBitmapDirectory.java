@@ -25,6 +25,9 @@ public class HDTBitmapDirectory {
     private final long numBitmapEntries;
     private final long numSuperblockEntries;
     private final long numBlockEntries;
+    /** Superblock counters kept on the heap up to this many entries (128 MiB of them). */
+    static final long HEAP_SUPERBLOCKS_MAX = 1L << 24;
+    private volatile long[] superblockHeap;
 
     public HDTBitmapDirectory(BitPackedUnSignedLongBuffer superblock,
                               BitPackedUnSignedLongBuffer block,
@@ -48,8 +51,33 @@ public class HDTBitmapDirectory {
         this.numBlockEntries = block.getNumEntries();
     }
 
+    /**
+     * The superblock counters, on the heap from the first select on: one cumulative
+     * count per 512 bits of bitmap, so a store of a billion rows a level holds 16 MiB
+     * of them. Finding a superblock then never touches the file - it was the part of
+     * a select that probed all over a dataset - and what is left to read lies
+     * together: the block counters of one superblock, and a word of the bitmap.
+     * Beyond {@link #HEAP_SUPERBLOCKS_MAX} entries they are read where they lie, as
+     * before. Loaded lazily, so opening a store reads none of it; two threads racing
+     * here load the same content twice.
+     */
+    private long[] superblocksOnHeap() {
+        long[] heap = superblockHeap;
+        if (heap == null && numSuperblockEntries > 0 && numSuperblockEntries <= HEAP_SUPERBLOCKS_MAX) {
+            heap = new long[(int) numSuperblockEntries];
+            superblock.get(0, heap, 0, heap.length);
+            superblockHeap = heap;
+        }
+        return heap;
+    }
+
+    private long superblockAt(long[] heap, long index) {
+        return (heap != null) ? heap[(int) index] : superblock.get(index);
+    }
+
     public long select1(long rank) {
         if (rank <= 0) return -1L;
+        long[] heap = superblocksOnHeap();
 
         // Step 1: Find Superblock - the greatest index whose cumulative count is
         // still below the target rank. The cumulative counts of real index bitmaps
@@ -64,16 +92,16 @@ public class HDTBitmapDirectory {
         long sbIdx = 0; // Default to 0 if not found or first
 
         if (high > 8) {
-            long last = superblock.get(high);
+            long last = superblockAt(heap, high);
             long guess = (last > 0) ? (long) ((double) rank / last * high) : 0;
             if (guess < 0) guess = 0;
             if (guess > high) guess = high;
             long step = 1;
             long cur = guess;
-            if (superblock.get(guess) < rank) {
+            if (superblockAt(heap, guess) < rank) {
                 // Answer is at or to the right of the guess: gallop right.
                 sbIdx = guess;
-                while (cur + step <= high && superblock.get(cur + step) < rank) {
+                while (cur + step <= high && superblockAt(heap, cur + step) < rank) {
                     cur += step;
                     sbIdx = cur;
                     step <<= 1;
@@ -83,7 +111,7 @@ public class HDTBitmapDirectory {
             } else {
                 // Answer is strictly left of the guess: gallop left. Index 0 always
                 // qualifies (the seeded count is 0 < rank), so the bracket is never empty.
-                while (cur - step >= 0 && superblock.get(cur - step) >= rank) {
+                while (cur - step >= 0 && superblockAt(heap, cur - step) >= rank) {
                     cur -= step;
                     step <<= 1;
                 }
@@ -94,7 +122,7 @@ public class HDTBitmapDirectory {
 
         while (low <= high) {
             long mid = (low + high) >>> 1;
-            long val = superblock.get(mid);
+            long val = superblockAt(heap, mid);
             if (val < rank) {
                 sbIdx = mid;
                 low = mid + 1;
@@ -103,12 +131,12 @@ public class HDTBitmapDirectory {
             }
         }
 
-        long baseRank = superblock.get(sbIdx);
+        long baseRank = superblockAt(heap, sbIdx);
         // If the SB rank is strictly greater than target (shouldn't happen if 0 is 0), 
         // it means we need to look at previous SB.
         if (baseRank >= rank && sbIdx > 0) {
             sbIdx--;
-            baseRank = superblock.get(sbIdx);
+            baseRank = superblockAt(heap, sbIdx);
         }
         
         long remaining = rank - baseRank;

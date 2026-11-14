@@ -93,6 +93,11 @@ final class UltraPackedBuffer {
         return data;
     }
 
+    /** As {@link #add}, in the block-structured form (SPECIFICATIONS.md §5.1a) the index id sequences take. */
+    void addBlocked(WritableGroup group) {
+        com.ebremer.beakgraph.hdf5.BlockedEncoder.add(group, name, numEntries, this::get);
+    }
+
     void add(WritableGroup group) {
         if (data.length > 0) {
             WritableDataset ds = group.putDataset(name, data);

@@ -6,6 +6,20 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **Format v6: block-structured id sequences** (SPECIFICATIONS.md §5.1a). The id
+  sequences of both indexes (`Ss`/`Sp`/`So`) and the dictionary's role lists
+  (`graphs`, `subjects`, `objects`) are stored in blocks of 1,024 entries
+  (more for sequences past four billion entries), each with a base and a
+  width of its own, with a directory dataset `<name>_blocks` beside each
+  that a reader keeps in memory. An entry is still one read; a search in a
+  long sorted run is narrowed to one block without reading the file; and a
+  run of nearby ids costs the bits of their spread, not of the largest id
+  in the store. The rank/select directory's superblock counters are kept in
+  memory from a level's first lookup on. Stores of format v3-v5 read as
+  before; a store written now is not readable by earlier releases, which
+  refuse it by its version. All six engines write the same bytes for the
+  same sequence, as before. See PERFORMANCE.md for what this is the first
+  step of, and what it measured.
 * Jena 6.2.0.
 * The HDF5 library of every reader and every writer is
   [Falcon](https://github.com/ebremer/falcon) 0.1.0, in place of jHDF for the

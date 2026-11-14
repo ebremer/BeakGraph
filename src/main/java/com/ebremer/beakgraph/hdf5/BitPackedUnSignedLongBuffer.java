@@ -18,6 +18,14 @@ import java.util.stream.StreamSupport;
 /**
  * A buffer that supports writing and reading bit-packed unsigned integers/longs.
  *
+ * <p>A read view is of one of two forms. The first is one width for the whole
+ * sequence ({@link #readView}): bitmaps, rank directories and the dictionary's
+ * arrays. The second is block-structured ({@link #readBlocked},
+ * SPECIFICATIONS.md §5.1a, written by {@link BlockedEncoder}): the index id
+ * sequences since format v6, each block with a base and a width of its own,
+ * kept in a directory on the heap. Both answer the same calls, so nothing that
+ * reads a sequence needs to know which it holds.
+ *
  * <p>All read paths go through {@link RandomAccessBytes} with long offsets, so
  * a read view is no longer capped at 2 GiB by ByteBuffer's int indexing - the
  * backing bytes may be a ByteBuffer view of the mapped store, its FFM segment, or (for
@@ -51,6 +59,15 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
     private final Path path;
     private long numEntries;
 
+    // The directory of a block-structured read view, on the heap; all null (and the
+    // shift 0) for a buffer of one width. blockOffset has one entry more than there
+    // are blocks: where the data would end.
+    private final long[] blockOffset;
+    private final long[] blockBase;
+    private final byte[] blockWidth;
+    private final int blockShift;
+    private final long blockMask;
+
     /**
      * A write-side buffer of {@code bitWidth}-bit values, stored in HDF5 as the
      * dataset named {@code path} by {@link #add}; readable through
@@ -66,6 +83,11 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         this.data = new ByteBufferBytes(this.buffer);
         this.dataSize = 0;
         this.numEntries = 0;
+        this.blockOffset = null;
+        this.blockBase = null;
+        this.blockWidth = null;
+        this.blockShift = 0;
+        this.blockMask = 0;
     }
 
     private BitPackedUnSignedLongBuffer(RandomAccessBytes data, long numEntries, int bitWidth) {
@@ -95,6 +117,73 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         this.data = data;
         this.dataSize = data.size();
         this.numEntries = numEntries;
+        this.blockOffset = null;
+        this.blockBase = null;
+        this.blockWidth = null;
+        this.blockShift = 0;
+        this.blockMask = 0;
+    }
+
+    /** The block-structured read view: see {@link #readBlocked}. */
+    private BitPackedUnSignedLongBuffer(RandomAccessBytes data, RandomAccessBytes directory, long numEntries,
+            int blockEntries, int maxWidth) {
+        this.path = null;
+        this.buffer = null;
+        this.internalStream = null;
+        this.stage = null;
+        // As for a single-width view (BG-345): the attributes and the directory are the
+        // file's word, so what they declare is held against the bytes that are there
+        // before anything is read through them.
+        if (numEntries < 1 || blockEntries < 1 || Integer.bitCount(blockEntries) != 1) {
+            throw new IllegalStateException("block-structured buffer declares " + numEntries + " entries in blocks of "
+                    + blockEntries + " (at least one entry, and a power of two per block)");
+        }
+        long blocks = (numEntries - 1) / blockEntries + 1;
+        if (blocks > Integer.MAX_VALUE - 8 || directory.size() != blocks * BlockedEncoder.DIRECTORY_ENTRY_BYTES) {
+            throw new IllegalStateException("block-structured buffer declares " + numEntries + " entries in blocks of "
+                    + blockEntries + " (" + blocks + " directory entries of " + BlockedEncoder.DIRECTORY_ENTRY_BYTES
+                    + " bytes) but only " + directory.size() + " bytes are stored in its directory");
+        }
+        int n = (int) blocks;
+        byte[] raw = new byte[n * BlockedEncoder.DIRECTORY_ENTRY_BYTES];
+        directory.get(0, raw, 0, raw.length);
+        long[] offset = new long[n + 1];
+        long[] base = new long[n];
+        byte[] width = new byte[n];
+        long at = 0;
+        long remaining = numEntries;
+        for (int b = 0; b < n; b++) {
+            int e = b * BlockedEncoder.DIRECTORY_ENTRY_BYTES;
+            long v = 0;
+            for (int i = 0; i < 8; i++) {
+                v = (v << 8) | (raw[e + i] & 0xFFL);
+            }
+            int w = raw[e + 8] & 0xFF;
+            if ((w > BlockedEncoder.MAX_PACKED_WIDTH && w != 64) || w > maxWidth) {
+                throw new IllegalStateException("block-structured buffer: block " + b + " declares a width of " + w
+                        + " bits (0.." + BlockedEncoder.MAX_PACKED_WIDTH + " or 64, and at most the buffer's " + maxWidth + ")");
+            }
+            long count = Math.min(blockEntries, remaining);
+            offset[b] = at;
+            base[b] = v;
+            width[b] = (byte) w;
+            at += BlockedEncoder.blockBytes(count, w);
+            remaining -= count;
+        }
+        offset[n] = at;
+        if (at + BlockedEncoder.TAIL_BYTES > data.size()) {
+            throw new IllegalStateException("block-structured buffer declares " + numEntries + " entries in " + n
+                    + " blocks (" + (at + BlockedEncoder.TAIL_BYTES) + " bytes) but only " + data.size() + " bytes are stored");
+        }
+        this.bitWidth = maxWidth;
+        this.data = data;
+        this.dataSize = data.size();
+        this.numEntries = numEntries;
+        this.blockOffset = offset;
+        this.blockBase = base;
+        this.blockWidth = width;
+        this.blockShift = Integer.numberOfTrailingZeros(blockEntries);
+        this.blockMask = blockEntries - 1L;
     }
 
     /**
@@ -110,6 +199,26 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
 
     public static BitPackedUnSignedLongBuffer readView(RandomAccessBytes data, long numEntries, int bitWidth) {
         return new BitPackedUnSignedLongBuffer(data, numEntries, bitWidth);
+    }
+
+    /**
+     * A read-only view over a block-structured sequence (SPECIFICATIONS.md §5.1a):
+     * {@code data} holds the blocks, {@code directory} each block's base and width.
+     * The directory is read whole, now, and kept on the heap - 17 bytes a block -
+     * so that finding an entry's block, and narrowing a search in a sorted run to
+     * one block, never touch the file.
+     *
+     * @param blockEntries entries per block, a power of two
+     * @param maxWidth     the widest block's width, as the dataset declares it
+     */
+    public static BitPackedUnSignedLongBuffer readBlocked(RandomAccessBytes data, RandomAccessBytes directory,
+            long numEntries, int blockEntries, int maxWidth) {
+        return new BitPackedUnSignedLongBuffer(data, directory, numEntries, blockEntries, maxWidth);
+    }
+
+    /** True for a block-structured view ({@link #readBlocked}). */
+    public boolean isBlocked() {
+        return blockBase != null;
     }
 
     private static void checkWidth(int bitWidth) {
@@ -153,7 +262,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         // select1 is 1-based: rank 1 = first set bit. rank < 1 (including 0) is not a valid query,
         // so return -1 instead of a misleading index 0 (matches the rank<1 guard in the iterators).
         if (rank < 1) return -1;
-        if (bitWidth != 1) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
+        if (bitWidth != 1 || blockBase != null) throw new UnsupportedOperationException("select1 only supported for 1-bit bitmaps");
         long currentRank = 0;
         long maxIndex = numEntries;
         // Clamp fast-path byte range to the bytes that actually hold live bits (numEntries/64 full words),
@@ -214,7 +323,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
      * linear scan on a multi-million-bit block.
      */
     public long nextSetBit(long fromIndex, long maxWords) {
-        if (bitWidth != 1) throw new UnsupportedOperationException("nextSetBit only supported for 1-bit bitmaps");
+        if (bitWidth != 1 || blockBase != null) throw new UnsupportedOperationException("nextSetBit only supported for 1-bit bitmaps");
         if (fromIndex >= numEntries) return -1;
         long w = fromIndex >>> 6;
         long lastWord = (numEntries - 1) >>> 6;
@@ -261,7 +370,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
 
     /** A {@link BitReader} over this 1-bit bitmap. */
     public BitReader bitReader() {
-        if (bitWidth != 1) throw new UnsupportedOperationException("bitReader only supported for 1-bit bitmaps");
+        if (bitWidth != 1 || blockBase != null) throw new UnsupportedOperationException("bitReader only supported for 1-bit bitmaps");
         return new BitReader();
     }
 
@@ -355,6 +464,9 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         if (index < 0 || index >= numEntries) {
             throw new IndexOutOfBoundsException("Index " + index + " out of bounds [0, " + numEntries + ")");
         }
+        if (blockBase != null) {
+            return getBlocked(index);
+        }
         long totalBitOffset = index * bitWidth;
         long startByteIndex = totalBitOffset >>> 3;
         int bitOffsetInFirstByte = (int) (totalBitOffset & 7);
@@ -388,6 +500,84 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         long val = acc >>> rightShift;
         long mask = (bitWidth == 64) ? -1L : (1L << bitWidth) - 1;
         return val & mask;
+    }
+
+    /**
+     * An entry of a block-structured view: its block's base and width come from the
+     * heap, its bits from one 8-byte read. The read never runs past the data: a
+     * width is at most 57 bits beside a sub-byte offset of at most 7 (or 64,
+     * byte-aligned), and the data ends with {@link BlockedEncoder#TAIL_BYTES} of
+     * padding, which the constructor has checked.
+     */
+    private long getBlocked(long index) {
+        int b = (int) (index >>> blockShift);
+        int w = blockWidth[b];
+        if (w == 0) {
+            return blockBase[b];
+        }
+        long bit = (index & blockMask) * w;
+        long word = readLong(blockOffset[b] + (bit >>> 3));
+        if (w == 64) {
+            return word;
+        }
+        return blockBase[b] + ((word >>> (64 - (int) (bit & 7) - w)) & ((1L << w) - 1));
+    }
+
+    /**
+     * Decodes {@code count} entries from {@code index} into {@code dst}: for a
+     * block-structured view a block at a time, from whole words, without a call per
+     * entry into the bytes behind it.
+     */
+    public void get(long index, long[] dst, int dstOffset, int count) {
+        if (index < 0 || count < 0 || index + count > numEntries) {
+            throw new IndexOutOfBoundsException("Entries [" + index + ", " + (index + count) + ") out of bounds [0, " + numEntries + ")");
+        }
+        if (blockBase == null) {
+            for (int i = 0; i < count; i++) {
+                dst[dstOffset + i] = get(index + i);
+            }
+            return;
+        }
+        while (count > 0) {
+            int b = (int) (index >>> blockShift);
+            int first = (int) (index & blockMask);
+            int n = (int) Math.min(count, blockMask + 1 - first);
+            int w = blockWidth[b];
+            long base = blockBase[b];
+            if (w == 0) {
+                java.util.Arrays.fill(dst, dstOffset, dstOffset + n, base);
+            } else {
+                long bit = (long) first * w;
+                long wordAt = blockOffset[b] + ((bit >>> 6) << 3);
+                int offset = (int) (bit & 63);
+                long mask = (w == 64) ? -1L : (1L << w) - 1;
+                long add = (w == 64) ? 0 : base;
+                long word = readLong(wordAt);
+                for (int i = 0; i < n; i++) {
+                    long v;
+                    if (offset + w <= 64) {
+                        v = (word >>> (64 - offset - w)) & mask;
+                        offset += w;
+                        if (offset == 64 && i + 1 < n) {
+                            wordAt += 8;
+                            word = readLong(wordAt);
+                            offset = 0;
+                        }
+                    } else {
+                        int over = offset + w - 64;
+                        long high = word << over;
+                        wordAt += 8;
+                        word = readLong(wordAt);
+                        v = (high | (word >>> (64 - over))) & mask;
+                        offset = over;
+                    }
+                    dst[dstOffset + i] = add + v;
+                }
+            }
+            index += n;
+            dstOffset += n;
+            count -= n;
+        }
     }
 
     public long getWord64(long bitIndex) {
@@ -474,9 +664,69 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         }
     }
 
+    /**
+     * As {@link #add}, in the block-structured form (SPECIFICATIONS.md §5.1a): how
+     * the index id sequences are stored. The dataset is {@code name}, its directory
+     * {@code name + "_blocks"}.
+     */
+    public void addBlocked(WritableGroup group) {
+        if (buffer == null) {
+            throw new IllegalStateException("This buffer is a read view; the write API is unavailable");
+        }
+        prepareForReading();
+        BlockedEncoder.add(group, path.toString(), numEntries, this::get);
+    }
+
+    private static final int WHOLE_RANGE = Integer.MIN_VALUE;
+
+    /**
+     * For a search of the sorted run {@code [low, high]} of a block-structured view:
+     * the one block {@code value} can lie in, found without reading the data, or
+     * {@link #WHOLE_RANGE} when the run does not span whole blocks (or the view is
+     * of one width). A block that lies wholly inside an ascending run starts with
+     * its smallest entry, which is its base in the directory; so the last such
+     * block whose base is at most {@code value} is found on the heap. The run's
+     * first block starts before the run and its last may end after it, so their
+     * bases say nothing: the first is the answer when no whole block qualifies, and
+     * the last is asked for its first entry, one read.
+     */
+    private int blockOf(long low, long high, long value) {
+        if (blockBase == null) {
+            return WHOLE_RANGE;
+        }
+        int first = (int) (low >>> blockShift);
+        int last = (int) (high >>> blockShift);
+        if (last - first < 2) {
+            return WHOLE_RANGE;
+        }
+        int lo = first + 1;
+        int hi = last - 1;
+        int found = first;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (Long.compareUnsigned(blockBase[mid], value) <= 0) {
+                found = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if (found == last - 1 && Long.compareUnsigned(getBlocked((long) last << blockShift), value) <= 0) {
+            found = last;
+        }
+        return found;
+    }
+
     public long binarySearch(long start, long end, long value) {
         long low = start;
         long high = end;
+        int block = blockOf(low, high, value);
+        if (block != WHOLE_RANGE) {
+            // Every entry before the block is smaller and every one after it larger, so
+            // the insertion point of a value that is absent lies in the block too.
+            low = Math.max(low, (long) block << blockShift);
+            high = Math.min(high, (((long) block + 1) << blockShift) - 1);
+        }
         while (low <= high) {
             long mid = (low + high) >>> 1;
             long midVal = get(mid); // Internal get is bit-unpacked
@@ -507,6 +757,15 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         long low = start;
         long high = end;
         long result = -1;
+        int block = blockOf(low, high, value);
+        if (block != WHOLE_RANGE) {
+            low = Math.max(low, (long) block << blockShift);
+            high = Math.min(high, (((long) block + 1) << blockShift) - 1);
+            // No entry of the block reaches the value: the first that does opens the next block.
+            if (high < end) {
+                result = high + 1;
+            }
+        }
 
         while (low <= high) {
             long mid = (low + high) >>> 1;
@@ -533,6 +792,15 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
         long low = start;
         long high = end;
         long result = -1;
+        int block = blockOf(low, high, value);
+        if (block != WHOLE_RANGE) {
+            low = Math.max(low, (long) block << blockShift);
+            high = Math.min(high, (((long) block + 1) << blockShift) - 1);
+            // Every entry of the block is above the value: the last at or below it closes the block before.
+            if (low > start) {
+                result = low - 1;
+            }
+        }
 
         while (low <= high) {
             long mid = (low + high) >>> 1;
@@ -554,6 +822,9 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
      * @return
      */
     public LongStream stream() {
+        if (blockBase != null) {
+            return LongStream.range(0, numEntries).map(this::get);
+        }
         return StreamSupport.longStream(new BitPackedSpliterator(data, numEntries, bitWidth), false);
     }
 
