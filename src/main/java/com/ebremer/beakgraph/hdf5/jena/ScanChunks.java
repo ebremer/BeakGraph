@@ -7,6 +7,7 @@ import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
+import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -47,6 +48,14 @@ import org.slf4j.LoggerFactory;
  * scan costs the same total work as the sequential scan, spread across
  * threads. The bounds themselves are resolved once per store and pattern
  * shape ({@link RangeBounds}), not once per chunk.
+ *
+ * <p>For a caller whose workers keep the rows they read ({@link #chunks}:
+ * an aggregate, {@link GroupOnIds}) a predicate's scan with too few objects
+ * to divide by is divided by its rows instead - the subject positions under
+ * the objects the filter's bounds leave - so that {@code ?s a ?type}, four
+ * types and a million subjects, is a million rows' work for every core. A
+ * scan that hands its rows to one consumer is not divided that way: it
+ * gains little from being divided at all.
  *
  * <p>Sizing: parallelize when the chunkable position range is at least
  * {@code -Dbeakgraph.scan.parallel.threshold} (default 65536; 0 or negative
@@ -96,11 +105,44 @@ final class ScanChunks {
     }
 
     /**
+     * The chunks of the scan {@link #tryParallel} would plan for the pattern
+     * in graph {@code gi}, for a caller that runs them itself - an aggregate,
+     * which takes each chunk's rows where they are read ({@link GroupOnIds})
+     * - or null where no parallel scan would be planned.
+     *
+     * @param g the graph as the chunks' quad pattern names it: its term, or a
+     *          variable {@code b0} binds to graph {@code gi}
+     */
+    static List<Supplier<Iterator<BindingNodeId>>> chunks(HDF5Reader reader, PositionalDictionaryReader dict, long gi, Node g,
+            BindingNodeId b0, Triple triple, ExprList filter, long threshold) {
+        if (threshold <= 0 || gi < 1) return null;
+        return split(reader, dict, gi, g, b0, triple, filter, threshold, true);
+    }
+
+    /**
      * @param g the graph as the chunks' quad pattern names it: its term, or a
      *          variable {@code b0} binds to graph {@code gi}
      */
     private static ParallelScan plan(HDF5Reader reader, PositionalDictionaryReader dict, long gi, Node g,
             BindingNodeId b0, Triple triple, ExprList filter, long threshold, ExecutionContext execCxt) {
+        List<Supplier<Iterator<BindingNodeId>>> suppliers = split(reader, dict, gi, g, b0, triple, filter, threshold, false);
+        return (suppliers == null) ? null : new ParallelScan(suppliers, execCxt.getCancelSignal());
+    }
+
+    /**
+     * The scan of the pattern in graph {@code gi} as independent chunks by
+     * position, or null when it is not one to split.
+     *
+     * @param byRows whether a predicate's scan with too few objects to divide
+     *               by may be divided by its rows instead - the subject
+     *               positions under those objects. For a caller whose workers
+     *               keep the rows ({@link #chunks}): a predicate of four
+     *               values and a million rows is a million rows of work
+     *               there, where a scan that hands its rows to one consumer
+     *               gains little from being divided at all.
+     */
+    private static List<Supplier<Iterator<BindingNodeId>>> split(HDF5Reader reader, PositionalDictionaryReader dict, long gi, Node g,
+            BindingNodeId b0, Triple triple, ExprList filter, long threshold, boolean byRows) {
         // A channel-backed (HTTP) store serializes every read behind one lock
         // and one block cache: chunk workers would only contend on it while
         // thrashing the cache across their disjoint regions (BG-247).
@@ -123,8 +165,7 @@ final class ScanChunks {
             if (range == null || range[1] - range[0] + 1 < threshold) return null;
             Quad quad = new Quad(g, s, p, o);
             return build("SPO", range,
-                    (lo, hi) -> new BGIteratorSPO_All(dict, gspo, b0, quad, filter, nodeTable, lo, hi),
-                    execCxt);
+                    (lo, hi) -> new BGIteratorSPO_All(dict, gspo, b0, quad, filter, nodeTable, lo, hi));
         }
 
         if (p.isConcrete()) {
@@ -141,14 +182,45 @@ final class ScanChunks {
             long oStart = RangeSelect.blockStart(gpos.getDirectory('O'), bo, pIndex + 1);
             if (oStart == -1) return null;
             long oEnd = RangeSelect.blockEnd(gpos.getDirectory('O'), bo, pIndex + 1, oStart);
-            if (oStart > oEnd || oEnd - oStart + 1 < threshold) return null;
+            if (oStart > oEnd) return null;
             Quad quad = new Quad(g, s, p, o);
+            if (oEnd - oStart + 1 < threshold) {
+                if (!byRows) return null;
+                // Few values: the rows themselves, which lie together at the subject level under the predicate's
+                // objects. A part is a range of subject positions, and the objects whose blocks its ends lie in.
+                // The objects are first narrowed to those the filter's bounds leave, as the iterator narrows them: a
+                // filter the index answers by itself leaves few rows, or none, to divide.
+                RangeBounds bounds = RangeBounds.of(filter, quad, dict);
+                BitPackedUnSignedLongBuffer so = gpos.getIDBuffer('O');
+                long first = (bounds.minO <= 0) ? oStart : so.lowerBound(oStart, oEnd, bounds.minO);
+                long last = (bounds.maxO == Long.MAX_VALUE) ? oEnd : so.upperBound(oStart, oEnd, bounds.maxO);
+                if (first < 0 || first > last) return null;
+                long[] rows = RangeSelect.childRange(gpos, 'S', first, last);
+                if (rows == null || rows[1] - rows[0] + 1 < threshold) return null;
+                HDTBitmapDirectory dirS = gpos.getDirectory('S');
+                BitPackedUnSignedLongBuffer bs = gpos.getBitmapBuffer('S');
+                return build("POS by rows", rows, (lo, hi) -> new BGIteratorPOS(dict, gpos, b0, quad, filter, nodeTable,
+                        owner(dirS, bs, first, last, lo), owner(dirS, bs, first, last, hi), lo, hi));
+            }
             return build("POS", new long[]{oStart, oEnd},
-                    (lo, hi) -> new BGIteratorPOS(dict, gpos, b0, quad, filter, nodeTable, lo, hi),
-                    execCxt);
+                    (lo, hi) -> new BGIteratorPOS(dict, gpos, b0, quad, filter, nodeTable, lo, hi));
         }
 
         return null;
+    }
+
+    /** The object position in [lo, hi] whose subject block holds subject position {@code position}: the last block that starts at or before it. */
+    private static long owner(HDTBitmapDirectory dirS, BitPackedUnSignedLongBuffer bs, long lo, long hi, long position) {
+        while (lo < hi) {
+            long mid = (lo + hi + 1) >>> 1;
+            long start = RangeSelect.blockStart(dirS, bs, mid + 1);
+            if (start != -1 && start <= position) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return lo;
     }
 
     private static boolean isUnboundVar(Node n, BindingNodeId b0) {
@@ -164,7 +236,7 @@ final class ScanChunks {
         Iterator<BindingNodeId> create(long lo, long hi);
     }
 
-    private static ParallelScan build(String kind, long[] range, ChunkFactory factory, ExecutionContext execCxt) {
+    private static List<Supplier<Iterator<BindingNodeId>>> build(String kind, long[] range, ChunkFactory factory) {
         long size = range[1] - range[0] + 1;
         int procs = Runtime.getRuntime().availableProcessors();
         // -Dbeakgraph.scan.parallel.minchunk lowers the floor so a small store
@@ -182,6 +254,6 @@ final class ScanChunks {
             suppliers.add(() -> factory.create(lo, hi));
         }
         logger.debug("Parallel {} scan: {} positions in {} chunks", kind, size, suppliers.size());
-        return new ParallelScan(suppliers, execCxt.getCancelSignal());
+        return suppliers;
     }
 }

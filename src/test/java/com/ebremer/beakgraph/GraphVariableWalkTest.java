@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.VoidMode;
 import com.ebremer.beakgraph.hdf5.jena.GraphVarBG;
+import com.ebremer.beakgraph.hdf5.jena.GroupOnIds;
 import com.ebremer.beakgraph.hdf5.jena.ParallelScan;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
 import com.ebremer.beakgraph.hdf5.writers.HDF5Writer;
@@ -409,6 +410,7 @@ class GraphVariableWalkTest {
     void manySmallGraphsAreSharedAmongWorkers() throws Exception {
         String oldThreshold = System.setProperty("beakgraph.scan.parallel.threshold", "64");
         String oldMinChunk = System.setProperty("beakgraph.scan.parallel.minchunk", "64");
+        String oldHandOff = System.setProperty("beakgraph.group.handoff", "64");
         try {
             StringBuilder trig = new StringBuilder("@prefix ex: <http://ex.org/> .\nex:k ex:knows ex:n3_4 .\n");
             for (int g = 0; g < 70; g++) {
@@ -443,9 +445,13 @@ class GraphVariableWalkTest {
                     "SELECT (SUM(?v) AS ?n) WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:value ?v } }",
                 };
                 for (String query : shared) {
-                    long before = GraphVarBG.PARALLEL.get();
+                    // The walk's workers hand their rows on; under an aggregate the rows stay with the workers, which
+                    // are then the group's (GroupOnIds). One or the other, once.
+                    long before = GraphVarBG.PARALLEL.get() + GroupOnIds.PARALLEL.get();
+                    long grouped = GroupOnIds.PARALLEL.get();
                     List<String> rows = rows(ds, query);
-                    assertEquals(1, GraphVarBG.PARALLEL.get() - before, "the graphs left are shared among workers: " + query);
+                    assertEquals(1, GraphVarBG.PARALLEL.get() + GroupOnIds.PARALLEL.get() - before, "the graphs left are shared among workers: " + query);
+                    assertEquals(query.contains("COUNT(") || query.contains("SUM(") ? 1 : 0, GroupOnIds.PARALLEL.get() - grouped, query);
                     assertEquals(rows(truth, query), rows, query);
                     assertEquals(rowsWithoutTheWalk(ds, query), rows, query);
                 }
@@ -487,6 +493,7 @@ class GraphVariableWalkTest {
         } finally {
             restore("beakgraph.scan.parallel.threshold", oldThreshold);
             restore("beakgraph.scan.parallel.minchunk", oldMinChunk);
+            restore("beakgraph.group.handoff", oldHandOff);
         }
     }
 

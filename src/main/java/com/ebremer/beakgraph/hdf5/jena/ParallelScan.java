@@ -77,6 +77,11 @@ public final class ParallelScan implements IteratorCloseable<BindingNodeId>, Abo
     private static final ExecutorService POOL = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("beakgraph-scan-", 0).factory());
 
+    /** The workers' executor, for the other kind of parallel work on a store: chunks whose rows stay with the worker ({@link GroupOnIds}). */
+    static ExecutorService pool() {
+        return POOL;
+    }
+
     /**
      * The state a worker touches - and nothing else. Workers reference this
      * object, never the scan, so an abandoned scan becomes unreachable as soon

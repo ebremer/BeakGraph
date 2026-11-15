@@ -22,7 +22,7 @@ import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 
 /**
  * BeakGraph's {@link OpExecutor}. When the active graph is a {@link BeakGraph}
- * it intercepts four algebra shapes; everything else runs through Jena's
+ * it intercepts these algebra shapes; everything else runs through Jena's
  * default executor unchanged:
  * <ol>
  * <li>{@code OpGraph} with a variable graph over a BGP, or over BGPs under
@@ -35,7 +35,9 @@ import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
  * <li>{@code OpGroup} over the root input: {@link AggregateCountFastPath}
  *     answers {@code COUNT} aggregates over {@code { ?s ?p ?o }} - of one
  *     graph or of every named graph, whole or grouped by graph or predicate
- *     - from index structure.</li>
+ *     - from index structure; and {@link GroupOnIds} computes any other
+ *     group over patterns the id-level engine reads on the rows' ids, in
+ *     the threads that read them.</li>
  * <li>{@code OpBGP}, bare or under an {@code OpFilter}: the statistics-based
  *     reorder ({@link BeakGraph#getReorderTransform()}) against the peeked
  *     first binding, then filter placement, with each placed filter's
@@ -99,6 +101,12 @@ public class OpExecutorBG extends OpExecutor {
         if (isForBeakGraph && input instanceof QueryIterRoot) {
             QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
             QueryIterator fast = AggregateCountFastPath.tryExecute(opGroup, peek, execCxt);
+            if (fast != null) {
+                return fast;
+            }
+            // Any other group whose rows the id-level engine reads: grouped and
+            // aggregated on ids, by the threads that read them.
+            fast = GroupOnIds.tryExecute(opGroup, peek, execCxt);
             if (fast != null) {
                 return fast;
             }

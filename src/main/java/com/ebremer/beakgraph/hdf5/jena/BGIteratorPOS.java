@@ -24,6 +24,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private long gi, pi;
     private long oStart, oEnd, curOIndex;
     private long sStart, sEnd, curSIndex;
+    private long blockEnd;                   // where the current object's whole subject block ends: the next begins after it
+    private long sPosLo = 0;                 // the subject positions this iterator reads: all of them, or one
+    private long sPosHi = Long.MAX_VALUE;    // part's (see the constructor that takes them)
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
     private boolean hasNext = false;
@@ -44,7 +47,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private TripleTermMatcher ttMatcher;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, -1);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, -1);
     }
 
     /**
@@ -53,7 +56,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      *                 resolve the graph from the pattern and binding
      */
     BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, presetGi);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, presetGi);
     }
 
     /**
@@ -63,12 +66,27 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      * subject block belongs to the chunk owning its position.
      */
     BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi) {
-        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, -1);
+        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, 0, Long.MAX_VALUE, -1);
     }
 
-    private BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi, long presetGi) {
+    /**
+     * A part of the scan cut out by SUBJECT positions, for a predicate with
+     * few values and many rows, whose objects are too few to divide by: the
+     * rows at subject positions [sPosLo, sPosHi] of the objects at positions
+     * [oPosLo, oPosHi] - the objects whose blocks those subject positions lie
+     * in. A block that reaches past either end is read as far as the end.
+     */
+    BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable,
+            long oPosLo, long oPosHi, long sPosLo, long sPosHi) {
+        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, sPosLo, sPosHi, -1);
+    }
+
+    private BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable,
+            long oPosLo, long oPosHi, long sPosLo, long sPosHi, long presetGi) {
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
+        this.sPosLo = sPosLo;
+        this.sPosHi = sPosHi;
 
         BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
         BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
@@ -178,9 +196,12 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             this.sStart = RangeSelect.blockStart(dirS, Bs, curOIndex + 1);
             if (sStart == -1) return;
         } else {
-            this.sStart = this.sEnd + 1;
+            this.sStart = this.blockEnd + 1;
         }
-        this.sEnd = RangeSelect.blockEnd(dirS, Bs, curOIndex + 1, sStart);
+        this.blockEnd = RangeSelect.blockEnd(dirS, Bs, curOIndex + 1, sStart);
+        // The part of the block this iterator reads: all of it, unless the scan was divided by subject positions.
+        this.sEnd = Math.min(blockEnd, sPosHi);
+        if (sStart < sPosLo) sStart = sPosLo;
         this.curSIndex = sStart;
     }
 

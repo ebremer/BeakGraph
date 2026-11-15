@@ -167,7 +167,13 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   pattern and names `?g` itself, runs graph by graph through Jena's operator,
   which costs several times as much a graph. A `COUNT` of every quad under
   `GRAPH ?g`, whole or grouped by graph or predicate, is read off the index
-  without visiting a row.
+  without visiting a row. Any other `GROUP BY`, `COUNT`, `SUM`, `AVG`, `MIN`
+  or `MAX` over patterns the engine walks - in one graph or under `GRAPH ?g`
+  - is computed on ids by the threads that read the rows; a sum of
+  `xsd:double` or `xsd:float` values is then added in another order than one
+  thread adds it, and can differ in its last digits. A key that is an
+  expression, `SAMPLE`, `GROUP_CONCAT` and `DISTINCT` inside an aggregate
+  other than `COUNT(DISTINCT ?v)` are grouped by Jena, on one thread.
 * Dataset clauses (`FROM`, `FROM NAMED`, and the SPARQL protocol's
   `default-graph-uri` / `named-graph-uri`) keep the BeakGraph engine: a single
   `FROM <g>` is the graph's own view and several `FROM` graphs are a set-union

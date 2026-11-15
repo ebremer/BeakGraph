@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -21,6 +22,7 @@ import org.apache.jena.atlas.iterator.IteratorCloseable;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
+import org.apache.jena.query.QueryCancelledException;
 import org.apache.jena.sparql.algebra.Op;
 import org.apache.jena.sparql.algebra.OpVars;
 import org.apache.jena.sparql.algebra.op.OpAssign;
@@ -125,6 +127,11 @@ import static org.apache.jena.sparql.engine.main.solver.SolverLib.makeAbortable;
  *             thread.</li>
  *       </ul></li>
  * </ul>
+ *
+ * <p>Neither limit holds where the rows are not handed on at all: under a
+ * {@code GROUP BY} or an aggregate, each worker keeps the rows it reads and
+ * groups them itself, with filters of its own ({@link GroupOnIds}, which
+ * takes the block as {@link Prepared} makes it ready here).
  */
 public final class GraphVarBG {
 
@@ -245,7 +252,7 @@ public final class GraphVarBG {
     }
 
     /** EXISTS and NOT EXISTS: a graph pattern of their own, which is run against the graph a row is being solved in. */
-    private static boolean holdsPattern(Expr e) {
+    static boolean holdsPattern(Expr e) {
         if (e instanceof ExprFunctionOp) return true;
         if (e.isFunction()) {
             for (Expr arg : e.getFunction().getArgs()) {
@@ -422,7 +429,50 @@ public final class GraphVarBG {
         };
     }
 
-    // ------------------------------------------------------------------ the entry point
+    /**
+     * {@code plan} with filter expressions of its own: for a thread that
+     * evaluates them while other threads evaluate theirs. An expression may
+     * keep what it has worked out (a function bound on first use, a pattern
+     * compiled), and Jena evaluates one on one thread at a time; and the
+     * copies read their variables by the rows' ids ({@link RowValue}). The
+     * hints of a pattern are only read, and stay the one list.
+     */
+    private static Plan own(Plan plan, NodeTable nodeTable) {
+        return switch (plan) {
+            case Bgp b -> b;
+            case Filtered f -> new Filtered(RowValue.own(f.exprs(), nodeTable), own(f.sub(), nodeTable));
+            case Steps s -> new Steps(own(s.steps(), nodeTable));
+            case Optional o -> new Optional(own(o.left(), nodeTable), own(o.right(), nodeTable));
+            case Either e -> new Either(own(e.sides(), nodeTable));
+            case Assigned a -> new Assigned(own(a.sub(), nodeTable), a.vars(), a.ids());
+        };
+    }
+
+    private static Plan[] own(Plan[] plans, NodeTable nodeTable) {
+        Plan[] copies = new Plan[plans.length];
+        for (int i = 0; i < plans.length; i++) {
+            copies[i] = own(plans[i], nodeTable);
+        }
+        return copies;
+    }
+
+    /**
+     * The pattern a row of {@code plan} is first read from - the one whose
+     * read, when it is a scan, can be split by position - or null where the
+     * plan starts with sides that are read in turn.
+     */
+    private static Bgp leftmost(Plan plan) {
+        return switch (plan) {
+            case Bgp b -> b;
+            case Filtered f -> leftmost(f.sub());
+            case Steps s -> leftmost(s.steps()[0]);
+            case Optional o -> leftmost(o.left());
+            case Either e -> null;
+            case Assigned a -> leftmost(a.sub());
+        };
+    }
+
+    // ------------------------------------------------------------------ the entry points
 
     /**
      * The id-level execution of {@code opGraph}, or null - with {@code input}
@@ -432,6 +482,71 @@ public final class GraphVarBG {
      *             used for the bindings that hold the graph variable already
      */
     static QueryIterator tryExecute(OpGraph opGraph, QueryIterator input, ExecutionContext execCxt, UnaryOperator<QueryIterator> jena) {
+        Site site = site(opGraph, execCxt);
+        if (site == null) return null;
+        if (!input.hasNext()) {
+            return input;
+        }
+        QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
+        Prepared prepared = site.prepare(peek.peek());
+        if (prepared == null) {
+            return jena.apply(peek); // filter placement gave a shape the walk does not run
+        }
+        HITS.incrementAndGet();
+        PatternMatchBG.HITS.incrementAndGet();
+        if (prepared.empty) {
+            peek.close();
+            return QueryIterNullIterator.create(execCxt);
+        }
+        return new Stage(peek, execCxt, jena, prepared);
+    }
+
+    /**
+     * {@code GRAPH ?g { ... }} made ready for a caller that takes the rows
+     * itself, under the single binding {@code first} that binds nothing: an
+     * aggregate over them ({@link GroupOnIds}). Null when the walk would not
+     * answer the block.
+     */
+    static Prepared prepareWalk(OpGraph opGraph, Binding first, ExecutionContext execCxt) {
+        Site site = site(opGraph, execCxt);
+        return (site == null) ? null : site.prepare(first);
+    }
+
+    /**
+     * A block that runs in one graph - the active graph, or the graph a
+     * {@code GRAPH <iri>} names - made ready as {@link #prepareWalk} makes a
+     * block under a graph variable: the same plan, run in that one graph.
+     * Null for a block the walk would not answer, for a view of several
+     * graphs or of the union graph (whose rows are a union without
+     * duplicates), and for the empty pattern.
+     */
+    static Prepared prepareBlock(Op block, BeakGraph graph, Binding first) {
+        if (graph.isGraphSetView()) return null;
+        Node name = graph.getNamedGraph();
+        if (name == null || Quad.isUnionGraph(name)) return null;
+        if (!(graph.getReader() instanceof HDF5Reader reader)) return null;
+        if (!(reader.getDictionary() instanceof PositionalDictionaryReader dict) || dict.isEmpty()) return null;
+        if (block instanceof OpBGP bgp && bgp.getPattern().isEmpty()) return null;
+        if (!walkable(block, graph)) return null;
+        Plan plan = compile(block, first, new HashSet<>(), graph.getReorderTransform(), reader.getNodeTable());
+        if (plan == null) return null;
+        Node term = Quad.isDefaultGraph(name) ? Quad.defaultGraphIRI : name;
+        long gid = dict.getGraphs().locate(term);
+        return Prepared.of(null, term, plan, null, graph, reader, dict, (gid < 1) ? new long[0] : new long[] {gid});
+    }
+
+    /** A {@code GRAPH ?g} block that has passed the checks that need no input row. */
+    private record Site(Var graphVar, Op block, BGDatasetGraph dsg, BeakGraph root, HDF5Reader reader, PositionalDictionaryReader dict) {
+
+        /** The block planned against {@code first}, or null where filter placement gives a shape the walk does not run. */
+        Prepared prepare(Binding first) {
+            Plan plan = compile(block, first, new HashSet<>(), root.getReorderTransform(), reader.getNodeTable());
+            return (plan == null) ? null : Prepared.of(graphVar, null, plan, dsg, root, reader, dict, namedGraphIds(dict, root));
+        }
+    }
+
+    /** Whether {@code opGraph} is a block the walk answers, as far as can be said before the input is touched. */
+    private static Site site(OpGraph opGraph, ExecutionContext execCxt) {
         if (!enabled) return null;
         Node graphNode = opGraph.getNode();
         if (!graphNode.isVariable()) return null;
@@ -449,35 +564,7 @@ public final class GraphVarBG {
         if (!walkable(block, root)) return null;
         // A filter inside the block must not see ?g, and the walk binds it first: only where nothing inside could tell.
         if (!plain && OpVars.mentionedVars(block).contains(graphVar)) return null;
-
-        if (!input.hasNext()) {
-            return input;
-        }
-        QueryIterPeek peek = QueryIterPeek.create(input, execCxt);
-        Plan plan = compile(block, peek.peek(), new HashSet<>(), root.getReorderTransform(), reader.getNodeTable());
-        if (plan == null) {
-            return jena.apply(peek); // filter placement gave a shape the walk does not run
-        }
-        HITS.incrementAndGet();
-        PatternMatchBG.HITS.incrementAndGet();
-        // The outermost filters are applied to the walk's rows by the thread that consumes them.
-        List<ExprList> filters = new ArrayList<>();
-        while (plan instanceof Filtered f) {
-            filters.add(f.exprs());
-            plan = f.sub();
-        }
-        // A term the store does not hold matches in no graph: say so once, not once a graph.
-        if (plan instanceof Bgp bgp) {
-            for (Triple t : bgp.triples()) {
-                if ((t.getSubject().isConcrete() && dict.getSubjects().locate(t.getSubject()) < 1)
-                        || (t.getPredicate().isConcrete() && dict.getPredicates().locate(t.getPredicate()) < 1)
-                        || (t.getObject().isConcrete() && dict.getObjects().locate(t.getObject()) < 1)) {
-                    peek.close();
-                    return QueryIterNullIterator.create(execCxt);
-                }
-            }
-        }
-        return new Stage(peek, execCxt, jena, graphVar, plan, filters, dsg, root, reader, dict, namedGraphIds(dict, root));
+        return new Site(graphVar, block, dsg, root, reader, dict);
     }
 
     /**
@@ -499,30 +586,34 @@ public final class GraphVarBG {
                 .toArray();
     }
 
-    // ------------------------------------------------------------------ the walk
+    // ------------------------------------------------------------------ a block, and the graphs it runs in
 
-    /** One input binding at a time: Jena's operator where it holds the graph variable, the walk over the graphs where it does not. */
-    private static final class Stage extends QueryIterRepeatApply {
-        private final UnaryOperator<QueryIterator> jena;
-        private final Var graphVar;
-        private final Plan plan;
-        private final List<ExprList> filters;
-        private final boolean workers;      // whether the plan is for workers: no filter inside it, and rows that do work
-        private final BGDatasetGraph dsg;
-        private final BeakGraph root;
-        private final HDF5Reader reader;
-        private final PositionalDictionaryReader dict;
-        private final NodeTable nodeTable;
-        private final long[] graphs;
+    /**
+     * A block made ready to run: its plan, and the graphs it runs in. What
+     * the walk ({@link Stage}) is made of, and what an aggregate takes the
+     * block's rows from, graph by graph or a part of a large graph at a time
+     * ({@link GroupOnIds}).
+     */
+    static final class Prepared {
+        final Var graphVar;             // the variable of GRAPH ?g, bound to each graph in turn; null for a block in one given graph
+        final Node graphTerm;           // the one graph's term, where there is no variable
+        final Plan plan;                // the block, without its outermost filters
+        final List<ExprList> filters;   // those filters, innermost first
+        final boolean empty;            // a term of the pattern is not in the store: no graph has a row
+        final BGDatasetGraph dsg;       // the dataset the graphs are views of; null for a block in one given graph
+        final BeakGraph root;
+        final HDF5Reader reader;
+        final PositionalDictionaryReader dict;
+        final NodeTable nodeTable;
+        final long[] graphs;            // the ids of the graphs the block runs in, in the order they are visited
 
-        Stage(QueryIterator input, ExecutionContext execCxt, UnaryOperator<QueryIterator> jena, Var graphVar, Plan plan,
-                List<ExprList> filters, BGDatasetGraph dsg, BeakGraph root, HDF5Reader reader, PositionalDictionaryReader dict, long[] graphs) {
-            super(input, execCxt);
-            this.jena = jena;
+        private Prepared(Var graphVar, Node graphTerm, Plan plan, List<ExprList> filters, boolean empty, BGDatasetGraph dsg, BeakGraph root,
+                HDF5Reader reader, PositionalDictionaryReader dict, long[] graphs) {
             this.graphVar = graphVar;
+            this.graphTerm = graphTerm;
             this.plan = plan;
             this.filters = filters;
-            this.workers = !hasFilter(plan) && rowsDoWork(plan);
+            this.empty = empty;
             this.dsg = dsg;
             this.root = root;
             this.reader = reader;
@@ -531,34 +622,87 @@ public final class GraphVarBG {
             this.graphs = graphs;
         }
 
-        @Override
-        protected QueryIterator nextStage(Binding binding) {
-            ExecutionContext execCxt = getExecContext();
-            if (binding.contains(graphVar)) {
-                return jena.apply(QueryIterSingleton.create(binding, execCxt));
+        static Prepared of(Var graphVar, Node graphTerm, Plan plan, BGDatasetGraph dsg, BeakGraph root, HDF5Reader reader,
+                PositionalDictionaryReader dict, long[] graphs) {
+            // The outermost filters are applied to the block's rows last: by the thread that consumes a walk's rows, or by
+            // each thread that takes rows for an aggregate.
+            List<ExprList> filters = new ArrayList<>();
+            while (plan instanceof Filtered f) {
+                filters.add(f.exprs());
+                plan = f.sub();
             }
-            BindingNodeId base = SolverLibBeak.convert(binding, root);
-            // Parallelism is for the root binding only, as PatternMatchBG.solveFirst has it: a binding that carries
-            // variables is an outer row, and its block runs once a row. Nor for a store read through a channel.
-            long threshold = (PatternMatchBG.isRootLike(base) && !reader.isChannelBacked()) ? ScanChunks.threshold() : 0;
-            // Scans are added while the walk runs, and a cancel reads the list from another thread.
-            List<Abortable> killList = new CopyOnWriteArrayList<>();
-            Iterator<BindingNodeId> rows = new Walk(base, threshold, killList, execCxt);
-            rows = makeAbortable(rows, killList, execCxt.getCancelSignal());
-            return new QueryIterAbortable(SolverLibBeak.convertToNodes(rows, root), killList, null, execCxt);
+            // A term the store does not hold matches in no graph: say so once, not once a graph.
+            boolean empty = false;
+            if (plan instanceof Bgp bgp) {
+                for (Triple t : bgp.triples()) {
+                    if ((t.getSubject().isConcrete() && dict.getSubjects().locate(t.getSubject()) < 1)
+                            || (t.getPredicate().isConcrete() && dict.getPredicates().locate(t.getPredicate()) < 1)
+                            || (t.getObject().isConcrete() && dict.getObjects().locate(t.getObject()) < 1)) {
+                        empty = true;
+                    }
+                }
+            }
+            return new Prepared(graphVar, graphTerm, plan, filters, empty, dsg, root, reader, dict, graphs);
+        }
+
+        /**
+         * A reader of the block's rows for one thread, every filter applied,
+         * one graph or one part of a graph at a time ({@link GraphLoop#graph},
+         * {@link GraphLoop#part}).
+         *
+         * @param own whether the thread is to have filter expressions of its
+         *            own: one of several that read at once needs them, and
+         *            any thread reads values faster through them
+         */
+        GraphLoop loop(BindingNodeId base, ExecutionContext execCxt, boolean own) {
+            Plan mine = own ? GraphVarBG.own(plan, nodeTable) : plan;
+            List<ExprList> outer = filters;
+            if (own && !filters.isEmpty()) {
+                outer = new ArrayList<>(filters.size());
+                for (ExprList exprs : filters) {
+                    outer.add(RowValue.own(exprs, nodeTable));
+                }
+            }
+            return new GraphLoop(base, graphs, 0, 0, 0, null, execCxt, mine, outer);
+        }
+
+        /**
+         * The rows of graph {@code graphs[index]} in parts that can be read at
+         * once, where the block's first pattern is a scan of at least
+         * {@code threshold} positions there ({@link ScanChunks}); null where
+         * it is not. Each part is the first pattern's rows over a range of
+         * positions: {@link GraphLoop#part} makes the block's rows of them.
+         */
+        List<Supplier<Iterator<BindingNodeId>>> split(int index, BindingNodeId base, long threshold) {
+            if (threshold <= 0 || empty) return null;
+            Bgp first = leftmost(plan);
+            if (first == null || first.triples().length == 0) return null;
+            Triple t = first.triples()[0];
+            if (!t.getSubject().isVariable() || !t.getObject().isVariable()) return null;
+            long gid = graphs[index];
+            if (graphVar == null) {
+                return ScanChunks.chunks(reader, dict, gid, graphTerm, base, t, first.hints(), threshold);
+            }
+            BindingNodeId b0 = new BindingNodeId(base);
+            b0.bind(graphVar, NodeId.pack(NodeType.GRAPH, gid));
+            return ScanChunks.chunks(reader, dict, gid, graphVar, b0, t, first.hints(), threshold);
         }
 
         /**
          * What {@code expr.isSatisfied} is given for the rows of one graph: the
          * execution context with that graph as the active one, as Jena has it
          * when it runs the block there. Made for a graph when a row of it first
-         * comes to a filter, and kept while the rows are that graph's.
+         * comes to a filter, and kept while the rows are that graph's. A block
+         * in one given graph is handed the context of that graph to begin with.
          */
-        private final class GraphContext {
+        final class GraphContext {
             private long gid = -1;
             private ExecutionContext cxt;
 
             ExecutionContext of(long graph, ExecutionContext execCxt) {
+                if (graphVar == null) {
+                    return execCxt;
+                }
                 if (graph != gid) {
                     Node name = nodeTable.getNodeForNodeId(NodeId.pack(NodeType.GRAPH, graph));
                     cxt = (name == null) ? execCxt : ExecutionContext.copyChangeActiveGraph(execCxt, dsg.getGraph(name));
@@ -580,33 +724,68 @@ public final class GraphVarBG {
         }
 
         /**
-         * The plan's rows for the graphs {@code graphs[from..to)}, graph by
+         * The plan's rows for the graphs {@code ids[from..to)}, graph by
          * graph, each opened when the one before it is done. One thread's: the
-         * walk's own for its sequential part, a worker's for its share.
+         * walk's own for its sequential part, a worker's for its share, or -
+         * visiting no graph by itself - the reader an aggregate asks for one
+         * graph's rows at a time.
          */
-        private final class GraphLoop implements IteratorCloseable<BindingNodeId> {
+        final class GraphLoop implements IteratorCloseable<BindingNodeId> {
             private final BindingNodeId base;
+            private final long[] ids;
             private final long scanThreshold;       // from how many positions a single graph is scanned in parallel; 0 for never
             private final List<Abortable> killList;
             private final ExecutionContext execCxt;
+            private final Plan plan;                // the block as this thread evaluates it
+            private final List<ExprList> outer;     // the outermost filters, where this thread applies them; null where its consumer does
             private final GraphContext context = new GraphContext();
             private final List<ParallelScan> scans = new ArrayList<>(2); // the parallel scans under the current graph's rows
             private final int to;
             private int next;
             private Iterator<BindingNodeId> current;
+            private long effort;                    // rows this loop has put to a later pattern or to a filter
 
-            GraphLoop(BindingNodeId base, int from, int to, long scanThreshold, List<Abortable> killList, ExecutionContext execCxt) {
+            GraphLoop(BindingNodeId base, long[] ids, int from, int to, long scanThreshold, List<Abortable> killList, ExecutionContext execCxt,
+                    Plan plan, List<ExprList> outer) {
                 this.base = base;
+                this.ids = ids;
                 this.next = from;
                 this.to = to;
                 this.scanThreshold = scanThreshold;
                 this.killList = killList;
                 this.execCxt = execCxt;
+                this.plan = plan;
+                this.outer = outer;
             }
 
             /** How far the loop has come: the index of the next graph it would open. */
             int position() {
                 return next;
+            }
+
+            /**
+             * What the rows read so far have cost beyond being read: one for
+             * every row handed to a later pattern, to an optional or to a
+             * filter. A join that finds little and a filter that passes
+             * little have done work that their rows do not show.
+             */
+            long effort() {
+                return effort;
+            }
+
+            /**
+             * Counts a row put to a later pattern or to a filter, and now and
+             * then asks whether the query has been cancelled: a block can
+             * read for a long time without giving its consumer a row to
+             * notice that at.
+             */
+            private void spent() {
+                if ((++effort & 0x3FF) == 0) {
+                    AtomicBoolean cancel = execCxt.getCancelSignal();
+                    if (cancel != null && cancel.get()) {
+                        throw new QueryCancelledException();
+                    }
+                }
             }
 
             /** True while the graph being read has a row left; closes it when it has none. */
@@ -626,11 +805,36 @@ public final class GraphVarBG {
                 if (next >= to) {
                     return false;
                 }
-                long gid = graphs[next++];
-                BindingNodeId child = new BindingNodeId(base);
-                child.bind(graphVar, NodeId.pack(NodeType.GRAPH, gid)); // the input binding does not hold it: nextStage looked
-                current = rows(plan, child, gid, scanThreshold > 0);
+                current = of(ids[next++], scanThreshold > 0, null);
                 return true;
+            }
+
+            /** Every row of the block in graph {@code ids[index]}. */
+            Iterator<BindingNodeId> graph(int index) {
+                return of(ids[index], false, null);
+            }
+
+            /** The block's rows in graph {@code ids[index]} that come of one part of its first pattern's rows ({@link Prepared#split}). */
+            Iterator<BindingNodeId> part(int index, Supplier<Iterator<BindingNodeId>> first) {
+                return of(ids[index], false, first);
+            }
+
+            private Iterator<BindingNodeId> of(long gid, boolean scan, Supplier<Iterator<BindingNodeId>> first) {
+                BindingNodeId child = base;
+                if (graphVar != null) {
+                    child = new BindingNodeId(base);
+                    child.bind(graphVar, NodeId.pack(NodeType.GRAPH, gid)); // the input binding does not hold it: the caller looked
+                }
+                Iterator<BindingNodeId> out = rows(plan, child, gid, scan, first);
+                if (outer != null) {
+                    for (ExprList exprs : outer) {
+                        out = Iter.filter(out, row -> {
+                            spent();
+                            return context.accepts(exprs, row, gid, execCxt);
+                        });
+                    }
+                }
+                return out;
             }
 
             void closeCurrent() {
@@ -671,10 +875,12 @@ public final class GraphVarBG {
             /**
              * The rows of {@code node} that extend {@code input}, in graph {@code gid}.
              *
-             * @param scan whether {@code input} is the walk's own binding for the graph, so that a first pattern that
-             *             is a scan of a large graph may be planned in parallel
+             * @param scan  whether {@code input} is the walk's own binding for the graph, so that a first pattern that
+             *              is a scan of a large graph may be planned in parallel
+             * @param first the rows of the block's first pattern to start from, in place of reading it: one part of
+             *              them, for a caller that reads the parts at once; null to read the pattern
              */
-            private Iterator<BindingNodeId> rows(Plan node, BindingNodeId input, long gid, boolean scan) {
+            private Iterator<BindingNodeId> rows(Plan node, BindingNodeId input, long gid, boolean scan, Supplier<Iterator<BindingNodeId>> first) {
                 switch (node) {
                     case Bgp bgp -> {
                         Triple[] triples = bgp.triples();
@@ -682,8 +888,8 @@ public final class GraphVarBG {
                             return Iter.singletonIterator(input);
                         }
                         ExprList hints = bgp.hints();
-                        Iterator<BindingNodeId> out = null;
-                        if (scan && triples[0].getSubject().isVariable() && triples[0].getObject().isVariable()) {
+                        Iterator<BindingNodeId> out = (first == null) ? null : first.get();
+                        if (out == null && scan && triples[0].getSubject().isVariable() && triples[0].getObject().isVariable()) {
                             ParallelScan parallel = ScanChunks.tryParallel(reader, dict, gid, graphVar, input, triples[0], hints, scanThreshold, execCxt);
                             if (parallel != null) {
                                 killList.add(parallel);
@@ -696,37 +902,48 @@ public final class GraphVarBG {
                         }
                         for (int k = 1; k < triples.length; k++) {
                             Triple t = triples[k];
-                            out = Iter.flatMap(out, row -> reader.read(gid, row, t, hints, nodeTable));
+                            out = Iter.flatMap(out, row -> {
+                                spent();
+                                return reader.read(gid, row, t, hints, nodeTable);
+                            });
                         }
                         return out;
                     }
                     case Filtered filtered -> {
                         ExprList exprs = filtered.exprs();
-                        return Iter.filter(rows(filtered.sub(), input, gid, scan), row -> context.accepts(exprs, row, gid, execCxt));
+                        return Iter.filter(rows(filtered.sub(), input, gid, scan, first), row -> {
+                            spent();
+                            return context.accepts(exprs, row, gid, execCxt);
+                        });
                     }
                     case Steps steps -> {
-                        Iterator<BindingNodeId> out = rows(steps.steps()[0], input, gid, scan);
+                        Iterator<BindingNodeId> out = rows(steps.steps()[0], input, gid, scan, first);
                         for (int k = 1; k < steps.steps().length; k++) {
                             Plan step = steps.steps()[k];
-                            out = Iter.flatMap(out, row -> rows(step, row, gid, false));
+                            out = Iter.flatMap(out, row -> {
+                                spent();
+                                return rows(step, row, gid, false, null);
+                            });
                         }
                         return out;
                     }
                     case Optional optional -> {
                         Plan right = optional.right();
-                        return Iter.flatMap(rows(optional.left(), input, gid, scan), row -> {
-                            Iterator<BindingNodeId> extended = rows(right, row, gid, false);
+                        return Iter.flatMap(rows(optional.left(), input, gid, scan, first), row -> {
+                            spent();
+                            Iterator<BindingNodeId> extended = rows(right, row, gid, false, null);
                             return extended.hasNext() ? extended : Iter.singletonIterator(row);
                         });
                     }
                     case Either either -> {
-                        // A side is opened when the one before it is done, not before.
-                        return Iter.flatMap(List.of(either.sides()).iterator(), side -> rows(side, input, gid, scan));
+                        // A side is opened when the one before it is done, not before. (No part of a first pattern
+                        // comes here: a plan that begins with sides has none.)
+                        return Iter.flatMap(List.of(either.sides()).iterator(), side -> rows(side, input, gid, scan, null));
                     }
                     case Assigned assigned -> {
                         Var[] vars = assigned.vars();
                         long[] ids = assigned.ids();
-                        return Iter.removeNulls(Iter.map(rows(assigned.sub(), input, gid, scan), row -> {
+                        return Iter.removeNulls(Iter.map(rows(assigned.sub(), input, gid, scan, first), row -> {
                             BindingNodeId extended = new BindingNodeId(row);
                             for (int i = 0; i < vars.length; i++) {
                                 if (!extended.putCompatible(vars[i], ids[i], nodeTable)) {
@@ -738,6 +955,39 @@ public final class GraphVarBG {
                     }
                 }
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ the walk
+
+    /** One input binding at a time: Jena's operator where it holds the graph variable, the walk over the graphs where it does not. */
+    private static final class Stage extends QueryIterRepeatApply {
+        private final UnaryOperator<QueryIterator> jena;
+        private final Prepared p;
+        private final boolean workers;      // whether the plan is for workers: no filter inside it, and rows that do work
+
+        Stage(QueryIterator input, ExecutionContext execCxt, UnaryOperator<QueryIterator> jena, Prepared prepared) {
+            super(input, execCxt);
+            this.jena = jena;
+            this.p = prepared;
+            this.workers = !hasFilter(prepared.plan) && rowsDoWork(prepared.plan);
+        }
+
+        @Override
+        protected QueryIterator nextStage(Binding binding) {
+            ExecutionContext execCxt = getExecContext();
+            if (binding.contains(p.graphVar)) {
+                return jena.apply(QueryIterSingleton.create(binding, execCxt));
+            }
+            BindingNodeId base = SolverLibBeak.convert(binding, p.root);
+            // Parallelism is for the root binding only, as PatternMatchBG.solveFirst has it: a binding that carries
+            // variables is an outer row, and its block runs once a row. Nor for a store read through a channel.
+            long threshold = (PatternMatchBG.isRootLike(base) && !p.reader.isChannelBacked()) ? ScanChunks.threshold() : 0;
+            // Scans are added while the walk runs, and a cancel reads the list from another thread.
+            List<Abortable> killList = new CopyOnWriteArrayList<>();
+            Iterator<BindingNodeId> rows = new Walk(base, threshold, killList, execCxt);
+            rows = makeAbortable(rows, killList, execCxt.getCancelSignal());
+            return new QueryIterAbortable(SolverLibBeak.convertToNodes(rows, p.root), killList, null, execCxt);
         }
 
         /**
@@ -751,8 +1001,8 @@ public final class GraphVarBG {
             private final long threshold;
             private final List<Abortable> killList;
             private final ExecutionContext execCxt;
-            private final GraphLoop loop;
-            private final GraphContext context = new GraphContext();
+            private final Prepared.GraphLoop loop;
+            private final Prepared.GraphContext context = p.new GraphContext();
             private ParallelScan parallel;  // the graphs left, once they are the workers'
             private long produced;
             private boolean closed;
@@ -763,7 +1013,7 @@ public final class GraphVarBG {
                 this.threshold = threshold;
                 this.killList = killList;
                 this.execCxt = execCxt;
-                this.loop = new GraphLoop(base, 0, graphs.length, threshold, killList, execCxt);
+                this.loop = p.new GraphLoop(base, p.graphs, 0, p.graphs.length, threshold, killList, execCxt, p.plan, null);
             }
 
             /** The next row of the plan, before the outermost filters; null at the end. */
@@ -781,7 +1031,7 @@ public final class GraphVarBG {
                         return null;
                     }
                     int at = loop.position();
-                    if (workers && threshold > 0 && produced >= threshold && graphs.length - at >= 2) {
+                    if (workers && threshold > 0 && produced >= threshold && p.graphs.length - at >= 2) {
                         loop.close();
                         parallel = shareOut(at);
                         killList.add(parallel);
@@ -795,15 +1045,15 @@ public final class GraphVarBG {
 
             /** The graphs from {@code from} on, in as many contiguous shares as there are workers to take them. */
             private ParallelScan shareOut(int from) {
-                int left = graphs.length - from;
+                int left = p.graphs.length - from;
                 int shares = (int) Math.min(4L * Runtime.getRuntime().availableProcessors(), left);
                 int each = (left + shares - 1) / shares;
                 List<Supplier<Iterator<BindingNodeId>>> chunks = new ArrayList<>(shares);
-                for (int lo = from; lo < graphs.length; lo += each) {
+                for (int lo = from; lo < p.graphs.length; lo += each) {
                     int start = lo;
-                    int end = Math.min(graphs.length, lo + each);
+                    int end = Math.min(p.graphs.length, lo + each);
                     // A worker plans no scan of its own, and reads the list it is given through no filter: nothing of it is shared.
-                    chunks.add(() -> new GraphLoop(base, start, end, 0, killList, execCxt));
+                    chunks.add(() -> p.new GraphLoop(base, p.graphs, start, end, 0, killList, execCxt, p.plan, null));
                 }
                 PARALLEL.incrementAndGet();
                 return new ParallelScan(chunks, execCxt.getCancelSignal());
@@ -815,15 +1065,15 @@ public final class GraphVarBG {
                     if (row == null) {
                         return;
                     }
-                    if (filters.isEmpty() || passes(row)) {
+                    if (p.filters.isEmpty() || passes(row)) {
                         pending = row;
                     }
                 }
             }
 
             private boolean passes(BindingNodeId row) {
-                long gid = NodeId.id(row.get(graphVar));
-                for (ExprList exprs : filters) {
+                long gid = NodeId.id(row.get(p.graphVar));
+                for (ExprList exprs : p.filters) {
                     if (!context.accepts(exprs, row, gid, execCxt)) {
                         return false;
                     }

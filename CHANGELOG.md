@@ -6,6 +6,40 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **`GROUP BY` and the aggregates are computed on ids, by the threads that
+  read the rows.** Jena grouped every row on the one thread that asked, as
+  terms: however many workers read a pattern's rows, they handed them to
+  that thread one by one. `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` and
+  `COUNT(DISTINCT ?v)`, with plain variables as keys, over patterns the
+  engine walks (also under `FILTER`, `OPTIONAL` and `UNION`) in one graph,
+  under `GRAPH <iri>`, under `GRAPH ?g` or in a union of those, are now
+  computed by `GroupOnIds`: a group is found by the row's ids, counts are
+  taken from the ids, and sums and extremes are kept by Jena's own
+  accumulators in each worker and combined when the workers are done.
+  Workers evaluate the block's filters themselves, read values by id
+  instead of through Jena's JVM-wide cache of values (where they would wait
+  for each other), and a predicate's scan is divided among them by its rows
+  where its objects are too few to divide by. On a store of 4.0M quads in
+  5,000 graphs a scan of every quad is counted in 20 ms where it took
+  411 ms, 800,000 values are summed in 14 ms (113 ms), counted distinct in
+  6 ms (110 ms) and grouped by tag in 5 ms (118 ms), and a join of 200,000
+  rows is counted in 15 ms (91 ms). On one graph of 2.0M quads a filtered
+  count takes 14 ms (349 ms) and the rows of each type are counted in
+  3.5 ms (68 ms). A query that reads little stays on one thread
+  (`beakgraph.group.handoff`); lookups, dumps and the counts the index
+  holds take what they took. The answers are Jena's - the tests hold them
+  to its group over the same rows and to plain ARQ, on 375 queries - with
+  one thing to know: workers add a floating-point `SUM` or `AVG` in another
+  order than one thread does, so its last digits can differ. Still Jena's
+  group, on one thread: a key that is an expression, `SAMPLE`,
+  `GROUP_CONCAT`, `DISTINCT` inside an aggregate other than
+  `COUNT(DISTINCT ?v)`, the union graph and `FROM` lists.
+  `beakgraph.group.fastpath=false` switches it off.
+* **A cancelled query is noticed while a block reads.** A walk over the
+  named graphs asked for the cancel signal when it gave its consumer a row;
+  a join or a filter that read for long without one - millions of rows
+  turned away - ran to the end of its graph first. It now asks every
+  thousand rows it puts to a later pattern or a filter.
 * **The term of an id is found through pages of consecutive ids, not a
   Caffeine cache.** Every value a query reads is the term of an id, asked of
   the node table. That direction of the table was a Caffeine cache keyed by a

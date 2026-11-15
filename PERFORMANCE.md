@@ -445,7 +445,7 @@ What that says:
 Still open here:
 
 - A walk of single patterns is limited by the thread that consumes its rows: aggregating on ids, in the
-  workers, is item 4.
+  workers, is item 4. (Done since: see "Groups and aggregates on ids, in the workers".)
 - An optional or join that ARQ keeps as a left join or a join, `MINUS` and `BIND` inside a graph block.
 
 ### The terms by id (2026-11-15, branch `falcon3`, not committed when written)
@@ -537,3 +537,111 @@ What that says:
   403,932,568 bytes.
 - Not measured: many clients at once at the endpoint (the table has lookups from 16 threads; the tests hold
   the cache to its answers and its bound on every core), the native binary at the endpoint, and real data.
+
+### Groups and aggregates on ids, in the workers (2026-11-15, branch `falcon3`, not committed when written)
+
+The part of item 4 that the last sections kept pointing at: an aggregate's rows were read by workers and then
+handed, one by one, to the single thread that grouped them. `GROUP BY` and the aggregates are now computed
+where the rows are read (`GroupOnIds`). The store's format is untouched.
+
+- **A row stays its ids.** The group is found by the ids of the key variables in a table of longs. `COUNT(*)`,
+  `COUNT(?v)` and `COUNT(DISTINCT ?v)` are a row, a variable that has an id, a set of ids: no term is read.
+- **`SUM`, `AVG`, `MIN`, `MAX` are Jena's own accumulators**, given each row, so a value is added, compared and
+  found in error by the code that does so in Jena's group. Each worker has its own; their results are combined
+  by the operation that made them (Jena's addition, its ordering, the sum over the count).
+- **Workers keep what they read.** The named graphs are divided among them as for the walk, and a graph whose
+  first pattern is a large scan is divided by position. A worker's groups are put together with the others'
+  when it is done, in the order of the work; one with more than `beakgraph.group.flush` groups hands them on
+  as it goes.
+- **A predicate's scan is divided by its rows where its objects are too few** (`ScanChunks`, for this caller
+  only). A parallel scan was divided by object positions, and needed 65,536 of them: `?s a ?type`, four types
+  and 400,000 subjects, was one thread's.
+- **Filters are evaluated by the workers**, each with copies of the expressions, since an expression may keep
+  state. (The walk that hands its rows on still evaluates filters on the consuming thread.)
+- **Values are read by id, past Jena's cache** (`RowValue`). Jena makes the value of a term through one cache
+  of 10,000 entries for the whole JVM. Over many different terms it is written and evicted for every row, and
+  threads wait for each other there: it was 65% of the processor time of a filtered count on every core. A
+  worker's copy of an expression finds a value it made before by the row's id, and makes a new one the way
+  Jena's makers do for an IRI, a string, an integer, a decimal, a double or a float; any other kind is Jena's
+  to make, through its cache.
+- **When workers start is counted, not timed**: after reading has cost `beakgraph.group.handoff` (4,096: a
+  row grouped, a row put to a later pattern or a filter, four for a graph visited), and as many as the graphs
+  left would each have that much to do. The walk waits for 65,536 rows produced, which a filter that passes
+  little or a join that finds little never reaches.
+
+What it takes: plain variables as keys, the aggregates above, over patterns the walk runs (also under
+`FILTER`, `OPTIONAL`, `UNION`) in one graph, under `GRAPH <iri>`, under `GRAPH ?g`, or a union of those. A
+key that is an expression, `SAMPLE`, `GROUP_CONCAT`, `DISTINCT` inside an aggregate other than
+`COUNT(DISTINCT ?v)`, the union graph and `FROM` lists are Jena's group as before. The counts the index
+holds still come from the index.
+
+Measured at the endpoint (JVM, one client on a connection kept alive, each build on two servers in turn, 15
+requests after 15), in milliseconds a request, `12da8d1` against the working tree.
+
+The store of 4.0M quads in 5,000 graphs, all under `GRAPH ?g`:
+
+| Query | Before | After |
+|---|---|---|
+| Every quad scanned and counted (4.0M) | 411 | 20.5 |
+| The rows of a predicate counted (800,000) | 96 | 6.3 |
+| A number of every subject summed (800,000) | 113 | 14.0 |
+| Sum, average, least and greatest of it | 227 | 23.1 |
+| Its distinct values counted (1,000) | 110 | 5.8 |
+| Distinct subjects counted (800,000) | 470 | 27.0 |
+| Rows by tag (10 groups) | 118 | 5.3 |
+| Count, sum and greatest by tag, over a join (10 groups) | 345 | 43.2 |
+| Rows by value (1,000 groups) | 131 | 16.7 |
+| Rows by graph and type (20,000 groups) | 303 | 81 |
+| Rows by subject (800,000 groups) | 2,627 | 1,083 |
+| A filter that passes 800 of 800,000 | 117 | 9.7 |
+| A join of three patterns counted (200,000) | 91 | 15.4 |
+| An optional counted (200,000) | 57 | 9.0 |
+| A lookup counted (one graph of the 5,000 has it) | 2.4 | 2.2 |
+| Lookups, dumps and the index's counts | the same | the same |
+
+A store of one graph of 2.0M quads (400,000 subjects), under `GRAPH <iri>`:
+
+| Query | Before | After |
+|---|---|---|
+| Every quad counted through a filter (2.0M) | 349 | 13.9 |
+| Quads by predicate through a filter (5 groups) | 491 | 15.2 |
+| Names counted and the greatest found (400,000 of their own) | 235 | 9.4 and 23.4 |
+| A join counted and summed (400,000) | 338 | 23.0 |
+| Numbers counted and summed (400,000 rows of 1,000 values) | 85 | 6.5 |
+| Rows by type (400,000 rows of 4 values) | 68 | 3.5 |
+| Rows by tag and type, over a join (20 groups) | 417 | 21.2 |
+
+What that says:
+
+- **An aggregate now costs what reading its rows costs on every core**: 5 to 30 times less on this machine
+  (16 cores) for the queries with few groups.
+- **Many groups gain least.** 20,000 groups are 20,000 rows to write (81 ms, most of it the result); 800,000
+  groups are 800,000 entries put together from the workers' tables on one thread.
+- **A query that reads little is left alone.** The counted lookup is as it was. Started for every core as
+  soon as it qualified, it took 3.8 ms instead of 2.6: hence workers by the work left.
+- **The steps, as they were measured.** Grouping in the workers alone, waiting for 65,536 rows: the scan 23 ms,
+  but the join 74 (from 90), the optional 36, the filtered count 15. Counting the work instead: 18, 9 and 7.
+  On one graph: the filtered count took 106 ms until values were read by id (13.9), and the rows of a type
+  13.6 ms on one thread until the scan was divided by its rows (3.5).
+- **Answers are the same**: every query here gave the same rows from both builds, and the tests hold the
+  groups to Jena's group over the same rows and to plain ARQ over the same data in memory, on 42 shapes it
+  takes, 16 it leaves, 17 more read by workers and 300 drawn at random.
+- **One difference to know**: a floating-point sum depends on the order of its additions, and workers add in
+  another order than one thread. A `SUM` or `AVG` of `xsd:double` or `xsd:float` values can differ in its last
+  digits from the one thread's answer (as it already could after a parallel scan). Integer and decimal sums
+  are exact. The same query gives the same answer each time, but for a floating-point sum over more groups
+  than a worker keeps to itself.
+- **The native binary answers as the JVM does**: built from this tree, it gave the JVM's answer to each of
+  the sixteen queries of the first table (the scan in 21 ms, the four aggregates of a number at once in
+  133 ms). It was not measured against a native binary of the build before.
+- `-verify -deep` and `-export` take what they took (3.9 s and 2.7 s).
+- Not measured: many clients at once, and real data.
+
+Still open here:
+
+- The walk that hands its rows on (`SELECT *`, `DISTINCT`, a group Jena makes) still evaluates filters on one
+  thread and reads values through Jena's cache.
+- Dates, booleans and language-tagged strings still go through that cache in the workers.
+- A group with very many keys is put together on one thread.
+- `MINUS`, `BIND` and the joins ARQ keeps as joins are not blocks the walk runs, so neither are groups over
+  them.
