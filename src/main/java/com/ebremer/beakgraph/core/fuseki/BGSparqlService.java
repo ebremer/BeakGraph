@@ -133,10 +133,11 @@ public final class BGSparqlService {
      * into a truncated 200 instead of a 400/503. Below the threshold nothing
      * is on the wire yet, so {@code sendError} can still answer honestly;
      * beyond it the result is genuinely streaming and flushes pass through
-     * (the container commits on its own once its buffer fills in any case).
+     * (the container commits on its own once its buffer fills in any case:
+     * at 64 KiB by default, {@code SPARQLEndPoint.DEFAULT_OUTPUT_BUFFER},
+     * which is never set under the threshold).
      */
     private static final class ResponseOutput extends OutputStream {
-        static final long COMMIT_THRESHOLD = 16 * 1024;
 
         private final OutputStream out;
         private long written;
@@ -165,6 +166,14 @@ public final class BGSparqlService {
             try { out.close(); } catch (IOException e) { responseFailed = true; throw e; }
         }
     }
+
+    /**
+     * Bytes of body below which a response is kept uncommitted, so that an
+     * error can still be answered with a status code (see
+     * {@link ResponseOutput}). The container's output buffer must hold at
+     * least this much, or it would commit sooner by itself.
+     */
+    static final int COMMIT_THRESHOLD = 16 * 1024;
 
     private BGSparqlService() {
     }

@@ -6,6 +6,20 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **The endpoint gathers a response in a 64 KiB buffer**
+  (`beakgraph.http.output.buffer`), where Fuseki's setting gave every response
+  a 5 MiB one. The server's buffer pool keeps no buffer that large, so each
+  response - the 133 bytes of an ASK too - had 5 MiB allocated, cleared and
+  freed for it: about 0.7 ms of every request, and 5 MiB held while it ran. On
+  a connection kept alive an `ASK { }` now takes 0.26 ms where it took 0.93 ms,
+  a lookup in one graph 0.35 ms (1.05 ms), a two-hop join 0.53 ms (1.21 ms)
+  and a dump of 801 rows 2.9 ms (3.6 ms); the native binary gains the same
+  0.7 ms a request. Serving a store's file or its byte ranges in directory
+  mode costs what it did. What changes besides: a response is on the wire once
+  64 KiB of it are written, where it was 5 MiB, so a failure that surfaces
+  later than that - a timeout deep into a large result - ends in an aborted
+  transfer where it was still answered with a status code. One within the
+  first 64 KiB is answered with its status as before.
 * **The native binary reads a mapped store through a ByteBuffer view** of its
   memory segment, as it did before the move to Falcon: `beakgraph.ffm.threshold`
   defaults to `2147483647` in the GraalVM native binary and stays `0` on a JVM.

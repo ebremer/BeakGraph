@@ -21,6 +21,8 @@ import org.apache.jena.sparql.core.DatasetGraph;
 import org.apache.jena.sys.JenaSystem;
 import org.eclipse.jetty.ee11.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee11.servlet.ServletHolder;
+import org.eclipse.jetty.server.Connector;
+import org.eclipse.jetty.server.HttpConnectionFactory;
 import org.eclipse.jetty.server.Server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,7 +30,9 @@ import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 import java.io.*;
 import java.nio.file.*;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Enumeration;
 import java.util.zip.GZIPInputStream;
@@ -133,6 +137,7 @@ public class SPARQLEndPoint {
         // own loopback while the server deliberately listens on all interfaces.
         String publicBase = publicBase(params.base);
         LWSStorageServlet.honourForwardedHeaders(jettyServer);
+        sizeOutputBuffers(jettyServer);
 
         ServletHolder sparqlPageHolder = new ServletHolder("sparql-page", new SparqlWebPageServlet());
         context.addServlet(sparqlPageHolder, "/sparql");
@@ -243,6 +248,68 @@ public class SPARQLEndPoint {
             sep = new SPARQLEndPoint(params);
         }
         return sep;
+    }
+
+    /**
+     * Bytes of the buffer Jetty gathers a response in before writing it out,
+     * where {@code beakgraph.http.output.buffer} sets none. Fuseki's own
+     * setting is 5 MiB, and Jetty's buffer pool keeps no buffer past 64 KiB:
+     * with it every response - the 133 bytes of an ASK too - had a 5 MiB
+     * direct buffer allocated, zero-filled and freed for it, which was 0.67 ms
+     * of the 0.94 ms such a request took and 92% of the server's CPU in it
+     * (PERFORMANCE.md), and held 5 MiB for as long as each request ran.
+     * 64 KiB is the largest buffer the pool keeps, so one response's buffer is
+     * the next one's.
+     *
+     * <p>What it changes besides: the container sends what it has once this
+     * much of a body is written, where it waited for 5 MiB or the end. A
+     * failure that surfaces later than that - a timeout or a failed SERVICE
+     * call deep into a large result - ends in an aborted transfer, not a
+     * status code; one within the first 64 KiB is answered with its status as
+     * before ({@code BGSparqlService.ResponseOutput}).
+     */
+    static final int DEFAULT_OUTPUT_BUFFER = 64 * 1024;
+
+    /**
+     * The output buffer size for a configured value: never under
+     * {@link BGSparqlService#COMMIT_THRESHOLD}, the bytes a response must be
+     * able to hold back while an error can still be answered with a status.
+     */
+    static int outputBufferSize(long configured) {
+        return (int) Math.max(BGSparqlService.COMMIT_THRESHOLD, Math.min(configured, Integer.MAX_VALUE));
+    }
+
+    /**
+     * Gives every HTTP connector of {@code server} the output buffer size of
+     * {@code beakgraph.http.output.buffer} (bytes; {@link #DEFAULT_OUTPUT_BUFFER}
+     * where it is not set). Call before the server starts.
+     *
+     * @return the size set
+     */
+    static int sizeOutputBuffers(Server server) {
+        int size = outputBufferSize(Long.getLong("beakgraph.http.output.buffer", DEFAULT_OUTPUT_BUFFER));
+        for (Connector c : server.getConnectors()) {
+            HttpConnectionFactory http = c.getConnectionFactory(HttpConnectionFactory.class);
+            if (http != null) {
+                http.getHttpConfiguration().setOutputBufferSize(size);
+            }
+        }
+        return size;
+    }
+
+    /** The output buffer size of each HTTP connector of the running endpoint; empty when none runs (tests). */
+    static List<Integer> outputBufferSizes() {
+        List<Integer> sizes = new ArrayList<>();
+        FusekiServer running = server;
+        if (running != null) {
+            for (Connector c : running.getJettyServer().getConnectors()) {
+                HttpConnectionFactory http = c.getConnectionFactory(HttpConnectionFactory.class);
+                if (http != null) {
+                    sizes.add(http.getHttpConfiguration().getOutputBufferSize());
+                }
+            }
+        }
+        return sizes;
     }
 
     public DatasetGraph getDataset() {

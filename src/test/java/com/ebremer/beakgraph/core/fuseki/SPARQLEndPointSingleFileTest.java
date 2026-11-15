@@ -113,6 +113,30 @@ class SPARQLEndPointSingleFileTest {
         assertEquals(200, post.statusCode(), post.body());
     }
 
+    /**
+     * The response buffer is one Jetty's pool keeps (64 KiB), not Fuseki's
+     * 5 MiB, which was allocated and zero-filled anew for every response; and
+     * a result several times the buffer still arrives whole.
+     */
+    @Test
+    void responsesAreGatheredInABufferThePoolKeeps() throws Exception {
+        if (System.getProperty("beakgraph.http.output.buffer") == null) {
+            assertEquals(java.util.List.of(SPARQLEndPoint.DEFAULT_OUTPUT_BUFFER), SPARQLEndPoint.outputBufferSizes(),
+                    "every HTTP connector of the endpoint");
+        }
+        // 4 triples, to the fourth power: 256 rows of twelve terms each, several buffers of XML.
+        String product = "SELECT * WHERE { ?a ?b ?c . ?d ?e ?f . ?g ?h ?i . ?j ?k ?l }";
+        HttpResponse<String> r = get("rdf?query=" + enc(product), "Accept", "application/sparql-results+xml");
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.body().length() > 2 * SPARQLEndPoint.DEFAULT_OUTPUT_BUFFER, "a result of " + r.body().length() + " characters");
+        assertEquals(256, r.body().split("<result>", -1).length - 1, "every row of the result");
+        assertTrue(r.body().stripTrailing().endsWith("</sparql>"), "the result is whole");
+        // A small one fits the buffer and is sent with its length, as a response held back whole is.
+        HttpResponse<String> small = get("rdf?query=" + enc("ASK { }"), "Accept", "application/sparql-results+json");
+        assertEquals(200, small.statusCode(), small.body());
+        assertTrue(small.headers().firstValue("Content-Length").isPresent(), "a small response carries its length: " + small.headers().map());
+    }
+
     @Test
     void oversizedBodyIsRefused() throws Exception {
         byte[] big = new byte[BGSparqlService.MAX_QUERY_BODY_BYTES + 1];

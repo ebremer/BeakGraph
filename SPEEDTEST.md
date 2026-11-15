@@ -272,3 +272,9 @@ tree:
   and joins as equal on the two branches.
 - **The sparse-file cost varies from file to file**: the first query after an open took 44.6 ms on the
   store built for the re-measurement, 18.9 ms on the one above.
+- **The endpoint tables above overstate what a request costs.** Their client opened a new connection for
+  each request, which on this machine adds a median 0.8 ms and stalls of about 15 ms on a tenth to a half
+  of the requests; it is the likely reason for the dumps and joins that did not reproduce. On a connection
+  kept alive a dump of one graph takes 3.6 ms on the JVM, not 14. Counts, grouped counts and the lookups
+  across graphs are long enough to be little affected. See PERFORMANCE.md, "The endpoint's response
+  buffer", which also removes 0.7 ms from every request.

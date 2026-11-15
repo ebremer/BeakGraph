@@ -258,3 +258,51 @@ What that says:
   later check), and the collector was ruled out: the same number of collections, and the same times with
   a 1 GiB young generation. What made the earlier run faster was not found. Read the two as equal.
 - Not measured again: real data, Linux, macOS.
+
+### The endpoint's response buffer (2026-11-14, not committed when written)
+
+A profile of the endpoint (Flight Recorder, JVM, the 4.0M-quad store, one client on a connection kept
+alive) showed where a small query's time went: not in the query. Fuseki sets Jetty's output buffer to
+5 MiB, Jetty's buffer pool keeps no buffer past 64 KiB, and so every response had a 5 MiB direct buffer
+allocated, zero-filled and freed for it. That was 92% of the server's CPU in an `ASK { }`, 72% in a two-hop
+join, 25% in a dump of 801 rows; a fresh 5 MiB direct buffer measured 0.67 ms by itself.
+
+Done: the endpoint sets the buffer to 64 KiB, the largest the pool keeps
+(`SPARQLEndPoint.sizeOutputBuffers`, `beakgraph.http.output.buffer`). Per request, in milliseconds (median
+of 1,000 requests, two servers each):
+
+| Query | JVM before | JVM after | Native before | Native after |
+|---|---|---|---|---|
+| `ASK { }` | 0.93 | 0.26 | 0.93 | 0.23 |
+| Lookup of a subject in one graph | 1.05 | 0.35 | 1.13 | 0.36 |
+| Two-hop join in one graph | 1.21 | 0.53 | 1.33 | 0.67 |
+| Dump of one graph (801 rows, 239 KB of XML) | 3.62 | 2.88 | 5.90 | 5.15 |
+| Lookup of a subject, graph not given (5,000 graphs) | 7.5 | 6.4 | 16.0 | 14.5 |
+
+What that says, and what it costs:
+
+- **Every request is about 0.7 ms shorter**, which is most of a small one.
+- **Serving files is unchanged** (directory mode): the 62 MB store whole in 0.17 s before and after, a
+  64 KiB byte range in 3.1 ms before and after.
+- **A response is on the wire sooner**: once 64 KiB of it are written, where it was 5 MiB. A failure that
+  surfaces later than that ends in an aborted transfer, not a status code. One within the first 64 KiB is
+  answered with its status as before, and the buffer is never set under the 16 KiB the service holds back.
+- **How these were measured matters.** The endpoint tables of SPEEDTEST.md, and of "After the speed test"
+  above, were taken with a new connection for each request. On this machine that adds a median 0.8 ms and
+  stalls of about 15 ms on a tenth to a half of the requests: a dump took 14 to 22 ms there and takes
+  3.6 ms on a connection kept alive. That is the likely reason the native binary's dumps and joins did not
+  reproduce between runs. Whose side the stall is on was not found.
+
+Seen in the same profiles, and not changed:
+
+- **`GRAPH ?g { ... }` runs through Jena**, which builds an iterator pipeline for each graph: 88% of a
+  subject lookup without a graph, 58% of it building those pipelines; and 45% of the count and group-by
+  workload. The executor has no case for a variable graph.
+- **Writing the result as XML is 55% of a dump.** The endpoint answers JSON, CSV and XML: a client asking
+  for tab-separated values gets XML.
+- **The node cache (Caffeine) is 14% of a subject lookup without a graph, 5% of a dump and about half of
+  `-verify -deep`**, whose 9.9 s of wall time took 52.8 s of CPU.
+- **`BindingNodeId.get` is 12.7% of the scans**: every row asks again whether each variable is bound.
+- **A 64 KiB byte range of a file takes 3.1 ms** in directory mode, twelve times an `ASK`; the remote
+  battery's 241 range requests take 0.6 s in all.
+- **A `-method 3` build spends 38% of its CPU comparing terms** for the dictionary's order.
