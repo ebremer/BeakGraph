@@ -178,4 +178,201 @@ class AggregateCountFastPathTest {
     void modelSizeUsesIndexCount() {
         assertEquals(4, ds.getDefaultModel().size());
     }
+
+    // --- every named graph: GRAPH ?g -------------------------------------
+
+    @Test
+    void countOverEveryNamedGraph() {
+        // g1 holds 2 quads and g2 1; the default graph's 4 are not a named graph's.
+        check("SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 3, true);
+        check("SELECT (COUNT(?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 3, true);
+        check("SELECT (COUNT(?o) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 3, true);
+        check("SELECT (COUNT(DISTINCT *) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 3, true);
+    }
+
+    @Test
+    void distinctCountsOverEveryNamedGraph() {
+        check("SELECT (COUNT(DISTINCT ?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 2, true);
+        check("SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 3, true); // p2, shared, p3
+        // A subject may be in several graphs: counting it once needs the rows.
+        check("SELECT (COUNT(DISTINCT ?s) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 2, false);
+        check("SELECT (COUNT(DISTINCT ?o) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", 3, false);
+    }
+
+    @Test
+    void theGraphVariableInThePatternFallsBack() {
+        // The graph's name constrains the rows: no index count is the answer.
+        check("SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?g ?p ?o } }", 0, false);
+        check("SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?g } }", 0, false);
+    }
+
+    @Test
+    void aChosenSetOfNamedGraphsFallsBack() {
+        // FROM NAMED makes another dataset: its named graphs are not the store's.
+        check("SELECT (COUNT(*) AS ?n) FROM NAMED ex:g1 WHERE { GRAPH ?g { ?s ?p ?o } }", 2, false);
+    }
+
+    // --- groups ----------------------------------------------------------
+
+    /** The groups of a grouped count: the key variables' terms (in the order given) to the count. */
+    private static java.util.Map<String, Long> groups(String queryBody, String... keys) {
+        java.util.Map<String, Long> out = new java.util.TreeMap<>();
+        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(PREFIX + queryBody)).build()) {
+            ResultSet rs = qe.execSelect();
+            while (rs.hasNext()) {
+                org.apache.jena.query.QuerySolution row = rs.next();
+                StringBuilder key = new StringBuilder();
+                for (String k : keys) {
+                    key.append(row.get(k).asNode().toString().replace(NS, "ex:")).append(' ');
+                }
+                Long before = out.put(key.toString().trim(), row.getLiteral("n").getLong());
+                assertEquals(null, before, "one row a group: " + key);
+            }
+        }
+        return out;
+    }
+
+    private static void checkGroups(String queryBody, java.util.Map<String, Long> expected, boolean expectFastPath, String... keys) {
+        long before = AggregateCountFastPath.HITS.get();
+        assertEquals(new java.util.TreeMap<>(expected), groups(queryBody, keys), "groups of: " + queryBody);
+        assertEquals(expectFastPath ? 1 : 0, AggregateCountFastPath.HITS.get() - before, "fast-path activations for: " + queryBody);
+    }
+
+    @Test
+    void groupedByPredicateInOneGraph() {
+        checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p",
+                java.util.Map.of("ex:p0", 1L, "ex:p1", 1L, "ex:shared", 1L, "ex:refl", 1L), true, "p");
+        checkGroups("SELECT ?p (COUNT(?s) AS ?n) WHERE { GRAPH ex:g1 { ?s ?p ?o } } GROUP BY ?p",
+                java.util.Map.of("ex:p2", 1L, "ex:shared", 1L), true, "p");
+        // A graph that is none, and an entity that is no graph: no group at all.
+        checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH ex:nope { ?s ?p ?o } } GROUP BY ?p", java.util.Map.of(), true, "p");
+        checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH ex:s0 { ?s ?p ?o } } GROUP BY ?p", java.util.Map.of(), true, "p");
+    }
+
+    @Test
+    void groupedOverEveryNamedGraph() {
+        checkGroups("SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g",
+                java.util.Map.of("ex:g1", 2L, "ex:g2", 1L), true, "g");
+        checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?p",
+                java.util.Map.of("ex:p2", 1L, "ex:shared", 1L, "ex:p3", 1L), true, "p");
+        checkGroups("SELECT ?g ?p (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ?p",
+                java.util.Map.of("ex:g1 ex:p2", 1L, "ex:g1 ex:shared", 1L, "ex:g2 ex:p3", 1L), true, "g", "p");
+        checkGroups("SELECT ?p ?g (COUNT(DISTINCT *) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?p ?g",
+                java.util.Map.of("ex:g1 ex:p2", 1L, "ex:g1 ex:shared", 1L, "ex:g2 ex:p3", 1L), true, "g", "p");
+    }
+
+    @Test
+    void distinctCountsAGraph() {
+        checkGroups("SELECT ?g (COUNT(DISTINCT ?s) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g",
+                java.util.Map.of("ex:g1", 1L, "ex:g2", 1L), true, "g");
+        checkGroups("SELECT ?g (COUNT(DISTINCT ?p) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g",
+                java.util.Map.of("ex:g1", 2L, "ex:g2", 1L), true, "g");
+        checkGroups("SELECT ?g (COUNT(DISTINCT ?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g",
+                java.util.Map.of("ex:g1", 1L, "ex:g2", 1L), true, "g");
+        checkGroups("SELECT ?g (COUNT(DISTINCT ?o) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g",
+                java.util.Map.of("ex:g1", 2L, "ex:g2", 1L), false, "g");
+    }
+
+    @Test
+    void groupsWithoutAnIndexStructureFallBack() {
+        checkGroups("SELECT ?p (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p",
+                java.util.Map.of("ex:p0", 1L, "ex:p1", 1L, "ex:shared", 1L, "ex:refl", 1L), false, "p");
+        checkGroups("SELECT ?p (COUNT(DISTINCT ?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?p",
+                java.util.Map.of("ex:p2", 1L, "ex:shared", 1L, "ex:p3", 1L), false, "p");
+        checkGroups("SELECT ?o (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?o",
+                java.util.Map.of("ex:b", 1L, "ex:c", 1L, "\"x\"", 1L), false, "o");
+        checkGroups("SELECT ?g ?s (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ?s",
+                java.util.Map.of("ex:g1 ex:a", 2L, "ex:g2 ex:d", 1L), false, "g", "s");
+        checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o FILTER(isIRI(?o)) } GROUP BY ?p",
+                java.util.Map.of("ex:p0", 1L, "ex:shared", 1L, "ex:refl", 1L), false, "p");
+        checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH <" + Quad.unionGraph.getURI() + "> { ?s ?p ?o } } GROUP BY ?p",
+                java.util.Map.of("ex:p2", 1L, "ex:shared", 1L, "ex:p3", 1L), false, "p");
+        checkGroups("SELECT ?x (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY (STR(?p) AS ?x)",
+                java.util.Map.of("\"ex:p0\"", 1L, "\"ex:p1\"", 1L, "\"ex:shared\"", 1L, "\"ex:refl\"", 1L), // the helper shortens the namespace
+                false, "x");
+    }
+
+    @Test
+    void whatStandsAboveTheGroupStillApplies() {
+        // HAVING, ORDER BY and LIMIT work on the group's rows, whichever way they were made.
+        checkGroups("SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g HAVING (COUNT(*) > 1)",
+                java.util.Map.of("ex:g1", 2L), true, "g");
+        long before = AggregateCountFastPath.HITS.get();
+        try (QueryExecution qe = QueryExecution.dataset(ds).query(QueryFactory.create(
+                PREFIX + "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY DESC(?n) LIMIT 1")).build()) {
+            ResultSet rs = qe.execSelect();
+            assertEquals(NS + "g1", rs.next().getResource("g").getURI());
+            assertEquals(false, rs.hasNext());
+        }
+        assertEquals(1, AggregateCountFastPath.HITS.get() - before);
+    }
+
+    /**
+     * Stores of many graphs and predicates, of every shape the counts read
+     * past: the index counts must be the counts of the rows themselves, graph
+     * by graph and predicate by predicate, to the last graph and the last
+     * predicate of the store.
+     */
+    @Test
+    void indexCountsAreTheRowsCounts() throws Exception {
+        java.util.Random random = new java.util.Random(42);
+        for (int round = 0; round < 4; round++) {
+            int graphs = 1 + random.nextInt(40);
+            int predicates = 1 + random.nextInt(9);
+            java.util.Map<String, Long> byGraph = new java.util.TreeMap<>();
+            java.util.Map<String, Long> byPredicate = new java.util.TreeMap<>();
+            java.util.Map<String, Long> byBoth = new java.util.TreeMap<>();
+            java.util.Map<String, Long> ofDefault = new java.util.TreeMap<>();
+            java.util.Set<String> quads = new java.util.LinkedHashSet<>();
+            StringBuilder nq = new StringBuilder();
+            int rows = 20 + random.nextInt(600);
+            for (int i = 0; i < rows; i++) {
+                int g = random.nextInt(graphs + 1); // 0: the default graph
+                String s = "<" + NS + "s" + random.nextInt(60) + ">";
+                String p = "ex:q" + random.nextInt(predicates);
+                String o = random.nextBoolean() ? "<" + NS + "s" + random.nextInt(60) + ">" : "\"v" + random.nextInt(30) + "\"";
+                if (!quads.add(g + " " + s + " " + p + " " + o)) {
+                    continue; // a quad is stored once
+                }
+                String pIri = "<" + NS + p.substring(3) + ">";
+                nq.append(s).append(' ').append(pIri).append(' ').append(o);
+                if (g == 0) {
+                    ofDefault.merge(p, 1L, Long::sum);
+                } else {
+                    nq.append(" <").append(NS).append("n").append(g).append(">");
+                    byGraph.merge("ex:n" + g, 1L, Long::sum);
+                    byPredicate.merge(p, 1L, Long::sum);
+                    byBoth.merge("ex:n" + g + " " + p, 1L, Long::sum);
+                }
+                nq.append(" .\n");
+            }
+            File src = dir.resolve("random" + round + ".nq").toFile();
+            File h5 = dir.resolve("random" + round + ".nq.h5").toFile();
+            Files.write(src.toPath(), nq.toString().getBytes(StandardCharsets.UTF_8));
+            HDF5Writer.Builder().setSource(src).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+            Dataset saved = ds;
+            try (BeakGraph random1 = new BeakGraph(new HDF5Reader(h5))) {
+                ds = random1.getDataset();
+                long total = byGraph.values().stream().mapToLong(Long::longValue).sum();
+                check("SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", total, true);
+                check("SELECT (COUNT(DISTINCT ?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", byGraph.size(), true);
+                check("SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } }", byPredicate.size(), true);
+                checkGroups("SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g", byGraph, true, "g");
+                checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?p", byPredicate, true, "p");
+                checkGroups("SELECT ?g ?p (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ?p", byBoth, true, "g", "p");
+                checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p", ofDefault, true, "p");
+                for (String g : byGraph.keySet()) {
+                    java.util.Map<String, Long> ofGraph = new java.util.TreeMap<>();
+                    byBoth.forEach((k, v) -> {
+                        if (k.startsWith(g + " ")) {
+                            ofGraph.put(k.substring(g.length() + 1), v);
+                        }
+                    });
+                    checkGroups("SELECT ?p (COUNT(*) AS ?n) WHERE { GRAPH " + g + " { ?s ?p ?o } } GROUP BY ?p", ofGraph, true, "p");
+                }
+            } finally {
+                ds = saved;
+            }
+        }
+    }
 }

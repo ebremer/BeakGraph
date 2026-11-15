@@ -293,7 +293,7 @@ What that says, and what it costs:
   3.6 ms on a connection kept alive. That is the likely reason the native binary's dumps and joins did not
   reproduce between runs. Whose side the stall is on was not found.
 
-Seen in the same profiles, and not changed:
+Seen in the same profiles, and not changed (but for the first, done since: see the next section):
 
 - **`GRAPH ?g { ... }` runs through Jena**, which builds an iterator pipeline for each graph: 88% of a
   subject lookup without a graph, 58% of it building those pipelines; and 45% of the count and group-by
@@ -306,3 +306,69 @@ Seen in the same profiles, and not changed:
 - **A 64 KiB byte range of a file takes 3.1 ms** in directory mode, twelve times an `ASK`; the remote
   battery's 241 range requests take 0.6 s in all.
 - **A `-method 3` build spends 38% of its CPU comparing terms** for the dictionary's order.
+
+### Graph variables on ids, and counts from the index (2026-11-14, not committed when written)
+
+Two changes to the query engine, for the queries that go over every named graph. Neither touches the
+store's format.
+
+- **`GRAPH ?g { BGP }` is one walk over the named graphs on ids** (`GraphVarBG`, from the executor's new
+  case for a variable graph). Jena executed the pattern anew in every graph: the binding substituted into
+  the algebra, a graph view, an execution context, an iterator pipeline, and the graph's name assigned to
+  each row afterwards. The walk binds `?g` to a graph's id and reads the pattern with the id-level
+  iterators, one child binding and one iterator a graph.
+  - **What it takes:** a variable graph over a basic graph pattern, in the store's own dataset. A block
+    with a `FILTER`, `OPTIONAL` or `UNION` inside it, a `FROM NAMED` dataset, and a triple term with
+    variables run as before, and so does an input row that binds `?g` already: Jena's own rules for a
+    single graph apply to it.
+  - **A filter inside the block is why the shape is that narrow:** SPARQL joins the graph's name to the
+    pattern's solutions afterwards, so `GRAPH ?g { ... FILTER(?g = <x>) }` does not see `?g`. Binding it
+    first is the same thing for a pattern, and not for a filter.
+  - **A large graph on the way is still scanned in parallel**, under the conditions of before.
+- **Counts over every named graph, and counts by graph or by predicate, come from the index**
+  (`AggregateCountFastPath`, `IndexCounts`). The fast path answered a count in one graph with no group
+  keys. It now also answers `COUNT(*)` (and `COUNT(?x)`, `COUNT(DISTINCT *)`, `COUNT(DISTINCT ?g)`,
+  `COUNT(DISTINCT ?p)`) over `GRAPH ?g { ?s ?p ?o }`, and `GROUP BY ?p`, `GROUP BY ?g` and
+  `GROUP BY ?g ?p`. A predicate's quads in a graph are the distance between where its rows begin in GPOS
+  and where the next predicate's do: two `select1` calls a predicate, and no row read.
+- **The index reader's lookups by component letter are array loads** (`IndexReader`). They were maps
+  keyed by a boxed `Character`, asked nine times for every iterator built: a fifth of the walk's time once
+  Jena's part of it was gone.
+
+Measured at the endpoint (JVM, one client on a connection kept alive, a 4.0M-quad store of 5,000 graphs
+of 801 quads built for this; each build on two servers in turn), in milliseconds a request:
+
+| Query | Before | After |
+|---|---|---|
+| Subject lookup, graph not given | 7.0 | 2.2 |
+| Subject and predicate, graph not given | 6.0 | 1.5 |
+| Two-hop join from a subject, graph not given | 9.9 | 1.7 |
+| Object lookup (a literal), graph not given | 7.6 | 2.1 |
+| The rows of a type in every graph, counted (200,000) | 42 | 28 |
+| The rows of a predicate in every graph, counted (800,000) | 192 | 155 |
+| Count of every quad | 642 | 3.1 |
+| Named graphs counted (`COUNT(DISTINCT ?g)`) | 1,116 | 2.4 |
+| Quads grouped by predicate | 1,145 | 6.6 |
+| Quads grouped by graph (5,000 rows) | 680 | 18 |
+| Quads grouped by graph and predicate (30,000 rows) | 1,341 | 114 |
+| Quads of one graph grouped by predicate | 0.42 | 0.27 |
+| Subject lookup in one graph (not changed) | 0.32 | 0.30 |
+| Count of one graph (not changed) | 0.30 | 0.30 |
+| Dump of one graph, 801 rows (not changed) | 2.7 | 2.8 |
+
+What that says:
+
+- **A lookup without a graph is three to six times faster**, and what is left of it is the work itself: a
+  profile of the walk has the search of each graph's subjects and the select that finds them at 36%, the
+  bindings at about 10%. Making it much faster again takes an index that leads with the term (item 3).
+- **A scan across graphs gains less**, 20 to 35%: there the rows cost more than the graphs do.
+- **The counts no longer depend on the number of quads**, only on the number of graphs and predicates.
+- **Answers are the same**: every query of the table gave the same rows from both builds, and the tests
+  hold the walk to Jena's operator and to an in-memory dataset on 51 query shapes.
+
+Found on the way, and not changed:
+
+- **CSV results cost ten times what XML results do at the endpoint**, in both builds: a graph's 801 rows
+  take 31 ms as CSV, 2.7 ms as XML and 3.6 ms as JSON; 30,000 grouped rows 1.66 s, 0.11 s and 0.15 s.
+  Jena's CSV writer flushes once, at the end, so the cause is in how its writes reach the response; it was
+  not looked into further. The two grouped rows of the table above are XML timings for that reason.

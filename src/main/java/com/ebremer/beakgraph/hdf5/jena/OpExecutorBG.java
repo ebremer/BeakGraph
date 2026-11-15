@@ -22,15 +22,19 @@ import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
 
 /**
  * BeakGraph's {@link OpExecutor}. When the active graph is a {@link BeakGraph}
- * it intercepts three algebra shapes; everything else runs through Jena's
+ * it intercepts four algebra shapes; everything else runs through Jena's
  * default executor unchanged:
  * <ol>
+ * <li>{@code OpGraph} with a variable graph over a BGP: {@link GraphVarBG}
+ *     walks the dataset's named graphs on ids, where Jena executes the
+ *     pattern anew for each graph.</li>
  * <li>{@code OpDistinct} over the top-level root input: {@link DistinctTermFastPath}
  *     answers {@code SELECT DISTINCT ?p} / {@code ?s} / {@code ?g}-style queries
  *     from the per-graph index levels when the shape allows it.</li>
  * <li>{@code OpGroup} over the root input: {@link AggregateCountFastPath}
- *     answers whole-graph {@code COUNT} aggregates over {@code { ?s ?p ?o }}
- *     from index structure.</li>
+ *     answers {@code COUNT} aggregates over {@code { ?s ?p ?o }} - of one
+ *     graph or of every named graph, whole or grouped by graph or predicate
+ *     - from index structure.</li>
  * <li>{@code OpBGP}, bare or under an {@code OpFilter}: the statistics-based
  *     reorder ({@link BeakGraph#getReorderTransform()}) against the peeked
  *     first binding, then filter placement, with each placed filter's
@@ -103,10 +107,24 @@ public class OpExecutorBG extends OpExecutor {
     }
 
     @Override
+    protected QueryIterator execute(OpGraph opGraph, QueryIterator input) {
+        // GRAPH ?g { BGP }: one id-level walk over the named graphs, where Jena
+        // executes the pattern anew for each of them (GraphVarBG says which
+        // shapes; the rest, and a binding that holds ?g already, stay Jena's).
+        if (isForBeakGraph) {
+            QueryIterator walk = GraphVarBG.tryExecute(opGraph, input, execCxt, in -> super.execute(opGraph, in));
+            if (walk != null) {
+                return walk;
+            }
+        }
+        return super.execute(opGraph, input);
+    }
+
+    @Override
     protected QueryIterator execute(OpFilter opFilter, QueryIterator input) {
         if (!isForBeakGraph) {
             return super.execute(opFilter, input);
-        }        
+        }
         if (OpBGP.isBGP(opFilter.getSubOp())) {
             BeakGraph graph = (BeakGraph)execCxt.getActiveGraph();
             OpBGP opBGP = (OpBGP)opFilter.getSubOp();
@@ -154,7 +172,7 @@ public class OpExecutorBG extends OpExecutor {
         return plainExecute(op, input, execCxt) ;
     }
     
-    private static BasicPattern reorder(BasicPattern pattern, QueryIterPeek peek, ReorderTransformation transform) {
+    static BasicPattern reorder(BasicPattern pattern, QueryIterPeek peek, ReorderTransformation transform) {
         if (transform!=null) {     
             if (!peek.hasNext()) {
                 throw new ARQInternalErrorException("Peek iterator is already empty");

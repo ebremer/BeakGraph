@@ -47,6 +47,15 @@ public final class IndexCounts {
     public static long quads(HDF5Reader reader, Node graph, Index index) {
         long gi = resolveGraph(reader, graph);
         if (gi == UNSUPPORTED) return -1;
+        return quads(reader, gi, index);
+    }
+
+    /** As {@link #quads(HDF5Reader, Node)}, for the graph with dictionary id {@code gi} (a walk over the graph list). */
+    public static long quads(HDF5Reader reader, long gi) {
+        return quads(reader, gi, Index.GSPO);
+    }
+
+    private static long quads(HDF5Reader reader, long gi, Index index) {
         IndexReader ir = reader.getIndexReader(index);
         if (ir == null) return -1;
         String order = index.name();
@@ -72,9 +81,80 @@ public final class IndexCounts {
         return firstLevelCount(reader, graph, Index.GPOS, 'P');
     }
 
+    /** As {@link #distinctSubjects(HDF5Reader, Node)}, for the graph with dictionary id {@code gi}. */
+    public static long distinctSubjects(HDF5Reader reader, long gi) {
+        return firstLevelCount(reader, gi, Index.GSPO, 'S');
+    }
+
+    /** As {@link #distinctPredicates(HDF5Reader, Node)}, for the graph with dictionary id {@code gi}. */
+    public static long distinctPredicates(HDF5Reader reader, long gi) {
+        return firstLevelCount(reader, gi, Index.GPOS, 'P');
+    }
+
+    /** What {@link #quadsByPredicate} reports: a predicate's dictionary id and the quads of the graph that have it. */
+    @FunctionalInterface
+    public interface PredicateCount {
+        void accept(long predicateId, long quads);
+    }
+
+    /**
+     * The quads of {@code graph} predicate by predicate - what
+     * {@code SELECT ?p (COUNT(*) AS ?n) { ?s ?p ?o } GROUP BY ?p} asks for -
+     * from GPOS alone: a predicate's rows are the S-level entries under all of
+     * its objects, and both levels are contiguous, so a predicate's count is
+     * the distance between where its rows begin and where the next
+     * predicate's do. Two {@code select1} calls a predicate, no row read.
+     *
+     * @return false when not index-answerable (the union graph, a missing
+     *         index): nothing was reported, and the caller scans instead
+     */
+    public static boolean quadsByPredicate(HDF5Reader reader, Node graph, PredicateCount sink) {
+        long gi = resolveGraph(reader, graph);
+        if (gi == UNSUPPORTED) return false;
+        return quadsByPredicate(reader, gi, sink);
+    }
+
+    /** As {@link #quadsByPredicate(HDF5Reader, Node, PredicateCount)}, for the graph with dictionary id {@code gi}. */
+    public static boolean quadsByPredicate(HDF5Reader reader, long gi, PredicateCount sink) {
+        IndexReader gpos = reader.getIndexReader(Index.GPOS);
+        if (gpos == null) return false;
+        long[] predicates = RangeSelect.firstLevelRange(gpos, 'P', gi);
+        if (predicates == null) return true; // no such graph, or one without rows
+        BitPackedUnSignedLongBuffer sp = gpos.getIDBuffer('P');
+        long from = firstRow(gpos, predicates[0]);
+        for (long p = predicates[0]; p <= predicates[1]; p++) {
+            long to = firstRow(gpos, p + 1);
+            long pid = sp.get(p);
+            if (pid >= 1 && to > from) {
+                sink.accept(pid, to - from);
+            }
+            from = to;
+        }
+        return true;
+    }
+
+    /**
+     * The S-level position at which the rows of the predicate at P-level
+     * position {@code p} begin; for the position after the last predicate,
+     * the S level's length.
+     */
+    private static long firstRow(IndexReader gpos, long p) {
+        return firstChild(gpos, 'S', firstChild(gpos, 'O', p));
+    }
+
+    /** Where the children of the entry at {@code parent} begin at level {@code component}: its length for a parent past the last (the addressing of {@code RangeSelect.childRange}). */
+    private static long firstChild(IndexReader ir, char component, long parent) {
+        long start = RangeSelect.blockStart(ir.getDirectory(component), ir.getBitmapBuffer(component), parent + 1);
+        return (start == -1) ? ir.getIDBuffer(component).getNumEntries() : start;
+    }
+
     private static long firstLevelCount(HDF5Reader reader, Node graph, Index index, char component) {
         long gi = resolveGraph(reader, graph);
         if (gi == UNSUPPORTED) return -1;
+        return firstLevelCount(reader, gi, index, component);
+    }
+
+    private static long firstLevelCount(HDF5Reader reader, long gi, Index index, char component) {
         IndexReader ir = reader.getIndexReader(index);
         if (ir == null) return -1;
         long[] range = RangeSelect.firstLevelRange(ir, component, gi);

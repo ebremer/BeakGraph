@@ -6,6 +6,27 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **`GRAPH ?g { ... }` over a plain pattern is one walk over the named graphs
+  on ids.** Jena executed the pattern anew in every graph, building a graph
+  view, an execution context and an iterator pipeline for each; a store of
+  tiled data holds thousands of graphs, and for a pattern found in few of them
+  that setup was the query. The walk binds `?g` to each graph's id and reads
+  the pattern with the id-level iterators. On a store of 5,000 graphs a
+  subject lookup without a graph takes 2.2 ms where it took 7.0 ms, a two-hop
+  join from a subject 1.7 ms (9.9 ms). The rows are the same: a block with a
+  `FILTER`, `OPTIONAL` or `UNION` inside it, a `FROM NAMED` dataset and a row
+  that binds `?g` already run as before, and
+  `-Dbeakgraph.graphvar.fastpath=false` leaves every such pattern to Jena.
+* **Counts over every named graph, and counts by graph or by predicate, come
+  from the index.** `COUNT(*)` over `GRAPH ?g { ?s ?p ?o }` (with
+  `COUNT(?x)`, `COUNT(DISTINCT *)`, `COUNT(DISTINCT ?g)` and
+  `COUNT(DISTINCT ?p)`), and `GROUP BY ?p`, `GROUP BY ?g` and
+  `GROUP BY ?g ?p` over one graph's or every named graph's `?s ?p ?o`, are
+  read off the two indexes without visiting a row: a count of the 4.0M quads
+  of 5,000 graphs in 3 ms where it took 0.64 s, the quads by predicate in
+  7 ms (1.1 s), by graph in 18 ms (0.68 s). Other groups and counts
+  (`GROUP BY ?s`, a count of distinct subjects across graphs, a `FILTER`)
+  are computed from the rows as before.
 * **The endpoint gathers a response in a 64 KiB buffer**
   (`beakgraph.http.output.buffer`), where Fuseki's setting gave every response
   a 5 MiB one. The server's buffer pool keeps no buffer that large, so each

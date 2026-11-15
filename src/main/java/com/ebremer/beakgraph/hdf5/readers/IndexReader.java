@@ -5,8 +5,6 @@ import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.store.StoreGroup;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * Generalized IndexReader that works with any index type (GSPO, GPOS, etc.)
@@ -16,9 +14,15 @@ import java.util.Map;
 public class IndexReader {
     
     private final Index indexType;
-    private final Map<Character, BitPackedUnSignedLongBuffer> bitmaps = new HashMap<>();
-    private final Map<Character, BitPackedUnSignedLongBuffer> ids = new HashMap<>();
-    private final Map<Character, HDTBitmapDirectory> componentDirectories = new HashMap<>();
+    // A component is one of the letters G, S, P, O, and every iterator asks for
+    // nine of these as it is built - once per input row of a join, once per
+    // graph of a walk over the named graphs. Indexed by the letter itself:
+    // the maps keyed by a boxed Character that stood here were a fifth of the
+    // time of a subject lookup across 5,000 graphs.
+    private static final int LETTERS = 128;
+    private final BitPackedUnSignedLongBuffer[] bitmaps = new BitPackedUnSignedLongBuffer[LETTERS];
+    private final BitPackedUnSignedLongBuffer[] ids = new BitPackedUnSignedLongBuffer[LETTERS];
+    private final HDTBitmapDirectory[] componentDirectories = new HDTBitmapDirectory[LETTERS];
     private final char[] positions;
     private boolean directoryDatasets = false;
     
@@ -51,14 +55,17 @@ public class IndexReader {
                         + " rows but S" + suffix + " has " + idBuffer.getNumEntries()
                         + " (every level's bitmap and id list have the same length)");
             }
-            bitmaps.put(component, bitmap);
-            ids.put(component, idBuffer);
+            if (component >= LETTERS) {
+                throw new IllegalStateException("index " + indexName + ": '" + component + "' is not a component letter");
+            }
+            bitmaps[component] = bitmap;
+            ids[component] = idBuffer;
             if (sb != null && bb != null) {
                 directoryDatasets = true;
             }
 
             if (directoryUsable && bitmap != null && idBuffer != null && sb != null && bb != null) {
-                componentDirectories.put(component, new HDTBitmapDirectory(sb, bb, bitmap));
+                componentDirectories[component] = new HDTBitmapDirectory(sb, bb, bitmap);
             }
         }
     }
@@ -68,7 +75,7 @@ public class IndexReader {
     }
     
     public HDTBitmapDirectory getDirectory(char component) {
-        return componentDirectories.get(component);
+        return (component < LETTERS) ? componentDirectories[component] : null;
     }
 
     /** True when the group carries rank/select directory datasets (SB and BB per component), whether or not the format version lets them be used. */
@@ -77,11 +84,11 @@ public class IndexReader {
     }
     
     public BitPackedUnSignedLongBuffer getBitmapBuffer(char component) {
-        return bitmaps.get(component);
+        return (component < LETTERS) ? bitmaps[component] : null;
     }
     
     public BitPackedUnSignedLongBuffer getIDBuffer(char component) {
-        return ids.get(component);
+        return (component < LETTERS) ? ids[component] : null;
     }
 
     public Index getIndexType() {

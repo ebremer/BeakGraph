@@ -60,28 +60,56 @@ final class ScanChunks {
 
     private ScanChunks() {}
 
+    /** The position range from which a scan is planned in parallel; 0 or less plans none. */
+    static long threshold() {
+        return Long.getLong("beakgraph.scan.parallel.threshold", 65_536L);
+    }
+
     /** A parallel scan for this pattern, or null to use the sequential path. */
     static ParallelScan tryParallel(BeakGraph bg, BindingNodeId b0, Triple triple, ExprList filter, ExecutionContext execCxt) {
-        long threshold = Long.getLong("beakgraph.scan.parallel.threshold", 65_536L);
+        long threshold = threshold();
         if (threshold <= 0) return null;
         if (!(bg.getReader() instanceof HDF5Reader reader)) return null;
-        // A channel-backed (HTTP) store serializes every read behind one lock
-        // and one block cache: chunk workers would only contend on it while
-        // thrashing the cache across their disjoint regions (BG-247).
-        if (reader.isChannelBacked()) return null;
         if (!(reader.getDictionary() instanceof PositionalDictionaryReader dict)) return null;
         Node ng = bg.getNamedGraph();
         if (ng == null || Quad.isUnionGraph(ng) || bg.isGraphSetView()) return null; // union dedup is a serial point
         Node g = Quad.isDefaultGraph(ng) ? Quad.defaultGraphIRI : ng;
+        long gi = dict.getGraphs().locate(g);
+        if (gi < 1) return null; // absent graph: the sequential path answers empty immediately
+        return plan(reader, dict, gi, g, b0, triple, filter, threshold, execCxt);
+    }
+
+    /**
+     * As {@link #tryParallel(BeakGraph, BindingNodeId, Triple, ExprList, ExecutionContext)},
+     * for one graph of a walk over the dataset's named graphs
+     * ({@link GraphVarBG}): the graph is known by its id, and {@code b0}
+     * already binds {@code graphVar} to it, which is how the chunks' iterators
+     * find the graph and why every row carries it.
+     *
+     * @param threshold {@link #threshold()}, read once for the whole walk
+     */
+    static ParallelScan tryParallel(HDF5Reader reader, PositionalDictionaryReader dict, long gi, Var graphVar,
+            BindingNodeId b0, Triple triple, long threshold, ExecutionContext execCxt) {
+        if (threshold <= 0 || gi < 1) return null;
+        return plan(reader, dict, gi, graphVar, b0, triple, null, threshold, execCxt);
+    }
+
+    /**
+     * @param g the graph as the chunks' quad pattern names it: its term, or a
+     *          variable {@code b0} binds to graph {@code gi}
+     */
+    private static ParallelScan plan(HDF5Reader reader, PositionalDictionaryReader dict, long gi, Node g,
+            BindingNodeId b0, Triple triple, ExprList filter, long threshold, ExecutionContext execCxt) {
+        // A channel-backed (HTTP) store serializes every read behind one lock
+        // and one block cache: chunk workers would only contend on it while
+        // thrashing the cache across their disjoint regions (BG-247).
+        if (reader.isChannelBacked()) return null;
 
         Node s = triple.getSubject();
         Node p = triple.getPredicate();
         Node o = triple.getObject();
         if (!isUnboundVar(s, b0) || !isUnboundVar(o, b0)) return null;
         if (s.equals(o)) return null;
-
-        long gi = dict.getGraphs().locate(g);
-        if (gi < 1) return null; // absent graph: the sequential path answers empty immediately
 
         NodeTable nodeTable = reader.getNodeTable();
 

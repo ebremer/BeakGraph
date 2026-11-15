@@ -159,7 +159,12 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   `+` path (`?s :p* ?o`) makes Jena collect **every subject and object node of
   the graph** in memory before the first row, and under
   `urn:x-arq:UnionGraph` each step costs one lookup per named graph. Ground
-  one end of such paths, or run them inside `GRAPH <g>`.
+  one end of such paths, or run them inside `GRAPH <g>`. `GRAPH ?g { ... }`
+  likewise visits every named graph: a plain pattern in one walk on ids, a
+  block that holds a `FILTER`, `OPTIONAL` or `UNION` graph by graph through
+  Jena's operator, which costs several times as much a graph. A `COUNT` of
+  every quad under `GRAPH ?g`, whole or grouped by graph or predicate, is
+  read off the index without visiting a row.
 * Dataset clauses (`FROM`, `FROM NAMED`, and the SPARQL protocol's
   `default-graph-uri` / `named-graph-uri`) keep the BeakGraph engine: a single
   `FROM <g>` is the graph's own view and several `FROM` graphs are a set-union
