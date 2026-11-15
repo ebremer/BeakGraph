@@ -6,6 +6,23 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **The term of an id is found through pages of consecutive ids, not a
+  Caffeine cache.** Every value a query reads is the term of an id, asked of
+  the node table. That direction of the table was a Caffeine cache keyed by a
+  boxed id, which kept its eviction policy up to date on every read and did
+  its upkeep on the JVM's common pool. It is now a table of pages
+  (`IdNodeCache`): the terms of 16 consecutive ids share an array, found
+  through a table that is itself in the order of the ids, so a query that
+  goes through ids in order reads memory in order, and a hit writes nothing.
+  On a store of 4.0M quads `-verify -deep` takes 4.0 s where it took 5.8 s,
+  on 17 s of processor time where it took 36 s, and in the native binary
+  11.4 s where it took 28.4 s; a count of 800,000 values at the endpoint
+  takes 110 ms (122 ms). Lookups, dumps, group-bys and `-export` take what
+  they took. One lookup by id costs 6 to 39 ns where it cost 8 to 75 ns, and
+  no more from 16 threads at once, where it cost 36 to 77 ns. `beakgraph.nodetable.cache.size` bounds the table as before, in the
+  same weights; over the bound whole pages go, a tenth of the bound at a
+  time, where Caffeine chose entries by how often and how lately they were
+  asked. Term to id is still a Caffeine cache.
 * **`GRAPH ?g { ... }` is walked on ids with a `FILTER`, `OPTIONAL` or `UNION`
   inside it too.** The walk over the named graphs took a plain pattern only;
   any other block ran graph by graph through Jena. It now evaluates the

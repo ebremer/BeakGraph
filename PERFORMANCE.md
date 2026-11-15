@@ -301,7 +301,8 @@ Seen in the same profiles, and not changed (but for the first, done since: see t
 - **Writing the result as XML is 55% of a dump.** The endpoint answers JSON, CSV and XML: a client asking
   for tab-separated values gets XML.
 - **The node cache (Caffeine) is 14% of a subject lookup without a graph, 5% of a dump and about half of
-  `-verify -deep`**, whose 9.9 s of wall time took 52.8 s of CPU.
+  `-verify -deep`**, whose 9.9 s of wall time took 52.8 s of CPU. (Replaced since for the terms of ids: see
+  "The terms by id".)
 - **`BindingNodeId.get` is 12.7% of the scans**: every row asks again whether each variable is bound.
 - **A 64 KiB byte range of a file takes 3.1 ms** in directory mode, twelve times an `ASK`; the remote
   battery's 241 range requests take 0.6 s in all.
@@ -446,3 +447,93 @@ Still open here:
 - A walk of single patterns is limited by the thread that consumes its rows: aggregating on ids, in the
   workers, is item 4.
 - An optional or join that ARQ keeps as a left join or a join, `MINUS` and `BIND` inside a graph block.
+
+### The terms by id (2026-11-15, branch `falcon3`, not committed when written)
+
+One change, to the lookup a query makes for every value it reads: the term of an id
+(`SimpleNodeTable.getNodeForNodeId`). Both directions of the node table were Caffeine caches, and the
+profiles above had the id-to-term one at 14% of a lookup without a graph, 23% of a count of 800,000 values
+and about half of `-verify -deep`. The store's format is untouched.
+
+- **Terms are kept by page** (`IdNodeCache`). A dictionary counts its ids up in the order of its terms and
+  the indexes hand them out in that order, so the ids a query asks for lie together. The terms of 16
+  consecutive ids share a page, an array of 16 references; a table of buckets of four slots, kept no more
+  than an eighth full, finds the page. A hit reads the slot, the page's number and the reference: no boxed
+  key, no lock, nothing written, nothing left for another thread to tidy.
+- **The table is in the order of the ids too.** The pages of 4,096 consecutive ids have buckets that follow
+  one another, and where such a run begins is hashed. A query that goes through ids in order goes through
+  the table in order; so does a collection, which moves the terms into that order as it finds them through
+  the table.
+- **The bound is the same property**, `beakgraph.nodetable.cache.size`, in the same weights (1 a term, more
+  for a long literal). Over it, whole pages are dropped from a position that moves round the table until a
+  tenth of it is free; Caffeine chose entries by how often and how lately they were asked. Memory beside
+  the terms themselves: nine bytes a term when the ids of a page are all in use, 144 when a term is alone
+  on its page, which is about what a Caffeine entry was.
+- **Term to id stays in Caffeine**: it is asked for a query's constants and for joined values, and a term
+  is not a number that could be an index.
+
+Measured on the store of 4.0M quads in 5,000 graphs (805,016 entities, 1,611,017 objects), `590b73f`
+against the working tree.
+
+Nanoseconds a term, one thread asking the node table, the median of five rounds, the heap collected once
+after the cache is filled (`target/perf23/NodeBench.java` when measured; not in the repository):
+
+| Asked | Before | After |
+|---|---|---|
+| 1,000 terms, again and again | 8.4 | 5.9 |
+| 200,000 terms in the order of their ids, 100 times each | 17.1 | 7.7 |
+| 200,000 terms in no order, 100 times each | 74.9 | 39.3 |
+| 1,611,017 terms under the bound of 1,000,000, 4 times each | 174 | 127 |
+| 200,000 terms in the order of their ids, 4 threads at once | 21.7 | 6.3 |
+| 200,000 terms in the order of their ids, 16 threads at once | 35.7 | 7.3 |
+| 200,000 terms in no order, 4 threads at once | 80.0 | 33.4 |
+| 200,000 terms in no order, 16 threads at once | 77.4 | 34.9 |
+
+The passes and queries that read terms (the command line: medians of three runs, on the JVM and in native
+binaries built from both trees; the endpoint: the JVM, four servers a build, one client on a connection
+kept alive):
+
+| | Before | After |
+|---|---|---|
+| `-verify -deep`, time | 5.75 s | 3.96 s |
+| `-verify -deep`, processor time | 35.9 s | 17.1 s |
+| `-export NQ`, time | 2.71 s | 2.67 s |
+| `-export NQ`, processor time | 9.6 s | 9.6 s |
+| Native binary: `-verify -deep`, time | 28.4 s | 11.4 s |
+| Native binary: `-verify -deep`, processor time | 42.4 s | 14.8 s |
+| Native binary: `-export NQ`, time | 4.06 s | 4.06 s |
+| Endpoint: the rows of a predicate, counted (800,000) | 122 ms | 110 ms |
+| Endpoint: a number of every subject, summed (800,000) | 183 ms | 175 ms |
+| Endpoint: the other 22 queries of the tables above | the same | the same |
+
+What that says:
+
+- **The command line's check gains most.** `-verify -deep` reads every quad as terms, 2.4M of them under a
+  bound of 1M: 31% less time, and half the processor time, which had gone to Caffeine's evictions and to
+  its upkeep on other threads.
+- **And most of all in the native binary**, where the same check takes 11.4 s where it took 28.4 s: it
+  lost 17 s there and 1.8 s on the JVM, so what Caffeine did for each term cost a native image far more.
+  The native check is still three times the JVM's.
+- **Threads that ask at once do not slow each other.** A lookup in id order costs a thread 7 ns whether 1
+  or 16 of them ask; through Caffeine, which records each read for its eviction policy, it rose from 17 ns
+  to 36 ns.
+- **The endpoint gains little**: a tenth on a count of 800,000 values. Their sum takes 175 ms on every
+  server where it took 175 on two and 190 on two. Lookups, dumps and group-bys take what they took, each
+  within the few percent its servers differ by. The profiles had suggested more (23% of that count); a
+  share of samples that includes another thread's upkeep is not the time a request waits.
+- **`-export` does not ask the node table** - it writes the dictionary's text - so it is unchanged, as it
+  should be.
+- **A loop of cache hits has to be collected once to be measured.** With this cache such a loop allocates
+  nothing, so the heap is never collected and the terms stay where they were decoded, among the garbage of
+  their decoding: 35 ns a term in order instead of 8, and 80 in no order instead of 39. Caffeine's loop
+  boxed a key for every lookup and so collected by itself (25 and 68 to 80 without the collection above).
+  A server's queries allocate all the time, so the table gives both builds one collection.
+- **Two other designs were measured first, and dropped.** A table of single terms, eight to a bucket by a
+  multiplied hash with an array of ids beside it: 33 ns in order where Caffeine took 15, because the hash
+  scatters ids that arrive together, and 790 ns over the bound, because each sweep counted the whole
+  table. Then pages found through an array of page numbers: 74 ns in no order where Caffeine took 63, one
+  more place in memory for every lookup.
+- **Answers are the same**: every query gave the same rows from both builds, and the export the same
+  403,932,568 bytes.
+- Not measured: many clients at once at the endpoint (the table has lookups from 16 threads; the tests hold
+  the cache to its answers and its bound on every core), the native binary at the endpoint, and real data.

@@ -28,32 +28,30 @@ public class SimpleNodeTable implements NodeTable {
         return 1;
     }
 
-    // Caffeine LRU Caches for extreme high-performance concurrent caching.
-    // Keys/values are packed NodeId longs (boxed at the cache boundary only).
-    private final Cache<Long, Node> nodeId2nodemap = Caffeine.newBuilder()
-            .maximumWeight(CACHE_SIZE)
-            .weigher((Long id, Node n) -> weightOf(n))
-            .build();
+    // The two directions are asked very differently, and are kept differently.
+    //
+    // An id's term is asked for every value a query reads, and the ids come
+    // in the order of the dictionary: pages of consecutive ids (IdNodeCache),
+    // where a hit is two reads and a comparison, and nothing is written.
+    private final IdNodeCache nodeId2node = new IdNodeCache(CACHE_SIZE);
 
+    // A term's id is asked for the constants of a query and for the values
+    // an outer row brings in, which is seldom by comparison, and a term is
+    // not a number that could be an index: Caffeine, as before.
     private final Cache<Node, Long> node2nodeIdmap = Caffeine.newBuilder()
             .maximumWeight(CACHE_SIZE)
             .weigher((Node n, Long id) -> weightOf(n))
             .build();
 
-    /** The cache loader, one instance per table (no per-call lambda). */
-    private final java.util.function.Function<Long, Node> extractById;
-
     public SimpleNodeTable(PositionalDictionaryReader dict) {
         this.dict = dict;
-        this.extractById = this::extract;
     }
 
     /**
      * SUBJECT and GRAPH both point to the entity dictionary, OBJECT to the
      * hybrid entity + literal wrapper.
      */
-    private Node extract(Long boxed) {
-        long nodeId = boxed;
+    private Node extract(long nodeId) {
         return switch (NodeId.type(nodeId)) {
             case SUBJECT, GRAPH -> dict.getSubjects().extract(NodeId.id(nodeId));
             case PREDICATE -> dict.getPredicates().extract(NodeId.id(nodeId));
@@ -130,11 +128,11 @@ public class SimpleNodeTable implements NodeTable {
         // Misses are cached too: the store is immutable, so absence is permanent,
         // and an uncached miss re-ran up to two dictionary binary searches on every
         // lookup of the same foreign term (VALUES/BIND-heavy queries). The
-        // does-not-exist sentinel is deliberately NOT seeded into nodeId2nodemap.
+        // does-not-exist sentinel is deliberately NOT seeded into nodeId2node.
         return node2nodeIdmap.get(n, key -> {
             long nid = findInDictionaries(key);
             if (nid != NodeId.DOES_NOT_EXIST) {
-                nodeId2nodemap.put(nid, key);
+                nodeId2node.put(nid, key);
             }
             return nid;
         });
@@ -144,33 +142,35 @@ public class SimpleNodeTable implements NodeTable {
     public Node getNodeForNodeId(long nodeId) {
         if (nodeId == NodeId.NONE) throw new IllegalArgumentException("getNodeForNodeId: NONE");
 
-        // One boxed key per call, one cache operation: get-with-loader replaces
-        // the getIfPresent + put pair (which boxed twice on a miss). A null
-        // mapping result is not cached, so an unresolvable id stays a miss (BG-253).
-        Node node = nodeId2nodemap.get(nodeId, extractById);
-        if (node != null) {
-            // The reverse map is deliberately NOT seeded here. A dual-role URI has two valid
-            // NodeIds (predicate vs entity id-space); writing the reverse mapping from
-            // whichever role was reconstructed first would make getNodeIdForNode flip
-            // between roles on successive lookups. Leaving the Node -> NodeId mapping
-            // owned solely by getNodeIdForNode keeps it deterministic (predicate-first).
-            // nodeId2nodemap above is keyed by the full packed id, so it stays correct
-            // for both roles.
+        // The hit: no key object, no lock. On a miss the dictionary is read and
+        // the term kept; two threads that miss the same id both read it, and
+        // one of the two equal terms stays. An unresolvable id resolves to
+        // null, which is not kept, so it stays a miss (BG-253).
+        Node node = nodeId2node.get(nodeId);
+        if (node == null) {
+            node = extract(nodeId);
+            if (node != null) {
+                nodeId2node.put(nodeId, node);
+            }
         }
-
+        // The reverse map is deliberately NOT seeded here. A dual-role URI has two valid
+        // NodeIds (predicate vs entity id-space); writing the reverse mapping from
+        // whichever role was reconstructed first would make getNodeIdForNode flip
+        // between roles on successive lookups. Leaving the Node -> NodeId mapping
+        // owned solely by getNodeIdForNode keeps it deterministic (predicate-first).
+        // nodeId2node is keyed by the full packed id, so it stays correct for both roles.
         return node;
     }
 
     /** Entries the two caches currently hold (pending evictions applied) - tests pin that close() empties them. */
     public long cachedEntries() {
-        nodeId2nodemap.cleanUp();
         node2nodeIdmap.cleanUp();
-        return nodeId2nodemap.estimatedSize() + node2nodeIdmap.estimatedSize();
+        return nodeId2node.entries() + node2nodeIdmap.estimatedSize();
     }
 
     @Override
     public void close() throws Exception {
-        nodeId2nodemap.invalidateAll();
+        nodeId2node.clear();
         node2nodeIdmap.invalidateAll();
     }
 }
