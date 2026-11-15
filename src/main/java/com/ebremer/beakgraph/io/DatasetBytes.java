@@ -17,12 +17,25 @@ import java.util.OptionalLong;
  * dataset of any size is there at once. The view is of the very file whose
  * metadata (address, size, the numEntries / width attributes) was read: there
  * is no second open of the path, so a store rebuilt in place between open and
- * first query cannot pair old metadata with new bytes (BG-448). A dataset is
- * read through its segment itself ({@link MemorySegmentBytes}), whatever its
- * size. A ByteBuffer view of the same segment ({@link ByteBufferBytes}) is
- * kept as an option only: queries on a current-format store measured the
- * same through either, but the linear bitmap scans of a store older than the
- * rank/select directories ran about twice as fast through the segment.
+ * first query cannot pair old metadata with new bytes (BG-448).
+ *
+ * <p>Which way a mapped dataset is read depends on what runs the code,
+ * because the two ways measure differently there:
+ * <ul>
+ *   <li><b>On a JVM</b>, through its segment itself
+ *       ({@link MemorySegmentBytes}), whatever its size. Queries on a
+ *       current-format store measured the same through a ByteBuffer view of
+ *       the segment, but the linear bitmap scans of a store older than the
+ *       rank/select directories ran about twice as fast through the
+ *       segment.</li>
+ *   <li><b>In the GraalVM native binary</b>, through a ByteBuffer view of the
+ *       segment ({@link ByteBufferBytes}), up to the 2 GiB a ByteBuffer can
+ *       index. Through the segment the binary read a format v6 store 27%
+ *       slower in {@code -verify -deep} and 28% slower in {@code -export NQ}
+ *       (38.8 s against 30.5 s, 7.25 s against 5.66 s; 4.0M quads,
+ *       2026-11-14). A dataset past 2 GiB is read through its segment there
+ *       too.</li>
+ * </ul>
  *
  * <p>The mapping lasts exactly as long as the store is open: Falcon unmaps
  * the file when {@code HDF5Reader.close()} closes it, at once and on every
@@ -37,22 +50,44 @@ import java.util.OptionalLong;
  * offset in the file ({@code Dataset.storageOffset()}), through the same
  * reader the store's metadata was read through.
  *
- * <p>The {@code beakgraph.ffm.threshold} system property (bytes, default 0)
- * brings the ByteBuffer view back for testing and operations: a mapped
- * dataset of at most that many bytes is read through a ByteBuffer view of
- * its segment, a strictly larger one through the segment. A ByteBuffer
- * cannot index past 2 GiB, so datasets beyond that use the segment whatever
- * the property says.
+ * <p>The {@code beakgraph.ffm.threshold} system property (bytes) chooses
+ * otherwise, for testing and operations: a mapped dataset of at most that
+ * many bytes is read through a ByteBuffer view of its segment, a strictly
+ * larger one through the segment. Its default is 0 on a JVM (every dataset
+ * through its segment) and 2147483647 in the native binary (every dataset a
+ * ByteBuffer can index through a view). A ByteBuffer cannot index past
+ * 2 GiB, so datasets beyond that use the segment whatever the property says.
  *
  * @author Erich Bremer
  */
 public final class DatasetBytes {
 
     /**
-     * Up to this many bytes a mapped dataset is read through a ByteBuffer view of its MemorySegment instead of
-     * the segment itself. 0, the default: every dataset is read through its segment.
+     * The property a GraalVM native image carries ("runtime" while it runs, "buildtime" while it is built) and
+     * a JVM does not: GraalVM's {@code ImageInfo.PROPERTY_IMAGE_CODE_KEY}, read by name so that nothing of
+     * GraalVM's has to be on the class path.
      */
-    private static volatile long ffmThreshold = Long.getLong("beakgraph.ffm.threshold", 0L);
+    private static final String NATIVE_IMAGE_PROPERTY = "org.graalvm.nativeimage.imagecode";
+
+    /** True in a GraalVM native image, built or running. */
+    static boolean inNativeImage() {
+        return System.getProperty(NATIVE_IMAGE_PROPERTY) != null;
+    }
+
+    /**
+     * The threshold where {@code beakgraph.ffm.threshold} sets none: 0 on a JVM, so that every dataset is read
+     * through its segment, and all a ByteBuffer can index in a native image, so that every dataset it can hold
+     * is read through a view (see the class comment for what each measured).
+     */
+    static long defaultFfmThreshold(boolean nativeImage) {
+        return nativeImage ? Integer.MAX_VALUE : 0L;
+    }
+
+    /**
+     * Up to this many bytes a mapped dataset is read through a ByteBuffer view of its MemorySegment instead of
+     * the segment itself.
+     */
+    private static volatile long ffmThreshold = Long.getLong("beakgraph.ffm.threshold", defaultFfmThreshold(inNativeImage()));
 
     private DatasetBytes() {}
 

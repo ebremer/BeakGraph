@@ -10,10 +10,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 /**
- * {@link RandomAccessBytes} over an FFM {@link MemorySegment} - the path for
- * every dataset of a store opened from a local file, past ByteBuffer's 2 GiB
- * ceiling or not. Since JDK 22 a file region of any size can be mapped
- * straight to a segment.
+ * {@link RandomAccessBytes} over an FFM {@link MemorySegment} - on a JVM the
+ * path for every dataset of a store opened from a local file, past
+ * ByteBuffer's 2 GiB ceiling or not; in the GraalVM native binary, for the
+ * datasets past it (see {@link DatasetBytes}). Since JDK 22 a file region of
+ * any size can be mapped straight to a segment.
  *
  * <p>A segment handed to the constructor lives as its owner decides: a
  * store's datasets are slices of the one mapping Falcon makes of the file,

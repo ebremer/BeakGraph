@@ -143,6 +143,39 @@ class FfmReaderPathTest {
         }
     }
 
+    /**
+     * The default differs by what runs the code: a JVM reads a mapped dataset
+     * through its segment, the GraalVM native binary through a ByteBuffer view
+     * of it, which measured faster there on scans (DatasetBytes). The binary
+     * is not built by the tests, so what is held here is the choice itself,
+     * and that this JVM is not taken for a native image.
+     */
+    @Test
+    void theNativeBinaryReadsThroughAViewByDefaultAndAJvmThroughTheSegment() throws Exception {
+        assertEquals(0L, DatasetBytes.defaultFfmThreshold(false), "a JVM: every dataset through its segment");
+        assertEquals(Integer.MAX_VALUE, DatasetBytes.defaultFfmThreshold(true),
+                "a native image: every dataset a ByteBuffer can index through a view");
+        assertEquals(System.getProperty("org.graalvm.nativeimage.imagecode") != null, DatasetBytes.inNativeImage());
+        Path file = dir.resolve("native-default.h5");
+        try (WritableHdfFile out = WritableHdfFile.write(file)) {
+            out.putGroup("g").putDataset("bytes", new byte[] {1, 2, 3, 4, 5, 6, 7, 8});
+            out.commit();
+        }
+        try (Hdf5File in = Hdf5File.open(file)) {
+            Dataset bytes = in.root().dataset("g/bytes");
+            long previous = DatasetBytes.setFfmThreshold(DatasetBytes.defaultFfmThreshold(true));
+            try {
+                RandomAccessBytes view = DatasetBytes.of(bytes, null);
+                assertInstanceOf(ByteBufferBytes.class, view, "the native image's default");
+                assertEquals(0x0102030405060708L, view.getLong(0));
+                DatasetBytes.setFfmThreshold(DatasetBytes.defaultFfmThreshold(false));
+                assertInstanceOf(MemorySegmentBytes.class, DatasetBytes.of(bytes, null), "a JVM's default");
+            } finally {
+                DatasetBytes.setFfmThreshold(previous);
+            }
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Set<String>[] runProbes(File h5) throws Exception {
         Set<String>[] results = new Set[PROBES.length];

@@ -7,9 +7,10 @@ import java.nio.ByteOrder;
  * {@link RandomAccessBytes} over a {@link ByteBuffer} - the writers'
  * in-memory buffers, and the classic path for mapped datasets: a ByteBuffer
  * view of the store's mapping, capped at 2 GiB by ByteBuffer's int indexing.
- * Mapped datasets are read through {@link MemorySegmentBytes} by default,
- * and through this only where {@code beakgraph.ffm.threshold} asks for it
- * (see {@link DatasetBytes}).
+ * On a JVM mapped datasets are read through {@link MemorySegmentBytes} by
+ * default, and through this only where {@code beakgraph.ffm.threshold} asks
+ * for it; the GraalVM native binary reads them through this by default, the
+ * faster way there (see {@link DatasetBytes}).
  *
  * <p>The source buffer is duplicated at construction (position/limit/order of
  * the original are never touched afterwards) and forced BIG-ENDIAN; only

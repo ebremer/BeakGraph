@@ -174,7 +174,7 @@ What that says:
 - The native binary writes the same Zarr store as the JVM, file for file, with every engine, and
   verifies, exports and serves it. Its timings were not taken.
 
-Found on the way, in the HDF5 container, and not changed:
+Found on the way, in the HDF5 container (fixed since: see "After the speed test" at the end):
 
 - **Falcon writes its HDF5 files as sparse files, and on Windows a mapped sparse file is slow to touch.**
   Falcon's writer opens its output with `StandardOpenOption.SPARSE`. On this machine the first touch of a
@@ -203,7 +203,58 @@ Still open under item 2:
 Still open under item 1:
 
 - Use the bulk decode (`get(index, long[], ...)`, a block into an array from whole words) in the scan
-  paths: the full-scan iterator, export and the deep verify. Small on the JVM; the native binary's way out.
+  paths: the full-scan iterator, export and the deep verify. Small on the JVM. The native binary no longer
+  waits for it: it reads through the ByteBuffer view now (see "After the speed test"), and the bulk decode
+  would make the choice of view not matter.
 - The dictionary's other arrays (`offsets`, the typed value stores) are still single-width.
 - Lay the directories out together (or load them lazily) for remote opens.
 - Query times on a real store with its named graphs, rebuilt in the current format.
+
+### After the speed test: sparse files and the native binary's view (2026-11-14, not committed when written)
+
+SPEEDTEST.md compared this branch with `master` and found two places where it had lost ground. Both are
+fixed:
+
+- **Falcon no longer writes sparse files** (Falcon's hdf5/TODO.md, P2 WF12): its writer no longer opens
+  its output with `StandardOpenOption.SPARSE`. Nothing changes in BeakGraph, and no byte of a store
+  changes. A store Falcon wrote before this stays slow to open on Windows until it is copied (a copy, not
+  a move: the mark travels with the file).
+- **The native binary reads mapped arrays through a ByteBuffer view of their segment**, as it did before
+  the move to Falcon: `beakgraph.ffm.threshold` defaults to 2147483647 in a native image and stays 0 on a
+  JVM (`DatasetBytes`). Arrays past 2 GiB are read through the segment as before.
+
+Measured on the 4.0M-quad store, each configuration on the store it built: `master` (33febe9), this branch
+before (bf09ba1, Falcon 0.2.0 as it was) and after.
+
+| What | master | before | after |
+|---|---|---|---|
+| HDF5 file marked sparse | no | yes | no |
+| Warm JVM: open, first query, close | 4.4 ms | 48.4 ms (3.8 ms for a plain copy) | 4.0 ms |
+| ... the first query alone | 2.8 ms | 44.6 ms | 2.9 ms |
+| Fresh JVM: first query | 106 ms | 173 ms | 113 ms |
+| Build, `-method 3` / `-method 4` | 9.9 s / - | 10.8 s / 17.9 s | 10.8 s / 17.8 s |
+| ... the container step of `-method 3` | 0.08 s | 0.41 s | 0.43 s |
+| Native `-verify -deep` | 29.5 s | 41.1 s | 30.8 s |
+| Native `-export NQ` | 5.50 s | 7.52 s | 5.64 s |
+| Native endpoint: count of every quad | 1.35 s | 2.18 s | 1.39 s |
+| Native endpoint: quads grouped by predicate | 2.55 s | 3.31 s | 2.66 s |
+| Native endpoint: 1,000 subject lookups, graph not given | 24.4 s | 36.9 s | 24.4 s |
+| Native endpoint: 200 graphs dumped | 4.08 s | 4.56 s | 4.23 s |
+| Native endpoint: 100 two-hop joins | 0.98 s | 1.04 s | 0.96 s |
+
+What that says:
+
+- **Opening an HDF5 store costs what it did on `master`.** The file written now opens like a plain copy
+  of the old one, and writing it takes no longer, with the in-memory and the disk engines alike.
+- **How slow a sparse file is varies from file to file**: the first query after an open took 18.9 ms on
+  the store of the speed test and 44.6 ms on this one, written by the same code from the same source.
+- **The native binary is back within 5% of `master`** on everything it had lost: the deep verify, the
+  export, and the endpoint's counts and cross-graph lookups. Forced back to the segment
+  (`-Dbeakgraph.ffm.threshold=0`) on the new store, it takes 37.4 s and 7.23 s again. A Zarr store reads
+  the same: 29.6 s and 5.70 s.
+- **The speed test's "falcon2 is 30-40% faster at native dumps and joins" did not hold up.** The same
+  binary took 4.6 s and 1.0 s for them here, where it had taken 2.6 s and 0.5 s; `master` took about 4.1 s
+  and 0.9 s both times. The rounds of those two phases spread widely (3.5 s to 4.7 s for the dumps in a
+  later check), and the collector was ruled out: the same number of collections, and the same times with
+  a 1 GiB young generation. What made the earlier run faster was not found. Read the two as equal.
+- Not measured again: real data, Linux, macOS.

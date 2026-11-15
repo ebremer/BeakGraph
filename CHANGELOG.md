@@ -6,6 +6,25 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **The native binary reads a mapped store through a ByteBuffer view** of its
+  memory segment, as it did before the move to Falcon: `beakgraph.ffm.threshold`
+  defaults to `2147483647` in the GraalVM native binary and stays `0` on a JVM.
+  Since that move the binary had been 30-60% slower at whatever scans a store,
+  most of it from reading through the segment: on 4.0M quads `-verify -deep`
+  took 41.1 s and now takes 30.8 s (29.5 s before Falcon; 37.4 s through the
+  segment on a store that is not sparse, see the next entry), `-export NQ`
+  7.52 s and now 5.64 s (5.50 s), and the endpoint's count of every quad 2.18 s
+  and now 1.39 s (1.35 s). Arrays past 2 GiB are read through the segment as
+  before, and `-Dbeakgraph.ffm.threshold=0` brings it back for all. A JVM reads
+  as it did.
+* **A store is no longer written as an NTFS sparse file.** Falcon's HDF5 writer
+  asked for one, and on Windows a file created sparse stays slow to read through
+  a memory mapping, with every byte of it written: the first query after opening
+  a 62 MB store took 19 to 45 ms where it takes 3 ms now, as it did before
+  Falcon. Queries after the first, and Zarr stores, were not affected. An HDF5
+  store written on Windows by an unreleased build since the move to Falcon is
+  made fast by copying it (a copy, not a move). Needs Falcon 0.2.0 as it is now
+  (its P2 WF12); build times and the bytes of a store are unchanged.
 * **One store, two containers: Zarr beside HDF5** (SPECIFICATIONS.md §3a). A store
   - groups, named byte arrays, integer attributes - can be written as a Zarr v3
   directory store instead of an HDF5 file: `-zarr`, or a destination named
