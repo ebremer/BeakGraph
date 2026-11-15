@@ -121,14 +121,52 @@ class GraphVariableWalkTest {
         "SELECT ?s (COUNT(DISTINCT ?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?s",
         "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }",
         "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }",
+        // a FILTER, an OPTIONAL, a UNION inside the block: evaluated in each graph, with ?g bound but out of their sight
+        "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(isLiteral(?o)) } }",
+        "SELECT * WHERE { GRAPH ?g { ex:a ?p ?o FILTER(isLiteral(?o)) } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:only ?v FILTER(?v > \"g1\") } }",
+        "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c FILTER(?a != ex:b) FILTER(isIRI(?c)) } }",
+        "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b FILTER(?a = ex:b) } }",
+        "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b FILTER(?a = ex:b || ?a = ex:c) } }",
+        "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c FILTER(?a = ex:b) FILTER(?c = ex:d) } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:only ?v FILTER(?v = \"g1\") } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o OPTIONAL { ?o ex:next ?n } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o OPTIONAL { ?s ex:only ?v } OPTIONAL { ?o ex:next ?n } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o OPTIONAL { ?s ex:name ?n FILTER(?n = \"Alice\") } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o OPTIONAL { ?o ex:next ?n . ?n ex:next ?m } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:next ?o OPTIONAL { ?s ex:nope ?n } } }",
+        "SELECT * WHERE { GRAPH ?g { { ?s ex:only ?o } UNION { ?s ex:self ?o } } }",
+        "SELECT * WHERE { GRAPH ?g { { ?s ex:only ?o } UNION { ?s ex:self ?o } UNION { ?s ex:says ?o } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:only ?v FILTER(?v >= \"g2\") } }", // a comparison stays a filter, and is evaluated as one
+        "SELECT * WHERE { GRAPH ?g { { ?s ex:only ?o FILTER(?o = \"g2\") } UNION { ?s ex:self ?o } } }",
+        "SELECT * WHERE { GRAPH ?g { { ?s ex:p ?o } UNION { ?s ex:p ?o } } }",
+        "SELECT * WHERE { ?x ex:knows ?s . GRAPH ?g { ?s ex:p ?o FILTER(?x != ex:b) OPTIONAL { ?o ex:next ?n } } }",
+        "SELECT * WHERE { ex:a ex:name ?n OPTIONAL { GRAPH ?g { ?s ex:name ?m FILTER(?m = ?n) } } }",
+        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o FILTER(isIRI(?o)) } }",
+        "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ex:next ?o OPTIONAL { ?o ex:next ?z } } } GROUP BY ?g",
     };
 
     /** Shapes left to Jena's operator: not a plain BGP under the graph, not a variable graph, or another dataset. */
     private static final String[] LEFT_TO_JENA = {
-        "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(isLiteral(?o)) } }",
+        // the block mentions ?g and is more than a pattern: binding ?g first would be seen from inside
         "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(?g = ex:g2) } }",
-        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o OPTIONAL { ?o ex:next ?n } } }",
-        "SELECT * WHERE { GRAPH ?g { { ?s ex:only ?o } UNION { ?s ex:self ?o } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(BOUND(?g)) } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(!BOUND(?g)) } }",
+        "SELECT * WHERE { GRAPH ?g { ?g ?p ?o FILTER(isIRI(?o)) } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o OPTIONAL { ?g ex:self ?x } } }",
+        "SELECT * WHERE { GRAPH ?g { { ?s ex:says ?g } UNION { ?s ex:self ?o } } }",
+        // operators the walk does not run
+        "SELECT * WHERE { GRAPH ?g { ?s ex:next ?o FILTER NOT EXISTS { ?o ex:next ?z } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:next ?o FILTER EXISTS { ?o ex:next ?z } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ?p ?o MINUS { ?s ex:p ?o } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:only ?v BIND(STR(?v) AS ?t) } }",
+        "SELECT * WHERE { GRAPH ?g { { SELECT ?s (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?s } } }",
+        "SELECT * WHERE { GRAPH ?g { ?a ex:next+ ?b } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o VALUES ?o { ex:b } } }",
+        "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(false) } }",    // ARQ folds it to an empty table
+        "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b FILTER(?a = ex:nowhere) } }", // an assignment of a term the store has no id for
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?b { ?b ex:next ?o } UNION { ?s ex:only ?o } } }", // a join ARQ does not make a sequence of
+        "SELECT * WHERE { GRAPH ?g { ?s ex:p ?o OPTIONAL { { ?s ex:only ?v } UNION { ?o ex:only ?v } } } }", // an optional ARQ keeps a left join
         "SELECT ?g WHERE { GRAPH ?g { } }",
         "SELECT * WHERE { GRAPH ex:g1 { ?s ?p ?o } }",
         // ARQ rewrites an equality on the graph variable into the graph it names: no variable graph is left
@@ -329,10 +367,13 @@ class GraphVariableWalkTest {
                         "SELECT * WHERE { GRAPH ?g { ?s ex:value ?o } }",
                         "SELECT * WHERE { GRAPH ?g { ?s ex:link ?t . ?t ex:value ?v } }"}) {
                     long scans = ParallelScan.HITS.get();
+                    long shared = GraphVarBG.PARALLEL.get();
                     long walks = GraphVarBG.HITS.get();
                     List<String> rows = rows(ds, query);
                     assertTrue(GraphVarBG.HITS.get() > walks, query);
-                    assertEquals(1, ParallelScan.HITS.get() - scans, "ex:big, and only it, is scanned in parallel: " + query);
+                    // A walk that hands the graphs it has left to workers is a parallel scan too: not that one.
+                    long ofOneGraph = (ParallelScan.HITS.get() - scans) - (GraphVarBG.PARALLEL.get() - shared);
+                    assertEquals(1, ofOneGraph, "ex:big, and only it, is scanned in parallel as a graph: " + query);
                     assertEquals(rows(truth, query), rows, query);
                 }
                 // An outer row carries variables: its pattern runs once a row, and plans no scan.
@@ -347,6 +388,101 @@ class GraphVariableWalkTest {
                     Thread.sleep(10);
                 }
                 assertEquals(0, ParallelScan.ACTIVE_WORKERS.get(), "workers of a scan a LIMIT ended");
+            }
+        } finally {
+            restore("beakgraph.scan.parallel.threshold", oldThreshold);
+            restore("beakgraph.scan.parallel.minchunk", oldMinChunk);
+        }
+    }
+
+    /**
+     * Many small graphs: none is large enough to be scanned in parallel by
+     * itself, so a walk whose rows do work - a join, an optional - reads on
+     * one thread until it has produced as many rows as a parallel scan is
+     * worth, and hands the graphs it has left to workers. The rows are the
+     * same. A single pattern's rows are only read, and stay on one thread;
+     * so do a walk that finds little, a LIMIT met early and an outer row;
+     * and a filter is evaluated by the consuming thread, so a block with one
+     * that is not outermost stays on one thread.
+     */
+    @Test
+    void manySmallGraphsAreSharedAmongWorkers() throws Exception {
+        String oldThreshold = System.setProperty("beakgraph.scan.parallel.threshold", "64");
+        String oldMinChunk = System.setProperty("beakgraph.scan.parallel.minchunk", "64");
+        try {
+            StringBuilder trig = new StringBuilder("@prefix ex: <http://ex.org/> .\nex:k ex:knows ex:n3_4 .\n");
+            for (int g = 0; g < 70; g++) {
+                trig.append("ex:t").append(g).append(" {\n");
+                for (int i = 0; i < 12; i++) {
+                    trig.append("ex:n").append(g).append('_').append(i).append(" ex:value ").append((g * 7 + i) % 40)
+                        .append(" ; ex:next ex:n").append(g).append('_').append((i + 1) % 12).append(" .\n");
+                }
+                if (g % 9 == 0) {
+                    trig.append("ex:n").append(g).append("_0 ex:rare \"r").append(g).append("\" .\n");
+                }
+                trig.append("}\n");
+            }
+            Path src = dir.resolve("many.trig");
+            Files.writeString(src, trig.toString());
+            File h5 = dir.resolve("many.trig.h5").toFile();
+            HDF5Writer.Builder().setSource(src.toFile()).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+            DatasetGraph dsg = DatasetGraphFactory.create();
+            RDFParser.create().source(src.toUri().toString()).lang(Lang.TRIG).parse(dsg);
+            Dataset truth = DatasetFactory.wrap(dsg);
+            try (BeakGraph many = new BeakGraph(new HDF5Reader(h5))) {
+                Dataset ds = many.getDataset();
+                // 70 graphs of 24 or 25 quads: the walk passes 64 rows in its third graph, and 67 are left.
+                String[] shared = {
+                    "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c } }",
+                    "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c . ?c ex:value ?v } }",
+                    "SELECT * WHERE { GRAPH ?g { ?s ex:value ?v OPTIONAL { ?s ex:rare ?r } } }",
+                    "SELECT * WHERE { GRAPH ?g { ?s ex:value ?v OPTIONAL { ?s ex:next ?t . ?t ex:rare ?r } } }",
+                    "SELECT * WHERE { GRAPH ?g { { ?a ex:next ?b . ?b ex:value ?v } UNION { ?a ex:rare ?v } } }",
+                    "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c } FILTER(?g != ex:t5) }",
+                    "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c } } GROUP BY ?g",
+                    "SELECT (SUM(?v) AS ?n) WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:value ?v } }",
+                };
+                for (String query : shared) {
+                    long before = GraphVarBG.PARALLEL.get();
+                    List<String> rows = rows(ds, query);
+                    assertEquals(1, GraphVarBG.PARALLEL.get() - before, "the graphs left are shared among workers: " + query);
+                    assertEquals(rows(truth, query), rows, query);
+                    assertEquals(rowsWithoutTheWalk(ds, query), rows, query);
+                }
+                String[] oneThread = {
+                    "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }",                                      // a single pattern: rows that are only read
+                    "SELECT * WHERE { GRAPH ?g { ?s ex:value ?v } }",
+                    "SELECT * WHERE { GRAPH ?g { ?s ex:value ?v FILTER(?v > 20) } }",
+                    "SELECT * WHERE { GRAPH ?g { { ?s ex:value ?v } UNION { ?s ex:rare ?v } } }",
+                    "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:rare ?o } }",                 // 8 rows: never worth it
+                    "SELECT * WHERE { GRAPH ?g { ex:n3_4 ?p ?o } }",                                 // a lookup
+                    "SELECT * WHERE { ?k ex:knows ?x . GRAPH ?g { ?s ex:next ?x } }",                // an outer row
+                    "SELECT * WHERE { GRAPH ?g { ?s ex:value ?v OPTIONAL { ?s ex:rare ?r FILTER(?r != \"r9\") } } }", // a filter inside
+                };
+                for (String query : oneThread) {
+                    long before = GraphVarBG.PARALLEL.get();
+                    long walks = GraphVarBG.HITS.get();
+                    List<String> rows = rows(ds, query);
+                    assertTrue(GraphVarBG.HITS.get() > walks, query);
+                    assertEquals(0, GraphVarBG.PARALLEL.get() - before, "walked on one thread: " + query);
+                    assertEquals(rows(truth, query), rows, query);
+                }
+                // A LIMIT met before the walk has produced 64 rows starts no worker; one met after stops them.
+                long before = GraphVarBG.PARALLEL.get();
+                assertEquals(10, rows(ds, "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c } } LIMIT 10").size());
+                assertEquals(0, GraphVarBG.PARALLEL.get() - before);
+                assertEquals(300, rows(ds, "SELECT * WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?c } } LIMIT 300").size());
+                assertEquals(1, GraphVarBG.PARALLEL.get() - before);
+                long deadline = System.nanoTime() + 10_000_000_000L;
+                while (ParallelScan.ACTIVE_WORKERS.get() > 0 && System.nanoTime() < deadline) {
+                    Thread.sleep(10);
+                }
+                assertEquals(0, ParallelScan.ACTIVE_WORKERS.get(), "workers of a walk a LIMIT ended");
+                // Parallel scans switched off: the walk stays on one thread, and answers the same.
+                System.setProperty("beakgraph.scan.parallel.threshold", "0");
+                before = GraphVarBG.PARALLEL.get();
+                assertEquals(rows(truth, shared[0]), rows(ds, shared[0]));
+                assertEquals(0, GraphVarBG.PARALLEL.get() - before);
             }
         } finally {
             restore("beakgraph.scan.parallel.threshold", oldThreshold);

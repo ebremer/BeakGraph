@@ -86,12 +86,13 @@ final class ScanChunks {
      * already binds {@code graphVar} to it, which is how the chunks' iterators
      * find the graph and why every row carries it.
      *
+     * @param filter    the range hints of the filter placed on the pattern, or null
      * @param threshold {@link #threshold()}, read once for the whole walk
      */
     static ParallelScan tryParallel(HDF5Reader reader, PositionalDictionaryReader dict, long gi, Var graphVar,
-            BindingNodeId b0, Triple triple, long threshold, ExecutionContext execCxt) {
+            BindingNodeId b0, Triple triple, ExprList filter, long threshold, ExecutionContext execCxt) {
         if (threshold <= 0 || gi < 1) return null;
-        return plan(reader, dict, gi, graphVar, b0, triple, null, threshold, execCxt);
+        return plan(reader, dict, gi, graphVar, b0, triple, filter, threshold, execCxt);
     }
 
     /**

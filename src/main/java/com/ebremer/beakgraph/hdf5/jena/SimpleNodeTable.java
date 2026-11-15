@@ -74,7 +74,7 @@ public class SimpleNodeTable implements NodeTable {
      * a bound variable is turned back into its Node via {@link #getNodeForNodeId}
      * (keyed by the full packed id, so it returns the correct URI no matter which
      * role's id it carries) and then re-located in the dictionary for the position
-     * it is used at when the id-spaces differ - see HDF5Reader.substituteIfCrossSpace.
+     * it is used at when the id-spaces differ - see HDF5Reader.resolve.
      * The raw id is never indexed directly into a different id-space.
      */
     private long findInDictionaries(Node n) {

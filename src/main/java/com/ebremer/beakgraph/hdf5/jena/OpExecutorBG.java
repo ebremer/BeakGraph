@@ -25,9 +25,10 @@ import org.apache.jena.sparql.algebra.optimize.TransformFilterPlacement;
  * it intercepts four algebra shapes; everything else runs through Jena's
  * default executor unchanged:
  * <ol>
- * <li>{@code OpGraph} with a variable graph over a BGP: {@link GraphVarBG}
- *     walks the dataset's named graphs on ids, where Jena executes the
- *     pattern anew for each graph.</li>
+ * <li>{@code OpGraph} with a variable graph over a BGP, or over BGPs under
+ *     filters, optionals and unions: {@link GraphVarBG} walks the dataset's
+ *     named graphs on ids, where Jena executes the block anew for each
+ *     graph.</li>
  * <li>{@code OpDistinct} over the top-level root input: {@link DistinctTermFastPath}
  *     answers {@code SELECT DISTINCT ?p} / {@code ?s} / {@code ?g}-style queries
  *     from the per-graph index levels when the shape allows it.</li>
@@ -108,9 +109,9 @@ public class OpExecutorBG extends OpExecutor {
 
     @Override
     protected QueryIterator execute(OpGraph opGraph, QueryIterator input) {
-        // GRAPH ?g { BGP }: one id-level walk over the named graphs, where Jena
-        // executes the pattern anew for each of them (GraphVarBG says which
-        // shapes; the rest, and a binding that holds ?g already, stay Jena's).
+        // GRAPH ?g { ... }: one id-level walk over the named graphs, where Jena
+        // executes the block anew for each of them (GraphVarBG says which
+        // blocks; the rest, and a binding that holds ?g already, stay Jena's).
         if (isForBeakGraph) {
             QueryIterator walk = GraphVarBG.tryExecute(opGraph, input, execCxt, in -> super.execute(opGraph, in));
             if (walk != null) {

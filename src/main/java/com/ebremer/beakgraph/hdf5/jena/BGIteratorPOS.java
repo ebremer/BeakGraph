@@ -32,6 +32,11 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     // Row-emission plan (see BGIteratorSO): pattern and parent binding are fixed,
     // so the vars each row binds are computed once. Object and subject vary per row.
     private Var oVar, sVar;
+    // Whether each is new to every row - in no layer of the parent, and not the
+    // other one again (?x <p> ?x) - so that it is bound without a lookup. A
+    // variable that is not keeps putCompatible, which is what says a row with
+    // two values for it is no row.
+    private boolean oFresh, sFresh;
 
     // Triple-term pattern in the object position: rows whose object id fails
     // unification are dropped in computeNext (the same skip path repeated-var
@@ -151,6 +156,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         if (hasNext) {
             if (quad.getObject().isVariable()) oVar = Var.alloc(quad.getObject());
             if (quad.getSubject().isVariable()) sVar = Var.alloc(quad.getSubject());
+            oFresh = RowVars.fresh(parentBinding, oVar);
+            // A triple-term pattern binds the variables inside it before the subject binds: one of them may be the subject's.
+            sFresh = ttMatcher == null && RowVars.fresh(parentBinding, sVar, oVar);
         }
     }
 
@@ -209,7 +217,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         while (hasNext) {
             BindingNodeId result = new BindingNodeId(this.parentBinding);
             boolean ok = true;
-            if (oVar != null) {
+            if (oFresh) {
+                result.bind(oVar, NodeId.pack(NodeType.OBJECT, So.get(curOIndex)));
+            } else if (oVar != null) {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, So.get(curOIndex)), nodeTable);
             }
             if (ok && ttMatcher != null) {
@@ -224,7 +234,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
                     result = unified;
                 }
             }
-            if (ok && sVar != null) {
+            if (ok && sFresh) {
+                result.bind(sVar, NodeId.pack(NodeType.SUBJECT, Ss.get(curSIndex)));
+            } else if (ok && sVar != null) {
                 ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, Ss.get(curSIndex)), nodeTable);
             }
             curSIndex++;

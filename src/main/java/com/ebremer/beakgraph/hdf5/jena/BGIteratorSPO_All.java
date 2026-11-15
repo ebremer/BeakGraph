@@ -45,6 +45,12 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     // pre-bound in the parent) must agree per row.
     private Var gVar, sVar, pVar, oVar;
     private long gId;
+    // What each row does about each variable, decided once (RowVars): a
+    // variable in no layer of the parent, and not an earlier position's again,
+    // is new to every row and is bound without a lookup; the graph's, when the
+    // parent holds this very graph for it, needs nothing at all. Every other
+    // case keeps putCompatible.
+    private boolean gHeld, gFresh, sFresh, pFresh, oFresh;
 
     // Triple-term pattern in the object position: this scan-shaped iterator
     // formerly dropped the constraint entirely (a var-containing triple term is
@@ -226,6 +232,14 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         if (quad.getObject().isVariable()) oVar = Var.alloc(quad.getObject());
 
         advance();
+        if (hasNext) {
+            gHeld = RowVars.holds(parentBinding, gVar, gi);
+            gFresh = RowVars.fresh(parentBinding, gVar);
+            // The graph's variable is bound first: a later position that repeats it is not fresh.
+            sFresh = RowVars.fresh(parentBinding, sVar, gVar);
+            pFresh = RowVars.fresh(parentBinding, pVar, gVar, sVar);
+            oFresh = RowVars.fresh(parentBinding, oVar, gVar, sVar, pVar);
+        }
     }
 
     /**
@@ -376,16 +390,24 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         while (hasNext) {
             BindingNodeId result = new BindingNodeId(parentBinding);
             boolean ok = true;
-            if (gVar != null) {
+            if (gFresh) {
+                result.bind(gVar, gId);
+            } else if (gVar != null && !gHeld) {
                 ok = result.putCompatible(gVar, gId, nodeTable);
             }
-            if (ok && sVar != null) {
+            if (ok && sFresh) {
+                result.bind(sVar, NodeId.pack(NodeType.SUBJECT, resS));
+            } else if (ok && sVar != null) {
                 ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, resS), nodeTable);
             }
-            if (ok && pVar != null) {
+            if (ok && pFresh) {
+                result.bind(pVar, NodeId.pack(NodeType.PREDICATE, resP));
+            } else if (ok && pVar != null) {
                 ok = result.putCompatible(pVar, NodeId.pack(NodeType.PREDICATE, resP), nodeTable);
             }
-            if (ok && oVar != null) {
+            if (ok && oFresh) {
+                result.bind(oVar, NodeId.pack(NodeType.OBJECT, resO));
+            } else if (ok && oVar != null) {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, resO), nodeTable);
             }
             if (ok && ttMatcher != null) {

@@ -91,6 +91,19 @@ public class BindingNodeId implements Iterable<Var> {
     }
 
     /**
+     * Binds {@code v} to {@code id} without looking for it first: for a caller
+     * that has established - once, for all the rows it makes - that {@code v}
+     * is bound neither in this layer nor anywhere in the chain below it. Every
+     * row an iterator emits used to ask that again for each of its variables,
+     * walking the chain each time ({@link #put}, {@link #putCompatible}): a
+     * question whose answer is the same for every row of the iterator
+     * ({@link RowVars}).
+     */
+    public void bind(Var v, long id) {
+        append(v, id);
+    }
+
+    /**
      * Binds {@code v} to {@code id}; when {@code v} is already bound, the existing
      * binding is kept. Only safe when the caller guarantees the re-put carries the
      * same term (e.g. re-binding a value derived from this binding's own entry).

@@ -41,6 +41,9 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     // constant G/S/P packed NodeIds pre-built (only the object id varies per row).
     private Var gVar, sVar, pVar, oVar;
     private long gId, sId, pId;
+    // True when the planned variables are pairwise distinct: none is in the parent
+    // (planRowEmission), so each is new to every row and is bound without a lookup.
+    private boolean distinctVars;
 
     public BGIteratorSO(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this(dict, reader, bnid, quad, filter, nodeTable, -1);
@@ -186,6 +189,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
                 oVar = v;
             }
         }
+        distinctVars = RowVars.distinct(gVar, sVar, pVar, oVar);
     }
 
     private long resolveNode(Node node, Dictionary dictionary, BindingNodeId bnid) {
@@ -221,10 +225,17 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         }
         if (!hasNext) throw new NoSuchElementException();
         BindingNodeId result = new BindingNodeId(this.parentBinding);
-        if (gVar != null) result.put(gVar, gId);
-        if (sVar != null) result.put(sVar, sId);
-        if (pVar != null) result.put(pVar, pId);
-        if (oVar != null) result.put(oVar, NodeId.pack(NodeType.OBJECT, So.get(i)));
+        if (distinctVars) {
+            if (gVar != null) result.bind(gVar, gId);
+            if (sVar != null) result.bind(sVar, sId);
+            if (pVar != null) result.bind(pVar, pId);
+            if (oVar != null) result.bind(oVar, NodeId.pack(NodeType.OBJECT, So.get(i)));
+        } else {
+            if (gVar != null) result.put(gVar, gId);
+            if (sVar != null) result.put(sVar, sId);
+            if (pVar != null) result.put(pVar, pId);
+            if (oVar != null) result.put(oVar, NodeId.pack(NodeType.OBJECT, So.get(i)));
+        }
         i++;
         hasNext = (i <= j);
         return result;

@@ -152,7 +152,7 @@ public class PatternMatchBG {
         }
     }
 
-    private static SpatialContext getSpatialContext(ExprList filters) {
+    static SpatialContext getSpatialContext(ExprList filters) {
         if (filters == null || filters.isEmpty()) {
             return null;
         }

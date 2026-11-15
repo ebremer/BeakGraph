@@ -366,9 +366,83 @@ What that says:
 - **Answers are the same**: every query of the table gave the same rows from both builds, and the tests
   hold the walk to Jena's operator and to an in-memory dataset on 51 query shapes.
 
+Since then, on branch `falcon3`: a block with a `FILTER`, `OPTIONAL` or `UNION` inside it is walked too, and
+a walk whose rows do work goes parallel (see "Blocks, rows and workers" below).
+
 Found on the way, and not changed:
 
 - **CSV results cost ten times what XML results do at the endpoint**, in both builds: a graph's 801 rows
   take 31 ms as CSV, 2.7 ms as XML and 3.6 ms as JSON; 30,000 grouped rows 1.66 s, 0.11 s and 0.15 s.
   Jena's CSV writer flushes once, at the end, so the cause is in how its writes reach the response; it was
   not looked into further. The two grouped rows of the table above are XML timings for that reason.
+
+### Blocks, rows and workers (2026-11-15, branch `falcon3`, not committed when written)
+
+Three more changes to the query engine, all in how a query goes over the rows of many graphs. The store's
+format is untouched.
+
+- **A `GRAPH ?g` block with a `FILTER`, `OPTIONAL` or `UNION` inside it is walked on ids** (`GraphVarBG`).
+  The walk took a plain pattern; any other block ran graph by graph through Jena. It now evaluates, in each
+  graph, the operators Jena itself runs by handing each row of the left to the right: patterns, filters,
+  sequences, conditionals (the optional ARQ can run row by row) and unions, and what ARQ makes of
+  `FILTER(?x = <iri>)` (an assignment) and of `FILTER(a || b)` (a disjunction). Each filter is placed after
+  the triples that bind its variables, and is its pattern's range hints, as for a pattern outside a graph
+  block.
+  - **What keeps the answers the same:** SPARQL joins the graph's name to the block's solutions afterwards,
+    so nothing inside the block may see `?g`. The walk binds it first; it therefore takes such a block only
+    when nothing in it mentions `?g`. (A plain pattern may: for a pattern, binding it first is that join.)
+  - **Still Jena's:** `MINUS`, `BIND`, a sub-select, a property path, `EXISTS` inside a filter, an optional
+    or a join ARQ does not run row by row, a filter on `geof:sfIntersects` in a store with the spatial
+    index (Jena's route seeds it from that index), an assignment of a term the store has no id for.
+- **A walk hands the graphs it has left to parallel workers** once it has produced
+  `beakgraph.scan.parallel.threshold` rows, where a row costs more than reading it: a join, an optional.
+  The existing parallel scan was planned for one graph of that many positions; a store of thousands of
+  small graphs never met that, and ran its joins on one thread. A lookup, a `LIMIT` met early and a walk
+  under an outer row start no worker.
+- **Rows bind their new variables without a lookup** (`RowVars`, `BindingNodeId.bind`). Every row asked,
+  for each variable it binds, whether the binding under it already held one, walking the chain of layers:
+  the answer is the same for every row of an iterator, and is found once. A variable that is not new -
+  held by the binding underneath, or repeated in the pattern - keeps the check that compares its two
+  values. The reader also looks a pattern position up in the binding once where it looked twice.
+
+Measured as before (the endpoint on the JVM, one client on a connection kept alive, 4.0M quads in 5,000
+graphs, each build on two servers in turn), in milliseconds a request, `falcon2` against `falcon3`:
+
+| Query, all under `GRAPH ?g` | Before | After |
+|---|---|---|
+| Subject lookup, a filter in the block | 8.4 | 1.9 |
+| Subject lookup, an optional in the block | 6.4 | 1.4 |
+| Subject lookup, a union in the block | 10.1 | 2.5 |
+| 200,000 rows with an optional in the block, counted | 655 | 54 |
+| 400,000 rows of a union in the block, counted | 113 | 39 |
+| 80,000 of 800,000 rows passing a filter in the block, counted | 45 | 24 |
+| A join of three patterns, 200,000 rows, counted | 223 | 88 |
+| Every quad of every graph scanned and counted (4.0M) | 843 | 512 |
+| The rows of a predicate, counted (800,000) | 154 | 123 |
+| The rows of a type, counted (200,000) | 31.5 | 24.7 |
+| A number of every subject, summed (800,000) | 207 | 177 |
+| Subject lookup, plain | 2.1 | 2.1 |
+| Lookup, count and dump in one graph (not changed) | the same | the same |
+
+What that says:
+
+- **A block with a filter, an optional or a union now costs what a plain one does**: four times less for a
+  lookup, twelve times less where an optional is tried for every row of 5,000 graphs.
+- **Workers pay where rows do work, and not otherwise.** With the hand-off switched off the join takes
+  195 ms and the optional 108 ms: workers are the last 2.2 to 2.5 times of those two rows of the table.
+  A single pattern's rows were tried too: 13 to 17% faster for three scans, 12% slower for a fourth, with
+  every core busy. One thread consumes the rows either way, and handing a row from one thread to another
+  costs about what reading it does. So those stay on one thread, and their gain in the table is the
+  bindings'.
+- **The bindings' share was larger than the profile's 13% suggested** for the scan of every quad, whose
+  rows bind three variables each: 0.84 s to 0.51 s on one thread.
+- **Answers are the same**: every query gave the same rows from both builds; the tests hold the walk to
+  Jena's operator and to an in-memory dataset on 64 query shapes it takes and 22 it leaves, and hold rows
+  with a repeated or an already bound variable to an in-memory dataset on 30 more.
+- Not measured: the native binary, and real data.
+
+Still open here:
+
+- A walk of single patterns is limited by the thread that consumes its rows: aggregating on ids, in the
+  workers, is item 4.
+- An optional or join that ARQ keeps as a left join or a join, `MINUS` and `BIND` inside a graph block.

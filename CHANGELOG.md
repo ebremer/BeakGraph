@@ -6,6 +6,36 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **`GRAPH ?g { ... }` is walked on ids with a `FILTER`, `OPTIONAL` or `UNION`
+  inside it too.** The walk over the named graphs took a plain pattern only;
+  any other block ran graph by graph through Jena. It now evaluates the
+  block's patterns, filters, optionals and unions itself in each graph (and
+  what ARQ makes of `FILTER(?x = <iri>)` and `FILTER(a || b)`). On a store of
+  5,000 graphs a subject lookup with a filter in the block takes 1.9 ms where
+  it took 8.4 ms, one with an optional 1.4 ms (6.4 ms), one with a union
+  2.5 ms (10.1 ms); 200,000 rows with an optional are counted in 54 ms
+  (655 ms). The rows are the same. Still Jena's: a block with `MINUS`, `BIND`,
+  a sub-select, a property path or `EXISTS`, an optional or join ARQ does not
+  run row by row, a filter on `geof:sfIntersects` in a store with the spatial
+  index, and a block that is more than a pattern and names `?g` itself - a
+  filter inside the block must not see `?g`, which SPARQL joins afterwards.
+* **A walk over many graphs hands them to parallel workers** once it has
+  produced `beakgraph.scan.parallel.threshold` rows (65,536), where a row
+  costs more than reading it: a join, an optional. Parallel scans were planned
+  for one graph of that many positions, so a store of thousands of small
+  graphs ran its joins on one thread: a join of 200,000 rows across 5,000
+  graphs now takes 88 ms where it took 223 ms. A single pattern's rows stay
+  on one thread - workers made such scans 13 to 17% faster at best and 12%
+  slower at worst, since one thread consumes the rows either way - and so do
+  a lookup, a `LIMIT` met early, and a block whose filter is not its
+  outermost operator.
+* **Rows bind their new variables without looking for them first.** Every row
+  an iterator emitted asked, for each of its variables, whether the binding
+  under it already held one; the answer is the same for every row of the
+  iterator, and is now found once. A scan of 4.0M quads across 5,000 graphs
+  takes 0.51 s where it took 0.84 s (workers not involved), a lookup without
+  a graph 4 to 9% less. The reader also looks a pattern position up in the
+  binding once where it looked twice.
 * **`GRAPH ?g { ... }` over a plain pattern is one walk over the named graphs
   on ids.** Jena executed the pattern anew in every graph, building a graph
   view, an execution context and an iterator pipeline for each; a store of

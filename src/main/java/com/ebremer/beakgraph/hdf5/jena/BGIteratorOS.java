@@ -30,6 +30,8 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
     // Row-emission plan, computed once: G/P/O packed ids are constant, only S varies.
     private Var gVar, pVar, oVar, sVar;
     private long gId, pId, oId;
+    // As in BGIteratorSO: the planned variables are new to every row when they are pairwise distinct.
+    private boolean distinctVars;
 
     public BGIteratorOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this(dict, reader, bnid, quad, filter, nodeTable, -1);
@@ -196,6 +198,7 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
                 sVar = v;
             }
         }
+        distinctVars = RowVars.distinct(gVar, pVar, oVar, sVar);
     }
 
     @Override
@@ -208,10 +211,17 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         if (!hasNext) throw new NoSuchElementException();
         BindingNodeId result = new BindingNodeId(this.parentBinding);
         long currentSubjectId = Ss.get(i);
-        if (gVar != null) result.put(gVar, gId);
-        if (pVar != null) result.put(pVar, pId);
-        if (oVar != null) result.put(oVar, oId);
-        if (sVar != null) result.put(sVar, NodeId.pack(NodeType.SUBJECT, currentSubjectId));
+        if (distinctVars) {
+            if (gVar != null) result.bind(gVar, gId);
+            if (pVar != null) result.bind(pVar, pId);
+            if (oVar != null) result.bind(oVar, oId);
+            if (sVar != null) result.bind(sVar, NodeId.pack(NodeType.SUBJECT, currentSubjectId));
+        } else {
+            if (gVar != null) result.put(gVar, gId);
+            if (pVar != null) result.put(pVar, pId);
+            if (oVar != null) result.put(oVar, oId);
+            if (sVar != null) result.put(sVar, NodeId.pack(NodeType.SUBJECT, currentSubjectId));
+        }
         i++;
         // The range [i, j) is exact (a located subject, or the clamped block),
         // so the next row is deliverable whenever one remains.

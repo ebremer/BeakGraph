@@ -277,10 +277,10 @@ public class HDF5Reader implements BGReader {
         // A pattern variable already bound to a node that does not exist in this store
         // (e.g. a VALUES/BIND term not present here) cannot match anything, so the pattern
         // yields no solutions - rather than failing to resolve the missing id.
-        if (boundToMissing(triple, binding)) {
+        Triple pattern = resolve(triple, binding, nodeTable);
+        if (pattern == null) {
             return Collections.emptyIterator();
         }
-        Triple pattern = substituteCrossSpace(triple, binding, nodeTable);
         if (Quad.isUnionGraph(ng)) {
             return readUnion(namedGraphIds(), binding, pattern, filter, nodeTable);
         }
@@ -297,10 +297,11 @@ public class HDF5Reader implements BGReader {
             return Collections.emptyIterator();
         }
         BindingNodeId binding = orEmpty(bnid);
-        if (boundToMissing(triple, binding)) {
+        Triple pattern = resolve(triple, binding, nodeTable);
+        if (pattern == null) {
             return Collections.emptyIterator();
         }
-        return readGraph(graphId, binding, substituteCrossSpace(triple, binding, nodeTable), filter, nodeTable);
+        return readGraph(graphId, binding, pattern, filter, nodeTable);
     }
 
     @Override
@@ -335,24 +336,31 @@ public class HDF5Reader implements BGReader {
         return (bnid != null) ? bnid : new BindingNodeId();
     }
 
-    private static boolean boundToMissing(Triple triple, BindingNodeId binding) {
-        return boundToMissing(triple.getSubject(), binding)
-                || boundToMissing(triple.getPredicate(), binding)
-                || boundToMissing(triple.getObject(), binding);
-    }
-
     /**
-     * A bound variable's id is used DIRECTLY by the iterators (they consult the
-     * binding before the dictionary) whenever its id-space matches the position;
-     * only a cross-space binding (predicate id used in an entity position or
-     * vice versa) is materialized to its term here so the iterator re-locates it
-     * in the position's own dictionary. The former unconditional substitution
-     * paid an extract() + full binary search per bound variable per input row.
+     * The pattern as the iterators take it under {@code binding}, or null when
+     * no row can match. One lookup a position decides both things that were
+     * two passes over the pattern:
+     * <ul>
+     *   <li>A variable bound to a node that does not exist in this store (a
+     *       VALUES/BIND term not present here) cannot match anything: null.</li>
+     *   <li>A bound variable's id is used DIRECTLY by the iterators (they
+     *       consult the binding before the dictionary) whenever its id-space
+     *       matches the position; only a cross-space binding (predicate id used
+     *       in an entity position or vice versa) is materialized to its term
+     *       here so the iterator re-locates it in the position's own
+     *       dictionary. The former unconditional substitution paid an
+     *       extract() + full binary search per bound variable per input row.</li>
+     * </ul>
+     * The reader is asked once for every input row of a join and once for
+     * every graph of a walk over the named graphs, so the lookups count.
      */
-    private Triple substituteCrossSpace(Triple triple, BindingNodeId binding, NodeTable nodeTable) {
-        Node s = substituteIfCrossSpace(triple.getSubject(), binding, nodeTable, false);
-        Node p = substituteIfCrossSpace(triple.getPredicate(), binding, nodeTable, true);
-        Node o = substituteIfCrossSpace(triple.getObject(), binding, nodeTable, false);
+    private Triple resolve(Triple triple, BindingNodeId binding, NodeTable nodeTable) {
+        Node s = resolve(triple.getSubject(), binding, nodeTable, false);
+        if (s == null) return null;
+        Node p = resolve(triple.getPredicate(), binding, nodeTable, true);
+        if (p == null) return null;
+        Node o = resolve(triple.getObject(), binding, nodeTable, false);
+        if (o == null) return null;
         return (s == triple.getSubject() && p == triple.getPredicate() && o == triple.getObject())
                 ? triple : Triple.create(s, p, o);
     }
@@ -364,7 +372,8 @@ public class HDF5Reader implements BGReader {
             return Collections.emptyIterator();
         }
         BindingNodeId binding = orEmpty(bnid);
-        if (boundToMissing(triple, binding)) {
+        Triple pattern = resolve(triple, binding, nodeTable);
+        if (pattern == null) {
             return Collections.emptyIterator();
         }
         // Members are terms (a FROM list): each is located once, here; the
@@ -377,7 +386,7 @@ public class HDF5Reader implements BGReader {
             Node g = Quad.isDefaultGraph(n) ? this.defaultGraph : n;
             return java.util.stream.LongStream.of(dict.getGraphs().locate(g));
         }).filter(id -> id >= 1).distinct();
-        return readUnion(ids.iterator(), binding, substituteCrossSpace(triple, binding, nodeTable), filter, nodeTable);
+        return readUnion(ids.iterator(), binding, pattern, filter, nodeTable);
     }
 
     /**
@@ -568,27 +577,32 @@ public class HDF5Reader implements BGReader {
         }
     }
 
-    /** True when {@code n} is a variable already bound to a node that does not exist here. */
-    private static boolean boundToMissing(Node n, BindingNodeId bnid) {
-        return n.isVariable() && NodeId.isDoesNotExist(bnid.get(Var.alloc(n)));
-    }
-
     /**
-     * Replaces a bound variable with its concrete term ONLY when its NodeId lives
-     * in a different id-space than the position it is used at. GRAPH/SUBJECT ids
-     * are entity-space and OBJECT ids are entity-space plus offset literals, so
-     * among those three positions a bound id is directly comparable (a literal id
-     * in an entity position simply never matches - correct, since a literal cannot
-     * be a subject or graph). Only the isolated PREDICATE space needs the
-     * materialize-and-relocate round trip, in either direction.
+     * One position of {@link #resolve(Triple, BindingNodeId, NodeTable)}: the
+     * node itself (a term, an unbound variable, or a variable whose bound id
+     * the iterator reads from the binding), the term a cross-space binding
+     * stands for, or null for a variable bound to a node that does not exist
+     * here.
+     *
+     * <p>A bound variable is replaced with its concrete term ONLY when its
+     * NodeId lives in a different id-space than the position it is used at.
+     * GRAPH/SUBJECT ids are entity-space and OBJECT ids are entity-space plus
+     * offset literals, so among those three positions a bound id is directly
+     * comparable (a literal id in an entity position simply never matches -
+     * correct, since a literal cannot be a subject or graph). Only the isolated
+     * PREDICATE space needs the materialize-and-relocate round trip, in either
+     * direction.
      */
-    private Node substituteIfCrossSpace(Node n, BindingNodeId bnid, NodeTable nodeTable, boolean predicatePosition) {
+    private Node resolve(Node n, BindingNodeId bnid, NodeTable nodeTable, boolean predicatePosition) {
         if (!n.isVariable()) {
             return n;
         }
         long id = bnid.get(Var.alloc(n));
-        if (id == NodeId.NONE || NodeId.isDoesNotExist(id)) {
-            return n; // unbound (or already short-circuited by boundToMissing)
+        if (id == NodeId.NONE) {
+            return n; // unbound
+        }
+        if (NodeId.isDoesNotExist(id)) {
+            return null; // bound to a node this store does not hold
         }
         if (NodeId.isPredicateSpace(id) == predicatePosition) {
             return n; // same space: the iterator consumes the bound id directly
