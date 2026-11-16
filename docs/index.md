@@ -8,7 +8,7 @@ permalink: /
 # BeakGraph
 {: .fs-9 }
 
-RDF datasets as self-contained HDF5 files, queried with SPARQL in place.
+RDF datasets as self-contained HDF5 files or Zarr stores, queried with SPARQL in place.
 {: .fs-6 .fw-300 }
 
 [Get started](instructions/){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
@@ -22,15 +22,22 @@ BeakGraph is an [Apache Jena](https://jena.apache.org/) graph implementation of
 converts RDF into **dictionary-encoded, columnar quad stores**: one `.h5` file is one
 self-contained, immutable store, queried with SPARQL directly from the file — locally or over
 HTTP range requests — without loading the graph into memory. The same store can be written as a
-[Zarr](https://zarr.dev/) v3 directory store (`-zarr`), which is read the same way.
+[Zarr](https://zarr.dev/) v3 directory store (`-zarr`), or as that Zarr store in one ZIP archive
+(`-zip`), and is read the same way.
 
 ## Highlights
 
 - **Six conversion engines, one format.** In-memory engines (`-method 0/2/3`) for data that fits
   in RAM; disk-based engines (`-method 1/4/5`) for inputs larger than memory, up to
   10⁹–10¹¹ quads. Every engine writes the same on-disk format.
-- **Query in place.** A store on a web server or object store is queried through HTTP range
-  requests without downloading it.
+- **Two containers, pure Java.** HDF5 or Zarr hold the same arrays byte for byte; both are read
+  and written through [Falcon](https://github.com/ebremer/falcon), with no native HDF5 library to
+  install — the GraalVM native binary included.
+- **Query in place.** A store on a web server or object store — an `.h5` file or a `.zarr`
+  directory — is queried through HTTP range requests without downloading it.
+- **Queries on ids.** Joins, `GRAPH ?g` walks over thousands of named graphs, and `GROUP BY` and
+  aggregates run on integer ids, on parallel workers; counts of every quad come straight off the
+  index.
 - **SPARQL endpoint and LWS storage.** `-endpoint` serves one store as a read-only SPARQL
   endpoint, or a whole directory of stores as [W3C LWS](https://github.com/w3c/lws-protocol)
   storage.
@@ -44,7 +51,8 @@ HTTP range requests — without loading the graph into memory. The same store ca
 ## Quick start
 
 Requires Java 25 and Maven 3.9, and no HDF5 install — see
-[Requirements](instructions/#1-requirements).
+[Requirements](instructions/#1-requirements). Falcon, the HDF5 and Zarr library, is not on Maven
+Central yet: install it first ([Building](instructions/#2-building)).
 
 ```bash
 # Build the self-contained command-line jar
@@ -70,12 +78,12 @@ try (BeakGraph bg = BG.getBeakGraph(new File("mydata.ttl.h5"))) {
 
 | Page | What it covers |
 |---|---|
-| [Instructions](instructions/) | Building, the command-line reference, choosing a conversion engine, very large builds, exporting, verifying, serving, and using BeakGraph from Java. |
+| [Instructions](instructions/) | Building, the command-line reference, the HDF5 and Zarr containers, choosing a conversion engine, very large builds, exporting, verifying, serving, and using BeakGraph from Java. |
 | [File format](specification/) | The on-disk format of a BeakGraph store: the HDF5 and Zarr container profiles, encodings, term order, dictionary, quad indexes and ingest rules. |
 | [RDF 1.2 compliance](rdf-1.2-compliance/) | Conformance to RDF 1.1, RDF 1.2 and SPARQL-CDT, and the documented deviations. |
 | [Benchmarks](benchmarks/) | The JMH benchmarks for the read path. |
 | [Changelog](changelog/) | Release notes and the format version history. |
-| [Architecture](architecture/) | The original design of the on-disk format, slide by slide: file layout, dictionaries, indexes, rank/select, the query path and the writers. |
+| [Architecture](architecture/) | How a store is laid out, read and written, one topic per page: the file layout, the two containers, dictionaries, indexes, rank/select, integer sequences, the query path and the six writers. |
 
 ## Background
 

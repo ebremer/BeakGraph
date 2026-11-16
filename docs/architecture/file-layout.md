@@ -7,30 +7,42 @@ permalink: /architecture/file-layout/
 
 # File layout
 
-Groups and datasets inside the `.h5` container
+Groups and arrays inside a store — format version 6
 {: .fs-6 .fw-300 }
 
 ```text
-/.BG                          attrs: numQuads, formatVersion (=3)
+/.BG                          attrs: numQuads, formatVersion (=6)
  |- dictionary/
- |   |- entities/             URIs + blank nodes from G, S, and entity O
- |   |- predicates/           predicate URIs
- |   |- literals/             every literal object
- |   |- graphs                (columnar id lists: the DISTINCT sorted ids
- |   |- subjects               used in each quad position - drives fast
- |   |- objects                enumeration and cardinality answers)
+ |   |- entities/             IRIs + blank nodes used as G, S or non-literal O
+ |   |- predicates/           predicate IRIs
+ |   |- literals/             every literal object, then every RDF 1.2 triple term
+ |   |- graphs    graphs_blocks       the DISTINCT sorted ids used in each
+ |   |- subjects  subjects_blocks     position, block-structured, with their
+ |   |- objects   objects_blocks      directories (graph enumeration, membership)
  |- GSPO/                     index ordered graph > subject > predicate > object
- |   |- Ss  Bs   SBs  BBs     level 1 (subject layer)
- |   |- Sp  Bp   SBp  BBp     level 2 (predicate layer)
- |   |- So  Bo   SBo  BBo     level 3 (object layer)
+ |   |- Bs  Ss Ss_blocks  SBs BBs     level 1 (subject layer)
+ |   |- Bp  Sp Sp_blocks  SBp BBp     level 2 (predicate layer)
+ |   |- Bo  So So_blocks  SBo BBo     level 3 (object layer)
  |- GPOS/                     index ordered graph > predicate > object > subject
-     |- Sp  Bp   SBp  BBp
-     |- So  Bo   SBo  BBo
-     |- Ss  Bs   SBs  BBs
+     |- Bp  Sp Sp_blocks  SBp BBp
+     |- Bo  So So_blocks  SBo BBo
+     |- Bs  Ss Ss_blocks  SBs BBs
 ```
 
-Every dataset is a bit-packed buffer with two attributes: `width` (bits per entry) and `numEntries`.
+- Every packed integer array carries `numEntries` and `width` (on a block-structured one, its
+  widest block's); the raw value arrays (`floats`, `doubles`, an FCD's `offsets`) carry `numEntries`
+  alone. A block-structured array also carries `blockEntries` — its presence is what marks the
+  form — and has its `_blocks` directory beside it ([Integer sequences](../bit-packed-buffers/))
+- A section holds per-node columns (`datatypes`, `offsets`; in `literals` also `typedLiterals`,
+  `langTags`, `langDirs`) and value stores (`iri`, `strings`, `integers`, `longs`, `floats`,
+  `doubles`, `tripleTerms`, `typedLiteralsDictionary`, `langs`), each present only when used
+  ([Inside a dictionary section](../dictionary-sections/))
+- Readers find features by presence: no language tags → no `langs` / `langTags`; no triple terms → no
+  `tripleTerms`. `formatVersion` only stops older readers from misreading newer stores
+- In Zarr the same tree is a hierarchy of groups and `uint8` arrays: `.BG/GSPO/So` is
+  `.BG/GSPO/So/zarr.json` plus its chunk `.BG/GSPO/So/c/0` — about 60 arrays, some 130 files, with the
+  metadata of all of them consolidated into the root `zarr.json`
 
 ---
 
-[← Previous: What a BeakGraph file is](../what-a-beakgraph-file-is/){: .btn } [Next: Dictionary design →](../dictionary-design/){: .btn .btn-primary }
+[← Previous: What a BeakGraph store is](../what-a-beakgraph-file-is/){: .btn } [Next: Containers →](../containers/){: .btn .btn-primary }

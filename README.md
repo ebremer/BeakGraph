@@ -17,7 +17,14 @@ Documentation: **[ebremer.github.io/BeakGraph](https://ebremer.github.io/BeakGra
 
 Requires Java 25 and Maven 3.9, and no HDF5 install: every engine reads and writes HDF5 and Zarr in
 pure Java, through [Falcon](https://github.com/ebremer/falcon) (see
-[docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §1-2).
+[docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) §1-2). Falcon is not on Maven Central yet: install it
+first, at the version the pom names as `falcon.version` (0.3.0 for BeakGraph 0.20.0):
+
+```
+git clone https://github.com/ebremer/falcon && cd falcon && mvn -pl hdf5,zarr -am install
+```
+
+Then:
 
 ```
 mvn -Plib clean package             # self-contained library jar: target/BeakGraph-<version>.jar
@@ -50,9 +57,9 @@ java -agentlib:native-image-agent=config-merge-dir=meta \
   `-zarr`, or a `-dest` named `*.zarr`, writes the same store as a Zarr v3 directory store instead of an
   HDF5 file, and `-zip`, or a `-dest` named `*.zip`, as that Zarr store in one ZIP file; every command
   below takes any of them.
-* `-src <file.h5|dir> -export NT|NQ|TTL|TRIG|JSON-LD` dumps stores back to RDF.
-* `-verify <file.h5|dir> [-deep]` integrity-checks stores before publishing them.
-* `-endpoint <file.h5|dir> -port 8888` serves one store, or a whole directory as W3C LWS storage,
+* `-src <store|dir> -export NT|NQ|TTL|TRIG|JSON-LD` dumps stores back to RDF.
+* `-verify <store|dir> [-deep]` integrity-checks stores before publishing them.
+* `-endpoint <store|dir> -port 8888` serves one store, or a whole directory as W3C LWS storage,
   over SPARQL. The endpoint is unauthenticated and read-only by design (with `SERVICE` federation
   on); authentication belongs in the proxy or application in front of it - see
   [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md), "Deployment and trust model".
@@ -122,12 +129,9 @@ Document-relative IRIs (`<>`, `<sibling.png>`) are stored unresolved and resolve
 URL a store is served from; see [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) "Document-relative
 IRIs" and SPECIFICATIONS.md §9.2.
 
-BeakGraph is a [Apache Jena](https://jena.apache.org/) Graph implementation backed by [HDF5](https://www.hdfgroup.org/solutions/hdf5/).
-Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/).
-
 ### Limitations
 
-* BeakGraph files are read-only. The in-memory engines (`-method 0/2/3`) hold
+* BeakGraph stores are read-only. The in-memory engines (`-method 0/2/3`) hold
   the whole input on the heap; the disk-based engines (`-method 1/4/5`, spill
   space under `-workdir`) bound RAM by spilling and are the way to build stores
   larger than memory
@@ -147,7 +151,10 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 * `.h5` files written before the spatial-index redesign carry the old
   corner-based index entries, which the query side no longer reads - rebuild
   them from source for spatial queries (their spatial answers were unsound
-  anyway; non-spatial queries are unaffected).
+  anyway; non-spatial queries are unaffected). Stores built with `-spatial` by
+  0.19.0 or earlier can hold repaired pyramid levels (`hal:asWKT{s}`) with
+  fractional vertices; rebuild them for a consumer that reads integer
+  coordinates only ([CHANGELOG.md](CHANGELOG.md), 0.20.0).
 * Numeric literals typed `xsd:int`, `xsd:long`, `xsd:float` or `xsd:double` are
   stored by value and canonicalized at ingest: `"01"^^xsd:int` is stored - and
   matched - as `"1"^^xsd:int`.
@@ -185,7 +192,7 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   shortcuts apply to a single graph only). A dataset with a BeakGraph default
   graph that is *not* a BeakGraph dataset (a Jena `Model` over the graph) takes
   Jena's generic construction instead.
-* RDF 1.2 support is at the spec's **full conformance** level (format v5):
+* RDF 1.2 support is at the spec's **full conformance** level (since format v5):
   base-direction literals (`"x"@en--ltr`, `rdf:dirLangString`; format v4) and
   triple terms (`<<( s p o )>>`, including the reifier/annotation sugar and
   nesting; format v5) are stored and matched term-exactly across every writer
@@ -223,7 +230,7 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   block cache for all its arrays), and a storage directory serves either as a store. The code above the
   container (`com.ebremer.beakgraph.store`) does not know which it has.
 * **One self-contained jar.** The published library jar shades every dependency (Jena, Fuseki,
-  Falcon, JTS, the HDF5 natives, log4j and its `log4j2.yml` at the classpath root), so a consumer
+  Falcon, JTS, aircompressor, log4j and its `log4j2.yml` at the classpath root), so a consumer
   gets one artifact that runs on an empty classpath. The trade-off: a consumer that also brings
   its own Jena or JTS sees duplicate, unrelocated classes, and the embedded logging
   configuration takes over that application's log4j setup (it writes a rolling
@@ -231,8 +238,9 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
 * **Six engines, one format.** Every `-method` targets the same on-disk format
   (SPECIFICATIONS.md); the RAM-family engines produce byte-identical stores, the disk family
   isomorphic ones. Rules shared by all engines live in one helper each
-  (`RdfSources.parser`, `RelativeIris`, `Params.gridGraph`, `NodeComparator`), because six
-  hand-mirrored copies of a rule were the recurring source of divergence.
+  (`RdfSources.parser`, `RelativeIris`, `Params.gridGraph`, `NodeComparator`, and `BlockedEncoder`
+  for the format v6 id sequences), because six hand-mirrored copies of a rule were the recurring
+  source of divergence.
 * **Locale-independent code.** Identifiers, protocol strings and file names are case-mapped
   and formatted with `Locale.ROOT` (never the JVM default: `"trig".toUpperCase()` is `TRİG` under
   tr-TR, `%d` prints Arabic-Indic digits under ar-EG); `LocaleRuleTest` scans the sources for
@@ -253,13 +261,13 @@ HDF5 files called [HDFView](https://www.hdfgroup.org/download-hdfview/).  HDFVie
 
 Spatial indexing based on [GeoSPARQL](https://github.com/opengeospatial/ogc-geosparql) is supported for `geof:sfIntersects` (see Limitations above).
 
-The full list of containers under consideration are:
-* [HDF5](https://www.hdfgroup.org/solutions/hdf5/)
+The containers, done and under consideration:
+* [HDF5](https://www.hdfgroup.org/solutions/hdf5/) - implemented
+* [Zarr](https://zarr.dev/) - implemented, as a directory store
+* [Zip](https://en.wikipedia.org/wiki/ZIP_(file_format)) - implemented, as a Zarr store in one ZIP archive
 * [Apache Arrow](https://arrow.apache.org/)
-* [Zarr](https://zarr.dev/)
-* [Zip](https://en.wikipedia.org/wiki/ZIP_(file_format))
 * [DICOM](https://www.dicomstandard.org/)
-* [LWS](https://github.com/w3c/lws-protocol)
+* [LWS](https://github.com/w3c/lws-protocol) - a directory of stores is already served as LWS storage (`-endpoint <dir>`)
 
 ### Historical
 The original BeakGraph was an [Apache Jena](https://jena.apache.org/) Graph implementation backed by [Apache Arrow](https://arrow.apache.org/)

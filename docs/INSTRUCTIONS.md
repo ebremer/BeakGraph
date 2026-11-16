@@ -1,9 +1,10 @@
 # BeakGraph — Instructions
 
-BeakGraph converts RDF datasets into **HDF5-backed, dictionary-encoded, columnar quad stores**
-that can be queried with SPARQL (via Apache Jena) directly from the `.h5` file — locally or over
-HTTP range requests — without loading the graph into memory. One `.h5` file is one self-contained,
-immutable store.
+BeakGraph converts RDF datasets into **dictionary-encoded, columnar quad stores** that can be
+queried with SPARQL (via Apache Jena) directly from the store — locally or over HTTP range
+requests — without loading the graph into memory. One store is one self-contained, immutable
+dataset, kept in an HDF5 file (`.h5`) or, the same store, in a Zarr directory (`.zarr`) or a Zarr
+ZIP archive (`.zarr.zip`; §4a).
 
 ---
 
@@ -13,6 +14,7 @@ immutable store.
 |---|---|
 | Java 25+ | The build targets current JDKs. |
 | Maven 3.9+ | Standard build. |
+| [Falcon](https://github.com/ebremer/falcon) | The HDF5 and Zarr library, at the version the pom names (`falcon.version`); not on Maven Central yet, so install it into your local Maven repository first (§2). |
 | Native HDF5 library | Not needed. Every engine, the disk-based ones (`-method 1`, `4` and `5`) included, reads and writes HDF5 - and Zarr - through pure-Java [Falcon](https://github.com/ebremer/falcon), on any platform Java 25 runs on. |
 | Disk workspace | For `-method 1/4/5`: free space on the order of a few times the uncompressed source (see §7). |
 
@@ -20,15 +22,20 @@ immutable store.
 
 ```bash
 # Falcon, the HDF5 and Zarr library, is not on Maven Central yet: install it first, at the
-# version the pom names as falcon.version (git clone https://github.com/ebremer/falcon && cd falcon)
+# version the pom names as falcon.version - 0.3.0 for BeakGraph 0.20.0
+# (git clone https://github.com/ebremer/falcon && cd falcon)
 mvn -pl hdf5,zarr -am install
 
-# Library + tests
+# Library + tests: the self-contained jar (all dependencies shaded; -Dthin for the plain jar)
 mvn clean package
 
-# Self-contained command-line jar (all dependencies shaded)
+# The same jar, as the command-line tool
 mvn -Pcmdlinejar clean package
 # -> target/BeakGraph-<version>.jar
+
+# GraalVM native binary (the builder JVM takes -Dnative.build.heap, 32G by default)
+mvn -Pcmdlinenative clean package
+# -> target/beakgraph
 ```
 
 Run the CLI either from the shaded jar or via your own classpath:
@@ -69,12 +76,12 @@ java -jar BeakGraph.jar -endpoint out/ -port 8888
 | Option | Default | Description |
 |---|---|---|
 | `-src <path>` | — | Source file **or** directory tree. Directories are walked recursively; every supported RDF file (see §5) is converted. |
-| `-dest <path>` | — | Destination. Required with `-src`. In per-file mode: the directory mirroring the source tree with `.h5` extensions. With `-merge`: the one store to write - a name ending in `.h5`/`.hdf5` is the file (missing parents are created); anything else (an existing directory, a trailing separator, or no such suffix) is a directory that receives `merged.h5`. |
+| `-dest <path>` | — | Destination. Required with `-src`. In per-file mode: the directory mirroring the source tree with `.h5` extensions (`.zarr` with `-zarr`, `.zarr.zip` with `-zip`). With `-merge`: the one store to write - a name ending in `.h5`/`.hdf5` is the HDF5 file, one ending in `.zarr` the Zarr store, one ending in `.zip` the Zarr store in a ZIP archive (missing parents are created); anything else (an existing directory, a trailing separator, or no such suffix) is a directory that receives `merged.h5` (`merged.zarr` with `-zarr`, `merged.zarr.zip` with `-zip`). |
 | `-method <0-5>` | `0` | Conversion engine — see §6. |
 | `-cores <n>` | `4` | Threads used **inside** one conversion by `-method 2`, `3`, `4` and `5` for the build stages. Each document's parse adds one Jena producer thread, and with `-spatial` the per-geometry augmentation runs on JDK virtual threads outside that budget. (Programmatic builders of methods 4/5 default to all available processors; the CLI to 4.) |
 | `-threads <n>` | `1` | Number of conversions run **at once** (per-file mode). Each conversion gets its own `-cores` budget — total CPU ≈ `threads × cores`, plus the parser and spatial threads noted under `-cores`. |
 | `-merge` | off | Merge **all** sources under `-src` into ONE store at `-dest` (if `-dest` is an existing directory, writes `<dest>/merged.h5`). Blank nodes stay distinct per source document, and so do relative references: each document's `<>` and relative links are stored relative to `-src` (`<>` in `a/x.ttl` becomes `a/x.ttl`, its `<img.png>` becomes `a/img.png`), so the merged store serves them below its own URL as the source tree was laid out. Works with every `-method`. |
-| `-force` | off | Per-file mode: rebuild destination `.h5` files that already exist instead of skipping them. |
+| `-force` | off | Per-file mode: rebuild destination stores that already exist instead of skipping them (the default skip is what makes a re-run resume). |
 | `-zarr` | off | Write each store in the **Zarr container** - a Zarr v3 directory store, `<name>.zarr` - instead of one HDF5 file, `<name>.h5`. It decides the names this run makes up (per-file mode, `<dest>/merged.zarr`, `<name>.zarr` in an existing directory); a `-dest` that itself ends in `.zarr` is a Zarr store without it, and one that ends in `.h5`/`.hdf5` an HDF5 file with it. Works with every `-method`. See §4a. |
 | `-zip` | off | Write each store as a **Zarr store in one file** - a ZIP archive, `<name>.zarr.zip`, whose entries are not compressed - instead of one HDF5 file. It decides the names this run makes up, as `-zarr` does (and wins over it); a `-dest` that itself ends in `.zip` is such an archive without it. While it is written a store takes up to its own size again beside the destination. Works with every `-method`. See §4a. |
 | `-void` | off | Generate the VoID/SD statistics graph (`urn:x-beakgraph:void`) with **exact** in-memory counting (RAM grows with distinct terms). Mutually exclusive with `-voidsketch`. |
@@ -89,16 +96,16 @@ java -jar BeakGraph.jar -endpoint out/ -port 8888
 | `-idSpillBatch <n>` | 2M (1), 4M (4, 5) | Disk-based writers: numeric id / quad records buffered per sorter before a run spills (16 bytes each, two buffers while sorting). |
 | `-mergeFanIn <n>` | 64 (1), 128 (4, 5) | Disk-based writers: spill runs merged per pass (at least 2). Bigger means fewer merge levels and more open files. |
 | `-huge` | off | Legacy shorthand for `-method 1`. An explicit `-method` takes precedence. |
-| `-export <fmt>` | — | **Export mode**: dump the BeakGraph(s) at `-src` back to RDF instead of converting. Formats: `NT`, `NQ`, `JSON-LD`, `TTL`, `TRIG` (case-insensitive). Output lands next to each `.h5` with the same name and the format's extension. See §5a. |
+| `-export <fmt>` | — | **Export mode**: dump the BeakGraph(s) at `-src` back to RDF instead of converting. Formats: `NT`, `NQ`, `JSON-LD`, `TTL`, `TRIG` (case-insensitive). Output lands next to each store with the same name and the format's extension. See §5a. |
 | `-compress` | off | gzip the `-export` output (adds `.gz` to the file name). |
-| `-verify <path>` | — | **Verify mode**: integrity-check the BeakGraph file at `<path>`, or every `.h5`/`.hdf5` under it when `<path>` is a directory (recursive). One `OK`/`FAIL` line per file plus a summary; exit code `2` if any file is damaged. See §5b. |
+| `-verify <path>` | — | **Verify mode**: integrity-check the store at `<path>`, or every store under it when `<path>` is a directory (recursive: `.h5`/`.hdf5` and `.zarr.zip` files, `*.zarr` directories). One `OK`/`FAIL` line per store plus a summary; exit code `2` if any store is damaged. See §5b. |
 | `-deep` | off | With `-verify`: additionally check the whole dictionary order, materialize every triple of every graph through GSPO, reconcile against the index-derived counts, and re-derive the same rows through GPOS (reads the bulk of each file). |
 | `-status` | off | Progress bar (per-file mode) and end-of-run counters. |
-| `-endpoint <file.h5 \| dir>` | — | Serve instead of converting: a single store as a SPARQL endpoint at `/rdf`, or a **directory** as W3C LWS storage (see "Serving a directory" below). |
-| `-port <n>` | `8888` | HTTP port for `-endpoint`. |
+| `-endpoint <store \| dir>` | — | Serve instead of converting: a single store (an `.h5` file, a `.zarr` store or a `.zarr.zip` archive) as a SPARQL endpoint at `/rdf`, or a **directory** as W3C LWS storage (see "Serving a directory" below). |
+| `-port <n>` | `8888` | HTTP port for `-endpoint`; `0` picks a free port. |
 | `-base <url>` | derived per request | Public base URL for the links and IRIs `-endpoint` advertises, e.g. `https://data.example.org/`. By default each response uses the scheme, host and port the client reached the server on (`Forwarded` / `X-Forwarded-*` headers from a reverse proxy are honoured); set this only behind a proxy that does not forward the original host. |
 | (protocol) | — | `-endpoint` honours the SPARQL 1.1 Protocol dataset parameters `default-graph-uri` and `named-graph-uri` (repeatable); when present they replace the query's own `FROM` / `FROM NAMED` clauses, and an absent graph name yields an empty dataset rather than an error. |
-| `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for every SPARQL endpoint the server exposes (the single-file `/rdf` endpoint, every per-`.h5` query in directory mode, and directory mode's `/rdf` metadata dataset, where Fuseki enforces it); a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. The limit bounds time, not memory: CONSTRUCT / DESCRIBE results are streamed for Turtle and N-Triples and capped for JSON-LD and RDF/XML (`beakgraph.query.construct.max.triples`, below); Graph Store `GET /rdf/data` in directory mode returns the whole metadata graph, whose size is the number of served files, not the data. Note: queries that expand large composite (`cdt:`) literals with `UNFOLD`, or compare them by value, parse the whole literal in RAM (~1 µs per element) and can hit this limit — raise it for CDT-heavy workloads. |
+| `-timeout <n>` | `30` | Per-query wall-clock limit in seconds for every SPARQL endpoint the server exposes (the single-store `/rdf` endpoint, every store's queries in directory mode, and directory mode's `/rdf` metadata dataset, where Fuseki enforces it); a query over the limit is cancelled and answered with HTTP 503. `0` disables the limit. The limit bounds time, not memory: CONSTRUCT / DESCRIBE results are streamed for Turtle and N-Triples and capped for JSON-LD and RDF/XML (`beakgraph.query.construct.max.triples`, below); Graph Store `GET /rdf/data` in directory mode returns the whole metadata graph, whose size is the number of served files, not the data. Note: queries that expand large composite (`cdt:`) literals with `UNFOLD`, or compare them by value, parse the whole literal in RAM (~1 µs per element) and can hit this limit — raise it for CDT-heavy workloads. |
 | `-version` / `-v` | — | Print version and exit. |
 | `-help` | — | Usage text. |
 
@@ -108,12 +115,15 @@ subdirectory the walk cannot list - an ACL-denied folder, a Windows profile junc
 junction cycle - is logged, counted as "Unreadable (skipped)" and skipped). `-verify` uses
 the same scheme: `2` means at least one damaged file.
 
-Existing non-empty destination `.h5` files are **skipped** in per-file mode (logged, counted as
-"Skipped (existing)" in the summary and *not* as successful conversions; pass `-force` to rebuild
-them); `-merge` always rebuilds its destination. When `-src` is a
-single file, `-dest` names the output `.h5` itself, or, if it is an existing directory, the directory
-to write `<name>.h5` into. Sources that differ only by RDF extension (`a.ttl`, `a.nt`) map to the
-same `a.h5`: the first in path order is converted and the rest are reported and counted as failed. All writers build into a sibling `*.tmp` file and publish with an atomic rename
+Existing destination stores (a non-empty file, or a Zarr store directory) are **skipped** in
+per-file mode (logged, counted as "Skipped (existing)" in the summary and *not* as successful
+conversions; pass `-force` to rebuild them); `-merge` always rebuilds its destination. When `-src`
+is a single file, `-dest` names the output store itself, or, if it is an existing directory (and not
+a `*.zarr` store), the directory to write `<name>.h5` into. Sources that differ only by RDF extension
+(`a.ttl`, `a.nt`) map to the same `a.h5`: the first in path order is converted and the rest are
+reported and counted as failed. All writers build beside the destination - a sibling `*.tmp` file,
+or for a Zarr store a sibling directory - and publish with an atomic rename (a Zarr directory store
+is moved into place complete, but not in one step: §4a)
 (if the destination cannot be replaced — on Windows a store that a reader has memory-mapped refuses
 the move — the finished build is kept as `<dest>.new` and the error says so; move it into place once
 the reader is closed) —
@@ -206,7 +216,8 @@ start; delete the file to force a full regeneration. Hidden entries (a dot-name,
 hidden attribute) and top-level entries named like a fixed route (`description`, `sparql`, `rdf`,
 `HalcyonStorage`) are not indexed - the routes would answer first. Container listings report each
 file's live size and modification time; a file replaced since the last scan is picked up on the next
-scan. In single-file mode the LWS surface is empty (every path but `/rdf` and `/sparql` answers 404).
+scan. In single-store mode (`-endpoint` naming one store) the LWS surface is empty (every path but
+`/rdf` and `/sparql` answers 404).
 
 The storage follows the read side of the
 [LWS Protocol 1.0](https://w3c.github.io/lws-protocol/lws10-core/) editor's draft of 2026-11-09.
@@ -238,7 +249,7 @@ it); those concerns are deliberately not built in here. If such a front end answ
 surface, the current LWS draft requires that response to carry `WWW-Authenticate` with a
 `resource_metadata` parameter (RFC 9728 protected resource metadata) and the
 `rel="https://www.w3.org/ns/lws#storage"` Link. Put only data you are willing to serve
-under `-endpoint`: everything not hidden or reserved is listed and downloadable, and every `.h5`
+under `-endpoint`: everything not hidden or reserved is listed and downloadable, and every store
 answers arbitrary read queries (bounded by `-timeout`). The server listens on all interfaces.
 
 ### Document-relative IRIs
@@ -284,13 +295,15 @@ relatively.
 ```bash
 java -jar BeakGraph.jar -src data.h5 -export NQ                 # -> data.nq
 java -jar BeakGraph.jar -src data.h5 -export TTL -compress      # -> data.ttl.gz
-java -jar BeakGraph.jar -src stores/ -export NT                 # every .h5 under stores/
+java -jar BeakGraph.jar -src stores/ -export NT                 # every store under stores/
 java -jar BeakGraph.jar -src data.zarr -export NQ               # a Zarr store: -> data.nq beside it
+java -jar BeakGraph.jar -src data.zarr.zip -export NQ           # a Zarr archive: -> data.nq beside it
 ```
 
-* `-src` may be one `.h5`/`.hdf5` file, one `*.zarr` store, or a directory tree (every `.h5`/`.hdf5`
-  file and every `*.zarr` store under it exports, the same rule `-verify` uses). `a.h5` and `a.zarr`
-  in one directory export to the same `a.nq`: keep them apart.
+* `-src` may be one `.h5`/`.hdf5` file, one `*.zarr` store, one `*.zarr.zip` archive, or a
+  directory tree (every `.h5`/`.hdf5` and `.zarr.zip` file and every `*.zarr` store under it
+  exports, the same rule `-verify` uses). `a.h5`, `a.zarr` and `a.zarr.zip` in one directory export
+  to the same `a.nq`: keep them apart.
 * **Automatic quad upgrade**: if `TTL` or `NT` is requested but the store holds named
   graphs beyond the default graph, the format silently upgrades to its quad form
   (`TTL -> TRIG`, `NT -> NQ`) and the extension follows.
@@ -316,22 +329,23 @@ are never exported and never force a triples store up to a quads syntax.
 
 ```bash
 java -jar BeakGraph.jar -verify data.h5                 # one file
-java -jar BeakGraph.jar -verify stores/                 # every .h5/.hdf5 file and *.zarr store under stores/, recursive
+java -jar BeakGraph.jar -verify stores/                 # every .h5/.hdf5 and .zarr.zip file and *.zarr store under stores/, recursive
 java -jar BeakGraph.jar -verify data.zarr -deep         # one Zarr store
 java -jar BeakGraph.jar -verify stores/ -deep           # + full data-level pass
 ```
 
-Run this before publishing files into served storage: a truncated or partially copied
+Run this before publishing stores into served storage: a truncated or partially copied
 `.h5` otherwise opens fine and only fails later, at query time, when a query first
 touches the damaged region (index loading is lazy).
 
-* **Structural pass (default)**: opens each file with the real reader stack - HDF5
-  superblock, `.BG` group, format version, dictionaries - then force-loads both indexes
+* **Structural pass (default)**: opens each store with the real reader stack - the
+  container (HDF5 superblock, or the Zarr root `zarr.json`), `.BG` group, format version, dictionaries - then force-loads both indexes
   (`GSPO`, `GPOS`) and enumerates the graph list. This maps every dataset the readers
-  use, so files cut off anywhere in metadata or data extents are caught. A non-empty
+  use, so stores cut off anywhere in metadata or data extents are caught. A non-empty
   store must contain *both* indexes (every `?s :p ?o` query needs GPOS), every index
   level must have its bitmap and id datasets with equal row counts, and a declared
-  `numEntries × width` that the stored bytes cannot hold fails the open. A sample of
+  `numEntries × width` - or, for a block-structured id sequence, the blocks its directory
+  declares - that the stored bytes cannot hold fails the open. A sample of
   each dictionary section (128 ids) must be in comparator order and findable again by
   the readers' binary search - a store sorted under a drifted comparator extracts fine
   but answers every concrete-term lookup with nothing.
@@ -341,13 +355,16 @@ touches the damaged region (index loading is lazy).
   predicate-bound scan per predicate and a sample of `?s p o` probes must agree with
   what GSPO produced - so corruption inside either index's data region is caught.
   Reads most of the file; budget roughly export-NT time per file.
-* Output: one `OK`/`FAIL` line per file (failures list their reasons), then
-  `Verified N file(s): M OK, K FAILED`.
-* **Exit codes**: `0` all files pass · `1` nothing to verify (or bad path) · `2` at
-  least one file is damaged. Verification continues past failures, so one run reports
-  every bad file in a tree.
-* A file named explicitly is verified regardless of extension; directory scans pick up
-  `*.h5` and `*.hdf5` (case-insensitive). Empty files are reported as damaged.
+* Output: one `OK`/`FAIL` line per store, with its format version (failures list their
+  reasons), then `Verified N file(s): M OK, K FAILED` (`(deep)` after `file(s)` with
+  `-deep`).
+* **Exit codes**: `0` all stores pass · `1` nothing to verify (or bad path) · `2` at
+  least one store is damaged. Verification continues past failures, so one run reports
+  every bad store in a tree.
+* A store named explicitly is verified whatever it is called (it is opened by what it is:
+  a directory, a ZIP archive, an HDF5 file); directory scans pick up `*.h5`, `*.hdf5` and
+  `*.zarr.zip` files and `*.zarr` directories that hold a `zarr.json` (case-insensitive),
+  and do not walk into a Zarr store. Empty files are reported as damaged.
 
 ## 6. Choosing a conversion method
 
@@ -409,7 +426,7 @@ java -Xmx32g -jar BeakGraph.jar \
 Every engine is a `BeakGraphWriter` with the same builder shape:
 
 ```java
-new / *Writer*.Builder()
+UltraHDF5Writer.Builder()                    // or any engine's Builder() - classes below
     .setSource(new File("data.ttl.gz"))      // or .setSources(List<File>) for a merge
     .setDestination(new File("data.h5"))
     .setSpatial(false)
@@ -417,8 +434,10 @@ new / *Writer*.Builder()
     .write();
 ```
 
-A destination named `*.zarr` is written in the Zarr container (§4a), by every engine; any other
-name is an HDF5 file. The classes keep the names of the container they were first written for.
+A destination named `*.zarr` is written in the Zarr container (§4a), by every engine, and one named
+`*.zip` as that Zarr store in a ZIP archive; any other name is an HDF5 file. The classes keep the
+names of the container they were first written for. `BG.getBGWriterBuilder()` is the `-method 0`
+builder.
 
 Classes: `hdf5.writers.HDF5Writer` (0) · `huge.HugeHDF5Writer` (1) ·
 `hdf5.writers.parallel.ParallelHDF5Writer` (2) · `hdf5.writers.ultra.UltraHDF5Writer` (3) ·
@@ -434,6 +453,9 @@ try (BeakGraph bg = new BeakGraph(new HDF5Reader(new File("data.h5")))) {
     Dataset ds = bg.getDataset();   // query with Jena/ARQ as usual
 }
 ```
+
+`HDF5Reader` opens a store in any container - an HDF5 file, a Zarr directory, a Zarr ZIP archive -
+by what is at the path, whatever it is called; `BG.getBeakGraph(file)` does the same in one call.
 
 Document-relative IRIs (`<>`, `<image.png>`) are stored as written. Give the graph the
 URL the store is served from and they resolve against it in query results, patterns and
@@ -451,10 +473,11 @@ A store opened over HTTP (`BG.getBeakGraph(new HTTPSeekableByteChannel(url))`, o
 URL as the base by default; a local file has no base unless one is given, so its relative
 IRIs come back as stored.
 
-### Reader tuning (system properties)
+### System properties
 
 The read path caches aggressively over the immutable store; defaults suit most
-workloads, and each knob trades heap for repeated-lookup speed:
+workloads, and each cache knob trades heap for repeated-lookup speed. The table also
+holds the knobs of the endpoint, of remote reads and of the writers:
 
 | Property | Default | What it bounds |
 |---|---|---|
@@ -471,15 +494,21 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.jsonld.remote` | `false` | What `-jsonLdRemote` sets: allow JSON-LD `@context` references to be fetched over http(s) (30 s timeout). |
 | `beakgraph.parser.chunk` | Jena default (100000) | Quads per chunk the RDF parser thread hands to the ingest. |
 | `beakgraph.parser.queue` | Jena default (10) | Chunks the parser thread may run ahead of the ingest; with the chunk size this bounds the parsed-but-not-ingested quads held in RAM. |
+| `beakgraph.publish.attempts` | `5` | Writers and `-export`: attempts to move a finished build over its destination before the build is kept as `<dest>.new` (on Windows a reader that has the destination memory-mapped refuses the move, and usually lets go within seconds). |
+| `beakgraph.publish.backoff.millis` | `500` | ... and the pause between those attempts. |
+| `beakgraph.features.maxRasterPixels` | `4000000` | `-features`: the most pixels one geometry is rasterized into. A larger geometry is drawn at a uniform scale, which the pixel-derived features undo, so a whole-slide annotation cannot exhaust the heap. |
+| `beakgraph.hilbert.maxWalkCells` | `16777216` | The most Hilbert cells the cell-enumerating viewer helpers of `com.ebremer.halcyon.hilbert.HilbertSpace` visit before refusing the call; they are meant for tile-sized covers. Queries and writers do not use them. |
 | `beakgraph.fcd.maxFragmentBytes` | `268435456` | Largest decoded size accepted for one compressed dictionary fragment (one RDF term); a header claiming more is treated as corruption before any allocation. |
 | `beakgraph.pool.perKey` | `8` | Endpoint reader pool: readers a single store can have in use at once - one is held for the whole of a query's result streaming, so this is the number of concurrent queries per `.h5`. Readers are thread-safe; the cap bounds memory (each instance carries its own caches), not correctness. |
 | `beakgraph.pool.maxTotal` | `256` | Endpoint reader pool: readers across all stores. |
 | `beakgraph.pool.maxWait.seconds` | `5` | Endpoint reader pool: how long a query waits for a free reader before the endpoint answers `503` with `Retry-After`. |
 | `beakgraph.http.output.buffer` | `65536` | Endpoint: bytes of the buffer a response is gathered in before it is sent. A response that fits is sent whole, with its length; a larger one is on the wire once this much of it is written, so a failure later than that ends in an aborted transfer where an earlier one is answered with a status code. 64 KiB is the largest buffer the server's pool keeps: a larger value is allocated and cleared for every response (Fuseki's own 5 MiB cost each request about 0.7 ms). Never taken under 16384. |
 | `beakgraph.http.readahead` | `8` | Remote reads (`HTTPSeekableByteChannel`): blocks (128 KiB each) fetched in one range request once two consecutive cache misses show a sequential scan; `0` fetches one block per request. Scattered reads always fetch single blocks. |
+| `beakgraph.http.retry.base.ms` | `250` | Remote reads: the first pause before a request that failed transiently (an I/O error, HTTP 429 or 5xx, a truncated body) is retried, doubled for each further attempt up to 5 s; a request is tried 5 times, and a server's `Retry-After` is honoured up to 30 s. |
 | `beakgraph.zarr.cache.block` | `131072` | A Zarr store that is not memory-mapped (over HTTP, or in another Falcon `Store`): bytes fetched at a time, aligned to this. |
 | `beakgraph.zarr.cache.blocks` | `256` | ... and the blocks kept of ALL the store's arrays together, the one read longest ago dropped first: at most block x blocks bytes (32 MiB) for each such store that is open. A pooled reader holds its own. |
 | `beakgraph.zarr.chunk.max` | `1073741824` | Writing Zarr: an array of up to this many bytes is one chunk, a longer one the fewest equal chunks of at most this (SPECIFICATIONS.md §3a, item 3). Under 2 GiB. |
+| `beakgraph.query.timeout.seconds` | `30` | What `-timeout` sets: the per-query wall-clock limit of the endpoint, read anew for each query, so an application that embeds the endpoint can change it at run time; `0` or negative disables it. |
 | `beakgraph.query.construct.max.triples` | `1000000` | Largest CONSTRUCT / DESCRIBE result served as JSON-LD or RDF/XML, formats that must be held in memory before serialization; a larger result is answered `413` with a hint to request `text/turtle` or `application/n-triples`, which are streamed without limit. `0` disables the cap. |
 | `beakgraph.pool.idle.seconds` | `300` | Endpoint reader pool: idle time before an unused reader is closed and its file mapping released. |
 | `beakgraph.lws.refresh.seconds` | `30` | Directory mode (`-endpoint <dir>`): how often the served directory is re-scanned for added, removed or replaced files. The cached `beakgraph.ttl.gz` metadata is validated against the directory at start-up and rewritten after every change. `0` disables the periodic scan; a request for a path that exists on disk but is not yet listed still triggers an immediate re-scan (once per new file). |
@@ -510,15 +539,15 @@ cannot be renamed: stop or drain the readers first.
 
 ## 9. Output guarantees
 
-* One format, one reader stack, for every method and for both containers - an HDF5 file
-  or a Zarr store hold the same arrays, byte for byte (§4a) - (format version 6:
-  the id sequences are block-structured, SPECIFICATIONS.md §5.1a).
-  v4 added the optional `langDirs` dataset for RDF 1.2 base-direction literals
-  (`"x"@en--ltr`); v5 adds the optional `tripleTerms` component store for
-  RDF 1.2 triple terms (`<<( s p o )>>`). v3/v4 files remain fully readable,
-  while newer files are rejected by older builds with an "Upgrade BeakGraph"
-  error. A store containing neither feature is byte-identical in shape to v3
-  output.
+* One format, one reader stack, for every method and for all three container
+  forms - an HDF5 file, a Zarr directory and a Zarr ZIP archive hold the same
+  arrays, byte for byte (§4a) - in format version 6: the id sequences are
+  block-structured (SPECIFICATIONS.md §5.1a). v4 added the optional `langDirs`
+  dataset for RDF 1.2 base-direction literals (`"x"@en--ltr`), v5 the optional
+  `tripleTerms` component store for RDF 1.2 triple terms (`<<( s p o )>>`); a
+  store holding neither feature has neither dataset. v3-v5 stores remain fully
+  readable, while newer stores are rejected by older builds with an "Upgrade
+  BeakGraph" error (see "Format versions" below).
 * Methods 0/2/3 produce **byte-identical** stores for the same single source on
   the same platform (one format, one HDF5 write sequence; the parity tests
   compare the files byte for byte - the only platform-dependent bytes are zstd
@@ -531,9 +560,9 @@ cannot be renamed: stop or drain the readers first.
   produce **isomorphic** stores (blank-node labels are rank-derived rather than
   relabelled).
 * See `SPECIFICATIONS.md` (repo root) for the precise on-disk format — enough
-  to re-create BeakGraph files without this source tree — and the architecture
+  to re-create BeakGraph stores without this source tree — and the architecture
   overview (`docs/architecture/`, the "Architecture" section of
-  https://ebremer.github.io/BeakGraph/) for the original design.
+  https://ebremer.github.io/BeakGraph/) for the design, one topic per page.
 
 ## Format versions
 
@@ -549,3 +578,10 @@ than the running build supports is refused at open.
 | v4 | 0.18.0 | `langDirs` for `rdf:dirLangString`; composite (`cdt:`) literals ordered lexically | the source contained base-direction literals (a v3 store holds them as plain `"x"@en`) or `cdt:` literals (a pre-v4 store holding them is refused at open) |
 | v5 | 0.18.0 | RDF 1.2 triple terms (`tripleTerms` component store) | the source contained triple terms (a pre-v5 build could not store them) |
 | v6 | 0.19.0 | id sequences stored in blocks, each with its own width, with an in-memory directory (SPECIFICATIONS.md §5.1a) | never for correctness: v3-v5 stores read as before; rebuild for the smaller indexes. A v6 store is refused by earlier builds |
+
+Not every reason to rebuild is a format change, and `-verify` cannot show these: a store built with
+`-spatial` by 0.19.0 or earlier can hold pyramid levels (`hal:asWKT{s}`) with fractional vertices
+where a geometry needed repair - rebuild it for a consumer that reads integer coordinates only
+(CHANGELOG.md, 0.20.0); and a store built before the spatial-index redesign carries corner-based
+index entries that current readers ignore, so its spatial queries need a rebuild (README.md,
+"Limitations").

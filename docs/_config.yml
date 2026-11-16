@@ -5,9 +5,9 @@
 
 title: BeakGraph
 description: >-
-  RDF datasets as self-contained HDF5 files: dictionary-encoded, columnar quad
-  stores queried with SPARQL (Apache Jena) directly from the file, locally or
-  over HTTP range requests.
+  RDF datasets as self-contained HDF5 files or Zarr stores: dictionary-encoded,
+  columnar quad stores queried with SPARQL (Apache Jena) directly from the
+  store, locally or over HTTP range requests.
 url: https://ebremer.github.io
 baseurl: /BeakGraph   # the workflow overrides this with the deployed site's path
 
