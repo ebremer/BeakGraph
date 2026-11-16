@@ -1,280 +1,319 @@
-# Speed test: master against falcon2, in HDF5 and in Zarr
+# Speed test: master against falcon, in HDF5 and in Zarr
 
-Measured on 2026-11-14. Three configurations, each building its own store from the same source and reading
+Measured on 2026-11-15. Three configurations, each building its own store from the same source and reading
 the store it built:
 
 | Name here | Code | Container | Store format |
 |---|---|---|---|
 | **master** | `master`, commit `33febe9` (jHDF; the native HDF5 library for the disk engines) | HDF5 | v5 |
-| **falcon2 HDF5** | `falcon2`, commit `bf09ba1`, on Falcon 0.2.0 | HDF5 | v6 |
-| **falcon2 Zarr** | the same build, destination named `*.zarr` | Zarr v3 directory store | v6 |
+| **falcon HDF5** | `falcon`, commit `07c8328`, on Falcon 0.2.0 | HDF5 | v6 |
+| **falcon Zarr** | the same build, destination named `*.zarr` | Zarr v3 directory store | v6 |
 
-The three gave the same answers to every query (row counts and hashes agree) and byte-identical exports.
+The three gave the same answers to every query but one, a floating-point average whose last digits differ
+(see "How far to trust these"). Their exports are the same bytes on the synthetic stores and the same size
+on real data.
+
+This replaces the test of 2026-11-14, which compared master with `falcon2` at commit `bf09ba1` and is in this
+file's history. What has changed on the falcon side since is at the end.
 
 ## Summary
 
-- **Queries on the JVM run at the same speed**, within a few percent, in process and on both stores below.
-  Over the HTTP endpoint, scans and joins are 13-23% slower on falcon2.
-- **falcon2 stores are 19% smaller** (format v6), on synthetic and on real data.
-- **Lookups are faster, scans slightly slower**: in the micro-benchmarks falcon2 is 15-44% faster at selects
-  and at locating an object term, and 0-10% slower at full scans. The other dictionary operations are within
-  about 10% either way, but for `extractEntity`, 7-17% slower.
-- **HDF5 and Zarr perform alike on falcon2**, apart from opening a store.
-- **Opening a store is where falcon2 loses**: open, first query and close take 4.5 ms on master and 10-21 ms
-  on falcon2 for the synthetic store, 6.5 ms against 24-41 ms for the real one.
-- **The native binary is 30-70% slower on scan-heavy work** on falcon2 (verify, export, counts, lookups across
-  graphs) and 30-40% faster at per-graph dumps and joins. Builds are equal. (The faster dumps and joins did
-  not reproduce later: see "Since this was measured".)
-- **Builds take the same time**, apart from the step that writes the container.
+- **Stores are smaller**: 21% on the store of many graphs, 42% on the store of one graph, 19% on real data.
+- **Builds take the same time.**
+- **Lookups are 3 to 6 times faster** at the endpoint, in one graph and across all of them.
+- **Counts and aggregates are 5 to 80 times faster** where rows are read, and 13 to 465 times where the
+  index now answers. On real data: 6 to 38 times for aggregates over 1.36M features (twice for a join that
+  begins at a constant object), and 560 to 1,300 times for counts across the 31,311 graphs.
+- **`-verify -deep` is a third faster on the JVM and 2.5 times faster in the native binary**; on real data,
+  17% faster. `-export` is equal on the synthetic stores and 14% faster on real data.
+- **The native binary is no longer slower than master's** at anything measured, and is 5 to 600 times
+  faster at counts and aggregates.
+- **Equal on both branches**: dumps of one graph (1.3 times), a query answered from the spatial index, a
+  query cut short by `LIMIT`, the list of graphs, and opening a store.
+- **HDF5 and Zarr perform alike on falcon**, apart from opening a store, where Zarr takes about 2.4 ms more.
 
 ## Setup
 
 - One machine: Windows 11, Ryzen 9 5950X (16 cores), 128 GB RAM, GraalVM CE 25.0.4. Linux and macOS were
   not measured.
-- **Synthetic store**: 4,005,000 quads in 5,000 named graphs of 801 quads each, from one TriG file.
-- **Micro-benchmark store**: the `benchmarks/` module's own, 50,000 subjects.
-- **Real data**: a 1.79 GB format-v2 store of pathology segmentation data ("TCGA"). It was exported once to
-  TriG (3.87 GB), and each configuration rebuilt it with `-method 4 -spatial`, which derives the spatial index
-  and its tile graphs again. The rebuilt stores each report 28,492,336 source quads and hold 31,311 graphs.
-  (The original records 10,854,248 source quads; the difference was not looked into.)
-- The configurations took turns, and the order they ran in rotated from repetition to repetition. Unless a
-  table says otherwise a figure is the median of three runs (startup: of ten); ranges are in brackets where
-  they matter.
+- **Store of many graphs**: 4,005,001 quads in 5,000 named graphs of 801 quads each, from one TriG file.
+- **Store of one graph**: 2,000,001 quads, 400,000 subjects of five triples in one named graph.
+- **Real data**: a 1.79 GB format-v2 store of pathology segmentation data ("TCGA"). A copy was exported once
+  to TriG (3.87 GB) and each configuration rebuilt it with `-method 4 -spatial`. The rebuilt stores hold
+  28,492,336 quads in the default graph - 1,356,779 features with a polygon, a classification, a
+  probability and ten shape measurements each - and the spatial index's 31,311 tile graphs.
+- The configurations took turns, in an order that rotated from repetition to repetition.
+- **Endpoint figures** are one client on a connection kept alive, asking for XML; a figure is the mean of
+  each server's median, over three servers a configuration for the first table and two for the others.
+- **Real-data queries were asked in process**, not through the endpoint, which listens on every interface:
+  the data was not served. They therefore carry no HTTP and no result writing.
 - The native binary of master is its code built with the reachability metadata of the `falcon` branch: as
   committed on master, the binary dies at startup.
 
-## Synthetic store, JVM
+## Synthetic stores, JVM
 
 ### Size and build
 
-| | master | falcon2 HDF5 | falcon2 Zarr |
+| | master | falcon HDF5 | falcon Zarr |
 |---|---|---|---|
-| Store on disk | 76,266,663 bytes | 62,088,673 bytes | 62,113,759 bytes in 126 files |
-| Build, `-method 0`, wall | 24.8 s | 25.8 s | 25.8 s |
-| Build, `-method 3`, wall | 9.8 s | 10.9 s | 10.8 s |
-| Build, `-method 4`, wall | 16.9 s | 17.8 s | 17.8 s |
-| Peak memory, `-method 0` / `3` / `4` | 3.0 / 3.1 / 5.2 GB | 3.1 / 3.1 / 5.2 GB | 3.0 / 3.1 / 5.1 GB |
+| Many graphs: store on disk | 72,330,677 bytes | 57,334,529 bytes | 57,358,663 bytes in 122 files |
+| Many graphs: build, `-method 3` | 8.7 s | 8.8 s | 9.7 s |
+| Many graphs: build, `-method 0` (one run) | 16.8 s | 16.7 s | 17.8 s |
+| One graph: store on disk | 34,517,264 bytes | 19,908,265 bytes | 19,932,293 bytes in 122 files |
+| One graph: build, `-method 3` | 4.7 s | 5.7 s | 5.7 s |
+| One graph: build, `-method 0` (one run) | 9.7 s | 10.7 s | 10.7 s |
 
-The command line polls once a second for its conversions to end, so wall time moves in steps of one second.
-The `-method 3` writer logs its own times, which are finer:
-
-| `-method 3`, from the writer's log (ms) | master | falcon2 HDF5 | falcon2 Zarr |
-|---|---|---|---|
-| Stage 1, ingest | 3,733 | 3,665 | 3,723 |
-| Stage 2, dictionaries | 1,981 | 2,021 | 2,010 |
-| Stage 3, indexes | 3,049 [2,970..3,311] | 3,790 [3,225..3,944] | 2,860 [2,839..3,066] |
-| Stage 4, writing the container | 78 | 329 | 855 |
-| Write complete | 8,848 | 9,792 | 9,514 |
-
-Stages 1 to 3 run the same code in both falcon2 columns, so their difference in stage 3 is the spread between
-runs. What differs for certain is the container step: 0.08 s, 0.33 s, 0.86 s.
+`-method 3` is the median of three builds, which agreed to a tenth of a second. The command line polls once
+a second for its conversions to end, so these times move in steps of one second: falcon's build of the store
+of one graph, and its Zarr build of the store of many, ended one step later than master's every time, which
+is more than nothing and at most a second.
 
 ### Opening a store
 
-In a warm JVM, 400 cycles of open, first query (`SELECT * WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 1`) and close;
-medians of the last 200, in milliseconds. The fourth column is a plain copy of the falcon2 HDF5 file, which is
-not an NTFS sparse file (see "What explains the differences").
+In a warm JVM, 400 cycles of open, first query (`SELECT * WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 1`) and
+close; medians of the last 200, the median of three processes, in milliseconds.
 
-| Warm JVM (ms) | master | falcon2 HDF5 | falcon2 Zarr | falcon2 HDF5, plain copy |
-|---|---|---|---|---|
-| Open | 1.54 | 1.68 | 5.52 | 0.35 |
-| First query | 2.93 | 18.86 | 3.23 | 3.12 |
-| Close | 0.01 | 0.72 | 1.28 | 0.74 |
-| Whole cycle | 4.48 | 21.32 | 10.05 | 4.23 |
-
-In a fresh JVM (median of 7 processes, ms):
-
-| Fresh JVM (ms) | master | falcon2 HDF5 | falcon2 Zarr | falcon2 HDF5, plain copy |
-|---|---|---|---|---|
-| Reader constructed | 726 | 732 | 731 | 715 |
-| First query | 107 | 132 | 115 | 116 |
-| Open to the second answer | 991 | 1,014 | 1,000 | 992 |
-
-JVM startup (`-version`): 0.67 s, 0.66 s, 0.65 s.
-
-### Queries in process
-
-One reader, each phase run 15 times after 3 warm-ups; the median of three processes' medians, and the best
-round of all, in milliseconds.
-
-| Phase (ms) | master | falcon2 HDF5 | falcon2 Zarr |
+| Many graphs (ms) | master | falcon HDF5 | falcon Zarr |
 |---|---|---|---|
-| Graph list (5,000 rows) | 7.9 (best 4.8) | 8.8 (4.3) | 8.1 (5.5) |
-| 200 graphs dumped (160,200 rows) | 125.8 (115.9) | 127.1 (119.5) | 132.6 (123.3) |
-| 200 graphs: typed subjects (32,000 rows) | 32.4 (28.2) | 33.3 (28.5) | 33.2 (30.0) |
-| 200 graphs: quad counts | 18.2 (14.8) | 17.9 (13.1) | 18.4 (15.7) |
-| Count of every quad | 472 (427) | 478 (463) | 493 (466) |
-| Quads grouped by predicate | 910 (827) | 892 (860) | 975 (881) |
+| Open | 1.27 | 0.24 | 2.52 |
+| First query | 2.93 | 3.06 | 2.81 |
+| Close | 0.01 | 0.72 | 1.08 |
+| Whole cycle | 4.22 | 4.02 | 6.40 |
+
+| One graph (ms) | master | falcon HDF5 | falcon Zarr |
+|---|---|---|---|
+| Open | 1.56 | 0.27 | 2.65 |
+| First query | 2.14 | 2.01 | 1.77 |
+| Close | 0.02 | 0.57 | 1.00 |
+| Whole cycle | 3.71 | 2.84 | 5.43 |
 
 ### Command line
 
-| | master | falcon2 HDF5 | falcon2 Zarr |
+Medians of three runs.
+
+| | master | falcon HDF5 | falcon Zarr |
 |---|---|---|---|
-| `-verify -deep` | 6.45 s | 6.77 s | 6.86 s |
-| `-export NQ` (439,483,700 bytes from each) | 3.47 s | 3.58 s | 3.62 s |
+| Many graphs: `-verify -deep`, time | 5.65 s | 3.84 s | 3.96 s |
+| Many graphs: `-verify -deep`, processor time | 38.5 s | 15.7 s | 19.9 s |
+| Many graphs: `-export NQ`, time | 2.68 s | 2.73 s | 2.74 s |
+| Many graphs: `-export NQ`, processor time | 8.5 s | 10.2 s | 9.8 s |
+| One graph: `-verify -deep`, time | 3.69 s | 2.26 s | 2.08 s |
+| One graph: `-verify -deep`, processor time | 32.1 s | 11.4 s | 9.7 s |
+| One graph: `-export NQ`, time | 1.76 s | 1.73 s | 1.78 s |
+| One graph: `-export NQ`, processor time | 7.3 s | 7.5 s | 7.6 s |
 
-### SPARQL endpoint over HTTP
+The exports are the same bytes from all three: 403,932,568 from the store of many graphs, 194,378,332 from
+the store of one.
 
-One server per configuration; each phase 5 rounds, the median of the last 3, in milliseconds.
+### SPARQL endpoint over HTTP: lookups, dumps and the counts the index holds
 
-| JVM endpoint (ms) | master | falcon2 HDF5 | falcon2 Zarr |
-|---|---|---|---|
-| Ready after start | 1,177 | 1,110 | 1,130 |
-| 200 graphs dumped (801 rows each) | 2,891 | 2,996 | 2,922 |
-| 1,000 subject lookups, graph not given | 17,291 | 17,602 | 17,074 |
-| 100 two-hop joins in one graph | 868 | 1,015 | 1,001 |
-| Count of every quad | 577 | 659 | 650 |
-| Quads grouped by predicate | 978 | 1,123 | 1,207 |
+The store of many graphs; milliseconds a request.
 
-### Remote reads over HTTP ranges
-
-HDF5 only: a Zarr store is not read over HTTP by the endpoint or the pool yet. The `RemoteVsLocalBench`
-battery on the store each wrote, two runs each, no mismatches:
-
-| | master | falcon2 HDF5 |
-|---|---|---|
-| Range requests | 256 | 241 |
-| Bytes fetched | 43.37 MB | 39.11 MB |
-| Time, remote | 0.32-0.33 s | 0.29-0.31 s |
-
-### Micro-benchmarks (JMH, 2 forks, mean ± standard deviation)
-
-| Benchmark | master | falcon2 HDF5 | falcon2 Zarr | Unit |
+| Query (ms) | master | falcon HDF5 | falcon Zarr | master / falcon HDF5 |
 |---|---|---|---|---|
-| `SelectBench.adjacentPair` | 114.56 ± 0.55 | 85.73 ± 6.51 | 82.29 ± 3.11 | ns |
-| `SelectBench.directorySelect1` | 60.91 ± 3.56 | 51.72 ± 0.37 | 51.11 ± 0.58 | ns |
-| `SelectBench.linearSelect1` | 1,786.79 ± 10.11 | 1,358.56 ± 4.22 | 1,152.72 ± 17.08 | ns |
-| `DictionaryBench.entityLocateHit` | 30.79 ± 1.68 | 27.55 ± 0.28 | 28.81 ± 0.15 | ns |
-| `DictionaryBench.objectLocateHit` | 31.82 ± 1.69 | 18.44 ± 0.33 | 17.88 ± 1.24 | ns |
-| `DictionaryBench.predicateLocateHit` | 9.45 ± 0.14 | 9.41 ± 0.12 | 9.71 ± 0.22 | ns |
-| `DictionaryBench.locateMiss` | 18.47 ± 0.46 | 18.99 ± 0.24 | 18.41 ± 0.36 | ns |
-| `DictionaryBench.extractEntity` | 60.00 ± 1.12 | 63.98 ± 5.82 | 70.49 ± 2.99 | ns |
-| `DictionaryBench.extractObject` | 76.33 ± 1.29 | 76.02 ± 1.04 | 78.53 ± 2.09 | ns |
-| `DictionaryBench.nodeTableLookup` | 16.68 ± 1.30 | 17.08 ± 1.04 | 16.22 ± 0.80 | ns |
-| `QueryBench.pointLookup` | 2.71 ± 0.07 | 2.59 ± 0.09 | 2.70 ± 0.05 | µs |
-| `QueryBench.starJoin` | 4.55 ± 0.13 | 4.33 ± 0.07 | 4.50 ± 0.17 | µs |
-| `QueryBench.chainJoin` | 73.26 ± 1.36 | 65.04 ± 1.40 | 61.93 ± 0.98 | µs |
-| `QueryBench.rangeFilter` | 51.66 ± 1.34 | 54.99 ± 1.30 | 55.39 ± 1.58 | µs |
-| `QueryBench.graphVarScan` | 2,717 ± 66 | 2,813 ± 35 | 2,705 ± 106 | µs |
-| `QueryBench.distinctSubjects` | 1,985 ± 100 | 2,103 ± 35 | 2,050 ± 25 | µs |
-| `QueryBench.predicateScan` | 9,356 ± 1,008 | 10,902 ± 1,188 | 9,568 ± 753 | µs |
-| `QueryBench.fullScanFind` | 24,255 ± 897 | 26,733 ± 483 | 26,498 ± 969 | µs |
-| `QueryBench.fullScanSparql` | 49,167 ± 909 | 49,723 ± 915 | 48,801 ± 636 | µs |
-| `QueryBench.distinctObjects` | 91,033 ± 1,297 | 94,671 ± 1,649 | 95,644 ± 2,647 | µs |
+| Subject lookup, graph not given | 7.08 | 2.11 | 1.99 | 3.4 |
+| Subject and predicate, graph not given | 6.46 | 1.45 | 1.37 | 4.5 |
+| Two-hop join, graph not given | 10.1 | 1.58 | 1.55 | 6.4 |
+| Object lookup, graph not given | 7.29 | 2.01 | 1.89 | 3.6 |
+| Subject lookup, a filter in the block | 8.29 | 1.88 | 1.80 | 4.4 |
+| Subject lookup, an optional in the block | 6.53 | 1.37 | 1.32 | 4.8 |
+| Subject lookup, a union in the block | 10.1 | 2.38 | 2.30 | 4.3 |
+| Subject lookup in one graph | 0.98 | 0.35 | 0.35 | 2.8 |
+| Count of one graph | 1.00 | 0.32 | 0.33 | 3.1 |
+| Quads of one graph grouped by predicate | 1.30 | 0.44 | 0.42 | 3.0 |
+| Dump of one graph (801 rows) | 3.43 | 2.64 | 2.69 | 1.3 |
+| Count of every quad | 611 | 2.80 | 3.02 | 218 |
+| Graphs counted | 1,055 | 2.27 | 2.05 | 465 |
+| Quads grouped by predicate | 1,076 | 6.61 | 6.14 | 163 |
+| Quads grouped by graph (5,000 rows) | 969 | 18.6 | 18.5 | 52 |
+| Quads grouped by graph and predicate (30,000 rows) | 1,501 | 116 | 112 | 13 |
+| Rows of a type in every graph, counted (200,000) | 39.6 | 2.18 | 3.49 | 18 |
+| Rows of a predicate in every graph, counted (800,000) | 193 | 19.6 | 13.9 | 9.8 |
+| A number of every subject in every graph, summed (800,000) | 281 | 13.9 | 13.8 | 20 |
+| Every quad of every graph, scanned and counted (4.0M) | 936 | 21.6 | 20.9 | 43 |
+| Join scan in every graph, counted (200,000) | 297 | 17.7 | 17.4 | 17 |
+| Rows under a filter in the block, counted (80,000 of 800,000) | 40.7 | 8.89 | 9.45 | 4.6 |
+| Rows with an optional in the block, counted (200,000) | 663 | 9.54 | 9.99 | 69 |
+| Rows of a union in the block, counted (400,000) | 95.6 | 2.74 | 2.94 | 35 |
 
-## Synthetic store, native binary
+### SPARQL endpoint over HTTP: groups and aggregates
 
-| | master | falcon2 HDF5 | falcon2 Zarr |
+The store of many graphs, every query under `GRAPH ?g`, 15 requests after 15; milliseconds a request.
+
+| Query (ms) | master | falcon HDF5 | falcon Zarr | master / falcon HDF5 |
+|---|---|---|---|---|
+| Every quad scanned and counted (4.0M) | 641 | 20.6 | 20.8 | 31 |
+| Rows of a predicate counted (800,000) | 156 | 6.05 | 6.31 | 26 |
+| A number of every subject summed (800,000) | 179 | 13.7 | 14.2 | 13 |
+| Sum, average, least and greatest of it | 334 | 23.9 | 23.6 | 14 |
+| Its distinct values counted (1,000) | 172 | 6.14 | 5.73 | 28 |
+| Distinct subjects counted (800,000) | 655 | 23.7 | 25.8 | 28 |
+| Rows by tag (10 groups) | 222 | 5.38 | 5.24 | 41 |
+| Count, sum and greatest by tag, over a join (10 groups) | 1,159 | 42.7 | 43.3 | 27 |
+| Rows by value (1,000 groups) | 235 | 16.7 | 16.1 | 14 |
+| Rows by graph and type (20,000 groups) | 422 | 79.6 | 76.9 | 5.3 |
+| Rows by subject (800,000 groups) | 3,740 | 1,101 | 1,110 | 3.4 |
+| A filter that passes 800 of 800,000 | 187 | 9.53 | 9.62 | 20 |
+| A join of three patterns counted (200,000) | 273 | 16.0 | 15.8 | 17 |
+| An optional counted (200,000) | 722 | 8.80 | 8.65 | 82 |
+| A lookup counted (one graph of the 5,000 has it) | 11.5 | 2.19 | 1.72 | 5.2 |
+| One graph: rows by type (160 rows) | 1.26 | 0.58 | 0.52 | 2.2 |
+
+The store of one graph, every query under `GRAPH <iri>`:
+
+| Query (ms) | master | falcon HDF5 | falcon Zarr | master / falcon HDF5 |
+|---|---|---|---|---|
+| Every quad counted through a filter (2.0M) | 372 | 15.1 | 13.9 | 25 |
+| Quads by predicate through a filter (5 groups) | 547 | 14.1 | 13.7 | 39 |
+| Names counted and the greatest found (400,000 of their own) | 348 | 7.75 | 12.1 | 45 |
+| A join counted and summed (400,000) | 498 | 23.4 | 20.8 | 21 |
+| Numbers counted and summed (400,000 rows of 1,000 values) | 121 | 6.06 | 6.28 | 20 |
+| Rows by type (400,000 rows of 4 values) | 90.9 | 3.19 | 3.32 | 28 |
+| Rows by tag and type, over a join (20 groups) | 608 | 20.7 | 18.8 | 29 |
+
+## Synthetic stores, native binary
+
+Means of two runs.
+
+| | master | falcon HDF5 | falcon Zarr |
 |---|---|---|---|
-| Startup (`-version`) | 0.044 s | 0.041 s | 0.041 s |
-| Build, `-method 3` (2 runs) | 38.4 s | 38.7 s | 38.2 s |
-| `-verify -deep` | 30.1 s | 42.2 s | 41.4 s |
-| `-export NQ` | 5.68 s | 7.52 s | 7.35 s |
+| Many graphs: `-verify -deep` | 29.3 s | 11.6 s | 11.2 s |
+| Many graphs: `-export NQ` | 4.08 s | 4.03 s | 4.17 s |
+| One graph: `-verify -deep` | 11.1 s | 4.17 s | 4.18 s |
+| One graph: `-export NQ` | 2.13 s | 2.02 s | 2.04 s |
+| Endpoint ready after start | 510 ms | 506 ms | 523 ms |
 
-| Native endpoint (ms) | master | falcon2 HDF5 | falcon2 Zarr |
-|---|---|---|---|
-| Ready after start | 522 | 518 | 506 |
-| 200 graphs dumped (801 rows each) | 4,203 | 2,557 | 2,819 |
-| 1,000 subject lookups, graph not given | 25,547 | 37,497 | 37,392 |
-| 100 two-hop joins in one graph | 884 | 511 | 633 |
-| Count of every quad | 1,348 | 2,261 | 2,271 |
-| Quads grouped by predicate | 2,585 | 3,550 | 3,443 |
+The native endpoint on the store of many graphs, two servers a configuration; milliseconds a request.
+From "rows by subject" down master has one server: on the second, a request of that query passed the
+endpoint's 30-second limit and was refused, which ended the run.
+
+| Query (ms) | master | falcon HDF5 | falcon Zarr | master / falcon HDF5 |
+|---|---|---|---|---|
+| Subject lookup, graph not given | 21.0 | 3.30 | 3.34 | 6.4 |
+| Subject lookup in one graph | 0.99 | 0.32 | 0.32 | 3.1 |
+| Dump of one graph (801 rows) | 6.57 | 4.74 | 4.80 | 1.4 |
+| Count of every quad | 1,836 | 3.06 | 3.12 | 600 |
+| Quads grouped by predicate | 3,807 | 8.45 | 8.49 | 451 |
+| Every quad scanned and counted (4.0M) | 1,602 | 44.2 | 39.6 | 36 |
+| Rows of a predicate counted (800,000) | 557 | 5.55 | 5.63 | 100 |
+| A number of every subject summed (800,000) | 593 | 13.3 | 13.2 | 45 |
+| Sum, average, least and greatest of it | 1,414 | 37.2 | 37.4 | 38 |
+| Its distinct values counted (1,000) | 574 | 6.50 | 6.61 | 88 |
+| Distinct subjects counted (800,000) | 3,241 | 30.4 | 30.7 | 107 |
+| Rows by tag (10 groups) | 993 | 5.56 | 5.73 | 178 |
+| Count, sum and greatest by tag, over a join (10 groups) | 3,569 | 96.9 | 105 | 37 |
+| Rows by value (1,000 groups) | 736 | 18.3 | 18.9 | 40 |
+| Rows by graph and type (20,000 groups) | 1,393 | 138 | 139 | 10 |
+| Rows by subject (800,000 groups) | 15,796 | 2,905 | 2,903 | 5.4 |
+| A filter that passes 800 of 800,000 | 814 | 15.0 | 15.1 | 54 |
+| A join of three patterns counted (200,000) | 622 | 29.6 | 30.5 | 21 |
+| An optional counted (200,000) | 2,782 | 17.8 | 17.8 | 156 |
+| A lookup counted (one graph of the 5,000 has it) | 28.6 | 1.94 | 1.95 | 15 |
+| One graph: rows by type (160 rows) | 1.12 | 0.33 | 0.34 | 3.4 |
+
+The scan of every quad took 32 and 56 ms on falcon HDF5's two servers and 21 and 59 ms on Zarr's: the
+figure above is a mean of two that differ.
 
 ## Real data, JVM
 
-| | master | falcon2 HDF5 | falcon2 Zarr |
+One run each of the build, the verify and the export.
+
+| | master | falcon HDF5 | falcon Zarr |
 |---|---|---|---|
 | Store on disk | 3,165,134,031 bytes | 2,549,441,441 bytes | 2,549,466,785 bytes in 131 files |
-| Build, `-method 4 -spatial` (one run) | 667 s | 660 s | 658 s |
-| Peak memory of the build | 13.1 GB | 12.8 GB | 12.3 GB |
-| `-verify -deep` (one run, all pass) | 593 s | 570 s | 430 s |
-| `-export TRIG` (one run, 3,869,724,679 bytes from each) | 292 s | 305 s | 309 s |
+| Build, `-method 4 -spatial`, time | 878 s | 884 s | 855 s |
+| Build, processor time | 1,844 s | 1,796 s | 1,854 s |
+| `-verify -deep`, time | 409 s | 339 s | 354 s |
+| `-verify -deep`, processor time | 946 s | 588 s | 605 s |
+| `-export TRIG` (3,869,724,679 bytes from each), time | 312 s | 267 s | 281 s |
+| `-export TRIG`, processor time | 680 s | 434 s | 452 s |
+| Reader constructed in a fresh JVM (two processes) | 628 and 723 ms | 628 and 857 ms | 634 and 647 ms |
 
-| Warm JVM, 200 cycles (ms) | master | falcon2 HDF5 | falcon2 Zarr |
-|---|---|---|---|
-| Open | 1.92 | 5.26 | 7.22 |
-| First query | 4.60 | 32.66 | 12.16 |
-| Close | 0.03 | 2.82 | 4.41 |
-| Whole cycle | 6.55 | 40.92 | 23.87 |
+Queries in process: each at least five times after at least two warm-ups, and for as long as two seconds
+after one and a half where a query is short; the mean of two processes' medians, in milliseconds.
 
-| Fresh JVM, 5 processes (ms) | master | falcon2 HDF5 | falcon2 Zarr |
-|---|---|---|---|
-| Reader constructed | 718 | 726 | 733 |
-| First query | 120 | 266 | 239 |
-| Open to the second answer | 1,039 | 1,211 | 1,195 |
-
-Queries in process, each phase 7 times after 2 warm-ups, three processes each (ms; median of the processes'
-medians with its range, and the best round of all):
-
-| Phase (ms) | master | falcon2 HDF5 | falcon2 Zarr |
-|---|---|---|---|
-| Graph list (31,311 rows) | 20.2 | 18.6 | 19.6 |
-| 200 graphs dumped (90,251 rows) | 151 [140..209], best 135 | 208 [181..215], best 130 | 151 [142..198], best 133 |
-| 200 graphs: quad counts | 31.5, best 22.7 | 33.2, best 22.4 | 34.4, best 27.8 |
-| Count of every quad | 10,333 [6,427..10,490], best 6,338 | 10,185 [9,774..10,294], best 6,768 | 10,253 [9,709..11,441], best 9,636 |
-| Quads grouped by predicate | 17,323 [12,117..18,043], best 12,070 | 17,069 [13,654..18,148], best 12,677 | 17,978 [17,800..18,395], best 17,378 |
+| Query (ms) | master | falcon HDF5 | falcon Zarr | master / falcon HDF5 |
+|---|---|---|---|---|
+| Quads of the default graph, counted | 0.44 | 0.43 | 0.43 | 1.0 |
+| Quads of the default graph by predicate (31 rows) | 2,345 | 0.49 | 0.48 | 4,737 |
+| Quads of every named graph, counted | 8,679 | 13.1 | 13.6 | 661 |
+| Quads of every named graph by predicate | 14,331 | 10.9 | 10.6 | 1,315 |
+| The ten largest named graphs | 12,028 | 21.5 | 21.5 | 560 |
+| The list of named graphs (31,311 rows) | 32.0 | 30.4 | 31.6 | 1.1 |
+| Features counted (1.36M) | 66.7 | 10.6 | 11.6 | 6.3 |
+| Features by classification, a join (1.36M) | 1,335 | 673 | 633 | 2.0 |
+| Probabilities: count, least, greatest, distinct (1.36M) | 352 | 10.7 | 10.8 | 33 |
+| Probabilities: sum and average | 227 | 12.5 | 12.5 | 18 |
+| Sphericity: count, least, greatest (1.36M) | 1,162 | 30.7 | 30.7 | 38 |
+| Sphericity: average (last digits differ) | 766 | 24.1 | 24.2 | 32 |
+| Area by classification: count and greatest, a join of three patterns | 3,993 | 176 | 168 | 23 |
+| Large features counted, a filter on the area | 0.33 | 0.24 | 0.24 | 1.3 |
+| Elongated and large features counted: two measures, filtered | 2,056 | 79.4 | 76.7 | 26 |
+| Polygons of a pyramid level across the tile graphs, counted | 72.5 | 8.36 | 6.60 | 8.7 |
+| Features in a region (`geof:sfIntersects`, spatial index) | 287 | 265 | 260 | 1.1 |
+| 1,000 polygons with their features (`LIMIT`) | 7.37 | 8.59 | 8.30 | 0.9 |
 
 ## What explains the differences
 
-- **Falcon writes its HDF5 files as NTFS sparse files, and a mapped sparse file is slow to touch on Windows.**
-  This is measured: the first touch of a page costs about 150 microseconds in the sparse file and about 1 in a
-  plain copy of it. It is why the first query after opening the falcon2 HDF5 store takes 18.9 ms where a copy
-  of the same file takes 3.1 ms, and why Zarr, whose chunk files are not sparse, looks faster than HDF5 there.
-  See PERFORMANCE.md, "Found on the way".
-- **A Zarr store is one file per array**: opening maps 57 files here instead of one, 4 to 5 ms more, and
-  closing unmaps them.
-- **falcon2 unmaps a store when it is closed**; master leaves that to the garbage collector, so its close is
-  nearly free and its file stays mapped for a while.
-- **What remains of the gap at open on the real store** (12.2 ms against 4.6 ms for the first query in Zarr,
-  where neither of the above applies) is probably format v6 reading its block directories into memory when
-  an index is first used. This was not profiled.
-- **The native binary's slower scans** are the read path through the memory segment, one entry at a time
-  (PERFORMANCE.md, item 1). `-Dbeakgraph.ffm.threshold=2147483647` reads through a ByteBuffer view instead;
-  it was not used here.
-- **Faster lookups and smaller stores** are format v6: per-block widths, and searches narrowed to one block
-  from a directory in memory.
+Each of these is a section of PERFORMANCE.md, where it was measured by itself.
+
+- **Smaller stores** are format v6: id sequences in blocks, each with the width its values need.
+- **Lookups in one graph** (0.98 to 0.35 ms) are the endpoint's response buffer: Fuseki asked for 5 MiB a
+  response, which Jetty's pool does not keep, so every answer allocated and cleared one.
+- **Lookups without a graph** are `GRAPH ?g` walked once on ids, where Jena ran the block anew in every
+  graph, also under `FILTER`, `OPTIONAL` and `UNION`.
+- **Counts of every quad, by graph and by predicate** are read off the index.
+- **Aggregates over rows** are grouped on ids by the workers that read the rows, which also evaluate the
+  filters, read values past Jena's JVM-wide cache of them, and divide a predicate's scan by its rows.
+- **`-verify -deep`** is the node table's cache of terms by id, in pages of consecutive ids, in place of a
+  Caffeine cache; the native binary gains most because Caffeine cost it most.
+- **The native binary's read path** goes through a ByteBuffer view of the mapped file, and Falcon no longer
+  writes sparse files: the two things that made it slower than master's in the earlier test.
+- **Zarr opens slower** because a store is one file an array: dozens of files to map and to unmap instead
+  of one.
+
+## Where falcon is not faster
+
+- **Builds**: equal on real data and on the store of many graphs in HDF5; one step of the one-second
+  polling slower on the store of one graph, and in Zarr on the store of many.
+- **`-export` on the synthetic stores**, and a **dump of one graph** (1.3 times): the cost is writing the
+  result.
+- **A query answered from the spatial index** (`geof:sfIntersects`): that route is Jena's on both branches.
+- **A query cut short by `LIMIT`**, and **the list of graphs**.
+- **A join that begins at a pattern with a constant object** gains only twice (features by classification:
+  `?f a geo:Feature` is read on one thread, since only a scan with subject and object both open is divided
+  among workers).
+- **Many groups**: 800,000 groups are put together on one thread (3.4 times).
 
 ## How far to trust these
 
-- **Long scans are bimodal between JVM runs, in every configuration.** The real-data count of every quad
-  takes about 6.4 s or about 10.3 s depending on the run, and can change within one. So the single-run
-  `-verify -deep` times on real data (593 / 570 / 430 s) do not separate the three, and neither do
-  differences of a few percent in the scan phases.
-- The endpoint figures are one server run per configuration.
-- The real-data builds, verifies and exports are one run each; they are long enough that a few percent is
-  the resolution, not more.
-- One machine, one operating system. The sparse-file effect in particular is Windows and NTFS.
+- One machine, one operating system.
+- **The endpoint was asked by one client at a time.** How the branches compare under many clients was not
+  measured; falcon's aggregates use every core for one query.
+- **The real-data build, verify and export are one run each**, long enough that a few percent is the
+  resolution, not more. The real-data queries ran in process, so they are not comparable with the endpoint
+  tables row for row.
+- **One answer differs**: the average of 1.36M `xsd:double` values agrees to ten digits and not in the
+  last. falcon's workers add the values in another order than one thread does, and a floating-point sum
+  depends on the order. Every other answer is the same, row for row.
+- **master's native binary is not the one its branch builds** (see Setup), and its second endpoint run
+  ended early.
+- Not measured this time, though the earlier test had them: the JMH micro-benchmarks, queries in process on
+  the synthetic stores, remote reads over HTTP ranges, and peak memory.
 - The scripts that took these measurements were kept outside the repository and are not part of it.
 
-## What would close the gaps
+## Against the earlier test
 
-1. Falcon not writing sparse HDF5 files, at least on Windows: the synthetic store's open cycle goes from
-   21.3 ms to 4.2 ms with a plain copy of the same file.
-2. The native binary's read path: the bulk decode still open under PERFORMANCE.md's item 1, or the
-   ByteBuffer view as its default.
-3. Loading format v6's directories when they are first needed, or laying them out together, if profiling
-   confirms they are what the first query pays for.
+The test of 2026-11-14 found `falcon2` equal to master at queries on the JVM, 13-23% slower over the
+endpoint at scans and joins, slower to open a store (21 ms against 4.5 ms), and 30-70% slower in the native
+binary at scan-heavy work. Since then, on the falcon side:
 
-## Since this was measured
+| | master | then (`bf09ba1`) | now (`07c8328`) |
+|---|---|---|---|
+| Open, first query, close (ms) | 4.2 - 4.5 | 21.3 | 4.0 |
+| Native `-verify -deep` | 29 - 30 s | 42.2 s | 11.6 s |
+| Native endpoint, count of every quad | 1.3 - 1.8 s | 2.26 s | 3.1 ms |
+| JVM endpoint, count of every quad | 0.58 - 0.61 s | 0.66 s | 2.8 ms |
 
-The tables above are as measured on commit `bf09ba1` and are not changed. Later the same day, in the working
-tree:
-
-- **Items 1 and 2 above are done.** Falcon no longer writes sparse files, and the native binary reads
-  through the ByteBuffer view by default. On the synthetic store, falcon2 in HDF5 then takes 4.0 ms to open,
-  answer a first query and close (master 4.4 ms), and its native binary 30.8 s for `-verify -deep`, 5.64 s
-  for `-export NQ`, 1.39 s for the endpoint's count of every quad and 24.4 s for the 1,000 subject lookups
-  (master 29.5 s, 5.50 s, 1.35 s, 24.4 s). The full table is in PERFORMANCE.md, "After the speed test".
-- **One finding above did not hold up: the native binary's faster dumps and joins on falcon2.** In that
-  re-measurement the same falcon2 binary took 4.6 s for the 200 dumps and 1.0 s for the 100 joins, where
-  the table above has 2.6 s and 0.5 s; master took about 4.1 s and 0.9 s both times. What made the earlier
-  run faster was not found (not the garbage collector, which was checked). Read the native binary's dumps
-  and joins as equal on the two branches.
-- **The sparse-file cost varies from file to file**: the first query after an open took 44.6 ms on the
-  store built for the re-measurement, 18.9 ms on the one above.
-- **The endpoint tables above overstate what a request costs.** Their client opened a new connection for
-  each request, which on this machine adds a median 0.8 ms and stalls of about 15 ms on a tenth to a half
-  of the requests; it is the likely reason for the dumps and joins that did not reproduce. On a connection
-  kept alive a dump of one graph takes 3.6 ms on the JVM, not 14. Counts, grouped counts and the lookups
-  across graphs are long enough to be little affected. See PERFORMANCE.md, "The endpoint's response
-  buffer", which also removes 0.7 ms from every request.
+(The synthetic source was generated anew for this test, so its stores are not byte for byte those of the
+earlier one; the real-data stores are the same size to the byte.)
