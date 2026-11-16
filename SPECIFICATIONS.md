@@ -1079,7 +1079,9 @@ stored verbatim (it is, as ordinary data).
 **(B/C) Multi-resolution pyramid (viewer support, not queried by the engine).** Computed **per
 polygonal part**, exactly as (A): each polygon of a multi/collection separately, non-areal members
 (points, lines) via their 0.5-expanded envelope box. Each part is repeatedly half-scaled (`×0.5`
-per level, integer-snapped, cleaned, stopping at area < 4.0 or 20 levels), and every part's
+per level, integer-snapped, cleaned, stopping at area < 4.0 or 20 levels; a level that is invalid
+after snapping is repaired and reduced back to the integer grid, so every level's coordinates are
+integers — 0.19.0 and earlier could write a repaired level with fractional vertices), and every part's
 level-`s` WKT is written as `S <https://halcyon.is/ns/asWKT{s}> "<POLYGON wkt>"^^geo:wktLiteral`
 into graph `urn:x-beakgraph:Spatial` **and** into every grid-tile graph
 `urn:x-beakgraph:grid:{s}:{x}:{y}` whose 512×512 tile (in level-`s` coordinates,

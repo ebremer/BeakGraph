@@ -4,6 +4,22 @@ Notable changes to BeakGraph and its on-disk format. The format history is
 normative (SPECIFICATIONS.md §4.1); the rest is a summary of what a release
 brought and what a reader must rebuild.
 
+## 0.20.0 - format v6 (2026-11)
+
+* **Every pyramid level is on the integer grid, a repaired one too**
+  (SPECIFICATIONS.md, spatial (B/C)). A part that is invalid after integer
+  snapping is repaired (JTS `buffer(0)`, keeping the largest lobe), and the
+  repair nodes a self-crossing ring where its edges cross, rarely at a whole
+  pixel: such a level was written with fractional vertices, e.g.
+  `POLYGON ((5838.666666666667 3535.5, 5842 3533, ...))`, which Halcyon's tile
+  renderer (it read integers only) threw on, dropping the rest of that tile's
+  grid cell. The repaired polygon is now reduced to the integer grid by
+  snap-rounding (`GeometryPrecisionReducer`, which keeps it valid; the largest
+  part is kept if that splits it, and a part with nothing left on the grid ends
+  its pyramid with a warning). The format is unchanged and so are the stores of
+  geometries that needed no repair; rebuild a store to replace fractional
+  levels (Halcyon reads both since next `6bb5d1e`).
+
 ## 0.19.0 - format v6 (2026-11)
 
 * **Zarr: one file, over HTTP, in a storage directory, and past 1 GiB**
