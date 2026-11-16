@@ -255,7 +255,7 @@ brought and what a reader must rebuild.
   the shaded jars, the `hdf5-backend-*` and `hdf5-ffm-*` build profiles,
   `-Dhdf5.ffm`, and `com.ebremer.beakgraph.huge.NativeHdf5File`
   (`FalconHdf5File` takes its place behind `StreamingHdf5`).
-* LWS storage mode follows the LWS Protocol editor's draft of 2026-10-23 for
+* LWS storage mode follows the LWS Protocol editor's draft of 2026-11-09 for
   everything a read-only storage serves. Every GET/HEAD response links the
   storage URI (`/description`) with `rel="https://www.w3.org/ns/lws#storage"`
   (was `…#storageDescription`); the storage URI serves the storage

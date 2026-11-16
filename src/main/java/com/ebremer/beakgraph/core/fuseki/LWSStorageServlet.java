@@ -47,7 +47,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Read-only LWS (W3C Linked Web Storage) storage endpoint over a generated
  * metadata model + on-disk files. The unauthenticated read surface follows the
- * LWS Protocol 1.0 editor's draft of 2026-10-23
+ * LWS Protocol 1.0 editor's draft of 2026-11-09
  * (w3c.github.io/lws-protocol/lws10-core/):
  *
  * <ul>

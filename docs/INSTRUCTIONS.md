@@ -209,7 +209,7 @@ file's live size and modification time; a file replaced since the last scan is p
 scan. In single-file mode the LWS surface is empty (every path but `/rdf` and `/sparql` answers 404).
 
 The storage follows the read side of the
-[LWS Protocol 1.0](https://w3c.github.io/lws-protocol/lws10-core/) editor's draft of 2026-10-23.
+[LWS Protocol 1.0](https://w3c.github.io/lws-protocol/lws10-core/) editor's draft of 2026-11-09.
 `/description` is the storage URI: it serves the storage description (`application/lws+cid`,
 whose `StorageRoot` service is `/`), and every response links it with
 `rel="https://www.w3.org/ns/lws#storage"`. Containers answer `application/lws+json` (the same

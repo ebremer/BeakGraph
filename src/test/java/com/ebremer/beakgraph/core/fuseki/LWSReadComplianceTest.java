@@ -30,7 +30,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * HTTP-level conformance of the unauthenticated read surface against the LWS
- * Protocol 1.0 editor's draft of 2026-10-23 (w3c.github.io/lws-protocol/lws10-core/):
+ * Protocol 1.0 editor's draft of 2026-11-09 (w3c.github.io/lws-protocol/lws10-core/):
  * storage discovery (rel=lws#storage, the application/lws+cid storage
  * description), container representation shape and media-type negotiation
  * (the LWS profile: profiled RDF isomorphic to application/lws+json),
