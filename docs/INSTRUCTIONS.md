@@ -548,4 +548,4 @@ than the running build supports is refused at open.
 | v3 | 0.17.0 | corrected rank/select directory, wider superblock entries | never for correctness; rebuild for speed |
 | v4 | 0.18.0 | `langDirs` for `rdf:dirLangString`; composite (`cdt:`) literals ordered lexically | the source contained base-direction literals (a v3 store holds them as plain `"x"@en`) or `cdt:` literals (a pre-v4 store holding them is refused at open) |
 | v5 | 0.18.0 | RDF 1.2 triple terms (`tripleTerms` component store) | the source contained triple terms (a pre-v5 build could not store them) |
-| v6 | unreleased | id sequences stored in blocks, each with its own width, with an in-memory directory (SPECIFICATIONS.md §5.1a) | never for correctness: v3-v5 stores read as before; rebuild for the smaller indexes. A v6 store is refused by earlier builds |
+| v6 | 0.19.0 | id sequences stored in blocks, each with its own width, with an in-memory directory (SPECIFICATIONS.md §5.1a) | never for correctness: v3-v5 stores read as before; rebuild for the smaller indexes. A v6 store is refused by earlier builds |

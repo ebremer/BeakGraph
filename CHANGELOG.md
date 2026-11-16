@@ -4,7 +4,7 @@ Notable changes to BeakGraph and its on-disk format. The format history is
 normative (SPECIFICATIONS.md §4.1); the rest is a summary of what a release
 brought and what a reader must rebuild.
 
-## Unreleased (branch rdf12andcdt, after 0.18.0)
+## 0.19.0 - format v6 (2026-11)
 
 * **Zarr: one file, over HTTP, in a storage directory, and past 1 GiB**
   (SPECIFICATIONS.md §3a; docs/INSTRUCTIONS.md §4a). Four things the Zarr

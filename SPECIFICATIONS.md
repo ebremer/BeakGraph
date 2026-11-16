@@ -1,6 +1,6 @@
 # BeakGraph File Format Specification
 
-**Format version 6 — derived from and verified against BeakGraph 0.18.0+ (2026-11-14; v6 stores the id sequences block-structured, §5.1a; v5 added RDF 1.2 triple terms). A store is kept in an HDF5 file (§3) or, the same store, in a Zarr hierarchy (§3a).**
+**Format version 6 — derived from and verified against BeakGraph 0.19.0 (2026-11-14; v6 stores the id sequences block-structured, §5.1a; v5 added RDF 1.2 triple terms). A store is kept in an HDF5 file (§3) or, the same store, in a Zarr hierarchy (§3a).**
 
 This document specifies the on-disk format of a BeakGraph store (an `.h5` file, or a `.zarr` directory
 store) precisely enough that an independent implementation — in Rust, C, Python, or any other language,
@@ -1128,7 +1128,7 @@ consequence of the contiguous-dataset profile, §3 — no format work needed).
 
 ## 11. Conformance checklist for a new implementation
 
-A writer is conformant when the reference stack (0.18.0+) can open its files and every query answers
+A writer is conformant when the reference stack (0.19.0+) can open its files and every query answers
 as over a reference-built store. Practical gates, in order:
 
 1. **Primitives round-trip**: bit-packed sequences (incl. widths 32/64 signed cases and the
@@ -1266,7 +1266,7 @@ the anchor alone cannot tell the two apart.
 |---|---|
 | Root group name | `.BG` (leading dot) |
 | Dictionary group name | `dictionary` |
-| `FORMAT_VERSION` | 5 |
+| `FORMAT_VERSION` | 6 |
 | `RANK_DIRECTORY_MIN_VERSION` | 3 |
 | Index superblock / block size | 512 / 64 bits |
 | FCD `blockSize` | 16 |
