@@ -36,6 +36,11 @@ import java.util.OptionalLong;
  *       2026-11-14). A dataset past 2 GiB is read through its segment there
  *       too.</li>
  * </ul>
+ * An array mapped in several pieces (a Zarr array of several chunks,
+ * {@link SegmentedBytes}) follows the same rule piece by piece: in the
+ * native binary a store of such arrays took 14.0 s to {@code -verify -deep}
+ * through the segments and 11.6 s through views, where the same store of
+ * one-chunk arrays takes 11.3 s (2026-11-15).
  *
  * <p>The mapping lasts exactly as long as the store is open: Falcon unmaps
  * the file when {@code HDF5Reader.close()} closes it, at once and on every
@@ -114,6 +119,20 @@ public final class DatasetBytes {
         return (size > ffmThreshold || size > Integer.MAX_VALUE)
                 ? new MemorySegmentBytes(segment)
                 : new ByteBufferBytes(segment.asByteBuffer());
+    }
+
+    /**
+     * The view of a mapped array that lies in several pieces of equal
+     * length, one after another (a Zarr array of several chunks): each piece
+     * read through its segment or through a ByteBuffer view of it, by the
+     * same threshold as one mapping, held to a piece.
+     *
+     * @param pieces the array's bytes in order (see {@link SegmentedBytes})
+     * @param length the bytes of the array each piece but the last holds
+     * @param size   the array's length in bytes
+     */
+    public static RandomAccessBytes of(MemorySegment[] pieces, long length, long size) {
+        return new SegmentedBytes(pieces, length, size, length <= ffmThreshold && length <= Integer.MAX_VALUE);
     }
 
     /**

@@ -42,7 +42,7 @@ import java.util.List;
 public final class FalconHdf5File implements StreamingHdf5File {
 
     private final Path path;
-    /** "HDF5 file" or "Zarr store": what the messages call it. */
+    /** "HDF5 file", "Zarr store" or "Zarr store in a ZIP archive": what the messages call it. */
     private final String what;
     private final WritableStore file;
     private final FalconGroup root;
@@ -51,7 +51,7 @@ public final class FalconHdf5File implements StreamingHdf5File {
 
     private FalconHdf5File(Path path, WritableStore file) {
         this.path = path;
-        this.what = file.container() == Container.HDF5 ? "HDF5 file" : "Zarr store";
+        this.what = file.container().noun();
         this.file = file;
         this.root = new FalconGroup(file.root(), "/");
     }
@@ -66,7 +66,7 @@ public final class FalconHdf5File implements StreamingHdf5File {
         try {
             return new FalconHdf5File(path, WritableStore.create(path, container));
         } catch (RuntimeException e) {
-            throw new IOException("Cannot create " + (container == Container.HDF5 ? "HDF5 file " : "Zarr store ") + path
+            throw new IOException("Cannot create " + container.noun() + " " + path
                     + ": " + e.getMessage(), e);
         }
     }

@@ -58,6 +58,12 @@ public class LWSMetadataGenerator {
      */
     public static final String CANONICAL_BASE = "http://localhost:8888/HalcyonStorage";
 
+    /**
+     * The media type a Zarr store is listed with, and served as: a GET of the
+     * store returns the document it is opened from, its root {@code zarr.json}.
+     */
+    public static final String ZARR_STORE_MEDIA_TYPE = "application/json";
+
     /** Default file name used to cache generated metadata inside a storage folder. */
     public static final String CACHE_FILE_NAME = "beakgraph.ttl.gz";
 
@@ -139,6 +145,20 @@ public class LWSMetadataGenerator {
                         return FileVisitResult.SKIP_SUBTREE;
                     }
                     String httpUri = toHttpUri(rootPath, dir);
+                    BasicFileAttributes document = zarrStoreDocument(dir);
+                    if (document != null) {
+                        // A Zarr store is a directory, and ONE resource: a store, as an .h5 file is.
+                        // What it holds is not listed, and it is not walked into.
+                        Resource res = model.createResource(httpUri);
+                        res.addProperty(RDF.type, dataType);
+                        res.addProperty(OWL.sameAs, model.createResource(
+                                "file:///" + dir.toAbsolutePath().toString().replace("\\", "/")));
+                        res.addProperty(modified, model.createTypedLiteral(modifiedLiteral(document), XSD.dateTime.getURI()));
+                        res.addProperty(size, model.createTypedLiteral(document.size(), XSD.integer.getURI()));
+                        res.addProperty(mediaType, ZARR_STORE_MEDIA_TYPE);
+                        linkToParent(model, rootPath, dir, items, totalItems);
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
                     processResource(model, httpUri, dir, attrs, containerType, null, null, modified);
                     linkToParent(model, rootPath, dir, items, totalItems);
                 }
@@ -147,6 +167,24 @@ public class LWSMetadataGenerator {
         });
 
         return model;
+    }
+
+    /**
+     * The attributes of the document a Zarr store at {@code dir} is opened
+     * from - its root {@code zarr.json} - when {@code dir} is one
+     * ({@code *.zarr}, holding that document); else null. They stand for the
+     * store in the listing: a rebuilt store is a new directory moved into
+     * place, with a new document.
+     */
+    static BasicFileAttributes zarrStoreDocument(Path dir) {
+        if (!com.ebremer.beakgraph.core.BeakGraphFiles.isZarrStoreDirectory(dir)) {
+            return null;
+        }
+        try {
+            return Files.readAttributes(dir.resolve("zarr.json"), BasicFileAttributes.class);
+        } catch (IOException e) {
+            return null; // gone since it was looked for: a plain directory, until the next scan
+        }
     }
 
     /** The cache file, and the temp file it is written through, are never content. */
@@ -205,7 +243,8 @@ public class LWSMetadataGenerator {
     /**
      * Compact fingerprint of the metadata a storage tree would produce: one entry
      * per file ({@code relative/path|size|modified}) and per directory
-     * ({@code relative/path|dir}), cache artifacts excluded. It is cheap - no
+     * ({@code relative/path|dir}), cache artifacts excluded; a Zarr store is
+     * one entry, as a file is, with the size and time of its root document. It is cheap - no
      * content probing - so a refresher can compare it against
      * {@link #modelSignature} on every poll and regenerate only when the tree
      * really changed. Directory timestamps are deliberately left out: writing
@@ -227,6 +266,11 @@ public class LWSMetadataGenerator {
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
                 if (!dir.equals(rootPath)) {
                     if (isExcluded(rootPath, dir, true)) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    BasicFileAttributes document = zarrStoreDocument(dir);
+                    if (document != null) {
+                        signature.add(relative(rootPath, dir) + "|" + document.size() + "|" + modifiedLiteral(document));
                         return FileVisitResult.SKIP_SUBTREE;
                     }
                     signature.add(relative(rootPath, dir) + "|dir");

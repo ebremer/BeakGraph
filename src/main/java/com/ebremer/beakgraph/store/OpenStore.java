@@ -37,13 +37,30 @@ public interface OpenStore extends AutoCloseable {
     void close();
 
     /**
-     * Opens the store at {@code path}: a directory as a Zarr store, a file as
-     * an HDF5 file, memory-mapped either way.
+     * Opens the store at {@code path}: a directory as a Zarr store, a ZIP
+     * archive as the Zarr store it holds, any other file as an HDF5 file,
+     * memory-mapped whichever it is.
      *
      * @throws java.io.UncheckedIOException if it cannot be opened
      */
     static OpenStore open(Path path) {
-        return Container.ofExisting(path) == Container.ZARR ? ZarrStore.open(path) : Hdf5Store.open(path);
+        return switch (Container.ofExisting(path)) {
+            case ZARR -> ZarrStore.open(path);
+            case ZARR_ZIP -> ZarrStore.openZip(path);
+            case HDF5 -> Hdf5Store.open(path);
+        };
+    }
+
+    /**
+     * Opens the Zarr store at an {@code http} or {@code https} URL, read a
+     * range at a time through a block cache ({@link ZarrStore#open(URI)}).
+     * An HDF5 file over HTTP is opened through its channel instead
+     * ({@link #open(SeekableByteChannel, URI)}).
+     *
+     * @throws java.io.UncheckedIOException if it cannot be opened
+     */
+    static OpenStore open(URI zarr) {
+        return ZarrStore.open(zarr);
     }
 
     /**

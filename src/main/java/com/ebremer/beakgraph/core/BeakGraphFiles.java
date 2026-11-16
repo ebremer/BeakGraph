@@ -24,6 +24,10 @@ import java.util.Locale;
  * ({@code -verify}, {@code -export}) take such a directory as ONE store and
  * do not walk into it.
  *
+ * <p>A Zarr store in one file, a ZIP archive, is found in a tree by the name
+ * {@code *.zarr.zip}: a tree holds other archives, and they are not stores.
+ * Named outright, a store is opened by what it is, whatever it is called.
+ *
  * @author Erich Bremer
  */
 public final class BeakGraphFiles {
@@ -43,9 +47,24 @@ public final class BeakGraphFiles {
         return name != null && name.toLowerCase(Locale.ROOT).endsWith(".zarr");
     }
 
-    /** Whether {@code name} names a store in either container: {@code .h5}, {@code .hdf5} or {@code .zarr}. */
+    /** Whether {@code name} is that of a Zarr store in a ZIP archive: it ends in {@code .zarr.zip}, case-insensitively. */
+    public static boolean isZarrArchiveName(String name) {
+        return name != null && name.toLowerCase(Locale.ROOT).endsWith(".zarr.zip");
+    }
+
+    /** Whether {@code name} names a store in any container: {@code .h5}, {@code .hdf5}, {@code .zarr} or {@code .zarr.zip}. */
     public static boolean isStoreName(String name) {
-        return isBeakGraphFileName(name) || isZarrStoreName(name);
+        return isBeakGraphFileName(name) || isZarrStoreName(name) || isZarrArchiveName(name);
+    }
+
+    /**
+     * Whether a destination NAMED {@code name} is one store file, and not a
+     * directory to put stores in: {@code .h5}, {@code .hdf5}, or {@code .zip}
+     * (a Zarr store in a ZIP archive, which a destination may name without
+     * the {@code .zarr} before it).
+     */
+    public static boolean isStoreFileName(String name) {
+        return isBeakGraphFileName(name) || (name != null && name.toLowerCase(Locale.ROOT).endsWith(".zip"));
     }
 
     /** Whether {@code dir} is a Zarr store by the rule above: a directory named {@code *.zarr} holding a {@code zarr.json}. */
@@ -73,8 +92,8 @@ public final class BeakGraphFiles {
 
     /**
      * Every store under {@code root}, in path order: the files named
-     * {@code .h5} / {@code .hdf5} and the Zarr store directories, which are
-     * not walked into.
+     * {@code .h5} / {@code .hdf5} / {@code .zarr.zip} and the Zarr store
+     * directories, which are not walked into.
      *
      * @throws IOException if a directory or file of the tree cannot be read
      */
@@ -92,7 +111,8 @@ public final class BeakGraphFiles {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                if (attrs.isRegularFile() && isBeakGraphFileName(file.getFileName().toString())) {
+                String name = file.getFileName().toString();
+                if (attrs.isRegularFile() && (isBeakGraphFileName(name) || isZarrArchiveName(name))) {
                     found.add(file);
                 }
                 return FileVisitResult.CONTINUE;
@@ -107,9 +127,15 @@ public final class BeakGraphFiles {
         return found;
     }
 
-    /** The name without its {@code .h5} / {@code .hdf5} / {@code .zarr} suffix; unchanged when it has none. */
+    /** The name without its {@code .h5} / {@code .hdf5} / {@code .zarr} / {@code .zarr.zip} / {@code .zip} suffix; unchanged when it has none. */
     public static String stripExtension(String name) {
         String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".zarr.zip")) {
+            return name.substring(0, name.length() - 9);
+        }
+        if (lower.endsWith(".zip")) {
+            return name.substring(0, name.length() - 4);
+        }
         if (lower.endsWith(".zarr")) {
             return name.substring(0, name.length() - 5);
         }

@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.hdf5;
 
 import com.ebremer.beakgraph.io.MemorySegmentBytes;
+import com.ebremer.beakgraph.io.SegmentedBytes;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.io.ByteBufferBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
@@ -246,6 +247,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
     private long readLong(long offset) {
         if (data instanceof ByteBufferBytes b) return b.getLong(offset);
         if (data instanceof MemorySegmentBytes m) return m.getLong(offset);
+        if (data instanceof SegmentedBytes s) return s.getLong(offset);
         return data.getLong(offset);
     }
 
@@ -253,6 +255,7 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
     private int readByte(long offset) {
         if (data instanceof ByteBufferBytes b) return b.get(offset) & 0xFF;
         if (data instanceof MemorySegmentBytes m) return m.get(offset) & 0xFF;
+        if (data instanceof SegmentedBytes s) return s.get(offset) & 0xFF;
         return data.get(offset) & 0xFF;
     }
 

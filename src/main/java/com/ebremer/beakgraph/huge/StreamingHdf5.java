@@ -92,7 +92,7 @@ public final class StreamingHdf5 {
         // The probe removes what it made, and nothing that was there before it.
         boolean taken = Files.exists(file, java.nio.file.LinkOption.NOFOLLOW_LINKS);
         try {
-            if (taken && container == Container.ZARR) {
+            if (taken && container.isDirectory()) {
                 throw new IOException(file.getFileName() + " is already there"); // a Zarr store would replace it whole
             }
             try (StreamingHdf5File f = create(file, container)) {

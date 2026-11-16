@@ -4,6 +4,8 @@ import java.util.Locale;
 import com.ebremer.beakgraph.core.HTTPSeekableByteChannel;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
+import com.ebremer.beakgraph.store.Container;
+import com.ebremer.beakgraph.store.OpenStore;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
@@ -20,10 +22,13 @@ import org.slf4j.LoggerFactory;
 /**
  * Creates and validates the pooled {@link BeakGraph} readers, keyed by the
  * store's URI: a {@code file:} URI (any form {@code Path.of(URI)} accepts)
- * opens the local file, an {@code http:} / {@code https:} URI opens the
- * store in place over range requests through {@link HTTPSeekableByteChannel}
- * - the same remote read path {@code BG.getBeakGraph(SeekableByteChannel)}
- * offers; every other scheme is rejected up front with a message naming the
+ * opens the local store (an HDF5 file, a Zarr directory, a Zarr store in a
+ * ZIP archive), an {@code http:} / {@code https:} URI opens the
+ * store in place over range requests - an HDF5 file through
+ * {@link HTTPSeekableByteChannel}, the same remote read path
+ * {@code BG.getBeakGraph(SeekableByteChannel)} offers, and a URL whose path
+ * ends in {@code .zarr} as a Zarr store ({@code OpenStore.open(URI)}), read
+ * through one block cache; every other scheme is rejected up front with a message naming the
  * accepted ones (the pool's URI key type used to promise more than
  * {@code new File(uri)} delivered, BG-277). Replacement detection (file
  * signature) applies to local files only; remote stores rely on the
@@ -91,7 +96,13 @@ public class BeakGraphPoolFactory extends BaseKeyedPooledObjectFactory<URI, Beak
         }
         String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
         if (scheme.equals("http") || scheme.equals("https")) {
-            return new HDF5Reader(new HTTPSeekableByteChannel(uri), uri); // the reader owns (and on failure closes) the channel
+            return switch (Container.ofRemote(uri)) {
+                case ZARR -> new HDF5Reader(OpenStore.open(uri), uri); // the reader owns (and on failure closes) the store
+                case HDF5 -> new HDF5Reader(new HTTPSeekableByteChannel(uri), uri); // ... and the channel
+                case ZARR_ZIP -> throw new IllegalArgumentException("A Zarr store in a ZIP archive is read from a local"
+                        + " file, not over HTTP: serve the store as a directory (.zarr) or as an HDF5 file. Got: "
+                        + HTTPSeekableByteChannel.redact(uri));
+            };
         }
         throw new IllegalArgumentException("BeakGraphPool supports file: and http(s): store URIs, got: " + uri);
     }

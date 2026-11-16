@@ -81,7 +81,7 @@ public final class VerifyCommand {
             return 1;
         }
         if (files.isEmpty()) {
-            out.println("No BeakGraph (.h5/.hdf5/.zarr) stores found under " + root);
+            out.println("No BeakGraph (.h5/.hdf5/.zarr/.zarr.zip) stores found under " + root);
             return 1;
         }
         int failed = 0;
@@ -113,7 +113,7 @@ public final class VerifyCommand {
             // and so is a directory that is a Zarr store, whatever its name.
             return List.of(path);
         }
-        // The .h5/.hdf5 files and the *.zarr stores of the tree; a store's own directories are not walked.
+        // The .h5/.hdf5/.zarr.zip files and the *.zarr stores of the tree; a store's own directories are not walked.
         return com.ebremer.beakgraph.core.BeakGraphFiles.findStores(path);
     }
 

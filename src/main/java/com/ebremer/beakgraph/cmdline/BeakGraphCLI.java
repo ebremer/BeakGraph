@@ -357,10 +357,10 @@ public class BeakGraphCLI {
         // A *.zarr name is a store even where it exists as a directory: a Zarr store is one, and is rebuilt.
         boolean zarrStore = !trailingSeparator && com.ebremer.beakgraph.core.BeakGraphFiles.isZarrStoreName(dest.getName());
         if (!zarrStore && (dest.isDirectory() || trailingSeparator
-                || !com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(dest.getName()))) {
+                || !com.ebremer.beakgraph.core.BeakGraphFiles.isStoreFileName(dest.getName()))) {
             String merged = "merged." + storeExtension();
             if (!dest.isDirectory()) {
-                logger.info("-dest {} names a directory (no .h5/.hdf5/.zarr suffix): the merged store is {}/{}", dest, dest, merged);
+                logger.info("-dest {} names a directory (no .h5/.hdf5/.zarr/.zip suffix): the merged store is {}/{}", dest, dest, merged);
             }
             dest.mkdirs();
             dest = new File(dest, merged);
@@ -411,7 +411,7 @@ public class BeakGraphCLI {
             inputs.add(params.src); // one store: an HDF5 file, or a Zarr store's directory
         }
         if (inputs.isEmpty()) {
-            System.err.println("No BeakGraph (.h5/.hdf5/.zarr) stores found under " + params.src);
+            System.err.println("No BeakGraph (.h5/.hdf5/.zarr/.zarr.zip) stores found under " + params.src);
             return;
         }
         for (File h5 : inputs) {
@@ -837,9 +837,11 @@ public class BeakGraphCLI {
         return mapToDestinationWithNewExtension(src, srcRoot.toPath(), dest.toPath(), extension);
     }
 
-    /** The extension of the store names this run makes up: {@code zarr} with {@code -zarr}, else {@code h5}. */
+    /** The extension of the store names this run makes up: {@code zarr.zip} with {@code -zip}, {@code zarr} with {@code -zarr}, else {@code h5}. */
     private String storeExtension() {
-        return (params.zarr ? com.ebremer.beakgraph.store.Container.ZARR : com.ebremer.beakgraph.store.Container.HDF5).extension();
+        com.ebremer.beakgraph.store.Container container = params.zip ? com.ebremer.beakgraph.store.Container.ZARR_ZIP
+                : params.zarr ? com.ebremer.beakgraph.store.Container.ZARR : com.ebremer.beakgraph.store.Container.HDF5;
+        return container.extension();
     }
 
     /**

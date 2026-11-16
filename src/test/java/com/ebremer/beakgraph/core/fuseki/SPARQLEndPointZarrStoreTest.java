@@ -110,11 +110,12 @@ class SPARQLEndPointZarrStoreTest {
     }
 
     @Test
-    void aStorageDirectoryListsAZarrStoreAsTheDirectoryItIs() throws Exception {
-        // Directory (LWS) mode does not serve a Zarr store as a store yet; it must still describe the tree it is in.
+    void aStorageDirectoryListsAZarrStoreAsOneStore() throws Exception {
+        // Directory (LWS) mode serves a Zarr store as the store it is (LWSZarrStoreTest): one entry of the tree it is in.
         Model tree = LWSMetadataGenerator.generateLWSModel(parent);
         assertFalse(tree.isEmpty());
         String ttl = new java.io.StringWriter() {{ tree.write(this, "TURTLE"); }}.toString();
         assertTrue(ttl.contains("big.zarr"), ttl);
+        assertFalse(ttl.contains("big.zarr/"), "what the store holds is not listed: " + ttl);
     }
 }

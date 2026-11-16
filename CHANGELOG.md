@@ -6,6 +6,50 @@ brought and what a reader must rebuild.
 
 ## Unreleased (branch rdf12andcdt, after 0.18.0)
 
+* **Zarr: one file, over HTTP, in a storage directory, and past 1 GiB**
+  (SPECIFICATIONS.md §3a; docs/INSTRUCTIONS.md §4a). Four things the Zarr
+  container did not do, and HDF5 did:
+  - **A Zarr store in ONE file.** `-zip`, or a destination named `*.zip`
+    (by convention `name.zarr.zip`), writes the store as a ZIP archive whose
+    entries are the directory store's files, none compressed
+    (`Container.ZARR_ZIP`). An entry is then the chunk's bytes, and the
+    reader memory-maps each where it lies in the archive: the same views,
+    answers and speed as the directory. Every engine writes it, and the same
+    archive byte for byte; every command reads it; `unzip` gives the
+    directory store back. An archive with a compressed chunk is refused with
+    a message that names the rule. A store is found by what is at its path
+    (a directory, a ZIP archive, an HDF5 file), whatever it is called.
+  - **A Zarr store over HTTP, through a cache.** `BG.getBeakGraph(URI)` and
+    the reader pool open a URL whose path ends in `.zarr` as a Zarr store:
+    one document to open it, then each array by ranges, a block at a time,
+    through ONE block cache for the whole store
+    (`beakgraph.zarr.cache.block`, `beakgraph.zarr.cache.blocks`; 32 MiB by
+    default). Each chunk is read through an `HTTPSeekableByteChannel` - its
+    retries, its read-ahead, its pinned validator, so a chunk replaced on
+    the server fails loudly - and the channels share the cache and one
+    client. A chunk's channel is told its size (`HTTPSeekableByteChannel
+    .sized`), which the array declares, so no request is spent on looking
+    at a chunk before reading it. Before, `ZarrStore.open(store, name)` sent a request for every
+    read; it now reads any Falcon store through the same cache.
+  - **A Zarr store in an LWS storage directory is a store.** `-endpoint
+    <directory>` listed a `*.zarr` directory as a container holding its
+    `zarr.json` (the `.BG` directory is hidden) and answered no query for
+    it. It is now one data resource, queried with SPARQL at its URL as an
+    `.h5` file is; a GET of it returns its root `zarr.json`; and its keys
+    (metadata documents and chunks, nothing else in the directory) are
+    served by range, so another BeakGraph can read the store in place. A
+    `*.zarr.zip` archive in a storage directory answers queries too.
+  - **An array of several chunks is read where its values lie.** An array
+    past 1 GiB is cut into chunks, and was read through its mappings a
+    range at a time, copying each value out through a scratch buffer
+    (`ChannelBytes`). `SegmentedBytes` reads each value straight from the
+    chunk it lies in, and such an array is no longer treated as remote (its
+    accelerators are used).
+  Needs Falcon 0.3.0 (`ZipStore.map`: an uncompressed entry as a
+  mapped view of the archive). Not done: a ZIP archive read over HTTP; a
+  check, while a remote Zarr store is open, that the store as a whole was
+  not replaced (each chunk is checked from the moment it is first read).
+
 * **`GROUP BY` and the aggregates are computed on ids, by the threads that
   read the rows.** Jena grouped every row on the one thread that asked, as
   terms: however many workers read a pattern's rows, they handed them to

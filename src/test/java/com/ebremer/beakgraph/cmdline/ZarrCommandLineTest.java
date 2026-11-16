@@ -111,6 +111,65 @@ class ZarrCommandLineTest {
         assertTrue(isZarrStore(into.resolve("a.zarr")));
     }
 
+    private static boolean isArchive(Path p) {
+        return Files.isRegularFile(p) && com.ebremer.beakgraph.store.Container.ofExisting(p) == com.ebremer.beakgraph.store.Container.ZARR_ZIP;
+    }
+
+    @Test
+    void zipWritesEachStoreAsOneArchive() throws Exception {
+        Path src = sources();
+        Path out = dir.resolve("zipped");
+        assertEquals(0, BeakGraphCLI.run(new String[] {"-src", src.toString(), "-dest", out.toString(), "-zip"}));
+        assertTrue(isArchive(out.resolve("a.zarr.zip")) && isArchive(out.resolve("sub/b.zarr.zip")));
+        assertFalse(Files.exists(out.resolve("a.h5")) || Files.exists(out.resolve("a.zarr")));
+        assertEquals(1, quads(out.resolve("a.zarr.zip")));
+        assertEquals(2, quads(out.resolve("sub/b.zarr.zip")));
+
+        // A second run leaves the archives that are there alone; -force rebuilds them.
+        Files.writeString(src.resolve("a.ttl"), A + B, StandardCharsets.UTF_8);
+        assertEquals(0, BeakGraphCLI.run(new String[] {"-src", src.toString(), "-dest", out.toString(), "-zip"}));
+        assertEquals(1, quads(out.resolve("a.zarr.zip")), "skipped: the store was there");
+        assertEquals(0, BeakGraphCLI.run(new String[] {"-src", src.toString(), "-dest", out.toString(), "-zip", "-force"}));
+        assertEquals(3, quads(out.resolve("a.zarr.zip")), "rebuilt in place");
+        Files.writeString(src.resolve("a.ttl"), A, StandardCharsets.UTF_8);
+
+        // One source, one named output: the name says the container, for every engine - with or without ".zarr" before ".zip".
+        for (int method = 0; method <= 5; method++) {
+            Path one = dir.resolve("one-" + method + (method % 2 == 0 ? ".zarr.zip" : ".zip"));
+            assertEquals(0, BeakGraphCLI.run(new String[] {"-src", src.resolve("a.ttl").toString(), "-dest", one.toString(),
+                "-method", Integer.toString(method)}));
+            assertTrue(isArchive(one), "method " + method);
+            assertEquals(1, quads(one));
+        }
+        // -merge: the one store, by name; and into a directory, merged.zarr.zip with -zip.
+        Path merged = dir.resolve("all.zarr.zip");
+        for (int round = 0; round < 2; round++) {
+            assertEquals(0, BeakGraphCLI.run(new String[] {"-src", src.toString(), "-dest", merged.toString(), "-merge"}));
+            assertTrue(isArchive(merged));
+            assertEquals(3, quads(merged));
+        }
+        Path into = dir.resolve("into-zip");
+        assertEquals(0, BeakGraphCLI.run(new String[] {"-src", src.toString(), "-dest", into.toString(), "-merge", "-zip"}));
+        assertTrue(isArchive(into.resolve("merged.zarr.zip")));
+        assertEquals(3, quads(into.resolve("merged.zarr.zip")));
+
+        // -verify and -export find the archives of a tree by name, and take one named outright.
+        assertEquals(List.of(out.resolve("a.zarr.zip"), out.resolve("sub/b.zarr.zip")), BeakGraphFiles.findStores(out));
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        try (PrintStream ps = new PrintStream(captured, true, StandardCharsets.UTF_8)) {
+            assertEquals(0, new VerifyCommand(out.toFile(), true, ps).run());
+            assertEquals(0, new VerifyCommand(dir.resolve("one-1.zip").toFile(), true, ps).run());
+        }
+        String report = captured.toString(StandardCharsets.UTF_8);
+        assertTrue(report.contains("OK    " + out.resolve("a.zarr.zip")) && report.contains("OK    " + out.resolve("sub/b.zarr.zip"))
+                && report.contains("Verified 2 file(s) (deep): 2 OK, 0 FAILED") && report.contains("Verified 1 file(s) (deep): 1 OK"), report);
+        assertEquals(0, BeakGraphCLI.run(new String[] {"-src", out.toString(), "-export", "NT"}));
+        assertEquals(3, Files.readAllLines(out.resolve("a.nt")).size());
+        assertEquals(2, Files.readAllLines(out.resolve("sub/b.nt")).size());
+        assertEquals(0, BeakGraphCLI.run(new String[] {"-src", dir.resolve("one-1.zip").toString(), "-export", "NT"}));
+        assertEquals(1, Files.readAllLines(dir.resolve("one-1.nt")).size());
+    }
+
     @Test
     void verifyAndExportTakeAZarrStoreAsOneStore() throws Exception {
         Path src = sources();

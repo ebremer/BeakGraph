@@ -76,8 +76,9 @@ public class HDF5Reader implements BGReader {
     }
 
     /**
-     * Opens the store at {@code src}: an HDF5 file, or the directory of a
-     * Zarr store. Either is memory-mapped.
+     * Opens the store at {@code src}: an HDF5 file, the directory of a Zarr
+     * store, or a Zarr store in a ZIP archive - by what is there, whatever
+     * it is named. Each is memory-mapped.
      */
     public HDF5Reader(File src) {
         this(OpenStore.open(src.toPath()), src.toURI());

@@ -145,8 +145,9 @@ As with HDF5, the profile is narrow because the reference reader reads dataset b
    dataset is cut into the fewest equal chunks of at most 2^30 bytes - `k = ceil(n / 2^30)` chunks of
    `ceil(n / k)` bytes - because a Zarr chunk has to fit one buffer of under 2 GiB in most
    implementations, Falcon among them. Zarr stores every chunk at its full declared length, so the last
-   chunk is padded with zeros beyond the dataset's end. A reader MUST accept any regular chunking. A
-   dataset of length 0 has `shape` `[0]`, `chunk_shape` `[1]` and no chunk.
+   chunk is padded with zeros beyond the dataset's end. A reader MUST accept any regular chunking, and
+   MUST NOT read the padding as part of the dataset. A dataset of length 0 has `shape` `[0]`,
+   `chunk_shape` `[1]` and no chunk.
 4. **`fill_value` is 0, and a writer SHOULD store every chunk.** A reader MUST read a chunk that is not
    stored as zeros: a general Zarr tool that copies a store may leave out a chunk that holds only the
    fill value. The reference reader rejects such a chunk of an array whose fill value is not 0.
@@ -159,17 +160,36 @@ As with HDF5, the profile is narrow because the reference reader reads dataset b
    writes it), and the reference reader opens a store from that one document when it is there, without
    reading the other `zarr.json` files. It is optional. Where it is present it MUST agree with the nodes'
    own documents: a hierarchy changed after it was consolidated has to be consolidated again.
+8. **One file.** The same hierarchy MAY be kept in a ZIP archive (PKWARE APPNOTE; Zip64 where the archive
+   needs it), by convention named `*.zarr.zip`: one entry per key of the directory store, named by the
+   key (`zarr.json`, `.BG/GSPO/So/zarr.json`, `.BG/GSPO/So/c/0`), and **every entry stored, not
+   compressed and not encrypted** (method 0). An entry's bytes in the file are then the key's value, and
+   a chunk can be memory-mapped or read by range inside the archive exactly as a chunk file is; this is
+   the form zarr-python's `ZipStore` reads and writes. An archive with a compressed chunk entry is **not
+   readable**; the reference reader rejects it with a message naming the chunk and this rule. Items 1 to 7
+   hold unchanged. A reader finds a store's container by what is at its path - a directory, a file that
+   begins with a ZIP local file header (`PK\x03\x04`), or an HDF5 file - not by its name. The reference
+   writer writes the root's `zarr.json` first and the other entries in the order of their keys, each with
+   the one modification time ZIP's format starts at (1980-01-01 00:00), so that the same store is the
+   same archive byte for byte; a reader MUST NOT depend on either.
 
 For the store of §4 (rank directories and block directories included) that is about 60 arrays: some 130
-small files in one directory tree, where the HDF5 container is one file. The reference writer builds the
-tree beside its destination and moves it into place complete, as it does a file.
+small files in one directory tree, or as many entries of one archive, where the HDF5 container is one
+file. The reference writer builds the tree beside its destination and moves it into place complete, as it
+does a file; for an archive it then packs the tree into one file beside the destination, and moves that.
 
 The reference writer writes this profile through [Falcon](https://github.com/ebremer/falcon)'s Zarr
-module; all six engines write it, and the same directory tree, file for file, for a source without
-blank nodes. The reference reader memory-maps each chunk of a local directory store through Falcon; it
-reads an array of several chunks, and a store in anything but a local directory, a range of a chunk at
-a time. Any other Zarr v3 reader can open the hierarchy and read each dataset as an array of bytes; what
-the bytes mean is the rest of this document.
+module; all six engines write it, and the same directory tree, file for file - and the same archive,
+byte for byte - for a source without blank nodes. The reference reader memory-maps each chunk of a
+local directory store, and each chunk entry of a local archive, through Falcon; a dataset of several
+chunks is read through its several mappings, each value from the chunk it lies in. A store that is
+not local is read by ranges: a directory store served by a web server at a URL `<base>` has the key `k`
+at `<base>/k`, and the reference reader fetches the root's `zarr.json` whole, and of a chunk only the
+blocks it reads, each after the first with the validator (`ETag`, else `Last-Modified`) the chunk's
+first range came with, so that a chunk replaced on the server is an error and never a mixture of two
+stores. Any
+other Zarr v3 reader can open the hierarchy and read each dataset as an array of bytes; what the bytes
+mean is the rest of this document.
 
 ---
 

@@ -53,6 +53,10 @@ java -jar BeakGraph.jar -src data/ -dest all.h5 -merge
 java -jar BeakGraph.jar -src data/ -dest out/ -zarr
 java -jar BeakGraph.jar -src data/ -dest all.zarr -merge
 
+# ... and as Zarr stores of ONE file each: a ZIP archive per file, or one named *.zip
+java -jar BeakGraph.jar -src data/ -dest out/ -zip
+java -jar BeakGraph.jar -src data/ -dest all.zarr.zip -merge
+
 # Serve a store as a SPARQL endpoint on port 8888
 java -jar BeakGraph.jar -endpoint out/example.h5 -port 8888
 
@@ -72,6 +76,7 @@ java -jar BeakGraph.jar -endpoint out/ -port 8888
 | `-merge` | off | Merge **all** sources under `-src` into ONE store at `-dest` (if `-dest` is an existing directory, writes `<dest>/merged.h5`). Blank nodes stay distinct per source document, and so do relative references: each document's `<>` and relative links are stored relative to `-src` (`<>` in `a/x.ttl` becomes `a/x.ttl`, its `<img.png>` becomes `a/img.png`), so the merged store serves them below its own URL as the source tree was laid out. Works with every `-method`. |
 | `-force` | off | Per-file mode: rebuild destination `.h5` files that already exist instead of skipping them. |
 | `-zarr` | off | Write each store in the **Zarr container** - a Zarr v3 directory store, `<name>.zarr` - instead of one HDF5 file, `<name>.h5`. It decides the names this run makes up (per-file mode, `<dest>/merged.zarr`, `<name>.zarr` in an existing directory); a `-dest` that itself ends in `.zarr` is a Zarr store without it, and one that ends in `.h5`/`.hdf5` an HDF5 file with it. Works with every `-method`. See §4a. |
+| `-zip` | off | Write each store as a **Zarr store in one file** - a ZIP archive, `<name>.zarr.zip`, whose entries are not compressed - instead of one HDF5 file. It decides the names this run makes up, as `-zarr` does (and wins over it); a `-dest` that itself ends in `.zip` is such an archive without it. While it is written a store takes up to its own size again beside the destination. Works with every `-method`. See §4a. |
 | `-void` | off | Generate the VoID/SD statistics graph (`urn:x-beakgraph:void`) with **exact** in-memory counting (RAM grows with distinct terms). Mutually exclusive with `-voidsketch`. |
 | `-voidsketch` | off | Generate the statistics graph with **bounded memory**: exact up to 65,536 distinct nodes per counter, then HyperLogLog estimates (~0.8% error, deterministic). Recommended for `-method 1/4/5`. Mutually exclusive with `-void`. |
 | `-voidbase <iri>` | `urn:x-beakgraph:dataset` | With `-void`/`-voidsketch`: the IRI of the `sd:Dataset` resource the statistics graph describes (programmatic builders: `setVoidDatasetIri`). |
@@ -116,22 +121,26 @@ a failed or interrupted build never corrupts a previous good store.
 
 ## 4a. Containers: HDF5 or Zarr
 
-A store is groups, named byte arrays and integer attributes. It is kept in one of two containers, and
-it is the same store in either - the same arrays byte for byte, the same attribute values, the same
-format version (SPECIFICATIONS.md §3 and §3a):
+A store is groups, named byte arrays and integer attributes. It is kept in one of two containers - the
+second in two forms - and it is the same store in each: the same arrays byte for byte, the same
+attribute values, the same format version (SPECIFICATIONS.md §3 and §3a):
 
-| | HDF5 (the default) | Zarr (`-zarr`, or a destination named `*.zarr`) |
-|---|---|---|
-| On disk | one file, `name.h5` | one directory, `name.zarr`: about 130 files for a store, a `zarr.json` and one chunk file per array |
-| An array | a contiguous dataset | a Zarr v3 array of `uint8`, uncompressed, in one chunk (several of at most 1 GiB past 1 GiB) |
-| Local reads | the file memory-mapped once | every chunk file memory-mapped when the store is opened |
-| Readable by | any HDF5 tool (HDFView, h5py) | any Zarr v3 tool (zarr-python, Falcon), as arrays of bytes |
+| | HDF5 (the default) | Zarr (`-zarr`, or a destination named `*.zarr`) | Zarr in one file (`-zip`, or a destination named `*.zip`) |
+|---|---|---|---|
+| On disk | one file, `name.h5` | one directory, `name.zarr`: about 130 files for a store, a `zarr.json` and one chunk file per array | one ZIP archive, `name.zarr.zip`: the directory store's files as its entries, none compressed |
+| An array | a contiguous dataset | a Zarr v3 array of `uint8`, uncompressed, in one chunk (several of at most 1 GiB past 1 GiB) | the same array, its chunk an entry |
+| Local reads | the file memory-mapped once | every chunk file memory-mapped when the store is opened | every chunk memory-mapped where it lies in the archive |
+| Over HTTP | by ranges of the one file | by ranges of each chunk (a URL that ends in `.zarr`) | not read over HTTP: serve the directory, or an `.h5` |
+| Readable by | any HDF5 tool (HDFView, h5py) | any Zarr v3 tool (zarr-python, Falcon), as arrays of bytes | the same tools, through their ZIP stores; and any unzip, which gives back the directory store |
 
-Every command takes either: `-verify`, `-export` and `-endpoint` accept a `*.zarr` directory as one
-store, and where they walk a tree they find the `.h5`/`.hdf5` files and the `*.zarr` directories
-(which hold a `zarr.json`) and do not walk into a store. The API is the same too:
-`BG.getBeakGraph(path)` opens a file or a directory, and a writer given a destination named `*.zarr`
-writes Zarr.
+Every command takes any of them: `-verify`, `-export` and `-endpoint` accept a `*.zarr` directory or a
+`*.zarr.zip` archive as one store, and where they walk a tree they find the `.h5`/`.hdf5` files, the
+`*.zarr.zip` archives and the `*.zarr` directories (which hold a `zarr.json`) and do not walk into a
+store. A store named outright is opened by what it is - a directory, a ZIP archive, an HDF5 file -
+whatever it is called. The API is the same too: `BG.getBeakGraph(path)` opens any of the three, a
+writer given a destination named `*.zarr` writes the directory and one named `*.zip` the archive, and
+`BG.getBeakGraph(URI)` opens a store on a web server: a URL whose path ends in `.zarr` as a Zarr store,
+any other as an HDF5 file.
 
 What to know about the Zarr container:
 
@@ -146,22 +155,48 @@ What to know about the Zarr container:
 * **A build only ever replaces a Zarr store or an empty directory.** A destination that is a directory
   of anything else is refused before the build starts.
 * **Arrays past 1 GiB** are cut into several chunks (most Zarr implementations, Falcon among them,
-  hold a chunk in one buffer of under 2 GiB) and are read through their mappings a range at a time,
-  which is slower than the single mapping of an HDF5 dataset. Stores whose arrays stay under 1 GiB -
-  a few GB in all - are not affected; for larger ones prefer HDF5.
-* **Not there yet:** `-endpoint` on a *directory* of stores (LWS storage mode) serves its `.h5` files
-  as stores, and lists a `*.zarr` directory as a directory, not as a store; and a Zarr store is read from
-  the local file system - not over HTTP or from an object store through the pool, where an HDF5 file
-  is read over range requests. `com.ebremer.beakgraph.store.ZarrStore.open(store, name)` reads a
-  store from any Falcon `Store` (a ZIP archive, HTTP, S3) a range at a time, without a cache.
+  hold a chunk in one buffer of under 2 GiB). Each chunk is mapped, and a value is read straight from
+  the chunk it lies in, as from the one mapping of an HDF5 dataset; what it costs over one mapping is
+  finding the chunk. `beakgraph.zarr.chunk.max` lowers the size a writer cuts at, for a reader that
+  wants smaller chunks.
+* **One file.** A `*.zarr.zip` archive is the directory store with its files as entries, written
+  without compression so that an entry is the chunk's bytes: it is memory-mapped and queried like the
+  directory, at the same speed, and is one file to copy and publish, as an `.h5` is. `unzip` gives the
+  directory store back, and `zip -r0` (no compression) of a directory store's *contents* makes an
+  archive BeakGraph reads; one zipped with compression is refused, with a message that says so. The
+  writer builds the directory beside the destination and then packs it, removing each file as it is
+  packed: a build needs the store's size once more on disk only for its largest chunk, and its time
+  grows by one copy of the store. The same store is the same archive, byte for byte.
+* **Over HTTP.** A directory store on any web server or object store that answers range requests is
+  queried in place: `BG.getBeakGraph(URI.create("https://host/data/store.zarr"))`, or the same URL as
+  a key of the reader pool. Opening reads one document (the root's `zarr.json`); each array is then
+  read a block at a time, as it is needed, through ONE cache for the whole store
+  (`beakgraph.zarr.cache.block` bytes a block, `beakgraph.zarr.cache.blocks` blocks: 32 MiB a store
+  that is open, by default). Nothing is asked about a chunk but the ranges read of it: its size is the
+  array's to say, and the answer to its first range gives the validator the later ones are pinned to, so
+  a chunk replaced on the server while the store is open fails the read, loudly, and never mixes two
+  stores. A chunk the server does not have reads as zeros, as the format says; one that is not the size
+  its array declares is an error. A query string in the URL (a presigned or SAS URL) is sent
+  with every request and kept out of messages, logs and the graph's name. A store in a ZIP archive is
+  not read over HTTP. `com.ebremer.beakgraph.store.ZarrStore.open(store, name)` reads a store from any
+  other Falcon `Store` (S3 through Falcon's `s3` module, memory) through the same cache.
+* **In a storage directory.** `-endpoint <directory>` serves a `*.zarr` store as the one store it is
+  (see "Serving a directory" below).
 
 ### Serving a directory (LWS storage mode)
 
 `-endpoint <directory>` serves the directory tree as a
 [W3C LWS](https://github.com/w3c/lws-protocol) storage at `/`: every file is retrievable (with
-HTTP range support), containers are listed, and every `.h5` answers SPARQL at its own URL
-(`GET <file>.h5?query=...` or a `POST` with the query) through a pool of readers
-(`beakgraph.pool.*` below). A metadata model describing the tree is served by Fuseki at `/rdf`
+HTTP range support), containers are listed, and every store - an `.h5`/`.hdf5` file, a `*.zarr.zip`
+archive, a `*.zarr` directory - answers SPARQL at its own URL
+(`GET <store>?query=...` or a `POST` with the query) through a pool of readers
+(`beakgraph.pool.*` below). A Zarr store's directory is listed as ONE data resource, as an `.h5` file
+is, not as a container of its files: a plain `GET` of it returns the document it is opened from (its
+root `zarr.json`, which is also what its listed size and modification time are those of), and the
+keys below it - each node's `zarr.json` and each array's chunks, and nothing else that may lie in the
+directory - are served whole or by range, so that the store can be read in place from another
+BeakGraph (`BG.getBeakGraph(URI.create("http://host:8888/dir/store.zarr"))`), as an `.h5` is by its
+ranges. A metadata model describing the tree is served by Fuseki at `/rdf`
 (read-only) and `/sparql` is the query UI. On first start the server generates that model and
 **writes it into the served directory** as `beakgraph.ttl.gz` - the directory must be writable
 (if the write fails the freshly generated model is still served, with a warning). The model is
@@ -187,7 +222,7 @@ echoes the profile; plain Turtle is the metadata model's listing plus navigation
 resource's links (`type`, `up`, `linkset`, storage) are also an RFC 9264 linkset at
 `<resource>.meta`. Every response carries an ETag and Last-Modified, conditional requests are
 honoured, and errors are RFC 9457 problem details. The storage is read-only by design: PUT, PATCH,
-DELETE and POST (other than a SPARQL query to a `.h5`) answer 405 with an `Allow` header, so
+DELETE and POST (other than a SPARQL query to a store) answer 405 with an `Allow` header, so
 linksets advertise `GET, HEAD, OPTIONS` rather than the PATCH a writable LWS server offers, and
 authentication, notifications and access requests are not provided (see "Deployment and trust
 model"). The `/rdf` metadata model uses the LWS vocabulary: `lws:items`, `lws:totalItems`,
@@ -411,7 +446,8 @@ try (BeakGraph bg = new BeakGraph(new HDF5Reader(new File("doc.ttl.h5")), base, 
 }
 ```
 
-A store opened over HTTP (`BG.getBeakGraph(new HTTPSeekableByteChannel(url))`) uses its own
+A store opened over HTTP (`BG.getBeakGraph(new HTTPSeekableByteChannel(url))`, or
+`BG.getBeakGraph(uri)` for an `.h5` file or a `.zarr` store) uses its own
 URL as the base by default; a local file has no base unless one is given, so its relative
 IRIs come back as stored.
 
@@ -441,6 +477,9 @@ workloads, and each knob trades heap for repeated-lookup speed:
 | `beakgraph.pool.maxWait.seconds` | `5` | Endpoint reader pool: how long a query waits for a free reader before the endpoint answers `503` with `Retry-After`. |
 | `beakgraph.http.output.buffer` | `65536` | Endpoint: bytes of the buffer a response is gathered in before it is sent. A response that fits is sent whole, with its length; a larger one is on the wire once this much of it is written, so a failure later than that ends in an aborted transfer where an earlier one is answered with a status code. 64 KiB is the largest buffer the server's pool keeps: a larger value is allocated and cleared for every response (Fuseki's own 5 MiB cost each request about 0.7 ms). Never taken under 16384. |
 | `beakgraph.http.readahead` | `8` | Remote reads (`HTTPSeekableByteChannel`): blocks (128 KiB each) fetched in one range request once two consecutive cache misses show a sequential scan; `0` fetches one block per request. Scattered reads always fetch single blocks. |
+| `beakgraph.zarr.cache.block` | `131072` | A Zarr store that is not memory-mapped (over HTTP, or in another Falcon `Store`): bytes fetched at a time, aligned to this. |
+| `beakgraph.zarr.cache.blocks` | `256` | ... and the blocks kept of ALL the store's arrays together, the one read longest ago dropped first: at most block x blocks bytes (32 MiB) for each such store that is open. A pooled reader holds its own. |
+| `beakgraph.zarr.chunk.max` | `1073741824` | Writing Zarr: an array of up to this many bytes is one chunk, a longer one the fewest equal chunks of at most this (SPECIFICATIONS.md §3a, item 3). Under 2 GiB. |
 | `beakgraph.query.construct.max.triples` | `1000000` | Largest CONSTRUCT / DESCRIBE result served as JSON-LD or RDF/XML, formats that must be held in memory before serialization; a larger result is answered `413` with a hint to request `text/turtle` or `application/n-triples`, which are streamed without limit. `0` disables the cap. |
 | `beakgraph.pool.idle.seconds` | `300` | Endpoint reader pool: idle time before an unused reader is closed and its file mapping released. |
 | `beakgraph.lws.refresh.seconds` | `30` | Directory mode (`-endpoint <dir>`): how often the served directory is re-scanned for added, removed or replaced files. The cached `beakgraph.ttl.gz` metadata is validated against the directory at start-up and rewritten after every change. `0` disables the periodic scan; a request for a path that exists on disk but is not yet listed still triggers an immediate re-scan (once per new file). |

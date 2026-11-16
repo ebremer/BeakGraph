@@ -57,7 +57,7 @@
              (-method 1/4/5) included. Pure JDK: no dependencies of its own and no
              native code. Not on Maven Central yet: build it at this version and
              `mvn install` it (falcon, core, hdf5 and zarr) before building BeakGraph. -->
-        <falcon.version>0.2.0</falcon.version>
+        <falcon.version>0.3.0</falcon.version>
         <!-- jHDF is a TEST dependency only: the tests read and forge HDF5 files
              with it, as a reader independent of the one under test. -->
         <jhdf.version>0.13.0</jhdf.version>

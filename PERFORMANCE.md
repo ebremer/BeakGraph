@@ -190,15 +190,12 @@ Found on the way, in the HDF5 container (fixed since: see "After the speed test"
 
 Still open under item 2:
 
-- Zarr stores over HTTP and from object stores, through the endpoint and the pool. `ZarrStore.open(store,
-  name)` reads from any Falcon `Store` a range at a time, but with no cache, so every read is a request.
-- Zarr stores inside an LWS storage directory are listed as directories, not served as stores.
-- A single-file form: a ZIP archive with uncompressed entries is a Zarr store Falcon reads, and could be
-  mapped as one file; Falcon's `ZipStore` does not map yet, and a store takes a value only as one array,
-  so an array larger than the heap cannot be written into one.
-- Arrays past 1 GiB: read through one view per array, as in HDF5.
+- Done since (see "Zarr: one file, over HTTP, in a storage directory, past one chunk" at the end): Zarr
+  stores over HTTP through a cache, Zarr stores served as stores from an LWS storage directory, the
+  single-file form, and arrays of several chunks read where their values lie.
 - Not checked against zarr-python, which is not installed here: Falcon's general Zarr reader reads every
-  array of a store, and that reader is tested against zarr-python in Falcon.
+  array of a store, and that reader is tested against zarr-python in Falcon. (Python's own `zipfile`
+  reads the single-file form and finds every CRC right.)
 
 Still open under item 1:
 
@@ -645,3 +642,153 @@ Still open here:
 - A group with very many keys is put together on one thread.
 - `MINUS`, `BIND` and the joins ARQ keeps as joins are not blocks the walk runs, so neither are groups over
   them.
+
+### Zarr: one file, over HTTP, in a storage directory, past one chunk (2026-11-15, branch `falcon`, not committed when written)
+
+The four things left open under item 2, which HDF5 did and the Zarr container did not. The store format is
+untouched (format v6); SPECIFICATIONS.md §3a gained item 8 (the single-file form) and says how a store is
+read over HTTP.
+
+- **One file.** `-zip`, or a destination named `*.zip`, writes a Zarr store as a ZIP archive
+  (`name.zarr.zip`): the directory store's files as its entries, none compressed, so an entry is the chunk's
+  bytes and is mapped where it lies in the archive. The writer builds the directory as before and packs it
+  with the JDK's `ZipOutputStream` (which writes Zip64 when the archive needs it, and checks each entry
+  against the CRC-32 taken while its chunk was written); the root's `zarr.json` comes first, the rest in key
+  order, each with one fixed time, so the same store is the same archive byte for byte. Reading needed one
+  addition to Falcon: `ZipStore.map`, an uncompressed entry as a mapped view of the archive (Falcon
+  0.3.0).
+- **Over HTTP.** `BG.getBeakGraph(URI)` and the pool open a URL that ends in `.zarr`. The root's `zarr.json`
+  is fetched whole through Falcon's `HttpStore`; every chunk is then read by ranges through an
+  `HTTPSeekableByteChannel` of its own, and the channels share one client and ONE block cache
+  (`BlockCache`, 256 blocks of 128 KiB for the whole store). A chunk's channel is told its size, which the
+  array declares, so nothing is asked about a chunk but the ranges read of it; the answer to its first range
+  gives the validator the later ones are pinned to. Any other Falcon `Store` is read through the same cache.
+- **In a storage directory.** The LWS scan skips dot-names, so a Zarr store was listed as a container
+  holding only its `zarr.json`, and took no query. It is one data resource now, queried at its URL as an
+  `.h5` is, and its keys are served by range, so one endpoint can read another's Zarr store in place.
+- **Several chunks.** An array past the size of a chunk was read through its mappings a range at a time,
+  each value copied out through a scratch buffer, and was treated as remote. `SegmentedBytes` reads a value
+  straight from the chunk it lies in; the chunk is found by the high half of one multiplication.
+
+Measured on the 4.0M-quad store (5,000 graphs), JVM, same machine as before:
+
+| What | HDF5 | Zarr directory | Zarr in a ZIP |
+|---|---|---|---|
+| On disk | 57,334,529 bytes, 1 file | 57,358,663 bytes, 122 files | 57,377,607 bytes, 1 file |
+| Build, `-method 3` (three each; the command line counts in steps of a second) | 8.8, 9.7, 8.8 s | 9.7, 8.7, 9.8 s | 9.9, 9.7, 9.7 s |
+| Open a store in a warm JVM | 0.25 ms | 2.48 ms | 1.37 ms |
+| First query after the open | 2.76 ms | 2.77 ms | 2.65 ms |
+| Close | 0.70 ms | 1.05 ms | 0.75 ms |
+| `-verify -deep` | 4.26 s | 4.08 s | 4.04 s |
+| `-export NQ` (the same 403,932,568 bytes) | 2.94 s | 2.68 s | 2.66 s |
+
+- **The archive reads as the directory does**, as designed: the same mapped bytes. It opens 1.1 ms faster
+  than the directory (one file to open, not 57) and 1.1 ms slower than HDF5.
+- **Where the archive's open goes** (Falcon alone, same store): the archive's directory 0.10 ms, the
+  `zarr.json` 0.32 ms, mapping the 57 chunks one by one 0.79 ms, closing 0.16 ms. The whole archive as ONE
+  mapping takes 0.10 ms to make and end, so mapping it once and cutting the chunks from that would take
+  about 0.7 ms off; not done (`ZipStore.map` maps an entry by itself). The directory store: 0.40 ms for the
+  document, 1.95 ms to map its 57 files, 0.43 ms to close them.
+- **A build into an archive writes the store once more**: nothing to see at 57 MB; a store of 4.8 GB (below)
+  took 71 to 85 s to write as an archive and 41 to 43 s as a directory, on a disk that forces about 100 MB
+  a second. On disk it needs the store once, and its largest chunk twice, while it is packed.
+
+Arrays of several chunks, two ways. The same 4.0M-quad store written with chunks of at most 1 MiB
+(`-Dbeakgraph.zarr.chunk.max=1048576`: 10 of its 55 arrays are then several chunks, 167 files):
+
+| | the build before (`07c8328`) | this tree | one chunk an array (either) |
+|---|---|---|---|
+| `-verify -deep` | 4.98 s (4.79 to 5.31) | 4.19 s (4.07 to 4.45) | 4.1 to 4.2 s |
+| `-export NQ` | 2.94 s | 2.79 s | 2.72 s |
+
+And at real size: a store of four arrays - 2.5 GiB (three chunks of 894,788,969 bytes), 1 GiB, 7 bytes
+under 1 GiB, and 3 MiB; 4.8 GB in all - written as an archive and as a directory, and every array read back
+against the pattern it was written with: around every chunk's edge, at 300,000 places drawn at random, a
+megabyte across each edge, and past its end (refused, though the last chunk is stored longer than the
+array). A value of 8 bytes at random in 64 MiB around a chunk's edge:
+
+| | ns a read |
+|---|---|
+| One chunk, one mapping (`MemorySegmentBytes`) | 21.4 to 22.2 |
+| Three chunks, this tree (`SegmentedBytes`) | 27.0 to 28.8 |
+| Three chunks, before (`ChannelBytes` over the mappings) | 70.7 |
+| For scale: an array of 3 MiB, all of it in the processor's cache | 2.3 |
+
+- **Several chunks cost about 6 ns a read over one mapping**, where they cost about 50: a third of that was
+  taken off by finding the chunk with an integer multiplication instead of one in floating point (34 ns as
+  first written). The rest is the second level: the piece's object, then its bytes.
+- **The native binary reads the pieces through ByteBuffer views**, as it reads one mapping (see "After the
+  speed test"): its `-verify -deep` of the store with chunks of 1 MiB took 14.0 s through the segments and
+  takes 11.6 s through views, against 11.3 s for the HDF5 file and 11.2 s for the archive.
+- **The archive of 4.8 GB is a Zip64 archive** - five of its twelve entries begin past 4 GiB - which Falcon
+  maps and Python's `zipfile` reads, every CRC-32 right.
+- **Another ZIP tool, both ways** (Python's `zipfile`, on a small store): the archive extracted is the
+  directory store file for file; the directory store zipped by that tool without compression, directory
+  entries and all, verifies and exports the same bytes; zipped with compression it is refused, by name of
+  the first chunk and of the rule.
+
+Over HTTP, from a server on the loopback interface that counts what it is asked (two runs each, a fresh JVM
+a run; the times are a loopback's, and what carries to a real link is the requests and the bytes):
+
+| | HDF5 | Zarr, this tree | Zarr, before (`07c8328`) |
+|---|---|---|---|
+| Open | 6 requests, 580 KB | 4 requests, 42 KB | 4 requests, 42 KB |
+| One subject's triples (the first query) | 34 requests, 6.3 MB, 191 to 238 ms | 54 requests, 4.4 MB, 166 to 179 ms | 23,499 requests, 3.7 to 4.1 s |
+| One graph, 801 rows | 16 requests, 2.1 MB, 39 to 44 ms | 20 requests, 3.1 MB, 44 to 47 ms | 6,583 requests, 1.0 s |
+| A join in a graph | 17 requests, 3.5 MB, 51 to 59 ms | 28 requests, 2.9 MB, 65 to 95 ms | 21,738 requests, 3.1 to 3.2 s |
+| A name, in any graph | 26 requests, 11.7 MB, 110 to 125 ms | 28 requests, 12.0 MB, 127 to 134 ms | 134,666 requests, 19.3 to 19.7 s |
+| Count every quad (from the index) | 8 requests, 3.8 MB, 41 to 42 ms | 10 requests, 4.3 MB, 43 to 51 ms | 158,759 requests, 22.6 to 22.8 s |
+| Another subject's triples | 4 requests, 0.5 MB, 11 to 12 ms | 4 requests, 0.5 MB, 6 to 7 ms | 1,436 requests, 0.21 s |
+| Count a tag, 400,000 rows | 11 requests, 10.6 MB, 79 to 88 ms | 15 requests, 11.0 MB, 79 to 86 ms | 215,996 requests, 30.6 to 30.9 s |
+| All seven | **122 requests, 39.0 MB** | **163 requests, 38.3 MB** | **578,841 requests, 4.8 MB** |
+| Each asked again | no request; 0.5 to 14 ms | no request; 0.5 to 18 ms | 52 to 1,819 requests a query |
+
+- **Before, a read was a request**: 23,499 for one subject's five triples. Unusable over anything but a
+  loopback, and it is why remote Zarr was listed as not there.
+- **Now a Zarr store costs what an HDF5 file does in bytes, and a third more in requests.** The bytes are
+  the same blocks. The requests are more because every small array is an object of its own, where HDF5's
+  128 KiB block brings several small datasets at once: the first query touches 54 arrays' worth. On a link
+  with a round trip of 20 ms that query would take about 0.7 s of waiting as HDF5 and 1.1 s as Zarr (the
+  requests are made one after another; this is arithmetic, not a measurement).
+- **Opening is cheaper than HDF5's**: one document, and the three block directories a reader looks at, each
+  fetched at its own size - 42 KB against 580 KB, as HDF5's blocks are 128 KiB whatever is needed of them.
+- **A `HEAD` a chunk was spent, and is not**: as first written, each chunk's channel looked at the chunk
+  before reading it - 216 requests for the seven queries, not 163. The array already says the chunk's size.
+- **Once read, a query asks the server nothing**, in either container. Zarr is then as fast as HDF5 for the
+  lookups and 25 to 35% slower for the two counts that scan (12 against 9 ms, 18 against 13): a read goes
+  through one more step, the array's reader, to its chunk's channel.
+- **Any Falcon store through the same cache** (`ZarrStore.open(store, name)` on Falcon's `HttpStore`): the
+  same 163 requests and 38.3 MB, and times within the spread of the channels'. What the channels add is
+  not speed on a loopback: retries with backoff, a kept connection, and a chunk replaced on the server
+  refused instead of read.
+
+Tests: 2,353 pass (30 of them new: the several-chunk view against a plain array for every offset and
+chunk length, offsets past 4 GiB and past the array; the archive against the HDF5 file and the directory for
+every engine, byte for byte, and what is not such an archive; a store over HTTP against the local one, with
+the server's requests counted, a chunk replaced, absent, gone, and of the wrong size, and a signed URL kept
+out of every message; a storage directory serving a Zarr store, its keys and nothing else of its
+directory, and read back through `BG.getBeakGraph(URI)`; `-zip` from the command line). Falcon: 970 Zarr
+tests pass, 4 new.
+
+Still open here:
+
+- **A ZIP archive over HTTP.** It would be the better remote form of Zarr: one object, so small arrays would
+  share a block as HDF5's datasets do. Falcon's `ZipStore` reads a local file only.
+- **A store's small arrays fetched together** (or at once, in parallel) when it is opened: most of the 54
+  requests of a first query are arrays of a few kilobytes.
+- **One mapping of an archive** for all its chunks (0.7 ms of a 1.4 ms open).
+- **A store replaced as a whole while it is read over HTTP** is noticed chunk by chunk, from the moment each
+  is first read; a chunk never read before is taken from whichever store is there. A store on a server is
+  to be published under a new name, as an HDF5 file is replaced by a new file.
+- **The warm read path of a remote Zarr store** is a step longer than HDF5's (the 25 to 35% above).
+- **Writing an archive in one pass**, without the directory first: for stores of many gigabytes, where the
+  second write is minutes.
+- Not measured: a real link (latency, TLS), an object store, and real data.
+
+The native binary, built from this tree, was held to the JVM on synthetic data: its archive of a source is
+the JVM's byte for byte (with `-method 3` and with `-method 4`); it verifies and exports the three
+containers alike, the exports the same bytes; `-zip` and `-zarr` make the names they should; and it serves
+a storage directory whose Zarr store a JVM then reads through `BG.getBeakGraph(URI)`. Not checked: a store
+read over HTTP from inside the native binary. Nothing on the command line asks for it, and the binary is
+built with the `https` URL protocol enabled and `http` not (`--enable-url-protocols=https`), which the one
+document fetched through Falcon's `HttpStore` would go by.

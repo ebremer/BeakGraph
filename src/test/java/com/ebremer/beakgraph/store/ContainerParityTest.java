@@ -17,9 +17,9 @@ import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.WritableDataset;
 import com.ebremer.beakgraph.hdf5.WritableGroup;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
-import com.ebremer.beakgraph.io.ChannelBytes;
 import com.ebremer.beakgraph.io.MemorySegmentBytes;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
+import com.ebremer.beakgraph.io.SegmentedBytes;
 import com.ebremer.falcon.hdf5.Attribute;
 import com.ebremer.falcon.hdf5.Dataset;
 import com.ebremer.falcon.hdf5.Group;
@@ -292,7 +292,8 @@ class ContainerParityTest {
                 try (OpenStore open = OpenStore.open(zarr)) {
                     RandomAccessBytes view = open.root().group(".BG").group("dictionary").group("literals").group("strings")
                             .array("stringbuffer").bytes();
-                    assertInstanceOf(ChannelBytes.class, view, "several mappings, read a range at a time");
+                    assertInstanceOf(SegmentedBytes.class, view, "several mappings, each read where a value lies");
+                    assertFalse(view.isRemote(), "mapped: the accelerators a remote array goes without are used");
                     byte[] read = new byte[(int) size];
                     view.get(0, read, 0, read.length);
                     assertArrayEquals(strings.readRawBytes(), read);

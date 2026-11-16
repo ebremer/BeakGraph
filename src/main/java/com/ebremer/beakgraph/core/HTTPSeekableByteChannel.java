@@ -10,10 +10,10 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.NonWritableChannelException;
 import java.nio.channels.SeekableByteChannel;
+import com.ebremer.beakgraph.io.BlockCache;
+import java.io.FileNotFoundException;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
@@ -36,7 +36,10 @@ import org.slf4j.LoggerFactory;
  * <p>Reads are served from an LRU cache of block-aligned ranges (default
  * 128 KiB blocks, 256 blocks = 32 MiB), so the binary searches the readers
  * issue against dictionaries and indexes touch the network once per block,
- * not once per read. Transient failures (I/O errors, HTTP 429/5xx, truncated
+ * not once per read. A store kept in many objects - a Zarr store, an object
+ * a chunk - reads each through a channel of its own, and the channels share
+ * one {@link BlockCache} and one HTTP client ({@link #sized}). Transient
+ * failures (I/O errors, HTTP 429/5xx, truncated
  * bodies) are retried with exponential backoff and jitter, honouring a
  * {@code Retry-After} delay when the server sends one (BG-11); a server that
  * answers a range request with 200 (no range support) fails loudly rather
@@ -45,7 +48,12 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The size is resolved at construction with a HEAD request, falling back
  * to a 1-byte range probe for deployments that reject HEAD (e.g.
- * method-scoped presigned URLs). The remote resource is assumed immutable
+ * method-scoped presigned URLs). A channel that is told its size
+ * ({@link #sized}) asks nothing until it is read: the answer to its first
+ * range confirms the size, and gives the validator and the URL after
+ * redirects that the later ranges use - one request fewer an object, which
+ * for a store of many objects is one round trip fewer for each. The remote
+ * resource is assumed immutable
  * while the channel is open - the BeakGraph contract. When the server
  * supplies a validator (a strong {@code ETag}, else {@code Last-Modified})
  * it is pinned at open and sent as {@code If-Range} with every range
@@ -100,14 +108,19 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
     private final URI uri;
     private final String display;
     private final HttpClient client;
+    /** Whether {@link #close()} closes the client: not one that other channels share. */
+    private final boolean ownsClient;
     /** Where the size probe ended up after redirects: the URL the block requests go to. */
     private volatile URI effectiveUri;
     private final int blockSize;
     private final int readAheadBlocks;
-    private final LruCache cache;
+    private final BlockCache.Part cache;
     private final long size;
-    /** ETag (strong) or Last-Modified captured with the size; null when the server sent neither. */
-    private final String validator;
+    /**
+     * ETag (strong) or Last-Modified captured with the size; null when the server sent neither - and, in a
+     * channel that was told its size, until its first range is answered.
+     */
+    private volatile String validator;
     private final ReentrantLock lock = new ReentrantLock();
 
     // guarded by lock
@@ -118,6 +131,8 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
     private long cacheHits = 0;
     private long cacheMisses = 0;
     private long lastMissBlock = -1;
+    /** Whether the server has said what the resource is: at open, but for a channel told its size - then by its first range. */
+    private boolean seen;
     private String changedMessage;
     private volatile boolean open = true;
 
@@ -133,26 +148,75 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
      * @throws IOException if the size of the remote resource cannot be determined
      */
     public HTTPSeekableByteChannel(URI uri, int blockSize, int maxCacheBlocks) throws IOException {
+        this(checked(uri), new BlockCache(positive(blockSize, maxCacheBlocks), maxCacheBlocks), newClient(), true, -1);
+    }
+
+    /**
+     * A channel on {@code uri} as one object of a store kept in many, whose
+     * size the store already knows (a Zarr chunk: its array declares it). Its
+     * blocks go into {@code cache}, among those of the store's other objects,
+     * and its requests through {@code client}; neither is the channel's:
+     * closing it drops the blocks it put there and leaves the client open.
+     *
+     * <p>Nothing is asked of the server here. The first read is: its answer
+     * must give the resource the size it was said to have (an
+     * {@link IOException} otherwise), and its validator is the one every
+     * later range is pinned to. A resource the server does not have (HTTP
+     * 404) fails that read with {@link FileNotFoundException}.
+     *
+     * @param size   the resource's length in bytes
+     * @param client a client that follows redirects ({@link #newClient()})
+     */
+    public static HTTPSeekableByteChannel sized(URI uri, long size, BlockCache cache, HttpClient client) {
+        if (size < 0) {
+            throw new IllegalArgumentException("size " + size);
+        }
+        try {
+            return new HTTPSeekableByteChannel(checked(uri), Objects.requireNonNull(cache, "cache"),
+                    Objects.requireNonNull(client, "client"), false, size);
+        } catch (IOException e) {
+            throw new AssertionError("no request is made for a resource of a known size", e);
+        }
+    }
+
+    /** A client as the channels use it: redirects followed, and the connect timeout they share. */
+    public static HttpClient newClient() {
+        return HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(CONNECT_TIMEOUT)
+                .build();
+    }
+
+    private static URI checked(URI uri) {
         Objects.requireNonNull(uri, "uri");
         String scheme = (uri.getScheme() == null) ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!scheme.equals("http") && !scheme.equals("https")) {
             throw new IllegalArgumentException("Not an http(s) URI: " + uri);
         }
+        return uri;
+    }
+
+    private static int positive(int blockSize, int maxCacheBlocks) {
         if (blockSize <= 0 || maxCacheBlocks <= 0) {
             throw new IllegalArgumentException(
                     "blockSize and maxCacheBlocks must be positive: " + blockSize + ", " + maxCacheBlocks);
         }
+        return blockSize;
+    }
+
+    /** @param knownSize the resource's size where the caller knows it (then nothing is asked of the server), else -1 */
+    private HTTPSeekableByteChannel(URI uri, BlockCache blocks, HttpClient client, boolean ownsClient, long knownSize)
+            throws IOException {
         this.uri = uri;
         this.display = redact(uri);
-        this.blockSize = blockSize;
-        this.readAheadBlocks = Math.max(0, Math.min(DEFAULT_READ_AHEAD_BLOCKS, maxCacheBlocks / 2));
-        this.cache = new LruCache(maxCacheBlocks);
-        this.client = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .connectTimeout(CONNECT_TIMEOUT)
-                .build();
+        this.blockSize = blocks.blockSize();
+        this.readAheadBlocks = Math.max(0, Math.min(DEFAULT_READ_AHEAD_BLOCKS, blocks.maxBlocks() / 2));
+        this.cache = blocks.part();
+        this.client = client;
+        this.ownsClient = ownsClient;
         try {
-            Probe probe = probeSize();
+            this.seen = knownSize < 0;
+            Probe probe = seen ? probeSize() : new Probe(knownSize, null, uri);
             this.size = probe.size();
             this.validator = probe.validator();
             this.effectiveUri = (probe.resolved() != null) ? probe.resolved() : uri;
@@ -160,11 +224,14 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                 logger.info("{} redirects to {}; block requests go there", display, redact(effectiveUri));
             }
         } catch (IOException | RuntimeException | Error e) {
-            client.close();
+            if (ownsClient) {
+                client.close();
+            }
             throw e;
         }
-        logger.debug("Opened {} ({} bytes, {} KiB blocks, {} block cache, validator {})",
-                display, size, blockSize / 1024, maxCacheBlocks, validator == null ? "none" : "pinned");
+        logger.debug("Opened {} ({} bytes, {} KiB blocks, {} block cache{}, validator {})",
+                display, size, blockSize / 1024, blocks.maxBlocks(), ownsClient ? "" : " shared",
+                !seen ? "from its first range" : validator == null ? "none" : "pinned");
     }
 
     /** The resource this channel reads (raw, query string included). */
@@ -300,7 +367,9 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
             }
             open = false;
             cache.clear();
-            client.close();
+            if (ownsClient) {
+                client.close();
+            }
             logger.debug("Closed {}: served {} bytes, fetched {} bytes in {} range requests, "
                     + "{} cache hits / {} misses", display, bytesServed, bytesFetched, rangeRequests,
                     cacheHits, cacheMisses);
@@ -367,6 +436,7 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
         }
         byte[] fetched = fetchBytes(blockIndex * (long) blockSize,
                 Math.min(size - 1, blockIndex * (long) blockSize + (long) count * blockSize - 1));
+        byte[] asked = null;
         for (int i = 0; i < count; i++) {
             int from = i * blockSize;
             if (from >= fetched.length) {
@@ -375,11 +445,15 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
             int len = Math.min(blockSize, fetched.length - from);
             byte[] one = (count == 1) ? fetched : java.util.Arrays.copyOfRange(fetched, from, from + len);
             cache.put(blockIndex + i, one);
+            if (i == 0) {
+                asked = one;
+            }
         }
         if (count > 1) {
             lastMissBlock = blockIndex + count - 1;
         }
-        return cache.get(blockIndex);
+        // Not read back from the cache: one shared with other channels may have dropped it already.
+        return asked;
     }
 
     /**
@@ -435,6 +509,13 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                             throw new IOException("Range bytes=" + start + "-" + end + " of " + display
                                     + " answered with 206 but no Content-Range header");
                         }
+                        long total = totalOf(contentRange);
+                        if (!seen && total >= 0 && total != size) {
+                            // Told its size, and this is the first the server says of it: before anything
+                            // else about the range, which a shorter resource cannot answer whole.
+                            throw new IOException(display + " is " + total + " bytes, not the " + size
+                                    + " it was said to be");
+                        }
                         if (!matchesRange(contentRange, start, end)) {
                             throw new IOException("Range bytes=" + start + "-" + end + " of " + display
                                     + " answered with mismatched Content-Range '" + contentRange + "'");
@@ -446,7 +527,6 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                         }
                         // The representation must still be the one the size and
                         // offsets were taken from: same total, same strong ETag.
-                        long total = totalOf(contentRange);
                         if (total >= 0 && total != size) {
                             throw changed("size " + size + " at open, now " + total);
                         }
@@ -454,6 +534,13 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                         if (validator != null && validator.startsWith("\"") && etag != null
                                 && !etag.startsWith("W/") && !etag.equals(validator)) {
                             throw changed("ETag " + validator + " at open, now " + etag);
+                        }
+                    } else if (!seen) {
+                        // The whole resource, from a server without ranges: its length is all that says what it is.
+                        long length = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                        if (length >= 0 && length != size) {
+                            throw new IOException(display + " is " + length + " bytes, not the " + size
+                                    + " it was said to be");
                         }
                     }
                     try {
@@ -463,6 +550,16 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                                     + " of " + display + ": expected " + expected + ", got " + block.length);
                         }
                         bytesFetched += expected;
+                        if (!seen) {
+                            // What a probe at open would have given: the validator to pin the later
+                            // ranges to, and where the requests ended up after redirects.
+                            seen = true;
+                            validator = validatorOf(response);
+                            if (response.uri() != null && !response.uri().equals(effectiveUri)) {
+                                effectiveUri = response.uri();
+                                logger.info("{} redirects to {}; block requests go there", display, redact(effectiveUri));
+                            }
+                        }
                         return block;
                     } catch (IOException e) {
                         last = e;
@@ -481,6 +578,14 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
                 if (status == 200) {
                     throw new IOException(display + " does not support HTTP range requests"
                             + " (Range bytes=" + start + "-" + end + " answered with 200)");
+                }
+                if (status == 404 && !seen) {
+                    // Never seen, and not there: for the caller to tell from a failure (an absent Zarr chunk is legal).
+                    throw new FileNotFoundException(display + " is not there (HTTP 404)");
+                }
+                if (status == 416 && !seen) {
+                    throw new IOException(display + " is shorter than the " + size + " bytes it was said to be"
+                            + " (range bytes=" + start + "-" + end + " not satisfiable)");
                 }
                 if (status == 416) {
                     throw changed("range bytes=" + start + "-" + end + " no longer satisfiable");
@@ -639,22 +744,6 @@ public final class HTTPSeekableByteChannel implements SeekableByteChannel {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while fetching " + display, e);
-        }
-    }
-
-    /** Access-ordered LRU of fetched blocks, bounded by block count. */
-    private static final class LruCache extends LinkedHashMap<Long, byte[]> {
-        private static final long serialVersionUID = 1L;
-        private final int maxBlocks;
-
-        LruCache(int maxBlocks) {
-            super(16, 0.75f, true);
-            this.maxBlocks = maxBlocks;
-        }
-
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<Long, byte[]> eldest) {
-            return size() > maxBlocks;
         }
     }
 }

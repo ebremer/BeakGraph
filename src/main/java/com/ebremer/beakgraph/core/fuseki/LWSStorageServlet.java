@@ -293,8 +293,62 @@ public class LWSStorageServlet extends HttpServlet {
         return reqPath.isEmpty() ? HTTP_ROOT : HTTP_ROOT + "/" + reqPath;
     }
 
-    private boolean isHDF5(Path file) {
-        return com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(file.getFileName().toString());
+    /**
+     * Whether {@code path} is a store this server answers SPARQL for: an HDF5
+     * file ({@code .h5} / {@code .hdf5}), a Zarr store in a ZIP archive
+     * ({@code .zarr.zip}), or the directory of a Zarr store ({@code *.zarr},
+     * holding a {@code zarr.json}).
+     */
+    private static boolean isStore(Path path) {
+        if (path == null || path.getFileName() == null) {
+            return false;
+        }
+        if (Files.isDirectory(path)) {
+            return com.ebremer.beakgraph.core.BeakGraphFiles.isZarrStoreDirectory(path);
+        }
+        String name = path.getFileName().toString();
+        return Files.isRegularFile(path) && (com.ebremer.beakgraph.core.BeakGraphFiles.isBeakGraphFileName(name)
+                || com.ebremer.beakgraph.core.BeakGraphFiles.isZarrArchiveName(name));
+    }
+
+    /**
+     * The keys of a Zarr store that are served: a node's metadata document,
+     * and a chunk of an array. Nothing else that may lie in the directory.
+     */
+    private static final java.util.regex.Pattern ZARR_KEY =
+            java.util.regex.Pattern.compile("(?:[^/]+/)*zarr\\.json|(?:[^/]+/)+c(?:/\\d+)+");
+
+    /**
+     * The file of a key of a Zarr store, when {@code reqPath} names one:
+     * {@code <store>.zarr/<key>}, in a store this storage lists. The store is
+     * ONE resource here and what it holds is not listed, but its keys are
+     * served - whole or by range - so that it can be read where it lies, as
+     * an .h5 file is by its ranges. Null for anything else: the request is
+     * then answered as any other.
+     */
+    private Path zarrKey(String reqPath) {
+        if (storageRoot == null) {
+            return null;
+        }
+        String[] segments = reqPath.split("/");
+        for (int i = 0; i < segments.length - 1; i++) {
+            if (!com.ebremer.beakgraph.core.BeakGraphFiles.isZarrStoreName(segments[i])) {
+                continue;
+            }
+            String storePath = String.join("/", java.util.Arrays.copyOfRange(segments, 0, i + 1));
+            String key = String.join("/", java.util.Arrays.copyOfRange(segments, i + 1, segments.length));
+            if (!ZARR_KEY.matcher(key).matches()) {
+                return null;
+            }
+            Path store = resolveWithin(storageRoot, storePath);
+            // A store the listing has: not one under a hidden directory, or shadowed by a fixed route.
+            if (store == null || !isStore(store) || lookup(resourceUriOf(storePath)) == null) {
+                return null;
+            }
+            Path file = resolveWithin(storageRoot, reqPath);
+            return (file != null && Files.isRegularFile(file)) ? file : null;
+        }
+        return null;
     }
 
     private boolean isSparqlRequest(HttpServletRequest req) {
@@ -1011,6 +1065,9 @@ public class LWSStorageServlet extends HttpServlet {
             String rel = it.getURI().substring(HTTP_ROOT.length());
             if (rel.startsWith("/")) rel = rel.substring(1);
             Path file = resolveWithin(storageRoot, rel);
+            if (file != null && Files.isDirectory(file) && isStore(file)) {
+                file = file.resolve("zarr.json"); // a Zarr store: the document that stands for it
+            }
             if (file != null && Files.isRegularFile(file)) {
                 try {
                     BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
@@ -1285,7 +1342,7 @@ public class LWSStorageServlet extends HttpServlet {
         if (reqPath != null && storageRoot != null) {
             String rel = stripAlias(reqPath);
             Path file = resolveWithin(storageRoot, rel);
-            if (file != null && Files.isRegularFile(file) && isHDF5(file) && lookup(resourceUriOf(rel)) != null) {
+            if (isStore(file) && lookup(resourceUriOf(rel)) != null) {
                 return ALLOW_QUERYABLE;
             }
         }
@@ -1318,16 +1375,22 @@ public class LWSStorageServlet extends HttpServlet {
             return;
         }
         reqPath = stripAlias(reqPath);
+        // A key of a Zarr store: its bytes, for a reader of the store. Not a resource of the listing.
+        Path zarrKey = zarrKey(reqPath);
+        if (zarrKey != null) {
+            serveBytes(req, resp, zarrKey, zarrKey.getFileName().toString().equals("zarr.json")
+                    ? LWSMetadataGenerator.ZARR_STORE_MEDIA_TYPE : "application/octet-stream", isHead);
+            return;
+        }
         String resourceURI = resourceUriOf(reqPath);
         Resource r = lookup(resourceURI);
         if (r == null) {
             sendProblem(req, resp, 404, "No resource at this URI");
             return;
         }
-        // SPARQL on .h5 files checked FIRST (fixes Jena Accept header triggering metadata instead of query)
+        // SPARQL on a store checked FIRST (fixes Jena Accept header triggering metadata instead of query)
         Path h5Candidate = resolveWithin(storageRoot, reqPath);
-        if (h5Candidate != null && Files.exists(h5Candidate) && !Files.isDirectory(h5Candidate)
-                && isHDF5(h5Candidate) && isSparqlRequest(req)) {
+        if (isStore(h5Candidate) && isSparqlRequest(req)) {
             handleSparqlQuery(req, resp, reqPath, h5Candidate);
             return;
         }
@@ -1558,12 +1621,17 @@ public class LWSStorageServlet extends HttpServlet {
         if (storageRoot == null) { sendProblem(req, resp, 500, "No storage root is configured"); return; }
         Path localFile = resolveWithin(storageRoot, reqPath);
         if (localFile == null) { sendProblem(req, resp, 403, null); return; }
-        if (!Files.exists(localFile) || Files.isDirectory(localFile)) {
-            sendProblem(req, resp, 404, "No resource at this URI");
+        if (isStore(localFile) && isSparqlRequest(req)) {
+            handleSparqlQuery(req, resp, reqPath, localFile);
             return;
         }
-        if (isHDF5(localFile) && isSparqlRequest(req)) {
-            handleSparqlQuery(req, resp, reqPath, localFile);
+        if (Files.isDirectory(localFile) && isStore(localFile)) {
+            // A Zarr store is a directory: what a GET of it returns is the document
+            // it is opened from, which is also what the listing describes it by.
+            localFile = localFile.resolve("zarr.json");
+        }
+        if (!Files.exists(localFile) || Files.isDirectory(localFile)) {
+            sendProblem(req, resp, 404, "No resource at this URI");
             return;
         }
         Statement mediaStmt = r.getProperty(FORMAT);
@@ -1573,6 +1641,15 @@ public class LWSStorageServlet extends HttpServlet {
             media = Files.probeContentType(localFile);
             if (media == null) media = "application/octet-stream";
         }
+        serveBytes(req, resp, localFile, media, isHead);
+    }
+
+    /**
+     * Serves a file's bytes as {@code media}: whole, or the one range asked
+     * for, with the validators a reader by ranges pins.
+     */
+    private static void serveBytes(HttpServletRequest req, HttpServletResponse resp, Path localFile, String media,
+                                   boolean isHead) throws IOException {
         // The file is OPENED FIRST and the validator derived from that handle:
         // size from the channel, mtime read right after the open. Stat-then-open
         // let an atomic replace in between send the new file's bytes under the
@@ -1654,6 +1731,11 @@ public class LWSStorageServlet extends HttpServlet {
         String reqPath = requestPath(req);
         if (reqPath == null) { sendProblem(req, resp, 400, "Malformed request URI"); return; }
         reqPath = stripAlias(reqPath);
+        if (zarrKey(reqPath) != null) {
+            // A key of a Zarr store is read, and nothing else: the query goes to the store.
+            methodNotAllowed(req, resp);
+            return;
+        }
         String resourceURI = resourceUriOf(reqPath);
         Resource r = lookup(resourceURI);
         if (r == null) {
@@ -1661,7 +1743,7 @@ public class LWSStorageServlet extends HttpServlet {
             return;
         }
         Path localFile = r.hasProperty(RDF.type, LWS_CONTAINER) ? null : resolveWithin(storageRoot, reqPath);
-        if (localFile == null || !Files.isRegularFile(localFile) || !isHDF5(localFile)) {
+        if (!isStore(localFile)) {
             // Creating resources (POST to a container) and every other write is
             // not supported: this storage is read-only. 405, not 406 - it is the
             // METHOD that is unsupported, not a content-negotiation failure.

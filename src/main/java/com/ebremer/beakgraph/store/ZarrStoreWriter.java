@@ -10,22 +10,29 @@ import com.ebremer.falcon.zarr.ZarrNode;
 import com.ebremer.falcon.zarr.datatype.DataType;
 import com.ebremer.falcon.zarr.json.JsonObject;
 import com.ebremer.falcon.zarr.store.FileSystemStore;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.stream.Stream;
+import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,6 +58,15 @@ import org.slf4j.LoggerFactory;
  * to {@code path}; a store with an array short of its length is not moved
  * there at all. {@link #close()} without a commit removes the directory.
  *
+ * <p>The same store in ONE file ({@link #createZip}, SPECIFICATIONS.md §3a,
+ * item 8) is written the same way, and then packed: {@link #commit()} copies
+ * each key's file into a ZIP archive beside {@code path} as an entry that is
+ * not compressed, removing the file as it goes, forces the archive to disk
+ * and moves it to {@code path}. An entry's CRC-32 is taken as the chunk is
+ * written, and the JDK's archive writer checks it against what it copied.
+ * The archive is the same bytes for the same store: its entries are in key
+ * order after the root's {@code zarr.json}, and carry one fixed time.
+ *
  * <p>Not thread-safe: a store is assembled from one thread.
  *
  * @author Erich Bremer
@@ -68,24 +84,47 @@ public final class ZarrStoreWriter implements WritableStore {
      */
     private static volatile long chunkMax = Long.getLong("beakgraph.zarr.chunk.max", 1L << 30);
 
+    /** The time every entry of an archive carries: the first a ZIP entry can. */
+    private static final LocalDateTime ARCHIVE_TIME = LocalDateTime.of(1980, 1, 1, 0, 0);
+
     private final Path path;
     /** The directory being written, beside {@link #path}. */
     private final Path work;
+    /** Whether the store is to be one ZIP archive at {@link #path}, not a directory. */
+    private final boolean zip;
+    /** The archive being packed, beside {@link #path}; null until {@link #commit()} packs it. */
+    private Path packed;
+    /** The CRC-32 of each chunk file written, for its entry in the archive. */
+    private final Map<Path, Long> checksums = new HashMap<>();
     private final ZarrGroup rootGroup;
     private final Group root;
     private final List<Node> nodes = new ArrayList<>();
     private final List<Dataset> datasets = new ArrayList<>();
     private boolean finished;
 
-    private ZarrStoreWriter(Path path, Path work, ZarrGroup rootGroup) {
+    private ZarrStoreWriter(Path path, Path work, ZarrGroup rootGroup, boolean zip) {
         this.path = path;
         this.work = work;
+        this.zip = zip;
         this.rootGroup = rootGroup;
         this.root = new Group(rootGroup);
     }
 
     /** Begins writing the store at {@code path}; what is already there is replaced by {@link #commit()}. */
     public static ZarrStoreWriter create(Path path) {
+        return create(path, false);
+    }
+
+    /**
+     * Begins writing the store as one ZIP archive at {@code path}; what is
+     * already there is replaced by {@link #commit()}. While it is packed the
+     * store is on disk once, and its largest chunk twice, beside {@code path}.
+     */
+    public static ZarrStoreWriter createZip(Path path) {
+        return create(path, true);
+    }
+
+    private static ZarrStoreWriter create(Path path, boolean zip) {
         Path absolute = path.toAbsolutePath();
         if (!Container.isReplaceable(absolute)) {
             throw new IllegalArgumentException("Refusing to write a Zarr store over " + absolute
@@ -95,7 +134,7 @@ public final class ZarrStoreWriter implements WritableStore {
                 + Long.toUnsignedString(System.nanoTime(), 36) + ".partial");
         FileSystemStore store = FileSystemStore.open(work); // makes the directory
         try {
-            return new ZarrStoreWriter(absolute, work, Zarr.createGroup(store));
+            return new ZarrStoreWriter(absolute, work, Zarr.createGroup(store), zip);
         } catch (RuntimeException | Error e) {
             deleteTree(work);
             throw e;
@@ -114,7 +153,7 @@ public final class ZarrStoreWriter implements WritableStore {
 
     @Override
     public Container container() {
-        return Container.ZARR;
+        return zip ? Container.ZARR_ZIP : Container.ZARR;
     }
 
     @Override
@@ -140,8 +179,16 @@ public final class ZarrStoreWriter implements WritableStore {
             }
             // One document that describes every node: a reader opens the store with one read of it.
             rootGroup.consolidate();
-            forceTree(work);
-            moveIntoPlace();
+            if (zip) {
+                packed = path.resolveSibling(path.getFileName() + "."
+                        + Long.toUnsignedString(System.nanoTime(), 36) + ".zip.partial");
+                pack(packed);
+                moveIntoPlace(packed);
+                deleteTree(work); // what is left of it: its directories
+            } else {
+                forceTree(work);
+                moveIntoPlace(work);
+            }
         } catch (IOException | RuntimeException | Error e) {
             discard();
             throw e;
@@ -161,10 +208,76 @@ public final class ZarrStoreWriter implements WritableStore {
             d.closeQuietly();
         }
         deleteTree(work);
+        if (packed != null) {
+            deleteTree(packed);
+        }
     }
 
-    /** Moves the finished directory to the path, replacing what is there. */
-    private void moveIntoPlace() throws IOException {
+    /**
+     * Packs the directory being written into the archive {@code target}: an
+     * entry a file, named by its key and not compressed, the root's
+     * {@code zarr.json} first and the rest in key order. A file is removed
+     * once its entry is written, so the store is on disk twice by no more
+     * than one chunk. The archive is forced to disk before this returns.
+     */
+    private void pack(Path target) throws IOException {
+        Map<String, Path> files = new TreeMap<>();
+        try (Stream<Path> walk = Files.walk(work)) {
+            for (Path p : walk.toList()) {
+                if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
+                    files.put(work.relativize(p).toString().replace('\\', '/'), p);
+                }
+            }
+        }
+        List<String> keys = new ArrayList<>(files.keySet());
+        if (keys.remove("zarr.json")) {
+            keys.add(0, "zarr.json"); // the document a reader opens the store from, where the archive begins
+        }
+        byte[] buffer = new byte[1 << 20];
+        try (FileChannel out = FileChannel.open(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+            ZipOutputStream archive = new ZipOutputStream(new BufferedOutputStream(Channels.newOutputStream(out), 1 << 16));
+            for (String key : keys) {
+                Path file = files.get(key);
+                long size = Files.size(file);
+                Long crc = checksums.get(file);
+                if (crc == null) {
+                    crc = checksum(file, buffer); // a metadata document, which Falcon wrote
+                }
+                ZipEntry entry = new ZipEntry(key);
+                entry.setMethod(ZipEntry.STORED);
+                entry.setSize(size);
+                entry.setCompressedSize(size);
+                entry.setCrc(crc);
+                entry.setTimeLocal(ARCHIVE_TIME);
+                archive.putNextEntry(entry);
+                try (FileChannel in = FileChannel.open(file, StandardOpenOption.READ)) {
+                    ByteBuffer bytes = ByteBuffer.wrap(buffer);
+                    for (int n; (n = in.read(bytes.clear())) >= 0; ) {
+                        archive.write(buffer, 0, n);
+                    }
+                }
+                archive.closeEntry(); // fails unless the size and the CRC-32 are what was copied
+                Files.delete(file);
+            }
+            archive.finish();
+            archive.flush();
+            out.force(true);
+        }
+    }
+
+    private static long checksum(Path file, byte[] buffer) throws IOException {
+        CRC32 crc = new CRC32();
+        try (FileChannel in = FileChannel.open(file, StandardOpenOption.READ)) {
+            ByteBuffer bytes = ByteBuffer.wrap(buffer);
+            for (int n; (n = in.read(bytes.clear())) >= 0; ) {
+                crc.update(buffer, 0, n);
+            }
+        }
+        return crc.getValue();
+    }
+
+    /** Moves the finished store - its directory, or its archive - to the path, replacing what is there. */
+    private void moveIntoPlace(Path built) throws IOException {
         Path aside = null;
         if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
             // A directory cannot be replaced in one step: set the old one aside, and remove it once the new one is in.
@@ -172,7 +285,7 @@ public final class ZarrStoreWriter implements WritableStore {
             Files.move(path, aside, StandardCopyOption.ATOMIC_MOVE);
         }
         try {
-            Files.move(work, path, StandardCopyOption.ATOMIC_MOVE);
+            Files.move(built, path, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException | RuntimeException e) {
             if (aside != null) {
                 try {
@@ -318,7 +431,11 @@ public final class ZarrStoreWriter implements WritableStore {
         private long written;
         /** The chunk being written, or null between chunks. */
         private FileChannel channel;
+        /** The file of the chunk being written. */
+        private Path chunkFile;
         private long inChunk;
+        /** The CRC-32 of the chunk being written: an archive's entry needs it before the bytes. Null for a directory store. */
+        private final CRC32 crc = zip ? new CRC32() : null;
 
         Dataset(ZarrArray array, long length, long chunk) {
             this.array = array;
@@ -369,10 +486,17 @@ public final class ZarrStoreWriter implements WritableStore {
             // A directory store keeps the value of a key in the file of that relative path.
             Path file = work.resolve(array.chunkKey(index));
             Files.createDirectories(file.getParent());
+            chunkFile = file;
+            if (crc != null) {
+                crc.reset();
+            }
             return FileChannel.open(file, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         }
 
         private void put(ByteBuffer bytes) throws IOException {
+            if (crc != null) {
+                crc.update(bytes.duplicate());
+            }
             while (bytes.hasRemaining()) {
                 channel.write(bytes);
             }
@@ -382,6 +506,9 @@ public final class ZarrStoreWriter implements WritableStore {
             FileChannel c = channel;
             channel = null;
             c.close();
+            if (crc != null) {
+                checksums.put(chunkFile, crc.getValue());
+            }
         }
 
         void closeQuietly() {

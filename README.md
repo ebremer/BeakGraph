@@ -48,7 +48,8 @@ java -agentlib:native-image-agent=config-merge-dir=meta \
 * `-src <file|dir> -dest <file|dir>` converts RDF to `.h5` (`-method 0..5` selects the engine:
   in-memory 0/2/3, disk-based 1/4/5 for inputs larger than RAM; `-merge` folds a tree into one store).
   `-zarr`, or a `-dest` named `*.zarr`, writes the same store as a Zarr v3 directory store instead of an
-  HDF5 file; every command below takes either.
+  HDF5 file, and `-zip`, or a `-dest` named `*.zip`, as that Zarr store in one ZIP file; every command
+  below takes any of them.
 * `-src <file.h5|dir> -export NT|NQ|TTL|TRIG|JSON-LD` dumps stores back to RDF.
 * `-verify <file.h5|dir> [-deep]` integrity-checks stores before publishing them.
 * `-endpoint <file.h5|dir> -port 8888` serves one store, or a whole directory as W3C LWS storage,
@@ -85,8 +86,11 @@ BG.getBGWriterBuilder()
 ```
 
 A destination named `*.zarr` (`new File("mydata.ttl.zarr")`) is written as a Zarr v3 directory store
-instead: the same groups, arrays and attributes, in a directory tree any Zarr reader can open. It is read
-the same way - `BG.getBeakGraph` takes the directory.
+instead: the same groups, arrays and attributes, in a directory tree any Zarr reader can open. One named
+`*.zip` (`mydata.ttl.zarr.zip`) is that Zarr store in one file, a ZIP archive with nothing compressed.
+Both are read the same way - `BG.getBeakGraph` takes the directory or the archive - and
+`BG.getBeakGraph(URI.create("https://host/data/mydata.ttl.zarr"))` queries a Zarr store where it lies on a
+web server, by range requests, as it does an `.h5` file.
 
 ### Using a BeakGraph with Apache Jena
 
@@ -214,10 +218,10 @@ Beakgraph's HDF5 design is heavily inspired by [RDF HDT](https://www.rdfhdt.org/
   v3 directory store, each array one uncompressed chunk: the same bytes either way, memory-mapped where
   they lie, so a query reads both the same and at the same speed. HDF5 is one file to copy, publish and
   serve over HTTP range requests; Zarr is a directory of some 130 small files that Zarr tools open, and
-  that can sit inside a larger Zarr hierarchy. The code above the container
-  (`com.ebremer.beakgraph.store`) does not know which it has. Not there yet for Zarr: reading a store
-  over HTTP or from an object store through the endpoint and the pool, and serving Zarr stores from
-  inside an LWS storage directory.
+  that can sit inside a larger Zarr hierarchy - or one ZIP archive of those files, uncompressed, which is
+  mapped the same way. Both are queried in place over HTTP by range requests (a Zarr store through one
+  block cache for all its arrays), and a storage directory serves either as a store. The code above the
+  container (`com.ebremer.beakgraph.store`) does not know which it has.
 * **One self-contained jar.** The published library jar shades every dependency (Jena, Fuseki,
   Falcon, JTS, the HDF5 natives, log4j and its `log4j2.yml` at the classpath root), so a consumer
   gets one artifact that runs on an empty classpath. The trade-off: a consumer that also brings

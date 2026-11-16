@@ -17,7 +17,8 @@ import java.nio.file.Path;
  *
  * <p>Nothing is at {@code path} until {@link #commit()}: the store is
  * written beside it - a temporary file for HDF5, a temporary directory for
- * Zarr - forced to disk, and moved there in one step. A build that fails
+ * Zarr (packed into a temporary file for a ZIP archive) - forced to disk,
+ * and moved there in one step. A build that fails
  * leaves nothing behind: {@link #close()} without a commit discards what was
  * written. So write inside try-with-resources, and commit as its last
  * statement:
@@ -39,6 +40,7 @@ public interface WritableStore extends AutoCloseable {
         return switch (container) {
             case HDF5 -> WritableHdfFile.write(path);
             case ZARR -> ZarrStoreWriter.create(path);
+            case ZARR_ZIP -> ZarrStoreWriter.createZip(path);
         };
     }
 
