@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import org.locationtech.jts.operation.polygonize.Polygonizer;
+import org.locationtech.jts.precision.GeometryPrecisionReducer;
 import static com.ebremer.beakgraph.Params.GRIDTILESIZE;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -262,8 +263,13 @@ public class PolygonScaler {
      * self-intersecting "bowtie" ring, say) is repaired by
      * {@link #fixPolygon}, which keeps the largest lobe, WITH a warning - the
      * previous unconditional {@code buffer(0)} silently discarded lobes and
-     * misreported a MultiPolygon result as "collapsed during snapping". Null
-     * only for a genuinely collapsed ring (fewer than four points).
+     * misreported a MultiPolygon result as "collapsed during snapping". The
+     * repair can add vertices off the grid (buffer(0) nodes the ring where it
+     * crosses itself, at 5838.666666666667 3535.5, say), so the repaired
+     * polygon is put back on it by {@link #onIntegerGrid}: every pyramid level
+     * is written with integer coordinates, which is what the tile renderers
+     * read. Null only for a genuinely collapsed ring (fewer than four points)
+     * or a repaired one that collapses on the grid.
      */
     private static Polygon snapAndSimplify(Polygon poly) {
         poly.apply(new IntSnapFilter());
@@ -276,7 +282,52 @@ public class PolygonScaler {
         }
         logger.warn("Repairing invalid polygon ({} points, envelope {}); the largest valid part is kept, other parts are dropped",
                 poly.getNumPoints(), poly.getEnvelopeInternal());
-        return fixPolygon(poly);
+        return onIntegerGrid(fixPolygon(poly));
+    }
+
+    private static final PrecisionModel INTEGER_GRID = new PrecisionModel(1.0);
+
+    /**
+     * A valid polygon with integer coordinates. One already on the grid is
+     * returned as it is. Otherwise its precision is reduced to the integer
+     * grid by JTS snap-rounding, which keeps the result valid (simply rounding
+     * the vertices, as IntSnapFilter does, can make it cross itself again);
+     * if that splits it, the largest part is kept, as {@link #fixPolygon}
+     * does. Null if nothing of it is left on the grid, or the reduction fails.
+     */
+    static Polygon onIntegerGrid(Polygon poly) {
+        if (poly == null || isOnIntegerGrid(poly)) {
+            return poly;
+        }
+        try {
+            Geometry reduced = GeometryPrecisionReducer.reduce(poly, INTEGER_GRID);
+            Polygon largest = null;
+            for (int i = 0; i < reduced.getNumGeometries(); i++) {
+                if (reduced.getGeometryN(i) instanceof Polygon p && !p.isEmpty()
+                        && (largest == null || p.getArea() > largest.getArea())) {
+                    largest = p;
+                }
+            }
+            if (largest == null || largest.getNumPoints() < 4 || !largest.isValid()) {
+                logger.warn("Repaired polygon collapsed on the integer grid ({} points, envelope {})",
+                        poly.getNumPoints(), poly.getEnvelopeInternal());
+                return null;
+            }
+            return largest;
+        } catch (RuntimeException ex) {
+            logger.warn("Could not put the repaired polygon on the integer grid ({} points, envelope {}): {}",
+                    poly.getNumPoints(), poly.getEnvelopeInternal(), ex.toString());
+            return null;
+        }
+    }
+
+    private static boolean isOnIntegerGrid(Geometry g) {
+        for (Coordinate c : g.getCoordinates()) {
+            if (c.x != Math.rint(c.x) || c.y != Math.rint(c.y)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static class IntSnapFilter implements CoordinateSequenceFilter {
