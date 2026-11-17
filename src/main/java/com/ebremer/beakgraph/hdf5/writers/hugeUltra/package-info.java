@@ -20,10 +20,10 @@
  *     the id-record sorters bit-packed onto it (no objects, no comparators,
  *     no codecs in the hot path);</li>
  * <li>{@link com.ebremer.beakgraph.hdf5.writers.hugeUltra.ParallelSpillSorter} -
- *     the term-column sorter: background spilling, concurrent merges, an
- *     order-preserving 8-byte prefix key that avoids most NodeComparator
- *     calls, and a grouped run format writing each distinct term's text once
- *     per run;</li>
+ *     the term-column sorter: background spilling, concurrent merges, rows
+ *     sorted on their terms' keys ({@code TermKey}: a term's place in
+ *     NodeComparator's order worked out once, not for every comparison), and
+ *     a grouped run format writing each distinct term's text once per run;</li>
  * <li>{@link com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer} -
  *     the public entry point ({@code BeakGraphWriter}); owns the worker pool
  *     and the atomic tmp-then-move publish.</li>

@@ -5,9 +5,9 @@ import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
-import com.ebremer.beakgraph.core.lib.NodeComparator;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
 import com.ebremer.beakgraph.core.lib.Stats;
+import com.ebremer.beakgraph.core.lib.TermKey;
 import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder;
 import com.ebremer.beakgraph.hdf5.Index;
@@ -148,6 +148,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
     // their exact temp-file footprint.
     private RecordSorter<TermRow> iEntSorter;
     private RecordSorter<TermRow> iLitSorter;
+    /** The graph and the subject keys of the last row, for the rows that repeat them (see {@link #sharedKey}). */
+    private TermKey graphKey;
+    private TermKey subjectKey;
     private RecordFile<Long> pTempFile;
     private final SorterProvider provider;
     /** Non-null: independent stage groups run concurrently on it (-method 4). */
@@ -682,13 +685,25 @@ public final class HugeBuildPipeline implements AutoCloseable {
         stats.numIRI++; // the predicate (RAM counts distinct; only >0 gates buffer allocation)
 
         long row = rows++;
-        gSorter.add(new TermRow(g, row));
-        sSorter.add(new TermRow(s, row));
+        graphKey = sharedKey(g, graphKey);
+        subjectKey = sharedKey(s, subjectKey);
+        gSorter.add(new TermRow(graphKey, row));
+        sSorter.add(new TermRow(subjectKey, row));
         oSorter.add(new TermRow(o, row));
         pTempFile.append(predTempIds.computeIfAbsent(p, k -> {
             predByTempId.add(k);
             return (long) (predByTempId.size() - 1);
         }));
+    }
+
+    /**
+     * The sort key of the row before, where this row's term is the same
+     * object - a graph's rows follow one another, and so do a subject's - or
+     * a new key: the sort then works the term's place in the order out once
+     * for those rows, not once for each.
+     */
+    private static TermKey sharedKey(Node term, TermKey last) {
+        return (last != null && last.node() == term) ? last : new TermKey(term);
     }
 
     private void countEntityKind(Node n, String position) {
@@ -895,8 +910,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
             List<Iterator<Node>> streams = (is == null)
                     ? List.of(termsOf(gs), termsOf(ss), nonLiteralPrefix(termsOf(os)))
                     : List.of(termsOf(gs), termsOf(ss), nonLiteralPrefix(termsOf(os)), termsOf(is));
-            PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(
-                    Comparator.comparing(pi -> pi.head, NodeComparator.INSTANCE));
+            PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(PeekedIterator.ORDER);
             for (Iterator<Node> it : streams) {
                 PeekedIterator pi = new PeekedIterator(it);
                 if (pi.head != null) heap.add(pi);
@@ -953,8 +967,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
             List<Iterator<Node>> streams = (is == null)
                     ? List.of(suffix)
                     : List.of(suffix, termsOf(is));
-            PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(
-                    Comparator.comparing(pi -> pi.head, NodeComparator.INSTANCE));
+            PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(PeekedIterator.ORDER);
             for (Iterator<Node> it : streams) {
                 PeekedIterator pi = new PeekedIterator(it);
                 if (pi.head != null) heap.add(pi);
@@ -1006,8 +1019,12 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     private static final class PeekedIterator {
+        /** By the heads, in NodeComparator order, on their sort keys. */
+        static final Comparator<PeekedIterator> ORDER = (a, b) -> TermKey.compare(a.key, b.key);
+
         private final Iterator<Node> it;
         Node head;
+        private TermKey key;
 
         PeekedIterator(Iterator<Node> it) {
             this.it = it;
@@ -1017,6 +1034,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
         /** Loads the next head; false at stream end. */
         final boolean advance() {
             head = it.hasNext() ? it.next() : null;
+            key = (head == null) ? null : new TermKey(head);
             return head != null;
         }
     }
@@ -1053,7 +1071,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
     static final class DictCursor implements AutoCloseable {
         private final Iterator<Node> stream;
         private final Runnable onClose;
-        private Node current = null;
+        private TermKey current = null;
         private long id = 0;
 
         DictCursor(Iterator<Node> stream, Runnable onClose) {
@@ -1061,23 +1079,29 @@ public final class HugeBuildPipeline implements AutoCloseable {
             this.onClose = onClose;
         }
 
-        /** 1-based id of {@code term}; the cursor only moves forward. */
-        long locate(Node term, String role) {
+        /**
+         * 1-based id of {@code key}'s term; the cursor only moves forward.
+         * Where the dictionary stands against the term is asked of the
+         * sort keys - the column's and one per dictionary entry - so a
+         * literal's value is made once on each side, without Jena's cache.
+         */
+        long locate(TermKey key, String role) {
+            Node term = key.node();
             // Cheap term-equality fast path before any comparator work.
-            if (current != null && current.equals(term)) {
+            if (current != null && current.node().equals(term)) {
                 return id;
             }
-            while (current == null || NodeComparator.INSTANCE.compare(current, term) < 0) {
+            while (current == null || TermKey.compare(current, key) < 0) {
                 if (!stream.hasNext()) {
                     throw new IllegalStateException("Cannot resolve " + role + " (not in dictionary): " + term);
                 }
-                current = stream.next();
+                current = new TermKey(stream.next());
                 id++;
-                if (current.equals(term)) {
+                if (current.node().equals(term)) {
                     return id;
                 }
             }
-            if (!current.equals(term)) {
+            if (!current.node().equals(term)) {
                 throw new IllegalStateException("Cannot resolve " + role + " (not in dictionary): " + term);
             }
             return id;
@@ -1106,7 +1130,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 if (prevTerm != null && prevTerm.equals(tr.term())) {
                     id = prevId;
                 } else {
-                    id = cursor.locate(tr.term(), role);
+                    id = cursor.locate(tr.key(), role);
                     columnar.writeLong(id);
                     prevTerm = tr.term();
                     prevId = id;

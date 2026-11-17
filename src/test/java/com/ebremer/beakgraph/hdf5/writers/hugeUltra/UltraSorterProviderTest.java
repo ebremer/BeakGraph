@@ -3,8 +3,8 @@ package com.ebremer.beakgraph.hdf5.writers.hugeUltra;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.ebremer.beakgraph.core.lib.CachingNodeComparator;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.TermKey;
 import com.ebremer.beakgraph.huge.HugeRecords;
 import com.ebremer.beakgraph.huge.HugeRecords.TermRow;
 import java.io.ByteArrayInputStream;
@@ -24,15 +24,15 @@ import org.apache.jena.sparql.core.Quad;
 import org.junit.jupiter.api.Test;
 
 /**
- * BG-136: the -method 4/5 term sort rests on ONE invariant -
- * {@code prefixKey(a) != prefixKey(b)} implies unsigned key order equals
+ * BG-136: the term sorts rest on ONE invariant of the sort keys' prefix -
+ * {@code prefix(a) != prefix(b)} implies unsigned prefix order equals
  * NodeComparator order - because the dedup merge and the id join then run
- * on NodeComparator directly. Nothing pinned it: the parity fixtures are
+ * on that order. Nothing pinned it: the parity fixtures are
  * ASCII http IRIs. This zoo covers every rank, chars 0x00 / 0x7F / 0xFE /
  * 0xFF / 0x100 / surrogate pairs at every prefix position, prefixes versus
  * their extensions, relative IRIs, the default-graph sentinels, literals of
- * every kind and nested triple terms, plus random strings; and it uses the
- * previously dead FAST_TERM_ORDER.
+ * every kind and nested triple terms, plus random strings; and it holds
+ * the order the sorters run on, the keys', to the comparator's.
  */
 class UltraSorterProviderTest {
 
@@ -96,7 +96,7 @@ class UltraSorterProviderTest {
     void distinctPrefixKeysAgreeWithNodeComparator() {
         List<Node> nodes = zoo();
         long[] keys = new long[nodes.size()];
-        for (int i = 0; i < keys.length; i++) keys[i] = UltraSorterProvider.prefixKey(nodes.get(i));
+        for (int i = 0; i < keys.length; i++) keys[i] = TermKey.prefix(nodes.get(i));
         int decided = 0;
         for (int i = 0; i < nodes.size(); i++) {
             for (int j = 0; j < nodes.size(); j++) {
@@ -109,25 +109,33 @@ class UltraSorterProviderTest {
         }
         assertTrue(decided > 1000, "the keys decide most pairs: " + decided);
         // Rank 0 sentinels sort first, the null graph is the default graph.
-        assertEquals(UltraSorterProvider.prefixKey(Quad.defaultGraphIRI), UltraSorterProvider.prefixKey(null));
-        assertTrue(Long.compareUnsigned(UltraSorterProvider.prefixKey(Quad.defaultGraphIRI),
-                UltraSorterProvider.prefixKey(NodeFactory.createBlankNode("a"))) < 0);
+        assertEquals(TermKey.prefix(Quad.defaultGraphIRI), TermKey.prefix(null));
+        assertTrue(Long.compareUnsigned(TermKey.prefix(Quad.defaultGraphIRI),
+                TermKey.prefix(NodeFactory.createBlankNode("a"))) < 0);
     }
 
     @Test
-    void fastTermOrderSortsExactlyLikeTermOrder() {
+    void theKeysTermOrderSortsExactlyLikeTheComparators() {
         List<Node> nodes = zoo();
         List<TermRow> rows = new ArrayList<>();
         for (int i = 0; i < nodes.size(); i++) rows.add(new TermRow(nodes.get(i), i));
         Collections.shuffle(rows, new Random(7));
         List<TermRow> expected = new ArrayList<>(rows);
-        expected.sort(HugeRecords.TERM_ORDER);
-        List<TermRow> fast = new ArrayList<>(rows);
-        fast.sort(UltraSorterProvider.FAST_TERM_ORDER);
-        List<TermRow> memo = new ArrayList<>(rows);
-        memo.sort(UltraSorterProvider.fastTermOrder(new CachingNodeComparator(16)));
-        assertEquals(terms(expected), terms(fast), "prefix-accelerated order on the shared comparator");
-        assertEquals(terms(expected), terms(memo), "prefix-accelerated order on a tiny memo");
+        expected.sort(HugeRecords.termOrder(NodeComparator.INSTANCE));
+        List<TermRow> keyed = new ArrayList<>(rows);
+        keyed.sort(HugeRecords.TERM_ORDER);
+        assertEquals(terms(expected), terms(keyed), "the order on the rows' keys");
+        // Rows read back from a run share their term's key: the same order, asked of fewer keys.
+        List<TermRow> shared = new ArrayList<>();
+        for (Node n : nodes) {
+            TermKey key = new TermKey(n);
+            for (int k = 0; k < 3; k++) shared.add(new TermRow(key, k));
+        }
+        Collections.shuffle(shared, new Random(8));
+        List<TermRow> expectedShared = new ArrayList<>(shared);
+        expectedShared.sort(HugeRecords.termOrder(NodeComparator.INSTANCE));
+        shared.sort(HugeRecords.TERM_ORDER);
+        assertEquals(terms(expectedShared), terms(shared), "the order on shared keys");
     }
 
     private static List<Node> terms(List<TermRow> rows) {
@@ -163,5 +171,13 @@ class UltraSorterProviderTest {
             }
         }
         assertEquals(rows, back, "(term, row) sequence survives the grouped run format");
+        int sharedKeys = 0;
+        for (int i = 1; i < back.size(); i++) {
+            if (back.get(i).term().equals(back.get(i - 1).term())) {
+                assertTrue(back.get(i).key() == back.get(i - 1).key(), "the rows of a term read back share its key");
+                sharedKeys++;
+            }
+        }
+        assertTrue(sharedKeys > 1000, "rows that repeat a term: " + sharedKeys);
     }
 }

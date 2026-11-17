@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.huge;
 
 import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.TermKey;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -13,9 +14,9 @@ import org.apache.jena.graph.Triple;
  * Record types flowing through the huge writer's spill files, with their
  * codecs and orderings.
  *
- * <p>{@code TermRow} carries one quad component (a term) plus the row number of
- * its quad; sorted by term it drives both dictionary construction (dedup) and
- * the sort-merge id join. {@code RowId} is the join output (row -> id), sorted
+ * <p>{@code TermRow} carries one quad component (a term, as its sort key) plus
+ * the row number of its quad; sorted by term it drives both dictionary
+ * construction (dedup) and the sort-merge id join. {@code RowId} is the join output (row -> id), sorted
  * back into row order. {@code IdQuad} is a fully dictionary-encoded quad; its
  * two orderings are exactly the {@link com.ebremer.beakgraph.hdf5.Index}
  * comparators, because dictionary ids are rank-assigned from the same
@@ -28,22 +29,36 @@ public final class HugeRecords {
 
     private HugeRecords() {}
 
-    public record TermRow(Node term, long row) {}
+    /**
+     * A term and the row of its quad. The term is held as its {@link TermKey},
+     * which a sort compares without working the term's place out again; the
+     * rows of one term may share one key (the ingest's consecutive rows of a
+     * subject, a run's rows of a term).
+     */
+    public record TermRow(TermKey key, long row) {
+
+        public TermRow(Node term, long row) {
+            this(new TermKey(term), row);
+        }
+
+        public Node term() {
+            return key.node();
+        }
+    }
 
     public record RowId(long row, long id) {}
 
     public record IdQuad(long g, long s, long p, long o) {}
 
-    /** Term order only; equal terms may interleave rows arbitrarily (the join maps them to one id). */
-    public static final Comparator<TermRow> TERM_ORDER = termOrder(NodeComparator.INSTANCE);
-
     /**
-     * {@link #TERM_ORDER} on the given comparator - a per-sorter
-     * {@link com.ebremer.beakgraph.core.lib.CachingNodeComparator} in
-     * production, so a term run's parallel sort memoizes its literal
-     * conversions locally instead of contending on Jena's global cache
-     * (BG-249).
+     * Term order only; equal terms may interleave rows arbitrarily (the join
+     * maps them to one id). On the rows' keys: NodeComparator's order, with
+     * each term's place in it worked out once and not for every comparison
+     * (see {@link TermKey}).
      */
+    public static final Comparator<TermRow> TERM_ORDER = (a, b) -> TermKey.compare(a.key(), b.key());
+
+    /** The same order asked of {@code cmp} for every pair: what {@link #TERM_ORDER} is held to. */
     public static Comparator<TermRow> termOrder(NodeComparator cmp) {
         return (a, b) -> cmp.compare(a.term(), b.term());
     }
@@ -82,8 +97,8 @@ public final class HugeRecords {
         return 64;
     }
 
-    /** {@link #estimateBytes} of a term row: the record plus its term. */
-    public static final ToLongFunction<TermRow> TERM_ROW_BYTES = r -> 32 + estimateBytes(r.term());
+    /** {@link #estimateBytes} of a term row: the record, its term, and what the term's key holds once it is sorted. */
+    public static final ToLongFunction<TermRow> TERM_ROW_BYTES = r -> 32 + TermKey.HEAP_BYTES + estimateBytes(r.term());
 
     public static final Comparator<IdQuad> GSPO_ORDER = Comparator
             .comparingLong(IdQuad::g)

@@ -34,6 +34,10 @@ import org.slf4j.LoggerFactory;
  * </ol>
  * Language-tagged literals are compared on the tag as stored; see the note at
  * {@link #compareExactLiteralTerms} for the tag-formatting precondition.
+ * <p>
+ * A sort does not call this for every pair: {@link TermKey} holds what a
+ * term's place in the order depends on, worked out once, and compares two
+ * of those through the parts of this class.
  * See SPECIFICATIONS.md §6 (dictionary order).
  */
 public class NodeComparator implements Comparator<Node> {
@@ -74,13 +78,31 @@ public class NodeComparator implements Comparator<Node> {
         try {
             return nodeValue(n);
         } catch (RuntimeException e) {
-            String dt = n.getLiteralDatatypeURI();
-            if (WARNED_DATATYPES.add(dt == null ? "" : dt)) {
-                logger.warn("Cannot build a value for literal {} (datatype {}); literals of this datatype whose value "
-                        + "fails to build are ordered as unparseable literals", n, dt, e);
-            }
-            return new NodeValueNode(n);
+            return unvalued(n, e);
         }
+    }
+
+    /**
+     * The value of one literal for a sort key: made without Jena's cache
+     * ({@link NodeValues#of}), and classified as {@link #valueOf} classifies
+     * it when it cannot be made.
+     */
+    static NodeValue keyValue(Node n) {
+        try {
+            return NodeValues.of(n);
+        } catch (RuntimeException e) {
+            return unvalued(n, e);
+        }
+    }
+
+    /** The literal as a plain node value, its datatype logged once: the fallback {@link #valueOf} describes. */
+    private static NodeValue unvalued(Node n, RuntimeException e) {
+        String dt = n.getLiteralDatatypeURI();
+        if (WARNED_DATATYPES.add(dt == null ? "" : dt)) {
+            logger.warn("Cannot build a value for literal {} (datatype {}); literals of this datatype whose value "
+                    + "fails to build are ordered as unparseable literals", n, dt, e);
+        }
+        return new NodeValueNode(n);
     }
 
     @Override
@@ -154,11 +176,7 @@ public class NodeComparator implements Comparator<Node> {
             // well-formed composites rank identically against every other value
             // space, without throwing.
             if (CdtTerms.isComposite(n1) && CdtTerms.isComposite(n2)) {
-                int byDatatype = n1.getLiteralDatatypeURI().compareTo(n2.getLiteralDatatypeURI());
-                if (byDatatype != 0) {
-                    return byDatatype;
-                }
-                return n1.getLiteralLexicalForm().compareTo(n2.getLiteralLexicalForm());
+                return compareComposites(n1, n2);
             }
 
             // Language-tagged pairs (rdf:langString / rdf:dirLangString) never go
@@ -185,86 +203,114 @@ public class NodeComparator implements Comparator<Node> {
             // value-space rank against other spaces (verified), so pairs with only
             // one language-kinded side stay on compareAlways safely.
             if (hasLanguage(n1) && hasLanguage(n2)) {
-                int c = n1.getLiteralLanguage().compareTo(n2.getLiteralLanguage());
-                if (c != 0) {
-                    return c;
-                }
-                c = n1.getLiteralLexicalForm().compareTo(n2.getLiteralLexicalForm());
-                if (c != 0) {
-                    return c;
-                }
-                return Integer.compare(directionRank(n1), directionRank(n2));
+                return compareLanguageTagged(n1, n2);
             }
             NodeValue nv1 = valueOf(n1);
             NodeValue nv2 = valueOf(n2);
-            try {
-                // Timezone-sensitive value spaces cannot go through compareAlways:
-                // it answers value order for XSD-determinate pairs but silently falls
-                // back to TERM order for indeterminate ones (a timezone-less dateTime
-                // vs a timezoned one within +/-14h; a month-based duration vs a
-                // day-based one). Mixing the two orders pairwise is not transitive -
-                // e.g. "2020-01-02T00:00:00" < "2020-01-02T08:00:00+14:00" <
-                // "2020-01-01T20:00:00Z" < the first - and a cyclic comparator breaks
-                // every sort and binary search in the store (locate() misses stored
-                // literals; builds fail with "Cannot resolve Object"). These spaces
-                // get a self-consistent total order below that agrees with XSD value
-                // order wherever XSD order is determinate, so the ValueCluster range
-                // pushdown stays over-inclusive and value-equal terms stay adjacent.
-                int group = temporalGroup(nv1);
-                if (group != 0 && group == temporalGroup(nv2)) {
-                    if (group == GROUP_DURATION) {
-                        return compareDurationTotal(nv1, nv2, n1, n2);
-                    }
-                    if (group == GROUP_INSTANT) {
-                        // One ARQ value space holds dateTime and the g* kinds;
-                        // a fixed kind rank keeps cross-kind pairs off the
-                        // lexical fallback compareAlways would give them.
-                        int byKind = Integer.compare(instantKindRank(nv1), instantKindRank(nv2));
-                        if (byKind != 0) {
-                            return byKind;
-                        }
-                    }
-                    return compareTemporalTotal(nv1, nv2, n1, n2);
-                }
-
-                // Numbers of ANY XSD numeric datatype: exact value order. The
-                // SPARQL promotion compareAlways applies to mixed pairs (decimal
-                // vs float as floats) is lossy, and mixing it with the exact
-                // decimal-vs-decimal order and a lexical tie-break was cyclic.
-                // Value-equal terms fall to the exact-term tie-break below.
-                if (nv1.isNumber() && nv2.isNumber()) {
-                    int byNumber = NumericOrder.compare(nv1, nv2);
-                    if (byNumber != 0) {
-                        return byNumber;
-                    }
-                    return compareExactLiteralTerms(n1, n2);
-                }
-
-                // compareAlways provides a strict SPARQL "ORDER BY" ordering by VALUE,
-                // handling mixed datatypes safely without throwing exceptions. Across
-                // distinct value spaces (number vs string vs dateTime vs date ...) it
-                // orders by a fixed value-space rank independent of the actual values,
-                // so it stays transitive there.
-                int byValue = NodeValue.compareAlways(nv1, nv2);
-                if (byValue != 0) {
-                    return byValue;
-                }
-                // Value-equal but possibly term-distinct (e.g. "1"^^xsd:int vs
-                // "1"^^xsd:integer, "1.0" vs "1.00", or an int equal to a double).
-                // Break the tie on the exact RDF term so distinct terms get distinct,
-                // stable dictionary positions instead of collapsing onto one id (which
-                // would make locate() return the wrong term).
-                return compareExactLiteralTerms(n1, n2);
-            } catch (RuntimeException e) {
-                // No silent per-pair fallback (see valueOf): a comparison that
-                // fails is an error, and a failed build beats an input-order
-                // dependent dictionary whose lookups miss stored terms.
-                throw new IllegalStateException("Cannot order literals " + n1 + " and " + n2 + ": " + e, e);
-            }
+            // The second group is asked for only where the first can matter.
+            int group1 = temporalGroup(nv1);
+            return compareByValue(n1, nv1, group1, n2, nv2, (group1 == 0) ? 0 : temporalGroup(nv2));
         }
 
         // 4. If they are both URIs or both BNodes, fallback to Jena's standard lexicographical sort
         return NodeCmp.compareRDFTerms(n1, n2);
+    }
+
+    /** Two composite (cdt:List / cdt:Map) literals: by datatype IRI, then by lexical form (see {@link #compare}). */
+    static int compareComposites(Node n1, Node n2) {
+        int byDatatype = n1.getLiteralDatatypeURI().compareTo(n2.getLiteralDatatypeURI());
+        if (byDatatype != 0) {
+            return byDatatype;
+        }
+        return n1.getLiteralLexicalForm().compareTo(n2.getLiteralLexicalForm());
+    }
+
+    /** Two language-tagged literals: by language tag, lexical form, base direction (see {@link #compare}). */
+    static int compareLanguageTagged(Node n1, Node n2) {
+        int c = n1.getLiteralLanguage().compareTo(n2.getLiteralLanguage());
+        if (c != 0) {
+            return c;
+        }
+        c = n1.getLiteralLexicalForm().compareTo(n2.getLiteralLexicalForm());
+        if (c != 0) {
+            return c;
+        }
+        return Integer.compare(directionRank(n1), directionRank(n2));
+    }
+
+    /**
+     * Two literals that are not both composite and not both language-tagged,
+     * by their values: {@code nv1} and {@code nv2} are the values of
+     * {@code n1} and {@code n2}, {@code group1} and {@code group2} their
+     * {@link #temporalGroup}s ({@code group2} is read only where
+     * {@code group1} is not 0). Static, and given the values, so that a sort
+     * that holds each literal's value ({@link TermKey}) runs THIS code and
+     * not a copy of it.
+     */
+    static int compareByValue(Node n1, NodeValue nv1, int group1, Node n2, NodeValue nv2, int group2) {
+        try {
+            // Timezone-sensitive value spaces cannot go through compareAlways:
+            // it answers value order for XSD-determinate pairs but silently falls
+            // back to TERM order for indeterminate ones (a timezone-less dateTime
+            // vs a timezoned one within +/-14h; a month-based duration vs a
+            // day-based one). Mixing the two orders pairwise is not transitive -
+            // e.g. "2020-01-02T00:00:00" < "2020-01-02T08:00:00+14:00" <
+            // "2020-01-01T20:00:00Z" < the first - and a cyclic comparator breaks
+            // every sort and binary search in the store (locate() misses stored
+            // literals; builds fail with "Cannot resolve Object"). These spaces
+            // get a self-consistent total order below that agrees with XSD value
+            // order wherever XSD order is determinate, so the ValueCluster range
+            // pushdown stays over-inclusive and value-equal terms stay adjacent.
+            if (group1 != 0 && group1 == group2) {
+                if (group1 == GROUP_DURATION) {
+                    return compareDurationTotal(nv1, nv2, n1, n2);
+                }
+                if (group1 == GROUP_INSTANT) {
+                    // One ARQ value space holds dateTime and the g* kinds;
+                    // a fixed kind rank keeps cross-kind pairs off the
+                    // lexical fallback compareAlways would give them.
+                    int byKind = Integer.compare(instantKindRank(nv1), instantKindRank(nv2));
+                    if (byKind != 0) {
+                        return byKind;
+                    }
+                }
+                return compareTemporalTotal(nv1, nv2, n1, n2);
+            }
+
+            // Numbers of ANY XSD numeric datatype: exact value order. The
+            // SPARQL promotion compareAlways applies to mixed pairs (decimal
+            // vs float as floats) is lossy, and mixing it with the exact
+            // decimal-vs-decimal order and a lexical tie-break was cyclic.
+            // Value-equal terms fall to the exact-term tie-break below.
+            if (nv1.isNumber() && nv2.isNumber()) {
+                int byNumber = NumericOrder.compare(nv1, nv2);
+                if (byNumber != 0) {
+                    return byNumber;
+                }
+                return compareExactLiteralTerms(n1, n2);
+            }
+
+            // compareAlways provides a strict SPARQL "ORDER BY" ordering by VALUE,
+            // handling mixed datatypes safely without throwing exceptions. Across
+            // distinct value spaces (number vs string vs dateTime vs date ...) it
+            // orders by a fixed value-space rank independent of the actual values,
+            // so it stays transitive there.
+            int byValue = NodeValue.compareAlways(nv1, nv2);
+            if (byValue != 0) {
+                return byValue;
+            }
+            // Value-equal but possibly term-distinct (e.g. "1"^^xsd:int vs
+            // "1"^^xsd:integer, "1.0" vs "1.00", or an int equal to a double).
+            // Break the tie on the exact RDF term so distinct terms get distinct,
+            // stable dictionary positions instead of collapsing onto one id (which
+            // would make locate() return the wrong term).
+            return compareExactLiteralTerms(n1, n2);
+        } catch (RuntimeException e) {
+            // No silent per-pair fallback (see valueOf): a comparison that
+            // fails is an error, and a failed build beats an input-order
+            // dependent dictionary whose lookups miss stored terms.
+            throw new IllegalStateException("Cannot order literals " + n1 + " and " + n2 + ": " + e, e);
+        }
     }
 
     /**
@@ -289,7 +335,7 @@ public class NodeComparator implements Comparator<Node> {
      * one tag are one Node. Never build language-tagged Nodes through
      * {@code LiteralLabelFactory} or {@code Node_Literal} directly (BG-370).
      */
-    private static int compareExactLiteralTerms(Node n1, Node n2) {
+    static int compareExactLiteralTerms(Node n1, Node n2) {
         int c = NodeCmp.compareRDFTerms(n1, n2);
         if (c != 0 || n1.equals(n2)) {
             return c;
@@ -312,7 +358,7 @@ public class NodeComparator implements Comparator<Node> {
         return (d == TextDirection.LTR) ? 1 : 2;
     }
 
-    private static boolean hasLanguage(Node n) {
+    static boolean hasLanguage(Node n) {
         String lang = n.getLiteralLanguage();
         return lang != null && !lang.isEmpty();
     }
@@ -333,7 +379,7 @@ public class NodeComparator implements Comparator<Node> {
      * same-kind pairs compare as instants. Ill-formed literals answer false
      * to all predicates and stay on the compareAlways path.
      */
-    private static int temporalGroup(NodeValue nv) {
+    static int temporalGroup(NodeValue nv) {
         if (nv.isDateTime() || nv.isGYear() || nv.isGYearMonth()
                 || nv.isGMonth() || nv.isGMonthDay() || nv.isGDay()) {
             return GROUP_INSTANT;
@@ -442,7 +488,7 @@ public class NodeComparator implements Comparator<Node> {
         throw new IllegalArgumentException("Not an RDF term (blank node, IRI, literal or triple term): " + n);
     }
 
-    private boolean isDefaultGraph(Node n) {
+    static boolean isDefaultGraph(Node n) {
         if (n == null) return true;
         return n.equals(Quad.defaultGraphIRI) || n.equals(Quad.defaultGraphNodeGenerated);
     }

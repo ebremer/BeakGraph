@@ -39,10 +39,9 @@ public enum Index {
     }
 
     /**
-     * The quad order on {@code cmp} - a per-sort
-     * {@link com.ebremer.beakgraph.core.lib.CachingNodeComparator} for the
-     * RAM writer's quad sorts, whose literal objects otherwise convert
-     * through Jena's global cache on every comparison (BG-249).
+     * The quad order on {@code cmp}: a comparator that finds a literal's
+     * value somewhere cheaper than Jena's global cache, which the shared
+     * instance asks on every comparison (BG-249).
      */
     public abstract Comparator<Quad> getComparator(NodeComparator cmp);
 }

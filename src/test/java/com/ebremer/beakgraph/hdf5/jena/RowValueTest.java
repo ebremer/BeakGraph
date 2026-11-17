@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ebremer.beakgraph.core.lib.NodeValues;
+import com.ebremer.halcyon.hilbert.WKTDatatype;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.jena.datatypes.RDFDatatype;
@@ -18,11 +20,11 @@ import org.apache.jena.sparql.util.ExprUtils;
 import org.junit.jupiter.api.Test;
 
 /**
- * The value a worker makes of a term ({@link RowValue#valueOf}) must be the
+ * The value a worker, or a sort, makes of a term ({@link NodeValues#of}) must be the
  * value Jena makes of it ({@code NodeValue.makeNode}): the same class, the
  * same term, the same place in the order of values and the same number.
  * Jena's makers are not public, and a few of them are repeated in
- * {@link RowValue} to keep the common kinds of term out of Jena's cache; this
+ * {@link NodeValues} to keep the common kinds of term out of Jena's cache; this
  * is what says they are repeated right, for the Jena on the class path.
  */
 class RowValueTest {
@@ -47,6 +49,15 @@ class RowValueTest {
         terms.add(typed("P1D", XSDDatatype.XSDduration));
         terms.add(typed("POINT(1 2)", TypeMapper.getInstance().getSafeTypeByName("http://www.opengis.net/ont/geosparql#wktLiteral")));
         terms.add(typed("anything", TypeMapper.getInstance().getSafeTypeByName("http://ex.org/datatype")));
+        terms.add(typed("POLYGON ((0 0, 1 0, 1 1, 0 0))", WKTDatatype.INSTANCE));
+        terms.add(typed("not wkt", WKTDatatype.INSTANCE));
+        terms.add(typed("<p>x</p>", org.apache.jena.vocabulary.RDF.dtXMLLiteral));
+        terms.add(typed("[1, 2]", NodeFactory.getType("http://w3id.org/awslabs/neptune/SPARQL-CDTs/List")));
+        // Datatypes of Jena's plain class that only CARRY an IRI Jena has a maker for: Jena finds the maker by the IRI.
+        terms.add(typed("5", new org.apache.jena.datatypes.BaseDatatype(XSDDatatype.XSDint.getURI())));
+        terms.add(typed("abc", new org.apache.jena.datatypes.BaseDatatype(XSDDatatype.XSDint.getURI())));
+        terms.add(typed("1.5", new org.apache.jena.datatypes.BaseDatatype(XSDDatatype.XSDdouble.getURI())));
+        terms.add(typed("text", new org.apache.jena.datatypes.BaseDatatype(XSDDatatype.XSDstring.getURI())));
         for (String lexical : new String[] {"0", "1", "-1", "+5", "05", "007", " 12 ", "123456789012345678901234567890", "1.0", "abc", "", "1e3", "-0"}) {
             for (RDFDatatype datatype : new RDFDatatype[] {XSDDatatype.XSDinteger, XSDDatatype.XSDint, XSDDatatype.XSDlong, XSDDatatype.XSDshort,
                     XSDDatatype.XSDbyte, XSDDatatype.XSDnonNegativeInteger, XSDDatatype.XSDpositiveInteger, XSDDatatype.XSDnegativeInteger,
@@ -71,7 +82,7 @@ class RowValueTest {
         int made = 0;
         for (Node term : terms()) {
             NodeValue jena = NodeValue.makeNode(term);
-            NodeValue ours = RowValue.valueOf(term);
+            NodeValue ours = NodeValues.of(term);
             String what = term + " (" + jena.getClass().getSimpleName() + ")";
             assertSame(jena.getClass(), ours.getClass(), what);
             assertEquals(term, ours.asNode(), what);

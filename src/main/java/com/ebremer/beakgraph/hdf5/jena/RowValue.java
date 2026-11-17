@@ -1,13 +1,8 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
 import com.ebremer.beakgraph.core.NodeTable;
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.util.Set;
-import org.apache.jena.datatypes.RDFDatatype;
-import org.apache.jena.datatypes.xsd.XSDDatatype;
+import com.ebremer.beakgraph.core.lib.NodeValues;
 import org.apache.jena.graph.Node;
-import org.apache.jena.graph.impl.LiteralLabel;
 import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.binding.Binding;
 import org.apache.jena.sparql.expr.Expr;
@@ -16,12 +11,6 @@ import org.apache.jena.sparql.expr.ExprTransformCopy;
 import org.apache.jena.sparql.expr.ExprTransformer;
 import org.apache.jena.sparql.expr.ExprVar;
 import org.apache.jena.sparql.expr.NodeValue;
-import org.apache.jena.sparql.expr.nodevalue.NodeValueDecimal;
-import org.apache.jena.sparql.expr.nodevalue.NodeValueDouble;
-import org.apache.jena.sparql.expr.nodevalue.NodeValueFloat;
-import org.apache.jena.sparql.expr.nodevalue.NodeValueInteger;
-import org.apache.jena.sparql.expr.nodevalue.NodeValueNode;
-import org.apache.jena.sparql.expr.nodevalue.NodeValueString;
 import org.apache.jena.sparql.function.FunctionEnv;
 
 /**
@@ -42,14 +31,15 @@ import org.apache.jena.sparql.function.FunctionEnv;
  *       read and no value made.</li>
  *   <li><b>A value asked first</b> is made as Jena makes it, without the
  *       cache, where that is one step that Jena's public classes offer
- *       ({@link #valueOf}): an IRI or a blank node, a string, an integer, a
- *       decimal, a double, a float. Anything else - a date, a boolean, a
- *       language-tagged string, a literal that is not well formed - is
- *       Jena's to make, through its cache as before.</li>
+ *       ({@link NodeValues#of}): an IRI or a blank node, a string, an integer,
+ *       a decimal, a double, a float, a literal of a datatype Jena has no
+ *       value for. Anything else - a date, a boolean, a language-tagged
+ *       string, a literal that is not well formed - is Jena's to make,
+ *       through its cache as before.</li>
  * </ul>
  * The values are the ones Jena would have made - of the same classes, with
  * the same number and the same term - so an expression cannot tell; a test
- * holds {@link #valueOf} to {@code NodeValue.makeNode} term by term.
+ * holds {@link NodeValues#of} to {@code NodeValue.makeNode} term by term.
  *
  * <p>For a binding that is not a row of ids of this store, or that has a
  * parent holding variables, it is Jena's variable.
@@ -58,13 +48,6 @@ final class RowValue extends ExprVar {
 
     private static final int BITS = 10;
     private static final long GOLDEN = 0x9E3779B97F4A7C15L;
-
-    /** The datatypes Jena reads as an integer of any size. */
-    private static final Set<RDFDatatype> INTEGERS = Set.of(
-            XSDDatatype.XSDinteger, XSDDatatype.XSDnonPositiveInteger, XSDDatatype.XSDnonNegativeInteger,
-            XSDDatatype.XSDpositiveInteger, XSDDatatype.XSDnegativeInteger, XSDDatatype.XSDbyte, XSDDatatype.XSDshort,
-            XSDDatatype.XSDint, XSDDatatype.XSDlong, XSDDatatype.XSDunsignedByte, XSDDatatype.XSDunsignedShort,
-            XSDDatatype.XSDunsignedInt, XSDDatatype.XSDunsignedLong);
 
     private final NodeTable nodeTable;
     private final long[] ids = new long[1 << BITS];              // no id is 0
@@ -102,7 +85,7 @@ final class RowValue extends ExprVar {
                     }
                     Node term = nodeTable.getNodeForNodeId(id);
                     if (term != null) {
-                        NodeValue value = valueOf(term);
+                        NodeValue value = NodeValues.of(term);
                         values[slot] = value;
                         ids[slot] = id;
                         return value;
@@ -111,42 +94,6 @@ final class RowValue extends ExprVar {
             }
         }
         return super.eval(binding, env);
-    }
-
-    /**
-     * The value of {@code term}, as {@code NodeValue.makeNode} gives it. The
-     * common kinds are made here the way Jena's own makers make them
-     * ({@code NVFactory}: a well-formed literal's number or string beside its
-     * term), which keeps them out of Jena's cache; every other kind, and any
-     * literal that is not well formed, is handed to Jena.
-     */
-    static NodeValue valueOf(Node term) {
-        if (!term.isLiteral()) {
-            return new NodeValueNode(term);
-        }
-        RDFDatatype datatype = term.getLiteralDatatype();
-        if (XSDDatatype.XSDstring.equals(datatype)) {
-            return new NodeValueString(term.getLiteralLexicalForm(), term);
-        }
-        LiteralLabel literal = term.getLiteral();
-        if (literal.isWellFormed()) {
-            if (XSDDatatype.XSDdouble.equals(datatype)) {
-                return new NodeValueDouble(((Number) literal.getValue()).doubleValue(), term);
-            }
-            if (XSDDatatype.XSDfloat.equals(datatype)) {
-                return new NodeValueFloat(((Number) literal.getValue()).floatValue(), term);
-            }
-            if (XSDDatatype.XSDdecimal.equals(datatype)) {
-                return new NodeValueDecimal(new BigDecimal(term.getLiteralLexicalForm().trim()), term);
-            }
-            if (INTEGERS.contains(datatype)) {
-                String lexical = term.getLiteralLexicalForm().trim();
-                if (datatype.isValid(lexical)) {
-                    return new NodeValueInteger(new BigInteger(lexical), term);
-                }
-            }
-        }
-        return NodeValue.makeNode(term);
     }
 
     /**

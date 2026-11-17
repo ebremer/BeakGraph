@@ -90,9 +90,9 @@ final class HugeTripleTerms implements AutoCloseable {
                     }
                     id = p;
                 } else if (term.isLiteral() || term.isTripleTerm()) {
-                    id = litCur.locate(term, "triple-term object") + numEntities;
+                    id = litCur.locate(ref.key(), "triple-term object") + numEntities;
                 } else {
-                    id = entCur.locate(term, "triple-term component");
+                    id = entCur.locate(ref.key(), "triple-term component");
                 }
                 resolved.add(new RowId(key, id));
             }

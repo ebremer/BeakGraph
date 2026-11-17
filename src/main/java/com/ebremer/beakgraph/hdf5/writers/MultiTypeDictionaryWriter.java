@@ -269,14 +269,15 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
      * the dictionaries are the one place a comparator gap (a duplicate in a
      * caller-supplied sorted list, or a NodeCmp regression like the dirLang
      * one NodeComparatorDirLangTest guards) can be caught for every engine at
-     * once. One pass of adjacent compares, through the same memoizing
-     * comparator the sort used (BG-104).
+     * once. One pass of adjacent compares (BG-104), through the comparator
+     * itself and not the keys the list was sorted on: this is also what
+     * holds a sort on keys to NodeComparator's order, list by list.
      */
     private static void requireStrictlyAscending(List<Node> sorted, String name) {
         if (sorted.size() < 2) {
             return;
         }
-        Comparator<Node> order = NodeSorter.sortComparator(sorted.size());
+        Comparator<Node> order = NodeSorter.adjacentOrder();
         for (int i = 1; i < sorted.size(); i++) {
             int c = order.compare(sorted.get(i - 1), sorted.get(i));
             if (c == 0) {

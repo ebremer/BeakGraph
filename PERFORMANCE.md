@@ -303,7 +303,8 @@ Seen in the same profiles, and not changed (but for the first, done since: see t
 - **`BindingNodeId.get` is 12.7% of the scans**: every row asks again whether each variable is bound.
 - **A 64 KiB byte range of a file takes 3.1 ms** in directory mode, twelve times an `ASK`; the remote
   battery's 241 range requests take 0.6 s in all.
-- **A `-method 3` build spends 38% of its CPU comparing terms** for the dictionary's order.
+- **A `-method 3` build spends 38% of its CPU comparing terms** for the dictionary's order. (Done since: see
+  "Terms sorted on keys".)
 
 ### Graph variables on ids, and counts from the index (2026-11-14, not committed when written)
 
@@ -792,3 +793,156 @@ a storage directory whose Zarr store a JVM then reads through `BG.getBeakGraph(U
 read over HTTP from inside the native binary. Nothing on the command line asks for it, and the binary is
 built with the `https` URL protocol enabled and `http` not (`--enable-url-protocols=https`), which the one
 document fetched through Falcon's `HttpStore` would go by.
+
+### Terms sorted on keys (2026-11-17, not committed when written)
+
+Builds had one line above (38% of a `-method 3` build comparing terms). Profiles of builds of a store shaped
+like pathology data (Flight Recorder; 300,000 features, each with a polygon of 24 to 63 vertices, a class, a
+probability and ten measurements: 4.5M source quads, 11.0M rows with `-spatial`, 8.0M literals, 394 MB) put
+it higher: `NodeComparator.compare` was 43% of the processor samples of `-method 4` on 4 cores and 60% of
+`-method 3` on 16. The store's format is untouched, and so is every byte of a store.
+
+What a sort asked the comparator, for both terms of every pair it looked at:
+
+- **the literal's value**, found in a memo by the literal itself (its hash, then its text compared), and on
+  a miss made through Jena's one cache for the JVM, which every sort thread writes and evicts from: 18 to
+  21% and 9 to 20% of a build;
+- **what kind of value** that is: nine questions to learn that a string is no date;
+- **for two numbers, two `BigDecimal`s** made of them: 10 to 12%.
+
+Done:
+
+- **A sort runs on keys** (`TermKey`). A key holds its term's place in the order - its kind; for a blank
+  node or an IRI the first seven characters packed into a long; for a literal its value and what kind of
+  value; for a number the double nearest to it - worked out once, at the key's first comparison, by the
+  thread that asks. Two keys are compared by reading them. `NodeSorter` (the dictionaries of methods 0, 2
+  and 3) sorts an array of keys; a term row of the disk engines (methods 1, 4, 5) holds its term's key.
+- **The order is the comparator's, by its own code.** `NodeComparator`'s branches for two literals are
+  static methods now, given the values, and the keys call them. What the keys decide by themselves is two
+  things: IRIs and blank nodes by the packed prefix (which the disk engines did already, anew for every
+  comparison), and two numbers by their nearest doubles. Rounding to the nearest double never reverses two
+  numbers, so different doubles decide; equal ones decide only when both numbers are floats or doubles,
+  and otherwise the exact values are compared as before.
+- **The rows of one term share one key**: a graph's rows and a subject's as they come from the source, and
+  a term's rows as a spilled run is read back (the run format writes a term once). A merge then works a
+  term's place out once a run, not once a row.
+- **A value is made without Jena's cache** (`NodeValues.of`: what the query workers' `RowValue` had for
+  strings and numbers, moved to where both use it), now also for a literal of a datatype Jena has no value
+  for, which is its own value. A WKT literal is one.
+- **Two floats or doubles are compared as doubles** (`NumericOrder.compare`), for every caller: they are
+  their exact values. A reader's search of a dictionary gains the same.
+- **The dictionary join asks keys too** (`DictCursor`). It asked the shared comparator, and so Jena's
+  cache, twice for every distinct term of a column.
+- **A dictionary made in memory is still checked against the comparator itself** before it is stored
+  (`requireStrictlyAscending`, each term against the next). That check is what holds a sort on keys to
+  `NodeComparator` build by build, so it does not run on keys; it makes each literal's value once now
+  (`NodeSorter.adjacentOrder`), where it looked it up in a memo twice.
+
+Found on the way, and fixed with it:
+
+- **Threads that make a JVM's first values wait for each other for good.** Jena's `NodeValue` makes values
+  of its subclasses while it is initialized, and each subclass waits for `NodeValue`. A sort's threads,
+  now the first in the JVM to make a value themselves, deadlocked in class initialization: every
+  `-method 1` build hung in its first sort. No unit test could show it, since some test before it had
+  made a value; the command line did. `NodeValues` initializes `NodeValue` before any thread can make a
+  value through it, and a test runs the first use in JVMs of their own (six of six hung without that, and
+  six of six ended with it).
+
+Measured with the jar before and the jar after in turn on the same source, the 300,000 features, in
+seconds (two figures are two rounds; the command line polls once a second for a build to end).
+`-method 0` was timed with the final jar; the other rows with a jar one small change before it, in the
+plain comparator, which their sorts do not go through:
+
+| Build | Before | After |
+|---|---|---|
+| `-method 4 -spatial` (4 cores, the default) | 179.5, 195.7 | 103.2, 121.6 |
+| `-method 4 -spatial -cores 16` | 154.7 | 109.6 |
+| `-method 3 -spatial -cores 16` | 102.6, 108.2 | 58.0, 59.3 |
+| `-method 3 -spatial` (4 cores) | 159.1 | 92.4 |
+| `-method 1 -spatial` | 173.7 | 141.4 |
+| `-method 0 -spatial` | 277.0, 289.9 | 186.4, 185.8 |
+| The 4.0M quads in 5,000 graphs, `-method 3` | 12.9, 15.0 | 11.9, 13.0 |
+
+Where it went, by the builds' own logs:
+
+| Stage | Before | After |
+|---|---|---|
+| `-method 4`, 4 cores: parse and augment (it waits for the runs being sorted) | 46, 50 | 16, 18 |
+| ... merge the runs and write the sorted columns | 65, 73 | 42, 40 |
+| ... dictionaries | 40, 36 | 23, 37 |
+| ... ids | 14, 20 | 8, 11 |
+| ... encode, indexes, container | 15 | 14 |
+| `-method 3`, 16 cores: sort the dictionaries' terms | 24.3 | 4.7 |
+| ... sort the GSPO keys (a radix sort, beside the sorts of the three columns) | 15.6 | 0.5 |
+| ... wait for the dictionaries to be encoded and the columns filled | 35.1 | 25.7 |
+| `-method 0`: sort the literals | 33, 29 | 5, 5 |
+| ... the literals' dictionary after its sort (the check of its order, the encoding) | 107, 111 | 57, 56 |
+| ... find the ids of every quad | 111, 121 | 97, 95 |
+
+And by profiles of the two parallel engines before and after:
+
+| | Before | After |
+|---|---|---|
+| `-method 4`, 4 cores: processor samples | 17,112 | 12,725 |
+| ... of them comparing terms | 43% | 15% |
+| `-method 3`, 16 cores: processor samples | 22,356 | 11,844 |
+| ... of them comparing terms | 60% | 19% |
+
+What that says:
+
+- **A build of this data takes 38 to 45% less time with the parallel engines** on the cores they were
+  measured with most, 29% less with `-method 4` on 16 cores, 19% less with `-method 1` and 33 to 36%
+  less with `-method 0`. The store of many graphs, which has few literals to a quad and none long, gains
+  a second or two of thirteen to fifteen.
+- **Every store is the bytes it was.** The six engines on the store of many graphs, on a spatial store of
+  30,000 features, and on a source made of every kind of term the comparator has a branch for (numbers
+  equal across datatypes, numbers past a double's range, infinities and NaN, dates with and without a
+  zone, durations, language tags with and without a direction, lists and maps, triple terms, 147,000
+  quads); and methods 0, 3 and 4 on the 300,000 features, the last two on 4 and on 16 cores. Each store
+  was compared with the one the jar before built from the same source.
+- **More than the sorts was waiting on the comparator.** The parser of `-method 4` waits for the run being
+  sorted, so its stage is a third of what it was. `-method 3`'s radix sort of the index keys shared the
+  cores with three sorts of terms and took 15.6 s; alone it takes 0.5. The check of a dictionary's order
+  was about fifty seconds of `-method 0`, going by the stage it is in.
+- **What is left of comparing is in good part the texts.** A fifth to a third of it is Jena comparing the
+  lexical forms of two WKT literals, which begin alike.
+- **The times of one build differ by 10 to 20% from run to run** on this machine (the same jar: 146 s
+  under the profiler early, 169, 180 and 196 s later), which is why the jars took turns. Two sets of
+  timings were thrown away: one taken while another program used four cores, and a pair of `-method 0`
+  in which the jar before took 390 s (the final jar: 185 s, as in the two pairs of the table).
+
+Still open here:
+
+- **`-method 0` finds every quad's ids by binary search through the comparator**: 95 to 97 s of its
+  186 s, half of the build that is left. It takes a sixth less than it did, which fits two doubles being
+  compared as doubles there now; the search itself is untouched. `-method 3` has a map from term to id;
+  `-method 2` searches as `-method 0` does, on its cores (not measured here).
+- **The dictionary is encoded on one thread, and parses every geometry**: 19 to 21% of a build now, half of
+  it the JTS parse of a literal whose value is not used (`DictionaryNodeEncoder` asks every literal for
+  its value) and half zstd.
+- **The spatial augmentation is as large**: 18 to 21%.
+- **The disk engines write the sorted columns a term a row** (`materialize`) and read them back three
+  times, a new term object a record: 11% and 8% (the id join) of `-method 4`. Its merge, its dictionaries
+  and its id join take the same time on 4 cores and on 16.
+- **`-method 3` sorts the terms of its three columns** (graphs, subjects, objects) though every term has an
+  id by then, and ids are in the order of their terms: a sort of numbers would do.
+- Not measured: the native binary, real data, Linux and macOS.
+
+Seen on the way, and not changed:
+
+- **A build can fail at its last step on Windows**: Defender holds a file that was just closed for about a
+  quarter of a second (a plain JDK program that writes a file, closes it and renames it at once fails
+  three times of three at 400 MB), and Falcon's HDF5 writer renames its file without trying again. The
+  file it leaves behind is the whole store.
+- **The in-memory and the disk engines write different bytes for a source with blank nodes** (the mixed
+  source above: 263,085 bytes differ between methods 0, 2, 3 and methods 1, 4, 5, in the jar before as in
+  this one; without its blank nodes the stores are the same bytes).
+
+Tests: 2,364 run and none fails (92 are skipped, as before: entries of the W3C suites). New: the keys
+against the comparator pair by pair - terms of every kind, some 700 numbers written in ten datatypes in
+every pair, and about 30,000 random numbers, each with the 40 that follow it in the comparator's order,
+which are the ones a nearest double separates least; a sort on keys against a sort on the comparator; one
+key asked by many threads before it has worked anything out; the first values of a JVM made on sixteen
+threads at once; the comparator for a walk along a list against the comparator; and a value made here
+against Jena's for a WKT literal, for a datatype Jena does not know, and for a datatype that only carries
+an XSD IRI.

@@ -70,7 +70,39 @@ public final class NumericOrder {
         int rb = rank(b);
         if (ra != rb) return Integer.compare(ra, rb);
         if (ra != 1) return 0;
+        if (isBinary(a) && isBinary(b)) {
+            // Two finite floats or doubles ARE their exact values: comparing
+            // them is comparing those, without the two BigDecimals (-0.0 and
+            // 0.0 are one value either way).
+            double x = binary(a);
+            double y = binary(b);
+            return (x < y) ? -1 : (x > y) ? 1 : 0;
+        }
         return exact(a).compareTo(exact(b));
+    }
+
+    /** A float or a double: a number whose exact value is the double {@link #binary} gives. */
+    static boolean isBinary(NodeValue nv) {
+        return isFloatKind(nv) || isDoubleKind(nv);
+    }
+
+    /** The value of a float or a double, as a double (a float converts exactly). */
+    static double binary(NodeValue nv) {
+        return isFloatKind(nv) ? nv.getFloat() : nv.getDouble();
+    }
+
+    /**
+     * The double nearest to a finite number's exact value. Rounding to the
+     * nearest double never reverses an order: of two numbers whose nearest
+     * doubles differ, the one with the smaller double is the smaller. Equal
+     * doubles decide nothing unless both numbers are {@link #isBinary}. A
+     * value past the range of a double rounds to an infinity, which keeps
+     * that property.
+     */
+    static double nearest(NodeValue nv) {
+        if (nv.isInteger()) return nv.getInteger().doubleValue();
+        if (nv.isDecimal()) return nv.getDecimal().doubleValue();
+        return binary(nv);
     }
 
     /**

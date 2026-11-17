@@ -1,6 +1,5 @@
 package com.ebremer.beakgraph.huge;
 
-import com.ebremer.beakgraph.core.lib.CachingNodeComparator;
 import com.ebremer.beakgraph.hdf5.Index;
 import java.nio.file.Path;
 
@@ -57,11 +56,10 @@ public interface SorterProvider {
         return new SorterProvider() {
             @Override
             public RecordSorter<HugeRecords.TermRow> termSorter(Path workDir, String tag) {
-                // A PER-SORTER memoizing comparator, as the hugeUltra provider
-                // has always had (BG-249). Cap ~= two spill batches of nodes.
-                int memo = (int) Math.min(1 << 22, Math.max(1 << 16, 2L * termSpillBatch));
+                // On the rows' sort keys, as the hugeUltra provider's: a term's
+                // place in the order is worked out once, not for every pair.
                 return new ExternalSorter<>(workDir, tag, HugeRecords.TERM_ROW_CODEC,
-                        HugeRecords.termOrder(new CachingNodeComparator(memo)), termSpillBatch, mergeFanIn,
+                        HugeRecords.TERM_ORDER, termSpillBatch, mergeFanIn,
                         HugeRecords.TERM_ROW_BYTES, termSpillBytes);
             }
 
