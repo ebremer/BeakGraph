@@ -80,6 +80,85 @@ original WKT verbatim.
 
 These are expectations from the measurements, not results.
 
+## The candidates of 2026-11-17, by number
+
+What else could be made faster, listed on 2026-11-17 from Flight Recorder profiles of builds and of
+queries: the JVM, in process, the same Windows machine, synthetic data only. The numbers are this list's
+own - they are not the five design changes above - and an item keeps its number when others are done, so
+that it can be named by it. The two stores are 300,000 features with a polygon of 24 to 63 vertices, a
+class, a probability and ten doubles (4.5M source quads, 11.0M rows with `-spatial`, 394 MB), and 4.0M
+quads in 5,000 graphs of 801. A figure is from the profile that put its item on the list unless it says
+otherwise; nothing here was measured on the native binary, on real data, or on Linux or macOS. What was
+done is under "Progress".
+
+Builds are items 1 to 3 and 16 to 24; reads and queries are items 4 to 15.
+
+1. **Done. Literal sort keys in the builds.** See "Terms sorted on keys".
+2. **The dictionary encoder asks every literal for its value** (`DictionaryNodeEncoder`), and for a WKT
+   literal that is a whole JTS parse whose result is not used. Tried on top of item 3 and not kept: the
+   dictionaries' stage of `-method 4` takes 4.4 s on 16 cores where it takes 5.7, and 7.1 s on 4 where it
+   takes 10.2, and the store is the same bytes. Every engine shares the encoder, so it wants its own
+   comparison of the six engines' bytes; `DictionaryNodeEncoder.prepare`, which works the same value
+   out ahead on the pool, changes with it.
+3. **Done. The disk engines' stages that ignored the cores** (the merge, the dictionaries, the ids). See
+   "Disk builds by ranges of the term order".
+4. **A long string read at random decodes its whole front-coded block**: 16 strings, each its own zstd
+   frame. `-verify -deep` of the 300,000 features took 146 s, 68% of it in zstd, on one thread (the store
+   of many graphs: 4 s). The reader alone can change: decode only the fragments the string asked for
+   needs.
+5. **(Format) Strings compressed a block at a time, or with a trained dictionary; geometry in binary.**
+   Design change 5 above. Not prototyped.
+6. **`sfIntersects`**: a region of 3,174 hits takes 557 ms on one thread - 37% parsing WKT, 28% `isValid`
+   for each candidate, 15% fetching the strings. A candidate seen only in cells that lie wholly inside
+   the region needs no test (a design, not prototyped); the tests could run in the workers; the parse
+   could be cheaper.
+7. **`ORDER BY` on ids**: `ORDER BY DESC(?a) LIMIT 10` over 300,000 rows takes 220 ms, 90% of it Jena's
+   comparator through its cache of values. `OpExecutorBG` has no case for `OpOrder` or `OpTopN`. To be
+   taken only where the dictionary's order is ARQ's (`FilterBounds.orderAgreesWithArq`).
+8. **`SELECT DISTINCT` through `GroupOnIds`**: 218 ms for 800,000 rows of 1,000 values across graphs,
+   where the same question as `COUNT(DISTINCT)` takes about 6 ms.
+9. **A join makes an iterator for every row**: `BGIteratorSO.<init>` is 76 to 88% of a join (a `select1`,
+   the start of a block, and a lookup in the Caffeine `queryMemo` for the range's bounds, a row). The
+   rows arrive in subject order, so a merge would do.
+10. **A scan with a constant object is one thread's**: `?f a geo:Feature` joined and grouped takes
+    169 ms, 99.9% of it on the main thread.
+11. **The order of joins ignores a filter's range**: a star with `FILTER(?p > 0.99)` takes 386 ms from
+    300,000 rows, and the range alone is 3,006 rows (about 1 ms). Not tried on a `-void` store.
+12. **`BIND`, `EXISTS` and `MINUS` inside `GRAPH ?g` are still Jena's**: 256, 101 and 56 ms on the store
+    of many graphs.
+13. **Writing results**: 100,000 rows in process are read in 14 ms and written as CSV in 102, TSV in 119,
+    XML in 507 and JSON in 688. Half of the XML (49%) is printing a character at a time. The endpoint
+    offers no TSV, and its CSV took ten times its XML there (not diagnosed).
+14. **Remote reads**: small Zarr arrays fetched together, `.zarr.zip` over HTTP, a directory's files laid
+    out together. See the Zarr section under "Progress"; not measured again for this list.
+15. **The index's shape**: SPOG order, dense graph ids, scans that decode in bulk. Design change 3 above;
+    not measured again for this list.
+16. **`-method 0`, the default engine, finds every quad's ids by binary search through the comparator**:
+    95 to 97 s of its 186 s. `-method 3` has a map from term to id; `-method 2` searches as `-method 0`
+    does, on its cores (not measured).
+17. **The dictionaries are encoded on one thread.** Done for the disk engines by item 3, where the stage
+    is bound by memory now (79 s of processor time on 16 threads for work one thread did in 23). The
+    in-memory engines were not looked at; it was 19 to 21% of a build before.
+18. **The parse and the spatial augmentation**: one thread parses and one takes the rows. 12 to 15 s of a
+    `-method 4` build of 39 to 50 s, its largest stage now. Not looked into further.
+19. **Mostly done by item 3. The disk engines wrote the sorted columns a term a row** and read them back
+    three times.
+20. **`-method 3` sorts the terms of its three columns**, though every term has an id by then and ids are
+    in the order of their terms: a sort of numbers would do. Not sized.
+21. **The disk engines could make the quads and both indexes beside the dictionaries**: neither needs the
+    other, and they are 6 s on one thread while the pool waits. Left out of item 3 because it makes it
+    harder to report a failure at once.
+22. **The disk engines write the container on one thread**: 7 s; the id sequences are block-encoded in
+    two passes over their temp files.
+23. **The disk engines read the ids back a column a thread**, the ranges in turn (1.7 s); a range a
+    thread would do.
+24. **`-method 1` reads its dictionary through a stream that asks the file's length for every buffer**:
+    its dictionaries' stage takes 1 to 6 s longer than before item 3 with the same processor samples.
+
+Where to go next, as it looked when item 3 was done: 16 and then 2 for builds (16 is the largest figure
+here, and in the engine a build gets by default); 21 and then 22 for the disk engines (13 s of the 39 a
+`-method 4` build takes on 16 cores); 4 and then 6 for reads.
+
 ## Progress
 
 ### Item 1, first step: format v6 (2026-11-14, not committed when written)
