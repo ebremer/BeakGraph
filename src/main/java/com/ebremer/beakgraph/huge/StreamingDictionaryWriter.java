@@ -88,6 +88,20 @@ final class StreamingDictionaryWriter implements AutoCloseable {
                               DictionarySection section, SortedSet<String> dataTypes, SortedSet<String> langSet,
                               boolean anyLangDir, HugeTripleTerms ttSupport)
             throws IOException {
+        this(workDir, name, nodeCount, stats, section, dataTypes, langSet, anyLangDir, ttSupport, null, 0);
+    }
+
+    /**
+     * As above, with the strings of the IRI and string stores front-coded and
+     * compressed by the threads of {@code pool} ({@link SpillFCDWriter}),
+     * {@code window} batches at a time, while the encoding thread goes on;
+     * a null pool leaves it all to the encoding thread.
+     */
+    StreamingDictionaryWriter(Path workDir, String name, long nodeCount, Stats stats,
+                              DictionarySection section, SortedSet<String> dataTypes, SortedSet<String> langSet,
+                              boolean anyLangDir, HugeTripleTerms ttSupport,
+                              java.util.concurrent.Executor pool, int window)
+            throws IOException {
         // The section fixes the routed term kinds (the RAM writer's Builder.section);
         // triple-term support only makes sense where triple terms are routed, so
         // the two engines can no longer disagree about a section's contents (BG-90).
@@ -150,9 +164,9 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             }
 
             this.iri = (!et.contains(DataType.IRI) || (stats.numIRI == 0)) ? null
-                    : open(opened, new SpillFCDWriter(dictDir, "iri", FCD_BLOCK_SIZE));
+                    : open(opened, new SpillFCDWriter(dictDir, "iri", FCD_BLOCK_SIZE, pool, window));
             this.strings = (!et.contains(DataType.STRING) || (stats.numStrings == 0)) ? null
-                    : open(opened, new SpillFCDWriter(dictDir, "strings", FCD_BLOCK_SIZE));
+                    : open(opened, new SpillFCDWriter(dictDir, "strings", FCD_BLOCK_SIZE, pool, window));
 
             if (literalsPresent && !langSet.isEmpty()) {
                 this.langs = open(opened, new SpillFCDWriter(dictDir, "langs", FCD_BLOCK_SIZE));
@@ -217,6 +231,12 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         if (doubles != null) doubles.complete();
         if (langTags != null) langTags.complete();
         if (langDirs != null) langDirs.complete();
+        // The string stores: the batches still being encoded are written here,
+        // so that what fails in one fails the encode and not the assembly.
+        if (iri != null) iri.finish();
+        if (strings != null) strings.finish();
+        if (typedLiteralsDictionary != null) typedLiteralsDictionary.finish();
+        if (langs != null) langs.finish();
     }
 
     long getNumberOfNodes() {

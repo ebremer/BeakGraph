@@ -24,10 +24,12 @@ permalink: /architecture/writers/
 - Shared code where hand-mirrored copies once diverged: one parser setup (`RdfSources.parser`), one
   relative-IRI rule (`RelativeIris`), one spatial augmenter, one comparator, one id-sequence encoder
   (`BlockedEncoder`)
-- Disk engines (1, 4, 5): external merge sort of (term,row) records → dictionaries by merge-dedup →
-  ids by sort-merge join → two id-quad sorts → the store written a piece of an array at a time. RAM
-  bounded by spill batches (records and bytes) at ANY quad count, JSON-LD documents excepted (they
-  are not streamed)
+- Disk engines (1, 4, 5): external merge sort of (term,row) records → one merge of the sorted
+  columns into the distinct dictionaries and every row's ids → two id-quad sorts → the store written
+  a piece of an array at a time. Engines 4 and 5 run that merge a range of the term order at a time,
+  as many ranges at once as `-cores`, and decode a dictionary's terms and compress its strings ahead
+  of the thread that encodes it. RAM bounded by spill batches (records and bytes) at ANY quad count,
+  JSON-LD documents excepted (they are not streamed)
 - In-memory outputs are byte-identical per source (0, 2, 3); disk outputs are isomorphic
   (rank-derived bnode labels)
 - Every engine writes both containers (`-zarr`, `-zip`, or a destination named `*.zarr` / `*.zip`)

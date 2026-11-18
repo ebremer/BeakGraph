@@ -105,8 +105,8 @@ class MergeConcurrencyTest {
 
     private static final ParallelSpillSorter.RunFormat<String> STRINGS = new ParallelSpillSorter.RunFormat<>() {
         @Override
-        public void writeRun(DataOutput out, Object[] sorted, int n) throws IOException {
-            for (int i = 0; i < n; i++) out.writeUTF((String) sorted[i]);
+        public void writeRun(DataOutput out, Object[] sorted, int from, int to) throws IOException {
+            for (int i = from; i < to; i++) out.writeUTF((String) sorted[i]);
         }
 
         @Override

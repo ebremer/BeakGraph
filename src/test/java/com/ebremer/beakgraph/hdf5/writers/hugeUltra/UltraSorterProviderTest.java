@@ -157,7 +157,7 @@ class UltraSorterProviderTest {
         UltraSorterProvider.GroupedTermFormat format = new UltraSorterProvider.GroupedTermFormat();
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream out = new DataOutputStream(bytes)) {
-            format.writeRun(out, rows.toArray(), rows.size());
+            format.writeRun(out, rows.toArray(), 0, rows.size());
         }
         List<TermRow> back = new ArrayList<>();
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {

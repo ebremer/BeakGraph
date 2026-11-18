@@ -74,6 +74,9 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
                         provider, pool, new PlaidIngest(builder.cores))) {
                     pipeline.setSourceRoot(builder.getSourceRoot());
                     pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
+                    if (builder.rangeRows > 0) {
+                        pipeline.setMinRangeRows(builder.rangeRows);
+                    }
                     pipeline.run(tmp, container);
                 }
             });
@@ -99,6 +102,7 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
 
         private int cores = Math.max(2, Runtime.getRuntime().availableProcessors());
         private int mergeConcurrency = 0;   // 0 = UltraSorterProvider.defaultMergeConcurrency(mergeFanIn, cores)
+        private long rangeRows = 0;         // 0 = the pipeline's default (HugeBuildPipeline.setMinRangeRows)
 
         public Builder() {
             super(1 << 19, 1 << 22, 128, com.ebremer.beakgraph.huge.SorterProvider.defaultTermSpillBytes(2));
@@ -126,6 +130,24 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
             if (merges < 1) throw new IllegalArgumentException("mergeConcurrency must be >= 1");
             this.mergeConcurrency = merges;
             return this;
+        }
+
+        /**
+         * Rows a range of the term order holds at least (default 262,144). The
+         * sorted term columns are merged into the dictionaries, and every row
+         * given its ids, a range of the term order at a time - up to four
+         * ranges a core, each merged by a thread of its own - but never in
+         * more ranges than leave each this many rows; a build of fewer rows
+         * than two of them is merged as one range.
+         */
+        public Builder setRangeRows(long rows) {
+            if (rows < 1) throw new IllegalArgumentException("rangeRows must be >= 1");
+            this.rangeRows = rows;
+            return this;
+        }
+
+        public long getRangeRows() {
+            return rangeRows;
         }
 
         int effectiveMergeConcurrency() {

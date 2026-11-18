@@ -26,8 +26,12 @@ import org.slf4j.LoggerFactory;
  *     continues - one spill in flight, ingestion backpressured on the previous
  *     one; when the shared pool is saturated by stage tasks the spill runs
  *     on the ingesting thread itself (BG-138);</li>
- * <li>the three column sorts, three dictionary encodes, and three id joins
- *     each run concurrently;</li>
+ * <li>the sorted term columns are merged into the dictionaries - and every
+ *     row given the ids of its terms - a range of the term order at a time,
+ *     up to {@code cores} ranges at once ({@link Builder#setRangeRows}); the
+ *     column sorts, the dictionary encodes and the id columns each run
+ *     concurrently, and a dictionary's terms are decoded and its strings
+ *     compressed by the pool's threads ahead of the one that encodes it;</li>
  * <li>encoded quads and (row, id) join records sort as bit-packed primitive
  *     keys - parallel radix sort per run, fixed-width binary spills, no
  *     objects ({@link PackedQuadSorter}, {@link PackedRowIdSorter});</li>
@@ -85,6 +89,9 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
                         workspace, provider, pool)) {
                     pipeline.setSourceRoot(builder.getSourceRoot());
                     pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
+                    if (builder.rangeRows > 0) {
+                        pipeline.setMinRangeRows(builder.rangeRows);
+                    }
                     pipeline.run(tmp, container);
                 }
             });
@@ -110,6 +117,7 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
 
         private int cores = Math.max(2, Runtime.getRuntime().availableProcessors());
         private int mergeConcurrency = 0;   // 0 = UltraSorterProvider.defaultMergeConcurrency(mergeFanIn, cores)
+        private long rangeRows = 0;         // 0 = the pipeline's default (HugeBuildPipeline.setMinRangeRows)
 
         public Builder() {
             super(1 << 19, 1 << 22, 128, com.ebremer.beakgraph.huge.SorterProvider.defaultTermSpillBytes(2));
@@ -137,6 +145,24 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
             if (merges < 1) throw new IllegalArgumentException("mergeConcurrency must be >= 1");
             this.mergeConcurrency = merges;
             return this;
+        }
+
+        /**
+         * Rows a range of the term order holds at least (default 262,144). The
+         * sorted term columns are merged into the dictionaries, and every row
+         * given its ids, a range of the term order at a time - up to four
+         * ranges a core, each merged by a thread of its own - but never in
+         * more ranges than leave each this many rows; a build of fewer rows
+         * than two of them is merged as one range.
+         */
+        public Builder setRangeRows(long rows) {
+            if (rows < 1) throw new IllegalArgumentException("rangeRows must be >= 1");
+            this.rangeRows = rows;
+            return this;
+        }
+
+        public long getRangeRows() {
+            return rangeRows;
         }
 
         int effectiveMergeConcurrency() {

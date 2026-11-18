@@ -69,7 +69,7 @@ final class HugeTripleTerms implements AutoCloseable {
      * {@code (ordinal, slot)} order). Must run after {@code entFile} and
      * {@code litFile} are complete and before the pipeline deletes them.
      */
-    SpillBitPackedBuffer resolve(RecordFile<Node> entFile, RecordFile<Node> litFile,
+    SpillBitPackedBuffer resolve(RecordSegments<Node> entFile, RecordSegments<Node> litFile,
                                  long numEntities, long numObjects) throws IOException {
         RecordSorter<RowId> resolved = provider.rowIdSorter(workDir, "ttids", count * 3, numObjects);
         try (var refStream = refs.sorted();

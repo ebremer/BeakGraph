@@ -404,7 +404,10 @@ java -Xmx32g -jar BeakGraph.jar \
   `setIdSpillBatch` / `setMergeFanIn` on every disk-based builder. A sorter level of
   `-method 4/5` merges at most `min(cores, 1024 / (fanIn + 1))` run groups at a time
   (`setMergeConcurrency`), so open files stay near 1024 and live records near
-  `concurrency x termSpillBatch` however many runs a level holds.
+  `concurrency x termSpillBatch` however many runs a level holds. The sorted columns are then
+  merged into the dictionaries in ranges of the term order, up to `-cores` of them at once: an
+  open range holds one file per run of a column, and a column never has more files open than its
+  merges may (so fewer ranges run at once when a column is left with close to `fanIn` runs).
 * **Shard your input**: `-merge` over many files is the natural way to feed 100B quads.
 * **Paths**: `-dest` and `-workdir` may be any path the file system takes. The writers probe
   the exact output path before parsing and refuse to start if it cannot be written, instead

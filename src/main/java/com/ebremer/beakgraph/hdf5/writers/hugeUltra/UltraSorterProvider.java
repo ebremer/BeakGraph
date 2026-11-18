@@ -109,8 +109,8 @@ public final class UltraSorterProvider implements SorterProvider {
     static final class GroupedTermFormat implements ParallelSpillSorter.RunFormat<TermRow> {
 
         @Override
-        public void writeRun(DataOutput out, Object[] sorted, int n) throws IOException {
-            int i = 0;
+        public void writeRun(DataOutput out, Object[] sorted, int from, int n) throws IOException {
+            int i = from;
             while (i < n) {
                 TermRow first = (TermRow) sorted[i];
                 int j = i + 1;
@@ -129,6 +129,12 @@ public final class UltraSorterProvider implements SorterProvider {
         /** Rows that share a key are of one term without a look at it. */
         private static boolean sameTerm(TermRow a, TermRow b) {
             return a.key() == b.key() || a.term().equals(b.term());
+        }
+
+        /** The rows of one group are read back with one key: a merge need not compare them. */
+        @Override
+        public boolean equalAtSight(TermRow a, TermRow b) {
+            return a.key() == b.key();
         }
 
         @Override

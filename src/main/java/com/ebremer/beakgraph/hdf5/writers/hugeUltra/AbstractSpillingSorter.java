@@ -123,6 +123,17 @@ abstract class AbstractSpillingSorter implements AutoCloseable {
      * merge is the caller's cursor.
      */
     protected final List<Path> mergeDownToFanIn() throws IOException {
+        List<Path> finalRuns = mergeDownKeepingRuns();
+        runs.clear();
+        return finalRuns;
+    }
+
+    /**
+     * As {@link #mergeDownToFanIn}, but the runs stay registered: they are
+     * read more than once (a range at a time), so no reader may remove them,
+     * and {@link #close} does.
+     */
+    protected final List<Path> mergeDownKeepingRuns() throws IOException {
         while (runs.size() > fanIn) {
             logger.info("Sorter '{}': merging {} runs (fan-in {}, up to {} groups at a time)",
                     tag, runs.size(), fanIn, maxConcurrentMerges);
@@ -153,9 +164,7 @@ abstract class AbstractSpillingSorter implements AutoCloseable {
             runs.clear();
             runs.addAll(next);
         }
-        List<Path> finalRuns = new ArrayList<>(runs);
-        runs.clear();
-        return finalRuns;
+        return new ArrayList<>(runs);
     }
 
     /**

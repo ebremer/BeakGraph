@@ -11,9 +11,10 @@
  *       point (a {@code BeakGraphWriter}, drop-in alternative to
  *       {@code HDF5Writer});</li>
  *   <li>{@link com.ebremer.beakgraph.huge.HugeBuildPipeline} - parse once,
- *       spill (term, row) columns, external-sort, merge-dedup into
- *       dictionaries, sort-merge id joins, external-sort encoded quads for the
- *       GSPO/GPOS indexes;</li>
+ *       spill (term, row) columns, external-sort, merge the sorted columns
+ *       once into the distinct dictionaries and every row's ids (a range of
+ *       the term order at a time where the sorters have ranges and there is
+ *       a pool), external-sort encoded quads for the GSPO/GPOS indexes;</li>
  *   <li>{@code Spill*} buffers - file-backed twins of the bit-packed /
  *       front-coded / primitive buffers, byte-identical on disk;</li>
  *   <li>{@link com.ebremer.beakgraph.huge.StreamingHdf5File} and friends - the

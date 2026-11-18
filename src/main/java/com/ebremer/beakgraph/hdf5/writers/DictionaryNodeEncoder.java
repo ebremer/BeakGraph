@@ -101,6 +101,22 @@ public final class DictionaryNodeEncoder {
     }
 
     /**
+     * The part of {@link #encode} that takes nothing but the node, for a
+     * thread other than the encoding one to do ahead of it: a literal's
+     * value, which the node keeps once it has been worked out. A literal
+     * that has none (ill-typed) says so again, cheaply, to {@code encode}.
+     */
+    public static void prepare(Node node) {
+        if (node.isLiteral()) {
+            try {
+                node.getLiteralValue();
+            } catch (RuntimeException ex) {
+                // encode() routes it to the strings, as it finds out itself
+            }
+        }
+    }
+
+    /**
      * Encodes one node of the sorted, distinct section. Every node writes
      * exactly one entry into offsets / datatypes (and the optional per-node
      * columns): a skipped node would leave every later id shifted, so every

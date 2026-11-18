@@ -23,11 +23,9 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
@@ -47,10 +45,16 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The disk-based BeakGraph build: parse once, spill per-column (term, row)
- * records, external-sort them, derive the dictionaries by merge-dedup, assign
- * ids by sort-merge join (no random lookups), zip the id columns into encoded
- * quads, external-sort those twice for the GSPO/GPOS indexes, and stream every
- * buffer into the HDF5 file. RAM stays bounded by the sorter batch sizes (a
+ * records, external-sort them, merge the sorted columns once into the
+ * distinct dictionaries and every row's ids (no random lookups, and no term
+ * read twice), zip the id columns into encoded quads, external-sort those
+ * twice for the GSPO/GPOS indexes, and stream every buffer into the HDF5
+ * file. With a stage pool and sorters that can be read by range
+ * ({@link RangeSorter}: -method 4 and 5) the merge runs a range of the term
+ * order at a time, as many ranges at once as the pool has threads, and the
+ * dictionaries' terms are decoded and their strings compressed ahead of the
+ * threads that encode them; without (-method 1) it is the one merge of the
+ * whole columns, on the calling thread. RAM stays bounded by the sorter batch sizes (a
  * record cap AND a byte budget per term sorter, BG-125) plus the small
  * in-memory populations (predicates, datatypes, language tags, VoID
  * statistics) regardless of quad count - with one exception: a JSON-LD
@@ -158,6 +162,34 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /** Non-null: Pass A runs through it instead of the sequential loop (-method 5). */
     private final ParallelIngest parallelIngest;
     private File sourceRoot;
+    /** Rows a range of the term order holds at least: fewer rows than two of them are merged as one range. */
+    private long minRangeRows = Long.getLong("beakgraph.build.rangeRows", 1L << 18);
+
+    /**
+     * Rows a range of the term order holds at least (default 262,144, or the
+     * {@code beakgraph.build.rangeRows} property): with a stage pool and
+     * sorters that have ranges the sorted columns are merged into the
+     * dictionaries in up to four ranges a thread, but never in more than this
+     * leaves rows for. A range leaves five small files behind it, to be
+     * opened again by the stages that follow, so ranges of few rows cost
+     * more than their merge saves (a store of 4 million rows on 16 threads:
+     * 1.2 s to encode its dictionaries from 64 ranges, 0.5 s from 15). Call
+     * before {@link #run}.
+     */
+    public HugeBuildPipeline setMinRangeRows(long rows) {
+        if (rows < 1) {
+            throw new IllegalArgumentException("minRangeRows must be >= 1, got " + rows);
+        }
+        this.minRangeRows = rows;
+        return this;
+    }
+
+    /** Ranges of the term order the sorted columns were merged in; 0 before {@link #run} has come to it. */
+    public int ranges() {
+        return rangesMerged;
+    }
+
+    private volatile int rangesMerged = 0;
 
     /** Merge mode: root the documents' stored relative references are taken from (see {@link RelativeIris#parseBase}). */
     public HugeBuildPipeline setSourceRoot(File root) {
@@ -193,7 +225,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /**
      * The injectable form: {@code provider} supplies every sorter the build
      * uses, and a non-null {@code stagePool} runs independent stage groups
-     * (column materializations, dictionary encodes, id joins) concurrently.
+     * (column sorts, the ranges of the dictionary merge, dictionary encodes,
+     * id columns) concurrently.
      * This is how the hugeUltra writer (-method 4) turbocharges the pipeline
      * without changing its flow or output.
      */
@@ -336,45 +369,85 @@ public final class HugeBuildPipeline implements AutoCloseable {
             }
         }
 
-        // ---- Materialize the sorted columns (each is re-read several times) ----
+        // ---- The sorted term columns: ingestion ended, the runs merged down to one merge's worth ----
         logger.info("Sorting {} rows per column (external merge sort{})...", rows,
                 stagePool == null ? "" : ", 3 columns concurrently");
-        final List<RecordFile<TermRow>> cols = Arrays.asList(null, null, null);
-        final RecordSorter<TermRow> gS = gSorter, sS = sSorter, oS = oSorter;
+        final Column[] columns = new Column[COLUMNS];
+        columns[G] = track(new Column(gSorter));
+        columns[S] = track(new Column(sSorter));
+        columns[O] = track(new Column(oSorter));
         gSorter = null;
         sSorter = null;
         oSorter = null;
-        runStages("column sort",
-                () -> cols.set(0, materialize(gS, "gcol.sorted")),
-                () -> cols.set(1, materialize(sS, "scol.sorted")),
-                () -> cols.set(2, materialize(oS, "ocol.sorted")));
-        RecordFile<TermRow> gSorted = cols.get(0);
-        RecordFile<TermRow> sSorted = cols.get(1);
-        RecordFile<TermRow> oSorted = cols.get(2);
-
-        // ---- Interior triple-term components (absent for triple-term-free builds) ----
-        RecordFile<TermRow> iEntSorted = null;
-        RecordFile<TermRow> iLitSorted = null;
+        // Interior triple-term components (absent for triple-term-free builds).
         if (iEntSorter != null) {
-            RecordSorter<TermRow> ie = iEntSorter;
-            RecordSorter<TermRow> il = iLitSorter;
+            columns[INTERIOR_ENTITIES] = track(new Column(iEntSorter));
+            columns[INTERIOR_LITERALS] = track(new Column(iLitSorter));
             iEntSorter = null;
             iLitSorter = null;
-            iEntSorted = materialize(ie, "icol-ent.sorted");
-            iLitSorted = materialize(il, "icol-lit.sorted");
         }
+        List<Stage> sorts = new ArrayList<>();
+        for (Column c : columns) {
+            if (c != null) {
+                sorts.add(c::sort);
+            }
+        }
+        runStages("column sort", sorts.toArray(Stage[]::new));
 
-        // ---- Distinct sorted dictionaries on disk ----
-        RecordFile<Node> entFile = track(new RecordFile<>(workDir.resolve("entities.sorted"), NodeCodec.INSTANCE));
-        mergeDistinctEntities(entFile, gSorted, sSorted, oSorted, iEntSorted);
+        // ---- Distinct sorted dictionaries on disk, and every row's place in them:
+        // one merge of the columns, a range of the term order at a time ----
+        final List<TermRow> bounds = chooseBounds(columns);
+        final int ranges = bounds.size() + 1;
+        this.rangesMerged = ranges;
+        final RangeOutput[] merged = new RangeOutput[ranges];
+        int atOnce = parallelism();
+        for (Column c : columns) {
+            if (c != null) {
+                atOnce = Math.min(atOnce, c.maxOpen());
+            }
+        }
+        if (ranges > 1) {
+            logger.info("Merging the columns into dictionaries in {} ranges of the term order, {} at a time",
+                    ranges, Math.min(atOnce, ranges));
+        }
+        runRanges("dictionary merge", ranges, atOnce, r -> merged[r] = mergeRange(r,
+                (r == 0) ? null : bounds.get(r - 1), (r == ranges - 1) ? null : bounds.get(r), columns));
+        for (Column c : columns) {
+            if (c != null) {
+                c.close();   // the runs go: nothing reads the terms a second time
+            }
+        }
+        List<RecordFile<Node>> entityParts = new ArrayList<>(ranges);
+        List<RecordFile<Node>> literalParts = new ArrayList<>(ranges);
+        // What a range's codes are counted from: the entities and the literals of the ranges before it.
+        final long[] entityBase = new long[ranges];
+        final long[] literalBase = new long[ranges];
+        long entitiesSoFar = 0;
+        long literalsSoFar = 0;
+        for (int r = 0; r < ranges; r++) {
+            entityParts.add(merged[r].entities);
+            literalParts.add(merged[r].literals);
+            entityBase[r] = entitiesSoFar;
+            literalBase[r] = literalsSoFar;
+            entitiesSoFar += merged[r].entities.count();
+            literalsSoFar += merged[r].literals.count();
+            for (int c = G; c <= O; c++) {
+                columns[c].merged += merged[r].ids[c].count();
+            }
+        }
+        for (int c = G; c <= O; c++) {
+            // A run cut short ends a range early without a sound (BG-129): the ranges must hold every row.
+            if (columns[c].merged != rows) {
+                throw new IOException("Sorted " + ROLES[c] + " column holds " + columns[c].merged
+                        + " rows where " + rows + " were added (a spill run is truncated)");
+            }
+        }
+        final RecordSegments<Node> entFile = new RecordSegments<>(entityParts);
+        final RecordSegments<Node> litFile = new RecordSegments<>(literalParts);
         long numEntities = entFile.count();
-
-        RecordFile<Node> litFile = track(new RecordFile<>(workDir.resolve("literals.sorted"), NodeCodec.INSTANCE));
-        distinctLiterals(litFile, oSorted, iLitSorted);
         long numLiterals = litFile.count();
-        if (iEntSorted != null) {
-            iEntSorted.delete();
-            iLitSorted.delete();
+        for (int r = 0; r < ranges; r++) {
+            literalBase[r] += numEntities;   // literal ids follow the entities'
         }
         long numObjects = numEntities + numLiterals;
         logger.info("Dictionary populations: {} entities, {} predicates, {} literals",
@@ -388,12 +461,17 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 ? track(new HugeTripleTerms(provider, workDir, predFinalIds))
                 : null;
         final StreamingDictionaryWriter[] dicts = new StreamingDictionaryWriter[3];
+        // With a pool, a section's terms are decoded and its strings compressed
+        // by the pool's threads, this many pieces ahead of the stage's own
+        // thread, which takes them in order.
+        final int ahead = (stagePool == null) ? 0 : parallelism() + 2;
         runStages("dictionary encode",
                 () -> {
                     if (numEntities > 0) {
                         dicts[0] = track(new StreamingDictionaryWriter(workDir, "entities", numEntities, stats,
-                                DictionarySection.ENTITIES, new TreeSet<>(), new TreeSet<>(), false, null));
-                        try (var s = entFile.read()) {
+                                DictionarySection.ENTITIES, new TreeSet<>(), new TreeSet<>(), false, null,
+                                stagePool, ahead));
+                        try (var s = sortedTerms(entFile, ahead)) {
                             dicts[0].encode(s);
                         }
                     }
@@ -409,13 +487,13 @@ public final class HugeBuildPipeline implements AutoCloseable {
                     if (numLiterals > 0) {
                         dicts[2] = track(new StreamingDictionaryWriter(workDir, "literals", numLiterals, stats,
                                 DictionarySection.LITERALS,
-                                dataTypes, langSet, langDirSeen, ttSupport));
-                        try (var s = litFile.read()) {
+                                dataTypes, langSet, langDirSeen, ttSupport, stagePool, ahead));
+                        try (var s = sortedTerms(litFile, ahead)) {
                             dicts[2].encode(s);
                         }
-                        // Reference join (CHANGELOG.md "Format v5 design notes"): entFile is safe to
-                        // read concurrently with the entities encode stage - the
-                        // id joins already read it from three stages at once.
+                        // Reference join (CHANGELOG.md "Format v5 design notes"): the entity
+                        // files are safe to read concurrently with the entities encode stage -
+                        // each reader has streams of its own.
                         if (ttSupport != null && ttSupport.count() > 0) {
                             dicts[2].setTripleTermsBuffer(
                                     ttSupport.resolve(entFile, litFile, numEntities, numEntities + numLiterals));
@@ -434,17 +512,18 @@ public final class HugeBuildPipeline implements AutoCloseable {
         SpillBitPackedBuffer subjectsList = track(new SpillBitPackedBuffer(workDir.resolve("columnar.subjects"), sBits));
         SpillBitPackedBuffer objectsList = track(new SpillBitPackedBuffer(workDir.resolve("columnar.objects"), oBits));
 
-        // ---- Sort-merge id joins (independent columns; concurrent with a pool),
-        // plus the predicate temp->final remap, which depends on nothing here ----
-        logger.info("Assigning ids (sort-merge joins{})...", stagePool == null ? "" : ", 3 columns concurrently");
+        // ---- Ids (independent columns; concurrent with a pool): a row's id is its
+        // range's count of the terms before it plus the code the merge gave it. Plus the
+        // predicate temp->final remap, which depends on nothing here ----
+        logger.info("Assigning ids ({} ranges{})...", ranges, stagePool == null ? "" : ", 3 columns concurrently");
         RecordSorter<RowId> gIds = track(provider.rowIdSorter(workDir, "gid", rows, numObjects));
         RecordSorter<RowId> sIds = track(provider.rowIdSorter(workDir, "sid", rows, numObjects));
         RecordSorter<RowId> oIds = track(provider.rowIdSorter(workDir, "oid", rows, numObjects));
         RecordFile<Long> pFinal = track(new RecordFile<>(workDir.resolve("pcol.final"), HugeRecords.VAR_LONG_CODEC));
         runStages("id join",
-                () -> joinColumn(gSorted, "Graph", entityCursor(entFile, null, numEntities), graphsList, gIds),
-                () -> joinColumn(sSorted, "Subject", entityCursor(entFile, null, numEntities), subjectsList, sIds),
-                () -> joinColumn(oSorted, "Object", entityCursor(entFile, litFile, numEntities), objectsList, oIds),
+                () -> assignIds(G, merged, entityBase, literalBase, graphsList, gIds),
+                () -> assignIds(S, merged, entityBase, literalBase, subjectsList, sIds),
+                () -> assignIds(O, merged, entityBase, literalBase, objectsList, oIds),
                 () -> {
                     try (var s = pTempFile.read()) {
                         while (s.hasNext()) {
@@ -453,9 +532,6 @@ public final class HugeBuildPipeline implements AutoCloseable {
                     }
                     pFinal.finish();
                 });
-        gSorted.delete();
-        sSorted.delete();
-        oSorted.delete();
         entFile.delete();
         litFile.delete();
         pTempFile.delete();
@@ -871,203 +947,342 @@ public final class HugeBuildPipeline implements AutoCloseable {
         };
     }
 
-    private RecordFile<TermRow> materialize(RecordSorter<TermRow> sorter, String name) throws IOException {
-        // Tracked: a failure elsewhere must close and delete this file even
-        // when the exception escapes mid-write (BG-124).
-        RecordFile<TermRow> rf = track(new RecordFile<>(workDir.resolve(name), HugeRecords.TERM_ROW_CODEC));
-        try (RecordSorter.SortedCursor<TermRow> s = sorter.sorted()) {
-            long n = 0;
-            while (s.hasNext()) {
-                rf.append(s.next());
-                if ((++n & 0xFFFF) == 0) {
-                    checkCancelled("materializing " + name);
-                }
-            }
-        }
-        rf.finish();
-        sorter.close();
-        return rf;
+    // ------------------------------------------------------------------
+    // The sorted columns, merged a range of the term order at a time
+    // ------------------------------------------------------------------
+
+    /** The columns a range is merged from: the three of a quad's terms, and the interior terms of triple terms. */
+    private static final int G = 0, S = 1, O = 2, INTERIOR_ENTITIES = 3, INTERIOR_LITERALS = 4, COLUMNS = 5;
+    private static final String[] ROLES = {"graph", "subject", "object", "triple-term component", "triple-term object"};
+
+    /** Ranges cut for each worker thread: more than one, so that an uneven range does not hold a thread's share. */
+    private static final int RANGES_PER_THREAD = 4;
+
+    /** Threads the stage pool runs at once. */
+    private int parallelism() {
+        return (stagePool instanceof java.util.concurrent.ForkJoinPool pool)
+                ? pool.getParallelism()
+                : Runtime.getRuntime().availableProcessors();
     }
 
     /**
-     * Entities = distinct {G union S union non-literal O union triple-term
-     * interior entities} in NodeComparator order: an n-way merge of the sorted
-     * streams with consecutive-dedup. The object stream stops at its first
-     * literal OR triple term - NodeComparator's macro order (bnode &lt; URI &lt;
-     * literal &lt; triple term) makes literals-plus-triple-terms a contiguous
-     * suffix, and the prefix must end at whichever of the two comes first:
-     * stopping only at a literal let a store with NO top-level literal object
-     * stream its triple terms into the entities file, where the writer (built
-     * without triple-term support) threw, so valid RDF 1.2 that the in-memory
-     * engines built failed on the disk engines. {@code interior} is null for
-     * triple-term-free builds.
+     * One sorted term column. A sorter that has ranges ({@link RangeSorter})
+     * is read a range at a time, by as many threads as there are ranges open;
+     * any other is read whole, as the one range there then is.
      */
-    private void mergeDistinctEntities(RecordFile<Node> out, RecordFile<TermRow> g,
-                                       RecordFile<TermRow> s, RecordFile<TermRow> o,
-                                       RecordFile<TermRow> interior) throws IOException {
-        try (var gs = g.read(); var ss = s.read(); var os = o.read();
-             var is = (interior == null) ? null : interior.read()) {
-            List<Iterator<Node>> streams = (is == null)
-                    ? List.of(termsOf(gs), termsOf(ss), nonLiteralPrefix(termsOf(os)))
-                    : List.of(termsOf(gs), termsOf(ss), nonLiteralPrefix(termsOf(os)), termsOf(is));
-            PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(PeekedIterator.ORDER);
-            for (Iterator<Node> it : streams) {
-                PeekedIterator pi = new PeekedIterator(it);
-                if (pi.head != null) heap.add(pi);
+    private static final class Column implements AutoCloseable {
+        private final RecordSorter<TermRow> sorter;
+        private RangeSorter.Ranges<TermRow> ranges;
+        private RecordSorter.SortedCursor<TermRow> whole;
+        /** Rows the ranges' merges have read of it. */
+        long merged = 0;
+
+        Column(RecordSorter<TermRow> sorter) {
+            this.sorter = sorter;
+        }
+
+        /** Ends ingestion; a sorter of many runs merges them down here, which is the long part. */
+        void sort() throws IOException {
+            if (sorter instanceof RangeSorter<TermRow> ranged) {
+                ranges = ranged.ranges();
+            } else {
+                whole = sorter.sorted();
             }
-            Node last = null;
+        }
+
+        boolean ranged() {
+            return ranges != null;
+        }
+
+        int maxOpen() {
+            return (ranges != null) ? ranges.maxOpen() : Integer.MAX_VALUE;
+        }
+
+        RecordSorter.SortedCursor<TermRow> open(TermRow from, TermRow to) throws IOException {
+            if (ranges != null) {
+                return ranges.open(from, to);
+            }
+            if (from != null || to != null || whole == null) {
+                throw new IllegalStateException("A sorter without ranges is read once, whole");
+            }
+            RecordSorter.SortedCursor<TermRow> cursor = whole;
+            whole = null;
+            return cursor;
+        }
+
+        @Override
+        public void close() {
+            if (whole != null) {
+                whole.close();
+                whole = null;
+            }
+            ranges = null;
+            sorter.close();
+        }
+    }
+
+    /**
+     * The bounds of the ranges the columns are merged in: terms, ascending,
+     * each the first of its range. They are chosen from the sorters' samples
+     * so that the ranges weigh about the same in bytes of runs to read. No
+     * bounds - one range - without a stage pool, for a small build, and where
+     * a sorter has no ranges (the sequential engine's).
+     */
+    private List<TermRow> chooseBounds(Column[] columns) {
+        if (stagePool == null) {
+            return List.of();
+        }
+        long wanted = Math.min((long) parallelism() * RANGES_PER_THREAD, rows / Math.max(1, minRangeRows));
+        if (wanted < 2) {
+            return List.of();
+        }
+        List<RangeSorter.Sample<TermRow>> samples = new ArrayList<>();
+        long total = 0;
+        for (Column c : columns) {
+            if (c == null) {
+                continue;
+            }
+            if (!c.ranged()) {
+                return List.of();
+            }
+            for (RangeSorter.Sample<TermRow> sample : c.ranges.samples()) {
+                samples.add(sample);
+                total += sample.weight();
+            }
+        }
+        samples.sort((a, b) -> TermKey.compare(a.record().key(), b.record().key()));
+        List<TermRow> bounds = new ArrayList<>();
+        long sinceBound = 0;
+        long remaining = total;
+        long rangesLeft = wanted;
+        int i = 0;
+        while (i < samples.size() && rangesLeft > 1) {
+            // The samples of one term together: a term is in one range.
+            TermKey key = samples.get(i).record().key();
+            long weight = 0;
+            int j = i;
+            while (j < samples.size() && TermKey.compare(samples.get(j).record().key(), key) == 0) {
+                weight += samples.get(j).weight();
+                j++;
+            }
+            if (i > 0 && sinceBound >= remaining / rangesLeft) {
+                bounds.add(samples.get(i).record());
+                remaining -= sinceBound;
+                sinceBound = 0;
+                rangesLeft--;
+            }
+            sinceBound += weight;
+            i = j;
+        }
+        return bounds;
+    }
+
+    /**
+     * The terms of a dictionary section in order: read by this thread
+     * without a stage pool, else decoded - and their literal values worked
+     * out - by the pool's threads, {@code ahead} chunks before this one takes
+     * them.
+     */
+    private RecordSorter.SortedCursor<Node> sortedTerms(RecordSegments<Node> files, int ahead) {
+        return (stagePool == null)
+                ? files.read()
+                : files.readAhead(stagePool, ahead,
+                        com.ebremer.beakgraph.hdf5.writers.DictionaryNodeEncoder::prepare);
+    }
+
+    @FunctionalInterface
+    private interface RangeTask {
+        void run(int range) throws IOException;
+    }
+
+    /**
+     * Runs {@code task} for the ranges {@code 0..ranges-1}: in order on this
+     * thread without a stage pool (or for one range), else on the pool, at
+     * most {@code atOnce} at a time - each of that many stages takes the next
+     * range until none is left, so a failure ends them as it ends any stage
+     * group ({@link #runStages}).
+     */
+    private void runRanges(String what, int ranges, int atOnce, RangeTask task) throws IOException {
+        if (stagePool == null || ranges == 1) {
+            for (int r = 0; r < ranges; r++) {
+                task.run(r);
+            }
+            return;
+        }
+        java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
+        Stage worker = () -> {
+            for (int r = next.getAndIncrement(); r < ranges; r = next.getAndIncrement()) {
+                checkCancelled(what);
+                task.run(r);
+            }
+        };
+        Stage[] workers = new Stage[Math.max(1, Math.min(atOnce, ranges))];
+        Arrays.fill(workers, worker);
+        runStages(what, workers);
+    }
+
+    /** What the merge of one range leaves: its distinct terms, and each column's rows with their terms' codes. */
+    private record RangeOutput(RecordFile<Node> entities, RecordFile<Node> literals, RangeIds[] ids) {}
+
+    /** The head of one column's cursor in a range's merge. */
+    private static final class Head {
+        final int column;
+        final RecordSorter.SortedCursor<TermRow> cursor;
+        TermRow row;
+
+        Head(int column, RecordSorter.SortedCursor<TermRow> cursor) {
+            this.column = column;
+            this.cursor = cursor;
+        }
+
+        boolean advance() {
+            row = cursor.hasNext() ? cursor.next() : null;
+            return row != null;
+        }
+    }
+
+    /**
+     * Merges one range of the sorted columns - the terms {@code t} with
+     * {@code from <= t < to}, a null bound being an open end - in a single
+     * pass that does what the build used to read the sorted columns three
+     * times for:
+     * <ul>
+     * <li>the range's distinct entities (graphs, subjects, non-literal
+     *     objects, the entities inside triple terms) and its distinct
+     *     literals-section terms (literal and triple-term objects, the
+     *     literals and nested terms inside triple terms), each in
+     *     NodeComparator order - the dictionaries' parts for this range;
+     *     NodeComparator's macro order (bnode &lt; IRI &lt; literal &lt;
+     *     triple term) puts every entity before every literals-section term,
+     *     so one merge of all the columns yields both, in turn;</li>
+     * <li>for every row of the three quad columns, the code of its term:
+     *     the term's 1-based place among the range's entities (shifted left
+     *     once) or among its literals-section terms (shifted, plus one). The
+     *     id is that place plus the count of the terms in the ranges before
+     *     ({@link #assignIds}), so no term is compared with a dictionary
+     *     afterwards.</li>
+     * </ul>
+     * Interior terms take their place in the dictionaries and give no row.
+     */
+    private RangeOutput mergeRange(int range, TermRow from, TermRow to, Column[] columns) throws IOException {
+        RecordFile<Node> entities = track(new RecordFile<>(workDir.resolve("entities.sorted." + range), NodeCodec.INSTANCE));
+        RecordFile<Node> literals = track(new RecordFile<>(workDir.resolve("literals.sorted." + range), NodeCodec.INSTANCE));
+        RangeIds[] ids = {
+            track(new RangeIds(workDir.resolve("gcol.ids." + range))),
+            track(new RangeIds(workDir.resolve("scol.ids." + range))),
+            track(new RangeIds(workDir.resolve("ocol.ids." + range)))};
+        List<Head> heads = new ArrayList<>(COLUMNS);
+        try {
+            PriorityQueue<Head> heap = new PriorityQueue<>(COLUMNS, (a, b) -> TermKey.compare(a.row.key(), b.row.key()));
+            for (int c = 0; c < COLUMNS; c++) {
+                if (columns[c] != null) {
+                    Head head = new Head(c, columns[c].open(from, to));
+                    heads.add(head);
+                    if (head.advance()) {
+                        heap.add(head);
+                    }
+                }
+            }
+            TermKey last = null;
+            long code = 0;
+            boolean literalSpace = false;
+            long n = 0;
             while (!heap.isEmpty()) {
-                PeekedIterator pi = heap.poll();
-                Node term = pi.head;
-                if (pi.advance()) heap.add(pi);
+                Head head = heap.poll();
+                TermKey key = head.row.key();
                 // equals() is the cheap equivalent of compare()==0 here: the
                 // comparator tie-breaks on the exact RDF term, so it returns 0
                 // only for term-equal nodes.
-                if (last == null || !last.equals(term)) {
-                    out.append(term);
-                    last = term;
-                }
-            }
-        }
-        out.finish();
-    }
-
-    /**
-     * Distinct literals-section terms = dedup-merge of the literal + triple-term
-     * suffix of the sorted object column with the interior literal/triple-term
-     * stream ({@code interior} null for triple-term-free builds). Triple terms
-     * macro-rank after every literal, so the merged stream stays sorted and the
-     * section keeps them as its contiguous suffix.
-     */
-    private void distinctLiterals(RecordFile<Node> out, RecordFile<TermRow> o,
-                                  RecordFile<TermRow> interior) throws IOException {
-        try (var os = o.read(); var is = (interior == null) ? null : interior.read()) {
-            Iterator<Node> suffix = new Iterator<>() {
-                private Node next = advance();
-
-                private Node advance() {
-                    while (os.hasNext()) {
-                        Node n = os.next().term();
-                        if (n.isLiteral() || n.isTripleTerm()) {
-                            return n;
-                        }
+                if (last == null || !(last == key || last.node().equals(key.node()))) {
+                    Node term = key.node();
+                    literalSpace = term.isLiteral() || term.isTripleTerm();
+                    if (literalSpace) {
+                        literals.append(term);
+                        code = (literals.count() << 1) | 1;
+                    } else {
+                        entities.append(term);
+                        code = entities.count() << 1;
                     }
-                    return null;
+                    last = key;
                 }
-
-                @Override public boolean hasNext() { return next != null; }
-
-                @Override public Node next() {
-                    if (next == null) throw new NoSuchElementException();
-                    Node n = next;
-                    next = advance();
-                    return n;
+                // A graph or a subject is an entity, and so is an interior
+                // entity (the ingest refuses any other): one in the literals'
+                // space, or an interior literal out of it, would be a row or
+                // a dictionary entry in the wrong section.
+                if (literalSpace != (head.column == INTERIOR_LITERALS) && head.column != O) {
+                    throw new IllegalStateException("Unexpected " + ROLES[head.column] + " node type: " + key.node());
                 }
-            };
-            List<Iterator<Node>> streams = (is == null)
-                    ? List.of(suffix)
-                    : List.of(suffix, termsOf(is));
-            PriorityQueue<PeekedIterator> heap = new PriorityQueue<>(PeekedIterator.ORDER);
-            for (Iterator<Node> it : streams) {
-                PeekedIterator pi = new PeekedIterator(it);
-                if (pi.head != null) heap.add(pi);
+                // Every row this column has of the term: they follow one
+                // another, and the term is still the smallest there is.
+                RangeIds out = (head.column <= O) ? ids[head.column] : null;
+                do {
+                    if (out != null) {
+                        out.add(code, head.row.row());
+                    }
+                    if ((++n & 0xFFFF) == 0) {
+                        checkCancelled("merging the sorted columns");
+                    }
+                } while (head.advance() && (head.row.key() == last || head.row.key().node().equals(last.node())));
+                if (head.row != null) {
+                    heap.add(head);
+                }
             }
-            Node last = null;
-            while (!heap.isEmpty()) {
-                PeekedIterator pi = heap.poll();
-                Node term = pi.head;
-                if (pi.advance()) heap.add(pi);
-                if (last == null || !last.equals(term)) {
-                    out.append(term);
-                    last = term;
-                }
+        } catch (UncheckedIOException ex) {
+            throw ex.getCause();
+        } finally {
+            for (Head head : heads) {
+                head.cursor.close();
             }
         }
-        out.finish();
-    }
-
-    private static Iterator<Node> termsOf(Iterator<TermRow> rows) {
-        return new Iterator<>() {
-            @Override public boolean hasNext() { return rows.hasNext(); }
-            @Override public Node next() { return rows.next().term(); }
-        };
-    }
-
-    private static Iterator<Node> nonLiteralPrefix(Iterator<Node> in) {
-        return new Iterator<>() {
-            private Node next = advance();
-
-            private Node advance() {
-                if (in.hasNext()) {
-                    Node n = in.next();
-                    // Sorted stream: the first literal or triple term ends the
-                    // entity prefix (mirrors distinctLiterals, which takes the rest).
-                    return (n.isLiteral() || n.isTripleTerm()) ? null : n;
-                }
-                return null;
-            }
-
-            @Override public boolean hasNext() { return next != null; }
-
-            @Override public Node next() {
-                if (next == null) throw new NoSuchElementException();
-                Node n = next;
-                next = advance();
-                return n;
-            }
-        };
-    }
-
-    private static final class PeekedIterator {
-        /** By the heads, in NodeComparator order, on their sort keys. */
-        static final Comparator<PeekedIterator> ORDER = (a, b) -> TermKey.compare(a.key, b.key);
-
-        private final Iterator<Node> it;
-        Node head;
-        private TermKey key;
-
-        PeekedIterator(Iterator<Node> it) {
-            this.it = it;
-            advance();
+        entities.finish();
+        literals.finish();
+        for (RangeIds column : ids) {
+            column.finish();
         }
+        return new RangeOutput(entities, literals, ids);
+    }
 
-        /** Loads the next head; false at stream end. */
-        final boolean advance() {
-            head = it.hasNext() ? it.next() : null;
-            key = (head == null) ? null : new TermKey(head);
-            return head != null;
+    /**
+     * The ids of one column's rows, range after range: a code's place plus
+     * the count of its space's terms in the ranges before - an entity's
+     * 1-based rank among the entities, a literals-section term's among those
+     * terms after all the entities: exactly locateGraph/locateSubject/
+     * locateObject semantics. Emits (row, id) for every row and the id of
+     * each DISTINCT term - in term order, i.e. ascending id order - into the
+     * columnar list.
+     */
+    private void assignIds(int column, RangeOutput[] merged, long[] entityBase, long[] literalBase,
+                           SpillBitPackedBuffer columnar, RecordSorter<RowId> out) throws IOException {
+        final String what = "assigning " + ROLES[column] + " ids";
+        long last = 0;   // ids begin at 1
+        for (int r = 0; r < merged.length; r++) {
+            RangeIds ids = merged[r].ids[column];
+            try (RangeIds.Reader groups = ids.read()) {
+                while (groups.next()) {
+                    long id = (((groups.code & 1) == 0) ? entityBase[r] : literalBase[r]) + (groups.code >>> 1);
+                    if (id != last) {
+                        if (id < last) {
+                            throw new IllegalStateException("Ids of the " + ROLES[column] + " column descend: "
+                                    + id + " after " + last + " (range " + r + ")");
+                        }
+                        columnar.writeLong(id);
+                        last = id;
+                    }
+                    for (int i = 0; i < groups.size; i++) {
+                        out.add(new RowId(groups.rows[i], id));
+                    }
+                    checkCancelled(what);
+                }
+            }
+            ids.delete();
         }
     }
 
     /**
-     * A monotone cursor over the sorted dictionary (entities, optionally
-     * followed by literals): the id of a term is its 1-based rank in the
-     * concatenated stream - exactly locateGraph/locateSubject/locateObject
-     * semantics, computed without random access.
+     * A monotone cursor over a sorted dictionary section: the id of a term is
+     * its 1-based rank in the stream, computed without random access.
      */
-    private DictCursor entityCursor(RecordFile<Node> entities, RecordFile<Node> literals, long numEntities)
-            throws IOException {
-        var entStream = entities.read();
-        var litStream = (literals == null) ? null : literals.read();
-        Iterator<Node> concat = new Iterator<>() {
-            @Override
-            public boolean hasNext() {
-                return entStream.hasNext() || (litStream != null && litStream.hasNext());
-            }
-
-            @Override
-            public Node next() {
-                return entStream.hasNext() ? entStream.next() : litStream.next();
-            }
-        };
-        return new DictCursor(concat, () -> {
-            entStream.close();
-            if (litStream != null) litStream.close();
-        });
-    }
-
-    // Package-visible: HugeTripleTerms reuses the same monotone-locate shape for
-    // the component-reference join.
+    // Package-visible: HugeTripleTerms resolves the component references with it.
     static final class DictCursor implements AutoCloseable {
         private final Iterator<Node> stream;
         private final Runnable onClose;
@@ -1110,33 +1325,6 @@ public final class HugeBuildPipeline implements AutoCloseable {
         @Override
         public void close() {
             onClose.run();
-        }
-    }
-
-    /**
-     * Walks a sorted column against the dictionary cursor, emitting (row, id)
-     * for every row and the id of each DISTINCT term - in term order, i.e.
-     * ascending id order - into the columnar list.
-     */
-    private void joinColumn(RecordFile<TermRow> column, String role, DictCursor cursor,
-                            SpillBitPackedBuffer columnar, RecordSorter<RowId> out) throws IOException {
-        try (cursor; var col = column.read()) {
-            Node prevTerm = null;
-            long prevId = -1;
-            while (col.hasNext()) {
-                TermRow tr = col.next();
-                long id;
-                // equals() suffices for the repeat check (compare()==0 iff term-equal).
-                if (prevTerm != null && prevTerm.equals(tr.term())) {
-                    id = prevId;
-                } else {
-                    id = cursor.locate(tr.key(), role);
-                    columnar.writeLong(id);
-                    prevTerm = tr.term();
-                    prevId = id;
-                }
-                out.add(new RowId(tr.row(), id));
-            }
         }
     }
 

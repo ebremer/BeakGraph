@@ -22,6 +22,36 @@ public final class HugeIO {
 
     private HugeIO() {}
 
+    /**
+     * An output stream that counts what passes through it, so that a writer
+     * knows where in its file the next record begins. (A long:
+     * {@code DataOutputStream.size()} stops at 2 GiB.)
+     */
+    public static final class Counted extends java.io.FilterOutputStream {
+        private long count = 0;
+
+        public Counted(java.io.OutputStream out) {
+            super(out);
+        }
+
+        /** Bytes written so far. */
+        public long count() {
+            return count;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            out.write(b);
+            count++;
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            out.write(b, off, len);
+            count += len;
+        }
+    }
+
     /** Streams an entire temp file into an already-created dataset. */
     static void copyFileIntoDataset(Path file, StreamingHdf5Dataset ds) throws IOException {
         try (InputStream in = new BufferedInputStream(Files.newInputStream(file), 1 << 20)) {

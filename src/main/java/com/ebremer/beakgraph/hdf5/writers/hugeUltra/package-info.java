@@ -22,15 +22,22 @@
  * <li>{@link com.ebremer.beakgraph.hdf5.writers.hugeUltra.ParallelSpillSorter} -
  *     the term-column sorter: background spilling, concurrent merges, rows
  *     sorted on their terms' keys ({@code TermKey}: a term's place in
- *     NodeComparator's order worked out once, not for every comparison), and
- *     a grouped run format writing each distinct term's text once per run;</li>
+ *     NodeComparator's order worked out once, not for every comparison), a
+ *     grouped run format writing each distinct term's text once per run, and
+ *     runs indexed as they are written, so that the sorted records can be
+ *     read as ranges of the order, each merged by a thread of its own
+ *     ({@code RangeSorter});</li>
  * <li>{@link com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer} -
  *     the public entry point ({@code BeakGraphWriter}); owns the worker pool
  *     and the atomic tmp-then-move publish.</li>
  * </ul>
  *
- * The independent pipeline stages (three column sorts, three dictionary
- * encodes, three id joins) run concurrently on the same pool, and GPOS sorts
+ * The pipeline merges the sorted columns into the dictionaries and the rows'
+ * ids a range of the term order at a time on the same pool, as many ranges
+ * at once as it has threads; the independent stages (three column sorts,
+ * three dictionary encodes, three id columns) run concurrently on it, a
+ * dictionary's terms are decoded and its strings compressed ahead of the
+ * thread that encodes it, and GPOS sorts
  * only the deduplicated quads teed out of the GSPO scan. Output format and
  * readers are unchanged; like -method 1 the file is written through Falcon,
  * in pure Java, and output is isomorphic (bnode labels are kept as parsed).

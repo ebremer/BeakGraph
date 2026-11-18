@@ -923,7 +923,8 @@ Still open here:
 - **The spatial augmentation is as large**: 18 to 21%.
 - **The disk engines write the sorted columns a term a row** (`materialize`) and read them back three
   times, a new term object a record: 11% and 8% (the id join) of `-method 4`. Its merge, its dictionaries
-  and its id join take the same time on 4 cores and on 16.
+  and its id join take the same time on 4 cores and on 16. (Done since: see "Disk builds by ranges of
+  the term order".)
 - **`-method 3` sorts the terms of its three columns** (graphs, subjects, objects) though every term has an
   id by then, and ids are in the order of their terms: a sort of numbers would do.
 - Not measured: the native binary, real data, Linux and macOS.
@@ -946,3 +947,161 @@ key asked by many threads before it has worked anything out; the first values of
 threads at once; the comparator for a walk along a list against the comparator; and a value made here
 against Jena's for a WKT literal, for a datatype Jena does not know, and for a datatype that only carries
 an XSD IRI.
+
+### Disk builds by ranges of the term order (2026-11-17, not committed when written)
+
+"Terms sorted on keys" left a `-method 4` build of the 300,000 features at about 103 s on 4 cores and
+104 s on 16: the cores made no difference. Timed inside the build (16 cores), 70 of those seconds were five
+steps that each ran on one thread:
+
+| Step | Seconds |
+|---|---|
+| merge the object column's runs into its sorted file (the graph and subject columns beside it: 4.1, 3.9) | 21.9 |
+| merge the three sorted files into the distinct entities | 9.9 |
+| read the object file again for the distinct literals | 7.8 |
+| encode the literals' dictionary | 22.7 |
+| join the object file with the dictionary for its ids (subjects 1.8 and graphs 1.9 beside it) | 7.6 |
+
+The store's format is untouched, and so is every byte of a store.
+
+Done:
+
+- **The sorted columns are merged once, a range of the term order at a time.** The terms are cut into
+  ranges at bounds chosen from the sorters' own samples, so that the ranges weigh about the same in bytes
+  of runs: up to four ranges a thread, of 262,144 rows each at least (`setRangeRows`,
+  `-Dbeakgraph.build.rangeRows`). A thread takes a range and merges the runs of all the columns within
+  it, in one pass. Each distinct term goes to its dictionary's part for that range (the entities, or
+  after them the literals and triple terms), and each row is written with its term's place among the
+  range's terms. An id is that place plus the count of the terms in the ranges before, which is known
+  once the ranges are done: no term is compared with a dictionary, and none is read twice. The sorted
+  column files - a term's text for every row, written once and read three times - are gone, and with
+  them the two passes over them and the join.
+- **A run can be entered in its middle.** As a run is written, where a record begins is noted for every
+  512 records or so (some 1,024 entries a run, up to 2,048 for a run merged from others; every index
+  gives up every other entry when the entries of a sorter's runs hold more than a quarter of its byte
+  budget). A range enters each run at
+  the entry before its lower bound and leaves it at the first record that is not below its upper bound,
+  so the ranges for bounds that follow one another hold every record once. A sorter that never spilled
+  gives stretches of its one sorted array. As many ranges are open at once as the sorter's merges may
+  hold files for.
+- **A merge does not compare the rows of one term.** A run holds a term once and its rows after it; read
+  back they share a key, and the run that gave one row of a term gives the next without a look at the
+  other runs. (The graph column of this store is one term 11 million times.)
+- **A dictionary's terms are decoded, and its strings compressed, ahead of the thread that encodes it.**
+  The dictionary's parts are read a chunk at a time (4,096 terms, or 256 KiB) by the pool's threads,
+  which also work out each literal's value; the front-coded string store is made a batch of strings
+  at a time (128 K characters: prefixes, UTF-8, zstd) by them too. The encoding thread takes the chunks
+  and writes the batches in order, a window of them (threads + 2) in flight, and does the piece it
+  comes to itself when no worker has begun it: nothing waits for a queue, on a pool of one thread
+  either.
+- **`-method 1` does the same one merge**, of the whole columns on its one thread (it has no pool, and
+  its sorter no ranges), and no longer writes the sorted column files either.
+
+Measured with the jar before and the jar after in turn on the same source, in seconds (several figures
+are several rounds; the command line polls once a second for a build to end). The machine ran both jars
+some 10% slower in the later rounds than in the earlier ones, which is why they took turns:
+
+| Build | Before | After |
+|---|---|---|
+| 300,000 features, `-method 4 -spatial` (4 cores, the default) | 107.2, 100.2, 107.5 | 49.1, 51.2, 55.2 |
+| ... `-cores 8` | 101.2 | 39.4 |
+| ... `-cores 16` | 103.4, 98.3 | 39.3, 39.4 |
+| ... `-cores 32` | 95.6 | 39.4 |
+| ... `-method 5 -spatial -cores 16` | 90.3 | 40.5 |
+| ... `-method 1 -spatial` | 128.4, 123.0, 130.0, 134.2 | 97.4, 91.0, 95.1, 107.1 |
+| 4.0M quads in 5,000 graphs, `-method 4` (4 cores) | 17.0, 17.0 | 11.9, 12.0 |
+| ... `-cores 16` | 16.0, 14.9 | 12.9, 12.9 |
+| ... `-method 1` | 25.2 | 19.9 |
+| 30,000 features, `-method 4 -spatial -cores 16` | 11.9 | 8.9 |
+
+(The first two figures of the 4-core row, the 8-core row, the first two of `-method 1` and the many
+graphs' `-method 1` were taken while the least a range held was 32,768 rows; those builds are cut into
+the same ranges either way.)
+
+Where it went, by the builds' own logs (`-method 4`, two rounds each):
+
+| Stage | 4 cores, before | 4 cores, after | 16 cores, before | 16 cores, after |
+|---|---|---|---|---|
+| parse and augment | 15.2, 15.4 | 15.4, 15.2 | 12.4, 11.6 | 11.6, 12.6 |
+| the sorted columns into dictionaries on disk | 42.2, 38.9 | 6.0, 6.5 | 39.0, 39.4 | 4.7, 5.0 |
+| encode the dictionaries | 27.0, 24.4 | 10.5, 13.5 | 25.0, 25.0 | 6.2, 6.0 |
+| ids | 9.5, 7.7 | 1.8, 1.6 | 7.5, 7.4 | 1.7, 1.7 |
+| the quads and both indexes | 5.3, 5.2 | 4.9, 5.7 | 5.5, 5.7 | 6.3, 5.7 |
+| the container | 6.3, 6.5 | 8.8, 7.1 | 12.1, 7.6 | 7.1, 7.0 |
+
+And `-method 1` (four rounds):
+
+| Stage | Before | After |
+|---|---|---|
+| the sorted columns into dictionaries on disk | 50.9, 45.5, 48.1, 50.1 | 20.7, 21.1, 21.8, 23.7 |
+| encode the dictionaries | 23.0, 23.0, 26.6, 25.7 | 29.6, 25.6, 27.3, 32.6 |
+| ids | 14.3, 13.2, 13.8, 14.8 | 4.7, 5.1, 4.9, 5.8 |
+
+What that says:
+
+- **A `-method 4` build of this data takes half the time on 4 cores and two fifths of it on 8 or more**,
+  and cores count now: 49 to 55 s on 4, 39 to 40 s on 8, 16 and 32. `-method 5` on one source is the
+  same. `-method 1` takes a quarter less (91 to 107 s against 123 to 134), and the store of many graphs
+  12 to 13 s against 15 to 17.
+- **Past 8 cores nothing is gained here, because what is left is not parallel.** Of the 39 s on 16
+  cores, 12 are the parse and the spatial augmentation, 7 the container, 6 the quads and the indexes, 2
+  the ids: 27 s that more cores do not shorten. The merge takes 5 s and the dictionaries 6.
+- **Every store is the bytes it was.** Each was compared with the store the jar before built from the
+  same source: `-method 1`, 4 and 5 on the store of many graphs, on 30,000 features, on the source of
+  every kind of term (with and without its blank nodes) and on the 300,000 features; `-method 4` also on
+  1 and on 16 cores, and into a Zarr store (143 files); `-method 0` and 3, which this does not touch, on
+  two of the sources. 26 comparisons, and again 11 with the final jar as it was timed.
+- **The dictionaries' stage is bound by memory now, not by cores.** It took 79 s of processor time on 16
+  threads for 5.7 s, and 39 s on 4 threads for 10 s; one thread did the same work in about 23 s. On 4
+  cores a young collection of 6.8 GB came every 1.2 s: 5.9 GB allocated a second. Part of that is the
+  JTS parse of each geometry, whose result is not used (the encoder asks every literal for its value,
+  as noted above). Tried, and not kept, because it changes what every engine does: without that parse
+  the stage takes 4.4 s on 16 cores where it takes 5.7, and 7.1 s on 4 where it takes 10.2 (one run
+  each), and the store is the same bytes.
+- **A range costs files.** Each leaves five small files that the stages after it open again. The store
+  of many graphs (4.0M rows) on 16 threads took 1.2 s to encode its dictionaries from 64 ranges, 0.7 to
+  0.8 s from 30, 0.5 s from 15 and 0.4 s from 3; the 300,000 features did not care. Hence the 262,144
+  rows a range holds at least (it was 32,768 when first timed).
+- **`-method 1` encodes its dictionaries more slowly than before, by 1 to 6 s**, with the processor
+  samples on its thread that the one-thread encode had before (1,921 against 1,932). The time is in the
+  system's calls: 179 samples against 40 in the call that asks a file how much of it is left to read,
+  61 against 8 in the writes of the string store. The merge before it now writes its files in 21 s, not
+  48, and the stage after it probably reads and writes while the system is still putting those away.
+  The build takes a quarter less all the same.
+- **Flight Recorder's samples do not show how many threads are busy**: it takes a few threads a tick.
+  They said 20 s for the dictionaries' stage where the process's processor time said 79. A stage on
+  many threads is measured by processor time against the clock here, and by thread dumps (48 looks at
+  the 4 workers: 38 at work, 10 waiting for the oldest chunk).
+
+Still open here:
+
+- **The parse and the augmentation are the largest stage now**, 12 to 15 s: one thread parses, one
+  takes the rows.
+- **The dictionaries' stage**: the parse of every geometry (above); and each string fragment is its own
+  zstd frame, with tables set up for each.
+- **The quads and the two indexes could be made beside the dictionaries**: neither needs the other, and
+  they are 6 s on one thread.
+- **The ids are read back a column a thread**, the ranges in turn (1.7 s); they could be read a range a
+  thread.
+- **The container is written on one thread**, 7 s; the id sequences are block-encoded in two passes
+  over their temp files.
+- **`-method 1` reads its dictionary through a stream that asks the file's length for every buffer**
+  (above); the engines with a pool read whole chunks at known places.
+- Not measured: the native binary, real data, Linux and macOS, a heap below 24 GB, and a column of more
+  runs than one merge takes (the indexes of merged runs are tested, not timed).
+
+Seen on the way, and not changed:
+
+- **A `-void` build is not the same bytes twice.** Two builds of 30,000 features by the jar before
+  differ in 197 bytes, and a build by each jar in 184: the statistics graph has blank nodes. Those two
+  stores were compared graph by graph instead (35,090 named graphs and the default graph, isomorphic).
+
+Tests: 2,391 run and none fails (92 are skipped, as before). New: the ranges of a sorter - every record
+once, in order and within its bounds, from runs of one level and of several, from a sorter that never
+spilled, for bounds that are not records, from many threads at once, with an index thinned to its
+first entries; a term's rows in one range whichever runs they came from; the ranges' id files and the
+chunks of a dictionary file, cut short as well; a dictionary's parts read ahead in the order of the
+stream on a pool, from one of its own threads, and on an executor that runs nothing; the string store's
+three buffers byte for byte the in-memory writer's, however the batches fall; and whole builds forced
+into many ranges - 8,000 quads, every kind of term, spatial, one term holding most rows - against the
+sequential engine's store, with a range that fails leaving nothing open.
