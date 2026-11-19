@@ -281,6 +281,11 @@ class AlgebraShapeParityTest {
             "SELECT * FROM <" + G1 + "> FROM <http://ex.org/g2> WHERE { ?s ex:p ?o OPTIONAL { ?o ex:only ?x } MINUS { ?s ex:only \"g1\" } }",
             "SELECT * FROM <" + G1 + "> WHERE { ?s ex:knows/ex:name ?n }",
             "SELECT * FROM <urn:x-arq:DefaultGraph> FROM <" + G1 + "> WHERE { ?s ex:name ?n }",
+            // DISTINCT ?p under GRAPH ?g (the index fast path where the dataset is the store's own)
+            "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } } ORDER BY ?p",
+            "SELECT DISTINCT ?p FROM NAMED <" + G1 + "> WHERE { GRAPH ?g { ?s ?p ?o } }",
+            "SELECT DISTINCT ?p FROM <" + G1 + "> WHERE { GRAPH ?g { ?s ?p ?o } }",
+            "SELECT DISTINCT ?p FROM <" + G1 + "> FROM NAMED <http://ex.org/g2> WHERE { GRAPH ?g { ?s ?p ?o } }",
         };
         for (String q : queries) {
             assertSelectParity(store, q);

@@ -1,5 +1,6 @@
 package com.ebremer.beakgraph.hdf5.jena;
 
+import com.ebremer.beakgraph.core.BGDatasetGraph;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
@@ -61,13 +62,23 @@ import org.slf4j.LoggerFactory;
  * exact algebra shape whose answer the index directly stores:
  *
  * <pre>  (distinct (project (?x) (bgp (?s ?p ?o))))            - active graph
- *  (distinct (project (?x) (graph &lt;g&gt; (bgp (?s ?p ?o)))))  - concrete graph</pre>
+ *  (distinct (project (?x) (graph &lt;g&gt; (bgp (?s ?p ?o)))))  - concrete graph
+ *  (distinct (project (?p) (graph ?g (bgp (?s ?p ?o)))))   - every named graph</pre>
  *
  * with all three pattern positions distinct unbound variables, exactly one
  * projected variable, no filter (a FILTER changes the algebra shape, so it
  * cannot fire here), and the plain top-level execution input (a single root
  * binding that binds none of the pattern's variables). Everything else falls
  * back to normal execution.
+ *
+ * <p>{@code GRAPH ?g} with {@code ?g} not projected asks for the predicates of
+ * every named graph the dataset has: the same predicate levels, read for each
+ * graph {@link GraphVarBG} would walk ({@link GraphVarBG#namedGraphIds}), and
+ * only where it would walk them - so the answer is the walk's, without
+ * reading a quad. {@code ?g} must not also appear in the pattern or be bound
+ * already. {@code DISTINCT ?s} under {@code GRAPH ?g} needs the cross-graph
+ * de-duplication the union graph lacks, and {@code DISTINCT ?g} is a
+ * different answer shape: both fall back.
  */
 public final class DistinctTermFastPath {
 
@@ -100,9 +111,16 @@ public final class DistinctTermFastPath {
 
         Op inner = project.getSubOp();
         Node target = bg.getNamedGraph();
+        Var graphVar = null; // GRAPH ?g: every named graph, below
         if (inner instanceof OpGraph opGraph) {
-            if (!opGraph.getNode().isConcrete()) return null; // GRAPH ?g - different answer shape
-            target = opGraph.getNode();
+            Node gn = opGraph.getNode();
+            if (gn.isConcrete()) {
+                target = gn;
+            } else if (gn.isVariable()) {
+                graphVar = Var.alloc(gn);
+            } else {
+                return null;
+            }
             inner = opGraph.getSubOp();
         }
         if (!(inner instanceof OpBGP opBGP)) return null;
@@ -117,7 +135,18 @@ public final class DistinctTermFastPath {
 
         boolean predicatePosition = Var.alloc(p).equals(v);
         boolean subjectPosition = Var.alloc(s).equals(v);
-        if (!predicatePosition && !subjectPosition) return null; // ?o: no single index level
+        if (!predicatePosition && !subjectPosition) return null; // ?o (or ?g): no single index level
+
+        // GRAPH ?g: only DISTINCT ?p (per-graph lists merged in a set, as for the
+        // union graph), and only where ?g ranges over the graphs alone - in the
+        // pattern too it would constrain the rows.
+        long[] namedGraphs = null;
+        if (graphVar != null) {
+            if (!predicatePosition) return null;
+            if (graphVar.equals(Var.alloc(s)) || graphVar.equals(Var.alloc(p)) || graphVar.equals(Var.alloc(o))) return null;
+            namedGraphs = namedGraphsWalked(execCxt, reader, dict);
+            if (namedGraphs == null) return null;
+        }
 
         IndexReader index = reader.getIndexReader(predicatePosition ? Index.GPOS : Index.GSPO);
         if (index == null) return null; // index absent (foreign/old file): scan instead
@@ -131,6 +160,7 @@ public final class DistinctTermFastPath {
         if (root == null) return null; // exhausted input: the normal path answers empty immediately
         // A pre-bound pattern variable (initial bindings) constrains the answer - scan instead.
         if (root.contains(Var.alloc(s)) || root.contains(Var.alloc(p)) || root.contains(Var.alloc(o))) return null;
+        if (graphVar != null && root.contains(graphVar)) return null; // ?g bound: one graph, the walk's to answer
         input.next(); // consume the single root binding (unrelated vars are dropped by the project)
 
         HITS.incrementAndGet();
@@ -138,7 +168,12 @@ public final class DistinctTermFastPath {
 
         if (predicatePosition) {
             Set<Long> pids = new LinkedHashSet<>();
-            if (Quad.isUnionGraph(target)) {
+            if (namedGraphs != null) {
+                for (long gid : namedGraphs) {
+                    collectGraphPredicates(index, gid, pids);
+                }
+                target = graphVar; // for the log line
+            } else if (Quad.isUnionGraph(target)) {
                 // Union-of-named-graphs semantics: every stored graph except the default.
                 long defaultGi = dict.getGraphs().locate(Quad.defaultGraphIRI);
                 dict.streamGraphIds()
@@ -165,6 +200,19 @@ public final class DistinctTermFastPath {
         }
         Iterator<Binding> out = new SubjectBindings(index.getIDBuffer('S'), range[0], range[1], nodeTable, v);
         return QueryIterPlainWrapper.create(out, execCxt);
+    }
+
+    /**
+     * The ids of the named graphs {@code GRAPH ?g} walks in this execution -
+     * {@link GraphVarBG}'s list, under the same conditions as its walk: the
+     * dataset is a {@link BGDatasetGraph} over this store and not a view of a
+     * set of graphs. Null anywhere else, where the fast path declines.
+     */
+    private static long[] namedGraphsWalked(ExecutionContext execCxt, HDF5Reader reader, PositionalDictionaryReader dict) {
+        if (!(execCxt.getDataset() instanceof BGDatasetGraph dsg)) return null;
+        BeakGraph root = dsg.getBeakGraph();
+        if (root == null || root.isGraphSetView() || root.getReader() != reader) return null;
+        return GraphVarBG.namedGraphIds(dict, root);
     }
 
     /** The graph's first-level id (entity id), or -1 for "no rows here". */

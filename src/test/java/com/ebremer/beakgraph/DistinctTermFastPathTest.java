@@ -8,18 +8,27 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import org.apache.jena.query.Dataset;
+import org.apache.jena.query.DatasetFactory;
 import org.apache.jena.query.QueryExecution;
 import org.apache.jena.query.QueryFactory;
 import org.apache.jena.query.QuerySolution;
 import org.apache.jena.query.ResultSet;
+import org.apache.jena.riot.Lang;
+import org.apache.jena.riot.RDFParser;
+import org.apache.jena.sparql.core.DatasetGraph;
+import org.apache.jena.sparql.core.DatasetGraphFactory;
 import org.apache.jena.sparql.core.Quad;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,6 +90,20 @@ class DistinctTermFastPathTest {
         return out;
     }
 
+    /** Runs the query and lists the single projected variable's term strings in result order. */
+    private static List<String> orderedTerms(String queryBody) {
+        List<String> out = new ArrayList<>();
+        try (QueryExecution qe = QueryExecution.dataset(ds)
+                .query(QueryFactory.create(PREFIX + queryBody)).build()) {
+            ResultSet rs = qe.execSelect();
+            String var = rs.getResultVars().get(0);
+            while (rs.hasNext()) {
+                out.add(rs.next().get(var).toString());
+            }
+        }
+        return out;
+    }
+
     private static Set<String> ex(String... locals) {
         Set<String> s = new HashSet<>();
         for (String l : locals) s.add(NS + l);
@@ -114,6 +137,31 @@ class DistinctTermFastPathTest {
     void predicatesUnionGraphAnswersFromIndexAcrossNamedGraphsOnly() {
         check("SELECT DISTINCT ?p WHERE { GRAPH <" + Quad.unionGraph.getURI() + "> { ?s ?p ?o } }",
                 ex("p2", "p3", "shared"), true);
+    }
+
+    @Test
+    void predicatesGraphVariableAnswersFromIndexAcrossNamedGraphsOnly() {
+        // p0/p1/refl exist only in the default graph, which GRAPH ?g does not range over.
+        check("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }",
+                ex("p2", "p3", "shared"), true);
+    }
+
+    @Test
+    void predicatesGraphVariableOrderedAnswersFromIndexInOrder() {
+        // ARQ moves ORDER BY above DISTINCT, leaving the fast path's shape underneath.
+        String q = "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } } ORDER BY ?p";
+        long before = DistinctTermFastPath.HITS.get();
+        assertEquals(List.of(NS + "p2", NS + "p3", NS + "shared"), orderedTerms(q));
+        assertEquals(1, DistinctTermFastPath.HITS.get() - before, "fast-path activations for: " + q);
+    }
+
+    @Test
+    void predicatesGraphVariableMatchesTheGraphWalk() {
+        // The same predicates as the GRAPH ?g walk itself, which a BIND keeps off the fast path.
+        long before = DistinctTermFastPath.HITS.get();
+        Set<String> walked = terms("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } BIND(1 AS ?x) }");
+        assertEquals(0, DistinctTermFastPath.HITS.get() - before);
+        check("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }", walked, true);
     }
 
     @Test
@@ -202,11 +250,71 @@ class DistinctTermFastPathTest {
     }
 
     @Test
-    void graphVariableFallsBack() {
-        check("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }",
-                ex("p2", "p3", "shared"), false);
+    void graphVariableSubjectsFallBack() {
+        // Cross-graph dedup of subject ids, as for the union graph: scan.
         check("SELECT DISTINCT ?s WHERE { GRAPH ?g { ?s ?p ?o } }",
                 ex("a", "d"), false);
+    }
+
+    @Test
+    void graphVariableProjectedFallsBack() {
+        // DISTINCT ?g is the list of non-empty graphs, a different answer shape (and DESCRIBE's internal query).
+        check("SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }",
+                ex("g1", "g2"), false);
+    }
+
+    @Test
+    void graphVariableInThePatternFallsBack() {
+        // ?g also in the pattern constrains the rows: no graph here has itself as a subject or object.
+        check("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?g ?p ?o } }", Set.of(), false);
+        check("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?g } }", Set.of(), false);
+    }
+
+    @Test
+    void graphVariableBoundOrFilteredFallsBack() {
+        check("SELECT DISTINCT ?p WHERE { VALUES ?g { ex:g1 } GRAPH ?g { ?s ?p ?o } }",
+                ex("p2", "shared"), false);
+        check("SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } FILTER(?g = ex:g2) }",
+                ex("p3"), false);
+    }
+
+    @Test
+    void graphVariableUnderDatasetClausesKeepsTheirNamedGraphs() {
+        // FROM NAMED limits the graphs ?g ranges over; FROM alone leaves none (SPARQL 1.1, 13.2).
+        // Whichever path answers, the dataset's named graphs are the ones read.
+        assertEquals(ex("p3"), terms("SELECT DISTINCT ?p FROM NAMED ex:g2 WHERE { GRAPH ?g { ?s ?p ?o } }"));
+        assertEquals(ex("p2", "p3", "shared"),
+                terms("SELECT DISTINCT ?p FROM NAMED ex:g1 FROM NAMED ex:g2 WHERE { GRAPH ?g { ?s ?p ?o } }"));
+        assertEquals(Set.of(), terms("SELECT DISTINCT ?p FROM ex:g1 WHERE { GRAPH ?g { ?s ?p ?o } }"));
+    }
+
+    /**
+     * Every writer engine, the disk-based ones included (method 5, Plaid, builds the
+     * large stores): DISTINCT ?p under GRAPH ?g answered from the index, equal to
+     * Jena's answer over the same TriG.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("com.ebremer.beakgraph.WriterEngines#all")
+    void predicatesGraphVariableOnEveryEngine(WriterEngines.Engine engine) throws Exception {
+        Path src = dir.resolve("dt.trig");
+        File h5 = dir.resolve("gv-" + engine.name() + ".h5").toFile();
+        engine.buildStore(src.toFile(), h5);
+        DatasetGraph dsg = DatasetGraphFactory.create();
+        RDFParser.create().source(src.toUri().toString()).lang(Lang.TRIG).parse(dsg);
+        String q = PREFIX + "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } } ORDER BY ?p";
+        List<String> expected = new ArrayList<>();
+        try (QueryExecution qe = QueryExecution.dataset(DatasetFactory.wrap(dsg)).query(QueryFactory.create(q)).build()) {
+            qe.execSelect().forEachRemaining(row -> expected.add(row.get("p").toString()));
+        }
+        try (BeakGraph store = BG.getBeakGraph(h5)) {
+            List<String> got = new ArrayList<>();
+            long before = DistinctTermFastPath.HITS.get();
+            try (QueryExecution qe = QueryExecution.dataset(store.getDataset()).query(QueryFactory.create(q)).build()) {
+                qe.execSelect().forEachRemaining(row -> got.add(row.get("p").toString()));
+            }
+            assertEquals(1, DistinctTermFastPath.HITS.get() - before, engine.name() + ": fast path");
+            assertEquals(expected, got, engine.name());
+        }
     }
 
     @Test

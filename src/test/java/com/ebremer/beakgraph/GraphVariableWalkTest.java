@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.VoidMode;
+import com.ebremer.beakgraph.hdf5.jena.DistinctTermFastPath;
 import com.ebremer.beakgraph.hdf5.jena.GraphVarBG;
 import com.ebremer.beakgraph.hdf5.jena.GroupOnIds;
 import com.ebremer.beakgraph.hdf5.jena.ParallelScan;
@@ -121,7 +122,7 @@ class GraphVariableWalkTest {
         "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ex:next ?o } } GROUP BY ?g",
         "SELECT ?s (COUNT(DISTINCT ?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?s",
         "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }",
-        "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }",
+        "SELECT DISTINCT ?s WHERE { GRAPH ?g { ?s ?p ?o } }",
         // a FILTER, an OPTIONAL, a UNION inside the block: evaluated in each graph, with ?g bound but out of their sight
         "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(isLiteral(?o)) } }",
         "SELECT * WHERE { GRAPH ?g { ex:a ?p ?o FILTER(isLiteral(?o)) } }",
@@ -244,6 +245,23 @@ class GraphVariableWalkTest {
             assertEquals(rowsWithoutTheWalk(store, query), walked, "the walk against Jena's operator on the same store: " + query);
             assertEquals(rows(reference, query), walked, "the walk against an in-memory dataset: " + query);
         }
+    }
+
+    @Test
+    void distinctPredicatesUnderAGraphVariableComeFromTheIndex() {
+        // DISTINCT ?p under GRAPH ?g is DistinctTermFastPath's: the GPOS predicate level of each
+        // graph the walk would visit, instead of the walk. A BIND keeps the same query on the walk.
+        String query = "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }";
+        long index = DistinctTermFastPath.HITS.get();
+        long walks = GraphVarBG.HITS.get();
+        List<String> got = rows(store, query);
+        assertEquals(1, DistinctTermFastPath.HITS.get() - index, "answered from the index: " + query);
+        assertEquals(walks, GraphVarBG.HITS.get(), "not by the walk: " + query);
+        walks = GraphVarBG.HITS.get();
+        List<String> walked = rows(store, "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } BIND(1 AS ?x) }");
+        assertTrue(GraphVarBG.HITS.get() > walks, "the BIND form is the walk's");
+        assertEquals(walked, got, "the index against the walk on the same store");
+        assertEquals(rows(reference, query), got, "the index against an in-memory dataset");
     }
 
     @Test
