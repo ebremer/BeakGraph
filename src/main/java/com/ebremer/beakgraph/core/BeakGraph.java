@@ -74,6 +74,9 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     // pattern by its exact count in the graphs THIS graph reads.
     private volatile ReorderTransformation reorderTransform;
     private volatile VoidStats voidStats;
+    // A predicate's rows, distinct objects and subjects per stored graph, read from the indexes
+    // as the reorder needs them; on the root graph only, for the store's lifetime.
+    private volatile PredicateFigures predicateFigures;
 
     /**
      * Stands, in a pattern handed to a reorder transform, for a variable bound earlier in the
@@ -468,7 +471,7 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
         if (stats == null) {
             return ReorderLib.fixed();
         }
-        return new BGReorderTransform(stats, exactCounts(graphIds));
+        return new BGReorderTransform(stats, graphCounts(graphIds));
     }
 
     /** The dataset's VoID statistics, loaded once (on the root graph), or null when unusable. */
@@ -507,30 +510,31 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     }
 
     /**
-     * Exact matches of {@code ?s <p> <o>} / {@code ?s <p> ?o}, summed over {@code graphIds}, from
-     * GPOS ({@code IndexCounts.quadsWithPredicate}); null when this reader has no such index.
+     * What the stored graphs with dictionary ids {@code graphIds} hold - exact matches of
+     * {@code ?s <p> <o>}, a predicate's rows and distinct objects, the graphs' quads and distinct
+     * subjects - summed over them, from their indexes ({@link GraphCounts}); null when this reader
+     * cannot count them.
      */
-    private BGReorderTransform.Counts exactCounts(long[] graphIds) {
+    private BGReorderTransform.Counts graphCounts(long[] graphIds) {
         if (graphIds == null
                 || !(reader instanceof com.ebremer.beakgraph.hdf5.readers.HDF5Reader h)
                 || !(h.getDictionary() instanceof com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader dict)) {
             return null;
         }
-        return (predicate, object) -> {
-            long pi = dict.getPredicates().locate(predicate);
-            if (pi < 1) return 0;
-            long oi = 0;
-            if (object != null) {
-                oi = dict.getObjects().locate(object);
-                if (oi < 1) return 0;
+        return new GraphCounts(h, dict, rootGraph().predicateFigures(h), graphIds);
+    }
+
+    /** The per-graph predicate figures, made once on the root graph and shared by every view. */
+    private PredicateFigures predicateFigures(com.ebremer.beakgraph.hdf5.readers.HDF5Reader h) {
+        PredicateFigures f = predicateFigures;
+        if (f == null) {
+            synchronized (this) {
+                f = predicateFigures;
+                if (f == null) {
+                    predicateFigures = f = new PredicateFigures(h);
+                }
             }
-            long sum = 0;
-            for (long gi : graphIds) {
-                long n = com.ebremer.beakgraph.hdf5.readers.IndexCounts.quadsWithPredicate(h, gi, pi, oi);
-                if (n < 0) return -1;
-                sum += n;
-            }
-            return sum;
-        };
+        }
+        return f;
     }
 }

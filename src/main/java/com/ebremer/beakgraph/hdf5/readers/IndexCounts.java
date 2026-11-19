@@ -166,6 +166,141 @@ public final class IndexCounts {
     }
 
     /**
+     * The quads of graph {@code gi} with predicate id {@code pi}, and their
+     * distinct objects - {@code {rows, objects}} - from GPOS alone: the
+     * predicate's position by binary search in the graph's P-level block, its
+     * O-level block (one entry per distinct object), and the rows under it.
+     * Rows ÷ objects is how many subjects a bound object joins to on average:
+     * the fan-out of {@code ?s <p> ?o} once {@code ?o} is bound, which the
+     * join reorder needs to see that {@code ?m sockg:of ?param} turns each of
+     * 156 parameters into some 20,000 measurements.
+     *
+     * @return {@code {0, 0}} for an absent graph or predicate, or null without
+     *         a GPOS index
+     */
+    public static long[] predicateRowsAndObjects(HDF5Reader reader, long gi, long pi) {
+        IndexReader gpos = reader.getIndexReader(Index.GPOS);
+        if (gpos == null) return null;
+        long[] none = {0, 0};
+        if (pi < 1) return none;
+        long[] predicates = RangeSelect.firstLevelRange(gpos, 'P', gi);
+        if (predicates == null) return none;
+        long p = gpos.getIDBuffer('P').binarySearch(predicates[0], predicates[1], pi);
+        if (p < 0) return none;
+        long[] objects = RangeSelect.childRange(gpos, 'O', p, p);
+        if (objects == null) return none;
+        return new long[] {firstRow(gpos, p + 1) - firstRow(gpos, p), objects[1] - objects[0] + 1};
+    }
+
+    /**
+     * Exact distinct subjects of predicate id {@code pi} in graph {@code gi}:
+     * the subjects of its GPOS rows, read and de-duplicated - so for a
+     * predicate with few rows; {@link #samplePairs} estimates it for any.
+     * Rows ÷ subjects is how many objects a bound subject joins to:
+     * {@code ?cell part_of ?organ} gives ubergraph's cell types 66 each,
+     * where dividing by every subject in the graph made it 1.
+     *
+     * @return the count (0 for an absent graph or predicate), or -1 without a
+     *         GPOS index
+     */
+    public static long distinctSubjectsWithPredicate(HDF5Reader reader, long gi, long pi) {
+        IndexReader gpos = reader.getIndexReader(Index.GPOS);
+        if (gpos == null) return -1;
+        if (pi < 1) return 0;
+        long[] predicates = RangeSelect.firstLevelRange(gpos, 'P', gi);
+        if (predicates == null) return 0;
+        long p = gpos.getIDBuffer('P').binarySearch(predicates[0], predicates[1], pi);
+        if (p < 0) return 0;
+        long[] objects = RangeSelect.childRange(gpos, 'O', p, p);
+        if (objects == null) return 0;
+        long[] rows = RangeSelect.childRange(gpos, 'S', objects[0], objects[1]);
+        if (rows == null) return 0;
+        BitPackedUnSignedLongBuffer subjects = gpos.getIDBuffer('S');
+        long[] ids = new long[Math.toIntExact(rows[1] - rows[0] + 1)];
+        for (int i = 0; i < ids.length; i++) {
+            ids[i] = subjects.get(rows[0] + i);
+        }
+        java.util.Arrays.sort(ids);
+        long distinct = 0;
+        for (int i = 0; i < ids.length; i++) {
+            if (i == 0 || ids[i] != ids[i - 1]) distinct++;
+        }
+        return distinct;
+    }
+
+    /** The contiguous runs of pairs {@link #samplePairs} reads: one page or two each, however large the graph. */
+    public static final int SAMPLE_RUN = 64;
+
+    /**
+     * A sample of graph {@code gi}'s (subject, predicate) pairs - GSPO's P level
+     * under the graph, one entry per distinct pair - from which
+     * {@link PairSample#subjects} estimates any predicate's distinct subjects:
+     * the share of the pairs that have it, times the pairs. A predicate's pairs
+     * ARE its distinct subjects, so this is a share to estimate, not a distinct
+     * count. Every pair when there are at most {@code size} (then exact).
+     *
+     * <p>Otherwise the sample is {@code size / }{@value #SAMPLE_RUN} runs of
+     * {@value #SAMPLE_RUN} consecutive pairs, spread evenly over the graph. The
+     * level is memory-mapped, so each read of a cold page is a fault: 16,384
+     * pairs read one by one took 8 s on the 4-billion-type graph of the OKN
+     * store, the same number in runs a few hundred faults.
+     *
+     * @return the sample (none for an absent graph), or null without a GSPO index
+     */
+    public static PairSample samplePairs(HDF5Reader reader, long gi, int size) {
+        IndexReader gspo = reader.getIndexReader(Index.GSPO);
+        if (gspo == null) return null;
+        long[] subjects = RangeSelect.firstLevelRange(gspo, 'S', gi);
+        long[] pairs = (subjects == null) ? null : RangeSelect.childRange(gspo, 'P', subjects[0], subjects[1]);
+        if (pairs == null) return new PairSample(0, new long[0]);
+        long n = pairs[1] - pairs[0] + 1;
+        BitPackedUnSignedLongBuffer predicates = gspo.getIDBuffer('P');
+        long[] sample;
+        if (n <= Math.max(size, SAMPLE_RUN)) {
+            sample = new long[(int) n];
+            for (int i = 0; i < sample.length; i++) {
+                sample[i] = predicates.get(pairs[0] + i);
+            }
+        } else {
+            int runs = Math.max(1, size / SAMPLE_RUN);
+            sample = new long[runs * SAMPLE_RUN];
+            long stride = (n - SAMPLE_RUN) / runs;
+            for (int r = 0; r < runs; r++) {
+                long from = pairs[0] + r * stride + stride / 2;
+                for (int i = 0; i < SAMPLE_RUN; i++) {
+                    sample[r * SAMPLE_RUN + i] = predicates.get(from + i);
+                }
+            }
+        }
+        java.util.Arrays.sort(sample);
+        return new PairSample(n, sample);
+    }
+
+    /** A graph's (subject, predicate) pair count and the sorted predicate ids of a systematic sample of them. */
+    public record PairSample(long pairs, long[] sample) {
+
+        /** True when every pair was read: then {@link #subjects} is exact. */
+        public boolean exact() {
+            return sample.length == pairs;
+        }
+
+        /**
+         * Estimated distinct subjects of predicate id {@code pi}: its share of the
+         * sample times the pairs - exact when every pair was read. A predicate the
+         * sample missed counts as half a hit.
+         */
+        public double subjects(long pi) {
+            if (sample.length == 0) return 0;
+            int lo = java.util.Arrays.binarySearch(sample, pi);
+            if (lo < 0) return exact() ? 0 : 0.5 * pairs / sample.length;
+            int hi = lo;
+            while (lo > 0 && sample[lo - 1] == pi) lo--;
+            while (hi + 1 < sample.length && sample[hi + 1] == pi) hi++;
+            return (double) (hi - lo + 1) * pairs / sample.length;
+        }
+    }
+
+    /**
      * The S-level position at which the rows of the predicate at P-level
      * position {@code p} begin; for the position after the last predicate,
      * the S level's length.
