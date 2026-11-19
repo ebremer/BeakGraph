@@ -19,13 +19,41 @@ import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
  * counts. The BeakGraph-specific rule: only a bound <em>subject</em> (GSPO prefix) or bound
  * <em>predicate</em> (GPOS prefix) gives an index lookup - a pattern bound on the object alone has no
  * index and must scan, so it is penalised and deferred until chaining binds its subject or predicate.
+ *
+ * <p>Exact counts, where the graphs a query reads can give them ({@link Counts}): a pattern whose
+ * predicate is a term and whose subject is not yet bound - {@code ?s <p> <o>} or {@code ?s <p> ?o} -
+ * is costed at its exact number of matches in those graphs, read from GPOS. The estimate above
+ * divides by the store's distinct objects, which in a large store puts nearly every
+ * {@code ?s <p> <o>} below one match; clamped to 1, they all tied, and the order they were written
+ * in decided: {@code ?fac rdf:type fio:Facility} (4.86 M matches) ran before
+ * {@code ?fac fio:ofIndustry naics:NAICS-562212} (14,306), and the query timed out.
  */
 final class BGReorderTransform implements ReorderTransformation {
 
+    /**
+     * Exact matches of {@code ?s <predicate> <object>} - or {@code ?s <predicate> ?o} when
+     * {@code object} is null - in the graphs a query reads; -1 when they cannot be counted.
+     */
+    @FunctionalInterface
+    interface Counts {
+        long matches(Node predicate, Node object);
+    }
+
     private final VoidStats stats;
+    private final Counts counts;
 
     BGReorderTransform(VoidStats stats) {
+        this(stats, null);
+    }
+
+    BGReorderTransform(VoidStats stats, Counts counts) {
         this.stats = stats;
+        this.counts = counts;
+    }
+
+    /** The dataset statistics this transform costs by (shared by every view of a store). */
+    VoidStats stats() {
+        return stats;
     }
 
     @Override
@@ -40,6 +68,7 @@ final class BGReorderTransform implements ReorderTransformation {
         boolean[] used = new boolean[n];
         Set<Node> bound = new HashSet<>();      // variables bound by already-chosen triples
         List<Integer> order = new ArrayList<>(n);
+        long[] exact = exactCounts(triples);
         for (int k = 0; k < n; k++) {
             int best = -1;
             double bestCost = Double.POSITIVE_INFINITY;
@@ -47,7 +76,7 @@ final class BGReorderTransform implements ReorderTransformation {
                 if (used[i]) {
                     continue;
                 }
-                double c = cost(triples.get(i), bound);
+                double c = cost(triples.get(i), bound, exact[i]);
                 if (c < bestCost) {
                     bestCost = c;
                     best = i;
@@ -66,11 +95,42 @@ final class BGReorderTransform implements ReorderTransformation {
         };
     }
 
-    /** Estimated result/scan cost of evaluating {@code t} given the currently bound terms/variables. */
-    private double cost(Triple t, Set<Node> bound) {
+    /**
+     * Each triple's exact matches as {@link Counts} gives them - for a predicate that is a term,
+     * with the object when it is one too - or -1: once per triple and reorder, not per candidate
+     * order.
+     */
+    private long[] exactCounts(List<Triple> triples) {
+        long[] exact = new long[triples.size()];
+        for (int i = 0; i < exact.length; i++) {
+            Triple t = triples.get(i);
+            exact[i] = -1;
+            // BeakGraph.BOUND is a variable bound earlier, value unknown: no term to count.
+            if (counts != null && t.getPredicate().isConcrete() && !t.getSubject().isConcrete()
+                    && !BeakGraph.BOUND.equals(t.getPredicate())) {
+                Node o = t.getObject();
+                if ((o.isConcrete() && !BeakGraph.BOUND.equals(o)) || o.isVariable()) {
+                    exact[i] = counts.matches(t.getPredicate(), o.isConcrete() ? o : null);
+                }
+            }
+        }
+        return exact;
+    }
+
+    /**
+     * Estimated result/scan cost of evaluating {@code t} given the currently bound terms/variables,
+     * and {@code exact}, its exact matches when its subject is unbound (or -1).
+     */
+    private double cost(Triple t, Set<Node> bound, long exact) {
         boolean s = isBound(t.getSubject(), bound);
         boolean p = isBound(t.getPredicate(), bound);
         boolean o = isBound(t.getObject(), bound);
+        // The exact count is the pattern's own matches: it stands for the cost only while nothing
+        // chosen earlier binds its subject or (a variable) object, which would make it a lookup
+        // per incoming row instead.
+        if (exact >= 0 && !s && (t.getObject().isConcrete() || !o)) {
+            return exact;
+        }
         double total = Math.max(1, stats.totalTriples());
 
         // Estimated matching cardinality via independent selectivity factors.

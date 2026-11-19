@@ -107,15 +107,20 @@ class ReorderQueryTest {
     }
 
     @Test
-    void namedGraphViewsShareTheDatasetStatistics() {
-        // BG-1: every GRAPH ?g view used to load the VoID statistics afresh.
+    void namedGraphViewsHaveTheirOwnStatsBackedTransforms() {
+        // BG-1: every GRAPH ?g view used to load the VoID statistics afresh. The statistics are
+        // still the root's, loaded once (core.ReorderStatisticsSharingTest); each view's transform
+        // is its own, because it costs patterns by their exact counts in that view's graphs.
         org.apache.jena.sparql.core.DatasetGraph dsg = ds.asDatasetGraph();
         ReorderTransformation root = bg.getReorderTransform();
         BeakGraph v1 = (BeakGraph) dsg.getGraph(org.apache.jena.graph.NodeFactory.createURI(NS + "g1"));
-        BeakGraph v2 = (BeakGraph) dsg.getGraph(org.apache.jena.graph.NodeFactory.createURI(NS + "g2"));
-        assertSame(root, v1.getReorderTransform(), "a view shares the dataset graph's transform");
-        assertSame(root, v2.getReorderTransform());
-        assertSame(root, ((BeakGraph) dsg.getGraph(org.apache.jena.sparql.core.Quad.unionGraph)).getReorderTransform());
+        BeakGraph union = (BeakGraph) dsg.getGraph(org.apache.jena.sparql.core.Quad.unionGraph);
+        for (BeakGraph view : new BeakGraph[] {v1, union}) {
+            ReorderTransformation t = view.getReorderTransform();
+            assertEquals(root.getClass(), t.getClass(), "a view uses the stats-backed reorder too");
+            assertNotSame(root, t, "a view counts in its own graphs");
+            assertSame(t, view.getReorderTransform(), "a view builds its transform once");
+        }
         // A standalone view (no dataset) still builds its own.
         BeakGraph standalone = new BeakGraph(org.apache.jena.graph.NodeFactory.createURI(NS + "g1"), bg.getReader());
         assertNotSame(root, standalone.getReorderTransform());

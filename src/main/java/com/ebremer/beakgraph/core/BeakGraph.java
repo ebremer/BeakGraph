@@ -67,11 +67,20 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     // is read-only so the value is stable once counted.
     private int cachedSize = -1;
     // Lazily-built join-reorder transform (read-only graph -> built once, then reused).
-    // The statistics are DATASET-wide (VoidStats reads the whole VoID graph), so
-    // every view handed out by BGDatasetGraph.getGraph shares its root graph's
-    // transform instead of reloading the stats per view - GRAPH ?g used to load
-    // them once per named graph per query (BG-1).
+    // Its statistics are DATASET-wide (VoidStats reads the whole VoID graph) and are
+    // loaded once, on the root graph, which every view handed out by
+    // BGDatasetGraph.getGraph shares - GRAPH ?g used to load them once per named
+    // graph per query (BG-1). The transform itself is this graph's own: it costs a
+    // pattern by its exact count in the graphs THIS graph reads.
     private volatile ReorderTransformation reorderTransform;
+    private volatile VoidStats voidStats;
+
+    /**
+     * Stands, in a pattern handed to a reorder transform, for a variable bound earlier in the
+     * block whose value the plan cannot know (the GRAPH ?g walk's planner): costed as bound, and
+     * never looked up as a term - its exact count would read 0 and put the pattern first.
+     */
+    public static final Node BOUND = NodeFactory.createURI("urn:x-beakgraph:bound");
     private final BeakGraph root;
 
     static {
@@ -425,37 +434,103 @@ public class BeakGraph extends GraphBase implements AutoCloseable {
     }
 
     /**
-     * Join-reordering transform for BGP optimization. Built lazily from the persisted VoID stats
-     * (BeakGraph-/index-aware selectivity) and cached, falling back to Jena's fixed heuristic when
-     * no stats are available. Returns a usable transform rather than null so multi-pattern BGPs are
-     * reordered most-selective-first.
+     * Join-reordering transform for BGP optimization over THIS graph. Built lazily from the
+     * persisted VoID stats (BeakGraph-/index-aware selectivity, shared with the root graph) and
+     * the exact counts of the graphs this graph reads - the named graph, the stored default
+     * graph, every named graph for the union graph, a graph-set view's members - and cached,
+     * falling back to Jena's fixed heuristic when no stats are available. Returns a usable
+     * transform rather than null so multi-pattern BGPs are reordered most-selective-first.
      */
     public ReorderTransformation getReorderTransform() {
-        if (root != null) {
-            return root.getReorderTransform();
-        }
         ReorderTransformation r = reorderTransform;
         if (r == null) {
             synchronized (this) {
                 r = reorderTransform;
                 if (r == null) {
-                    reorderTransform = r = buildReorderTransform();
+                    reorderTransform = r = buildReorderTransform(graphIds());
                 }
             }
         }
         return r;
     }
 
-    private ReorderTransformation buildReorderTransform() {
-        try {
-            VoidStats stats = VoidStats.load(reader);
-            if (stats.usable()) {
-                return new BGReorderTransform(stats);
-            }
-            logger.debug("No VoID stats for {}; using fixed reorder heuristic", uri);
-        } catch (RuntimeException ex) {
-            logger.warn("Failed to load VoID stats for {}; using fixed reorder heuristic", uri, ex);
+    /**
+     * A join-reordering transform costing patterns by their exact counts in the stored graphs
+     * with dictionary ids {@code graphIds} - the named graphs a {@code GRAPH ?g} walk visits, which
+     * no single graph's transform covers. Not cached: the counts are taken as a reorder needs them.
+     */
+    public ReorderTransformation reorderTransformForGraphs(long[] graphIds) {
+        return buildReorderTransform(graphIds);
+    }
+
+    private ReorderTransformation buildReorderTransform(long[] graphIds) {
+        VoidStats stats = rootGraph().voidStats();
+        if (stats == null) {
+            return ReorderLib.fixed();
         }
-        return ReorderLib.fixed();
+        return new BGReorderTransform(stats, exactCounts(graphIds));
+    }
+
+    /** The dataset's VoID statistics, loaded once (on the root graph), or null when unusable. */
+    private VoidStats voidStats() {
+        VoidStats s = voidStats;
+        if (s == null) {
+            synchronized (this) {
+                s = voidStats;
+                if (s == null) {
+                    s = NO_STATS;
+                    try {
+                        VoidStats loaded = VoidStats.load(reader);
+                        if (loaded.usable()) {
+                            s = loaded;
+                        } else {
+                            logger.debug("No VoID stats for {}; using fixed reorder heuristic", uri);
+                        }
+                    } catch (RuntimeException ex) {
+                        logger.warn("Failed to load VoID stats for {}; using fixed reorder heuristic", uri, ex);
+                    }
+                    voidStats = s;
+                }
+            }
+        }
+        return (s == NO_STATS) ? null : s;
+    }
+
+    private static final VoidStats NO_STATS = VoidStats.of(0, 0, 0, 0, java.util.Map.of());
+
+    /** The dictionary ids of the stored graphs this graph reads, or null when the reader cannot say. */
+    private long[] graphIds() {
+        if (!(reader instanceof com.ebremer.beakgraph.hdf5.readers.HDF5Reader h)) {
+            return null;
+        }
+        return h.graphIdsOf((memberGraphs != null) ? memberGraphs : List.of(namedgraph));
+    }
+
+    /**
+     * Exact matches of {@code ?s <p> <o>} / {@code ?s <p> ?o}, summed over {@code graphIds}, from
+     * GPOS ({@code IndexCounts.quadsWithPredicate}); null when this reader has no such index.
+     */
+    private BGReorderTransform.Counts exactCounts(long[] graphIds) {
+        if (graphIds == null
+                || !(reader instanceof com.ebremer.beakgraph.hdf5.readers.HDF5Reader h)
+                || !(h.getDictionary() instanceof com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader dict)) {
+            return null;
+        }
+        return (predicate, object) -> {
+            long pi = dict.getPredicates().locate(predicate);
+            if (pi < 1) return 0;
+            long oi = 0;
+            if (object != null) {
+                oi = dict.getObjects().locate(object);
+                if (oi < 1) return 0;
+            }
+            long sum = 0;
+            for (long gi : graphIds) {
+                long n = com.ebremer.beakgraph.hdf5.readers.IndexCounts.quadsWithPredicate(h, gi, pi, oi);
+                if (n < 0) return -1;
+                sum += n;
+            }
+            return sum;
+        };
     }
 }

@@ -144,8 +144,11 @@ public final class GraphVarBG {
     /** {@code -Dbeakgraph.graphvar.fastpath=false} leaves every {@code GRAPH ?g} to Jena's operator. */
     private static volatile boolean enabled = Boolean.parseBoolean(System.getProperty("beakgraph.graphvar.fastpath", "true"));
 
-    /** Stands for a term the rows before a pattern will have bound, when the pattern's triples are ordered. */
-    private static final Node BOUND = NodeFactory.createURI("urn:x-beakgraph:bound");
+    /**
+     * Stands for a term the rows before a pattern will have bound, when the pattern's triples are
+     * ordered: {@link BeakGraph#BOUND}, which the reorder costs as bound and never counts as a term.
+     */
+    private static final Node BOUND = BeakGraph.BOUND;
 
     private GraphVarBG() {}
 
@@ -540,8 +543,12 @@ public final class GraphVarBG {
 
         /** The block planned against {@code first}, or null where filter placement gives a shape the walk does not run. */
         Prepared prepare(Binding first) {
-            Plan plan = compile(block, first, new HashSet<>(), root.getReorderTransform(), reader.getNodeTable());
-            return (plan == null) ? null : Prepared.of(graphVar, null, plan, dsg, root, reader, dict, namedGraphIds(dict, root));
+            // The block runs in each named graph in turn, so its patterns are costed by their exact
+            // counts over all of them - the root graph's own transform counts only the stored
+            // default graph.
+            long[] graphs = namedGraphIds(dict, root);
+            Plan plan = compile(block, first, new HashSet<>(), root.reorderTransformForGraphs(graphs), reader.getNodeTable());
+            return (plan == null) ? null : Prepared.of(graphVar, null, plan, dsg, root, reader, dict, graphs);
         }
     }
 

@@ -332,6 +332,31 @@ public class HDF5Reader implements BGReader {
         return dict.streamGraphIds().filter(id -> id != dg && id != generated).iterator();
     }
 
+    /**
+     * The dictionary ids of the stored graphs a read of {@code graphs} visits:
+     * for one graph as {@link #read(Node, BindingNodeId, Triple, ExprList, NodeTable)}
+     * resolves it (the union graph is every named graph, the default graph this
+     * reader's default graph), for several as {@link #readGraphs} does. An absent
+     * graph contributes nothing. What the join reorder sums its exact counts over.
+     */
+    public long[] graphIdsOf(java.util.Collection<Node> graphs) {
+        if (dict.isEmpty()) {
+            return new long[0];
+        }
+        if (graphs.size() == 1 && Quad.isUnionGraph(graphs.iterator().next())) {
+            return java.util.stream.StreamSupport.longStream(
+                    java.util.Spliterators.spliteratorUnknownSize(namedGraphIds(), 0), false).toArray();
+        }
+        long defaultId = dict.getGraphs().locate(Quad.defaultGraphIRI);
+        return graphs.stream().flatMapToLong(n -> {
+            if (Quad.isUnionGraph(n)) {
+                return dict.streamGraphIds().filter(id -> id != defaultId);
+            }
+            Node g = Quad.isDefaultGraph(n) ? this.defaultGraph : n;
+            return java.util.stream.LongStream.of(dict.getGraphs().locate(g));
+        }).filter(id -> id >= 1).distinct().toArray();
+    }
+
     /** A null binding means "no bindings" - every layer below read() already treats it so (BG-340). */
     private static BindingNodeId orEmpty(BindingNodeId bnid) {
         return (bnid != null) ? bnid : new BindingNodeId();

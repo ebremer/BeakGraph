@@ -134,6 +134,38 @@ public final class IndexCounts {
     }
 
     /**
+     * Exact number of quads in graph {@code gi} with predicate id {@code pi}
+     * and, when {@code oi >= 1}, object id {@code oi} - the matches of
+     * {@code ?s <p> <o>} (or {@code ?s <p> ?o}) in that graph - from GPOS
+     * alone: the predicate's position by binary search in the graph's P-level
+     * block, the object's in the predicate's O-level block (the walk
+     * {@code BGIteratorOS} makes), then the size of the rows under it. A few
+     * {@code select1} calls and two binary searches, no row read. What the
+     * join reorder costs a pattern by.
+     *
+     * @return the count (0 for an absent graph, predicate or object), or -1
+     *         without a GPOS index
+     */
+    public static long quadsWithPredicate(HDF5Reader reader, long gi, long pi, long oi) {
+        IndexReader gpos = reader.getIndexReader(Index.GPOS);
+        if (gpos == null) return -1;
+        if (pi < 1) return 0;
+        long[] predicates = RangeSelect.firstLevelRange(gpos, 'P', gi);
+        if (predicates == null) return 0;
+        long p = gpos.getIDBuffer('P').binarySearch(predicates[0], predicates[1], pi);
+        if (p < 0) return 0;
+        if (oi < 1) {
+            return firstRow(gpos, p + 1) - firstRow(gpos, p);
+        }
+        long[] objects = RangeSelect.childRange(gpos, 'O', p, p);
+        if (objects == null) return 0;
+        long o = gpos.getIDBuffer('O').binarySearch(objects[0], objects[1], oi);
+        if (o < 0) return 0;
+        long[] rows = RangeSelect.childRange(gpos, 'S', o, o);
+        return (rows == null) ? 0 : rows[1] - rows[0] + 1;
+    }
+
+    /**
      * The S-level position at which the rows of the predicate at P-level
      * position {@code p} begin; for the position after the last predicate,
      * the S level's length.
