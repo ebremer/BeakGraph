@@ -121,7 +121,7 @@ class GraphVariableWalkTest {
         "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ex:a ?p ?o } }",
         "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ex:next ?o } } GROUP BY ?g",
         "SELECT ?s (COUNT(DISTINCT ?g) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?s",
-        "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }",
+        "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ex:p ?o } }",
         "SELECT DISTINCT ?s WHERE { GRAPH ?g { ?s ?p ?o } }",
         // a FILTER, an OPTIONAL, a UNION inside the block: evaluated in each graph, with ?g bound but out of their sight
         "SELECT * WHERE { GRAPH ?g { ?s ?p ?o FILTER(isLiteral(?o)) } }",
@@ -248,20 +248,23 @@ class GraphVariableWalkTest {
     }
 
     @Test
-    void distinctPredicatesUnderAGraphVariableComeFromTheIndex() {
-        // DISTINCT ?p under GRAPH ?g is DistinctTermFastPath's: the GPOS predicate level of each
-        // graph the walk would visit, instead of the walk. A BIND keeps the same query on the walk.
-        String query = "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } }";
-        long index = DistinctTermFastPath.HITS.get();
-        long walks = GraphVarBG.HITS.get();
-        List<String> got = rows(store, query);
-        assertEquals(1, DistinctTermFastPath.HITS.get() - index, "answered from the index: " + query);
-        assertEquals(walks, GraphVarBG.HITS.get(), "not by the walk: " + query);
-        walks = GraphVarBG.HITS.get();
-        List<String> walked = rows(store, "SELECT DISTINCT ?p WHERE { GRAPH ?g { ?s ?p ?o } BIND(1 AS ?x) }");
-        assertTrue(GraphVarBG.HITS.get() > walks, "the BIND form is the walk's");
-        assertEquals(walked, got, "the index against the walk on the same store");
-        assertEquals(rows(reference, query), got, "the index against an in-memory dataset");
+    void distinctPredicatesAndGraphsUnderAGraphVariableComeFromTheIndex() {
+        // DISTINCT ?p / ?g under GRAPH ?g are DistinctTermFastPath's: the GPOS predicate level, or the
+        // quad count, of each graph the walk would visit, instead of the walk. A BIND keeps the same
+        // query on the walk.
+        for (String var : new String[] {"?p", "?g"}) {
+            String query = "SELECT DISTINCT " + var + " WHERE { GRAPH ?g { ?s ?p ?o } }";
+            long index = DistinctTermFastPath.HITS.get();
+            long walks = GraphVarBG.HITS.get();
+            List<String> got = rows(store, query);
+            assertEquals(1, DistinctTermFastPath.HITS.get() - index, "answered from the index: " + query);
+            assertEquals(walks, GraphVarBG.HITS.get(), "not by the walk: " + query);
+            walks = GraphVarBG.HITS.get();
+            List<String> walked = rows(store, "SELECT DISTINCT " + var + " WHERE { GRAPH ?g { ?s ?p ?o } BIND(1 AS ?x) }");
+            assertTrue(GraphVarBG.HITS.get() > walks, "the BIND form is the walk's: " + var);
+            assertEquals(walked, got, "the index against the walk on the same store: " + query);
+            assertEquals(rows(reference, query), got, "the index against an in-memory dataset: " + query);
+        }
     }
 
     @Test
@@ -340,8 +343,12 @@ class GraphVariableWalkTest {
             ds.asDatasetGraph().listGraphNodes().forEachRemaining(n -> listed.add("g=" + n + " "));
             Collections.sort(listed);
             assertTrue(listed.size() > 3, "the VoID graph is a named graph of the dataset: " + listed);
-            long before = GraphVarBG.HITS.get();
+            // DISTINCT ?g comes from the index (DistinctTermFastPath), over the same graphs the walk visits.
+            long before = DistinctTermFastPath.HITS.get();
             assertEquals(listed, rows(ds, "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }"));
+            assertEquals(1, DistinctTermFastPath.HITS.get() - before);
+            before = GraphVarBG.HITS.get();
+            assertEquals(listed, rows(ds, "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } BIND(1 AS ?x) }"));
             assertTrue(GraphVarBG.HITS.get() > before);
             for (String query : new String[] {
                     "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }",
@@ -353,6 +360,8 @@ class GraphVariableWalkTest {
             Dataset view = new BeakGraph(org.apache.jena.graph.NodeFactory.createURI("http://ex.org/g1"), withVoid.getReader(), withVoid).getDataset();
             List<String> ofView = rows(view, "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }");
             assertFalse(ofView.contains("g=http://ex.org/g1 "), "the view's own graph: " + ofView);
+            assertEquals(rows(view, "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } BIND(1 AS ?x) }"), ofView,
+                    "the view's graphs, from the index as on the walk");
             assertEquals(rowsWithoutTheWalk(view, "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }"), rows(view, "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }"));
         }
     }

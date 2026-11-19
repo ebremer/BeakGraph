@@ -6,9 +6,11 @@ import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
+import com.ebremer.beakgraph.hdf5.readers.IndexCounts;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
 import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -38,7 +40,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Index-backed fast path for {@code SELECT DISTINCT ?x WHERE { ?s ?p ?o }} where
- * {@code ?x} is the predicate or the subject variable.
+ * {@code ?x} is the predicate or the subject variable - or, under {@code GRAPH ?g},
+ * the predicate or the graph variable.
  *
  * <p>Both indexes store per-graph term levels that ARE these queries' answers:
  * <ul>
@@ -63,7 +66,8 @@ import org.slf4j.LoggerFactory;
  *
  * <pre>  (distinct (project (?x) (bgp (?s ?p ?o))))            - active graph
  *  (distinct (project (?x) (graph &lt;g&gt; (bgp (?s ?p ?o)))))  - concrete graph
- *  (distinct (project (?p) (graph ?g (bgp (?s ?p ?o)))))   - every named graph</pre>
+ *  (distinct (project (?p) (graph ?g (bgp (?s ?p ?o)))))   - every named graph
+ *  (distinct (project (?g) (graph ?g (bgp (?s ?p ?o)))))   - the graphs themselves</pre>
  *
  * with all three pattern positions distinct unbound variables, exactly one
  * projected variable, no filter (a FILTER changes the algebra shape, so it
@@ -77,8 +81,13 @@ import org.slf4j.LoggerFactory;
  * only where it would walk them - so the answer is the walk's, without
  * reading a quad. {@code ?g} must not also appear in the pattern or be bound
  * already. {@code DISTINCT ?s} under {@code GRAPH ?g} needs the cross-graph
- * de-duplication the union graph lacks, and {@code DISTINCT ?g} is a
- * different answer shape: both fall back.
+ * de-duplication the union graph lacks, and falls back.
+ *
+ * <p>{@code DISTINCT ?g} asks which of those graphs hold at least one quad:
+ * each graph's quad count off the GSPO levels ({@link IndexCounts#quads}), the
+ * count and the empty-graph rule {@code GROUP BY ?g} uses in
+ * {@link AggregateCountFastPath}. {@code GRAPH ?g { }} (no pattern) is Jena's:
+ * it lists empty graphs too.
  */
 public final class DistinctTermFastPath {
 
@@ -135,15 +144,16 @@ public final class DistinctTermFastPath {
 
         boolean predicatePosition = Var.alloc(p).equals(v);
         boolean subjectPosition = Var.alloc(s).equals(v);
-        if (!predicatePosition && !subjectPosition) return null; // ?o (or ?g): no single index level
+        boolean graphPosition = graphVar != null && graphVar.equals(v);
+        if (!predicatePosition && !subjectPosition && !graphPosition) return null; // ?o: no single index level
 
-        // GRAPH ?g: only DISTINCT ?p (per-graph lists merged in a set, as for the
-        // union graph), and only where ?g ranges over the graphs alone - in the
-        // pattern too it would constrain the rows.
+        // GRAPH ?g: DISTINCT ?p (per-graph lists merged in a set, as for the union
+        // graph) or DISTINCT ?g (the graphs with a quad), and only where ?g ranges
+        // over the graphs alone - in the pattern too it would constrain the rows.
         long[] namedGraphs = null;
         if (graphVar != null) {
-            if (!predicatePosition) return null;
             if (graphVar.equals(Var.alloc(s)) || graphVar.equals(Var.alloc(p)) || graphVar.equals(Var.alloc(o))) return null;
+            if (subjectPosition) return null;
             namedGraphs = namedGraphsWalked(execCxt, reader, dict);
             if (namedGraphs == null) return null;
         }
@@ -161,10 +171,33 @@ public final class DistinctTermFastPath {
         // A pre-bound pattern variable (initial bindings) constrains the answer - scan instead.
         if (root.contains(Var.alloc(s)) || root.contains(Var.alloc(p)) || root.contains(Var.alloc(o))) return null;
         if (graphVar != null && root.contains(graphVar)) return null; // ?g bound: one graph, the walk's to answer
+
+        // DISTINCT ?g: the graphs holding a quad, decided before the input is
+        // consumed so that a graph without index structure can still decline.
+        List<Long> graphsWithQuads = null;
+        if (graphPosition) {
+            graphsWithQuads = new ArrayList<>();
+            for (long gid : namedGraphs) {
+                long quads = IndexCounts.quads(reader, gid);
+                if (quads < 0) return null; // not index-answerable: the walk answers
+                if (quads > 0) graphsWithQuads.add(gid);
+            }
+        }
         input.next(); // consume the single root binding (unrelated vars are dropped by the project)
 
         HITS.incrementAndGet();
         NodeTable nodeTable = reader.getNodeTable();
+
+        if (graphPosition) {
+            logger.debug("DISTINCT ?g answered from GSPO index: {} of {} named graphs hold quads",
+                    graphsWithQuads.size(), namedGraphs.length);
+            Var gv = graphVar;
+            Iterator<Binding> out = Iter.removeNulls(Iter.map(graphsWithQuads.iterator(), gid -> {
+                Node gn = nodeTable.getNodeForNodeId(NodeId.pack(NodeType.GRAPH, gid));
+                return (gn == null) ? null : BindingFactory.binding(gv, gn);
+            }));
+            return QueryIterPlainWrapper.create(out, execCxt);
+        }
 
         if (predicatePosition) {
             Set<Long> pids = new LinkedHashSet<>();

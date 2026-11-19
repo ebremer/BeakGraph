@@ -286,6 +286,10 @@ class AlgebraShapeParityTest {
             "SELECT DISTINCT ?p FROM NAMED <" + G1 + "> WHERE { GRAPH ?g { ?s ?p ?o } }",
             "SELECT DISTINCT ?p FROM <" + G1 + "> WHERE { GRAPH ?g { ?s ?p ?o } }",
             "SELECT DISTINCT ?p FROM <" + G1 + "> FROM NAMED <http://ex.org/g2> WHERE { GRAPH ?g { ?s ?p ?o } }",
+            // DISTINCT ?g under GRAPH ?g (the graphs holding a quad, from the index)
+            "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } } ORDER BY ?g",
+            "SELECT DISTINCT ?g FROM <" + G1 + "> WHERE { GRAPH ?g { ?s ?p ?o } }",
+            "SELECT DISTINCT ?g FROM <" + G1 + "> FROM NAMED <http://ex.org/g2> WHERE { GRAPH ?g { ?s ?p ?o } }",
         };
         for (String q : queries) {
             assertSelectParity(store, q);
