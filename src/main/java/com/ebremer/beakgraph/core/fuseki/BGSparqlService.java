@@ -136,23 +136,30 @@ public final class BGSparqlService {
      * (the container commits on its own once its buffer fills in any case:
      * at 64 KiB by default, {@code SPARQLEndPoint.DEFAULT_OUTPUT_BUFFER},
      * which is never set under the threshold).
+     * <p>
+     * Given a {@link ResultCache.Capture}, it also keeps a copy of what it
+     * wrote, for the result cache.
      */
     private static final class ResponseOutput extends OutputStream {
 
         private final OutputStream out;
+        private final ResultCache.Capture capture;
         private long written;
         boolean responseFailed;
 
-        ResponseOutput(OutputStream out) {
+        ResponseOutput(OutputStream out, ResultCache.Capture capture) {
             this.out = out;
+            this.capture = capture;
         }
 
         @Override public void write(int b) throws IOException {
             try { out.write(b); written++; } catch (IOException e) { responseFailed = true; throw e; }
+            if (capture != null) capture.write(b);
         }
 
         @Override public void write(byte[] b, int off, int len) throws IOException {
             try { out.write(b, off, len); written += len; } catch (IOException e) { responseFailed = true; throw e; }
+            if (capture != null) capture.write(b, off, len);
         }
 
         @Override public void flush() throws IOException {
@@ -314,10 +321,28 @@ public final class BGSparqlService {
     }
 
     /**
+     * The response format for a query and an Accept header (lower-cased): {@code json}, {@code csv} or {@code xml}
+     * for SELECT and ASK; {@code nt}, {@code ttl}, {@code jsonld} or {@code rdfxml} for CONSTRUCT and DESCRIBE;
+     * null for any other query.
+     */
+    static String responseFormat(Query query, String accept) {
+        if (query.isSelectType() || query.isAskType()) {
+            return accept.contains("json") ? "json" : accept.contains("csv") ? "csv" : "xml";
+        }
+        if (query.isConstructType() || query.isDescribeType()) {
+            if (accept.contains("n-triples") || accept.contains("ntriples")) return "nt";
+            if (accept.contains("turtle")) return "ttl";
+            return accept.contains("json") ? "jsonld" : "rdfxml";
+        }
+        return null;
+    }
+
+    /**
      * Execute {@code queryStr} against {@code ds} and serialize the result,
      * resolving relative IRIs against {@code baseURI} (the URL/URI the data is
      * served from). Client-side problems (parse errors, unsupported query
      * types) are answered with 400 and still return true - the reader is fine.
+     * A query asked before may be answered from {@link ResultCache}.
      *
      * @return true when the underlying reader behaved; false when execution
      *         failed (a 500 was written) - pooled callers should invalidate
@@ -356,6 +381,21 @@ public final class BGSparqlService {
             RelativeIRIResolver resolver = new RelativeIRIResolver(baseURI);
             Query query = resolver.isActive() ? QueryFactory.create(queryStr, baseURI) : QueryFactory.create(queryStr);
             applyProtocolDataset(query, protocolDataset);
+            // An answer kept from an earlier run of the same query is sent as it was.
+            String format = responseFormat(query, accept);
+            ResultCache.Key key = ResultCache.key(ds, query, baseURI, format);
+            ResultCache.Entry kept = ResultCache.get(key);
+            if (kept != null) {
+                resp.setHeader(ResultCache.HEADER, "hit");
+                resp.setContentType(kept.contentType());
+                resp.setContentLengthLong(kept.body().length);
+                out = new ResponseOutput(resp.getOutputStream(), null);
+                out.write(kept.body());
+                return true;
+            }
+            resp.setHeader(ResultCache.HEADER, (key == null) ? "bypass" : "miss");
+            ResultCache.Capture capture = (key == null) ? null : new ResultCache.Capture();
+            long started = System.nanoTime();
             // Relativize document IRIs the query names so they match the
             // dictionary. Skip the whole-query walk when there is no base.
             Query execQuery = query;
@@ -372,17 +412,17 @@ public final class BGSparqlService {
             try (QueryExecution qexec = qexecBuilder.build()) {
                 if (execQuery.isSelectType()) {
                     ResultSet rs = resolver.resolve(qexec.execSelect());
-                    if (accept.contains("json")) {
+                    if (format.equals("json")) {
                         resp.setContentType("application/sparql-results+json");
-                        out = new ResponseOutput(resp.getOutputStream());
+                        out = new ResponseOutput(resp.getOutputStream(), capture);
                         ResultSetFormatter.outputAsJSON(out, rs);
-                    } else if (accept.contains("csv")) {
+                    } else if (format.equals("csv")) {
                         resp.setContentType("text/csv");
-                        out = new ResponseOutput(resp.getOutputStream());
+                        out = new ResponseOutput(resp.getOutputStream(), capture);
                         ResultSetFormatter.outputAsCSV(out, rs);
                     } else {
                         resp.setContentType("application/sparql-results+xml");
-                        out = new ResponseOutput(resp.getOutputStream());
+                        out = new ResponseOutput(resp.getOutputStream(), capture);
                         ResultSetFormatter.outputAsXML(out, rs);
                     }
                 } else if (execQuery.isAskType()) {
@@ -390,28 +430,28 @@ public final class BGSparqlService {
                     // hand-written {"boolean":b} lacked the mandatory "head"
                     // member and ignored the Accept header (BG-42).
                     boolean b = qexec.execAsk();
-                    if (accept.contains("json")) {
+                    if (format.equals("json")) {
                         resp.setContentType("application/sparql-results+json");
-                        out = new ResponseOutput(resp.getOutputStream());
+                        out = new ResponseOutput(resp.getOutputStream(), capture);
                         ResultSetFormatter.outputAsJSON(out, b);
-                    } else if (accept.contains("csv")) {
+                    } else if (format.equals("csv")) {
                         resp.setContentType("text/csv");
-                        out = new ResponseOutput(resp.getOutputStream());
+                        out = new ResponseOutput(resp.getOutputStream(), capture);
                         ResultSetFormatter.outputAsCSV(out, b);
                     } else {
                         resp.setContentType("application/sparql-results+xml");
-                        out = new ResponseOutput(resp.getOutputStream());
+                        out = new ResponseOutput(resp.getOutputStream(), capture);
                         ResultSetFormatter.outputAsXML(out, b);
                     }
                 } else if (execQuery.isConstructType() || execQuery.isDescribeType()) {
                     Iterator<Triple> triples = resolver.resolve(execQuery.isConstructType()
                             ? qexec.execConstructTriples() : qexec.execDescribeTriples());
-                    boolean ntriples = accept.contains("n-triples") || accept.contains("ntriples");
-                    if (accept.contains("turtle") || ntriples) {
+                    boolean ntriples = format.equals("nt");
+                    if (format.equals("ttl") || ntriples) {
                         // Streamed triple by triple: no Model, no size limit.
                         // (Turtle carries RDF 1.2 triple terms natively.)
                         resp.setContentType(ntriples ? "application/n-triples" : "text/turtle");
-                        out = new ResponseOutput(resp.getOutputStream());
+                        out = new ResponseOutput(resp.getOutputStream(), capture);
                         StreamRDF stream = StreamRDFWriter.getWriterStream(out,
                                 ntriples ? RDFFormat.NTRIPLES : RDFFormat.TURTLE_BLOCKS);
                         stream.start();
@@ -448,18 +488,29 @@ public final class BGSparqlService {
                             // body or an opaque serializer failure.
                             resp.sendError(400, "Result contains RDF 1.2 triple terms, which this response format "
                                     + "cannot represent; request text/turtle");
-                        } else if (accept.contains("json")) {
+                        } else if (format.equals("jsonld")) {
                             resp.setContentType("application/ld+json");
-                            out = new ResponseOutput(resp.getOutputStream());
+                            out = new ResponseOutput(resp.getOutputStream(), capture);
                             RDFDataMgr.write(out, m, RDFFormat.JSONLD);
                         } else {
                             resp.setContentType("application/rdf+xml");
-                            out = new ResponseOutput(resp.getOutputStream());
+                            out = new ResponseOutput(resp.getOutputStream(), capture);
                             RDFDataMgr.write(out, m, RDFFormat.RDFXML);
                         }
                     }
                 } else {
                     resp.sendError(400, "Unsupported SPARQL query type");
+                }
+            }
+            // The answer is complete: keep it. Not an answer refused (no body
+            // written), one the client stopped reading, or one larger than the
+            // cache takes - nor, though the writer finished it, one that ran
+            // into the time limit.
+            if (capture != null && out != null && !out.responseFailed
+                    && (timeoutSeconds <= 0 || System.nanoTime() - started < TimeUnit.SECONDS.toNanos(timeoutSeconds))) {
+                byte[] body = capture.bytes();
+                if (body != null) {
+                    ResultCache.put(key, resp.getContentType(), body);
                 }
             }
             return true;
