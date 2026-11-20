@@ -150,7 +150,7 @@ public final class QueryEngineBG extends QueryEngineMain {
 
     @Override
     protected Op modifyOp(Op op) {
-        Op out = super.modifyOp(op);
+        Op out = MinusJoin.transform(super.modifyOp(op));
         if (resolver != null) {
             out = NodeTransformLib.transform(resolver.absoluteToStorage(storedTerm), out);
         }
