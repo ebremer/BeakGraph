@@ -95,6 +95,18 @@ public class OpExecutorBG extends OpExecutor {
     }
 
     @Override
+    protected QueryIterator execute(OpConditional opCondition, QueryIterator input) {
+        // OPTIONAL { ?s <p> ?o } over many rows: the pattern read once into a table, not looked up per row.
+        if (isForBeakGraph) {
+            OptionalHashJoin.Shape shape = OptionalHashJoin.shape(opCondition.getRight(), execCxt);
+            if (shape != null) {
+                return OptionalHashJoin.execute(exec(opCondition.getLeft(), input), opCondition.getRight(), shape, execCxt);
+            }
+        }
+        return super.execute(opCondition, input);
+    }
+
+    @Override
     protected QueryIterator execute(OpGroup opGroup, QueryIterator input) {
         // Whole-graph COUNT aggregates over {?s ?p ?o} answered from index structure
         // (same eligibility rules as the DISTINCT fast path above).
