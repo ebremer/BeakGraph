@@ -290,6 +290,15 @@ class AlgebraShapeParityTest {
             "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } } ORDER BY ?g",
             "SELECT DISTINCT ?g FROM <" + G1 + "> WHERE { GRAPH ?g { ?s ?p ?o } }",
             "SELECT DISTINCT ?g FROM <" + G1 + "> FROM NAMED <http://ex.org/g2> WHERE { GRAPH ?g { ?s ?p ?o } }",
+            // DISTINCT ?o of one predicate (the GPOS object level, merged across graphs)
+            "SELECT DISTINCT ?o WHERE { ?s ex:p ?o } ORDER BY ?o",
+            "SELECT DISTINCT ?o FROM <" + G1 + "> WHERE { ?s ex:p ?o } ORDER BY ?o",
+            "SELECT DISTINCT ?o FROM <urn:x-arq:UnionGraph> WHERE { ?s ex:p ?o } ORDER BY ?o",
+            "SELECT DISTINCT ?o WHERE { GRAPH ?g { ?s ex:p ?o } } ORDER BY ?o",
+            "SELECT DISTINCT ?o FROM NAMED <" + G1 + "> WHERE { GRAPH ?g { ?s ex:p ?o } }",
+            "SELECT DISTINCT ?o FROM <" + G1 + "> FROM <http://ex.org/g2> WHERE { ?s ex:p ?o }",
+            "SELECT DISTINCT ?o WHERE { ?s ex:says ?o }",
+            "SELECT DISTINCT ?o FROM <urn:x-arq:UnionGraph> WHERE { ?s ex:age ?o }",
         };
         for (String q : queries) {
             assertSelectParity(store, q);

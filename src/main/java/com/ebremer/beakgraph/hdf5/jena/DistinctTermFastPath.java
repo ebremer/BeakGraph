@@ -57,8 +57,9 @@ import org.slf4j.LoggerFactory;
  *       de-duplication (a k-way sorted merge - future work), so it falls back.</li>
  * </ul>
  *
- * <p>{@code ?o} has no single index level (objects repeat per predicate group)
- * and falls back. An earlier DISTINCT optimization was removed as unsound - it
+ * <p>{@code ?o} over {@code ?s ?p ?o} has no single index level (objects repeat
+ * per predicate group) and falls back; with the predicate a term, below, it has
+ * one. An earlier DISTINCT optimization was removed as unsound - it
  * streamed file-global id lists (over-reporting terms from other graphs,
  * including the VoID metadata graph), dropped FILTERs, and ignored the incoming
  * iterator. This one is sound by construction because it fires only on the
@@ -88,6 +89,16 @@ import org.slf4j.LoggerFactory;
  * count and the empty-graph rule {@code GROUP BY ?g} uses in
  * {@link AggregateCountFastPath}. {@code GRAPH ?g { }} (no pattern) is Jena's:
  * it lists empty graphs too.
+ *
+ * <p><b>The objects of one predicate</b> -
+ * {@code SELECT DISTINCT ?o WHERE { ?s <p> ?o }}, in the active graph, under
+ * {@code GRAPH <g>} or under {@code GRAPH ?g} - are the GPOS object level under
+ * that predicate in each graph read: sorted and duplicate-free, so one graph's
+ * answer streams straight off the index, and several graphs' (the union graph,
+ * {@code GRAPH ?g}) stream as a merge of sorted lists that drops repeats. A LIMIT
+ * stops the read. OKN's {@code scales/scales-ontology-event-labels} - the 82
+ * distinct {@code scales:OntologyLabel} values - read every docket entry's label
+ * to de-duplicate them: 11.8 s, where OKN's endpoint took 0.05 s.
  */
 public final class DistinctTermFastPath {
 
@@ -139,6 +150,9 @@ public final class DistinctTermFastPath {
         Node s = t.getSubject();
         Node p = t.getPredicate();
         Node o = t.getObject();
+        if (s.isVariable() && p.isURI() && o.isVariable() && Var.alloc(o).equals(v)) {
+            return objectsOfPredicate(reader, dict, target, graphVar, Var.alloc(s), p, Var.alloc(o), input, execCxt);
+        }
         if (!(s.isVariable() && p.isVariable() && o.isVariable())) return null;
         if (s.equals(p) || p.equals(o) || s.equals(o)) return null; // repeated vars constrain rows
 
@@ -231,8 +245,52 @@ public final class DistinctTermFastPath {
         if (range == null) {
             return QueryIterPlainWrapper.create(Collections.emptyIterator(), execCxt);
         }
-        Iterator<Binding> out = new SubjectBindings(index.getIDBuffer('S'), range[0], range[1], nodeTable, v);
+        Iterator<Binding> out = new IdBindings(index.getIDBuffer('S'), List.of(range), NodeType.SUBJECT, nodeTable, v);
         return QueryIterPlainWrapper.create(out, execCxt);
+    }
+
+    /**
+     * {@code DISTINCT ?o} over {@code ?s <p> ?o}: the GPOS object level under the
+     * predicate in each graph read, merged. Null - the input untouched - when the
+     * shape's conditions do not hold: {@code ?s} and {@code ?o} the same variable,
+     * either (or {@code ?g}) bound already, {@code ?g} in the pattern, no GPOS.
+     */
+    private static QueryIterator objectsOfPredicate(HDF5Reader reader, PositionalDictionaryReader dict, Node target,
+            Var graphVar, Var s, Node p, Var o, QueryIterPeek input, ExecutionContext execCxt) {
+        if (s.equals(o)) return null; // ?x <p> ?x: the subject constrains the rows
+        if (graphVar != null && (graphVar.equals(s) || graphVar.equals(o))) return null;
+        IndexReader gpos = reader.getIndexReader(Index.GPOS);
+        if (gpos == null) return null;
+        long[] graphs;
+        if (graphVar != null) {
+            graphs = namedGraphsWalked(execCxt, reader, dict);
+            if (graphs == null) return null;
+        } else {
+            graphs = reader.graphIdsOf(List.of(target));
+        }
+        Binding root = input.peek();
+        if (root == null) return null;
+        if (root.contains(s) || root.contains(o)) return null;
+        if (graphVar != null && root.contains(graphVar)) return null;
+        input.next(); // consume the single root binding
+
+        HITS.incrementAndGet();
+        List<long[]> ranges = new ArrayList<>();
+        long pi = dict.getPredicates().locate(p);
+        if (pi >= 1) {
+            BitPackedUnSignedLongBuffer predicates = gpos.getIDBuffer('P');
+            for (long gi : graphs) {
+                long[] block = RangeSelect.firstLevelRange(gpos, 'P', gi);
+                if (block == null) continue;
+                long at = predicates.binarySearch(block[0], block[1], pi);
+                if (at < 0) continue;
+                long[] objects = RangeSelect.childRange(gpos, 'O', at, at);
+                if (objects != null) ranges.add(objects);
+            }
+        }
+        logger.debug("DISTINCT ?o of {} answered from GPOS index: {} of {} graphs hold it", p, ranges.size(), graphs.length);
+        return QueryIterPlainWrapper.create(
+                new IdBindings(gpos.getIDBuffer('O'), ranges, NodeType.OBJECT, reader.getNodeTable(), o), execCxt);
     }
 
     /**
@@ -273,33 +331,68 @@ public final class DistinctTermFastPath {
 
 
     /**
-     * Lazily streams one binding per subject id in [start..end] of the GSPO
-     * subject level. Look-ahead so unresolvable ids are skipped rather than
-     * emitted as null (mirrors the predicate path's removeNulls).
+     * Lazily streams one binding per id in sorted, duplicate-free ranges of an
+     * index level - one range read straight through, several merged in id order
+     * with repeats dropped (an object in two graphs is one answer). Look-ahead so
+     * unresolvable ids are skipped rather than emitted as null (mirrors the
+     * predicate path's removeNulls).
      */
-    private static final class SubjectBindings implements Iterator<Binding> {
-        private final BitPackedUnSignedLongBuffer ss;
+    private static final class IdBindings implements Iterator<Binding> {
+        private final BitPackedUnSignedLongBuffer ids;
+        private final NodeType type;
         private final NodeTable nodeTable;
         private final Var var;
-        private final long end;
-        private long i;
+        private final long[] next;   // per range: the next position to read
+        private final long[] end;    // per range: its last position
+        private final java.util.PriorityQueue<long[]> heads; // {id, range}, when merging
+        private long last = -1;
         private Binding pending;
 
-        SubjectBindings(BitPackedUnSignedLongBuffer ss, long start, long end, NodeTable nodeTable, Var var) {
-            this.ss = ss;
-            this.end = end;
-            this.i = start;
+        IdBindings(BitPackedUnSignedLongBuffer ids, List<long[]> ranges, NodeType type, NodeTable nodeTable, Var var) {
+            this.ids = ids;
+            this.type = type;
             this.nodeTable = nodeTable;
             this.var = var;
+            this.next = new long[ranges.size()];
+            this.end = new long[ranges.size()];
+            for (int r = 0; r < ranges.size(); r++) {
+                next[r] = ranges.get(r)[0];
+                end[r] = ranges.get(r)[1];
+            }
+            this.heads = (ranges.size() > 1) ? new java.util.PriorityQueue<>((a, b) -> Long.compare(a[0], b[0])) : null;
+            if (heads != null) {
+                for (int r = 0; r < next.length; r++) {
+                    pull(r);
+                }
+            }
             advance();
+        }
+
+        /** Queues range {@code r}'s next id, if it has one. */
+        private void pull(int r) {
+            if (next[r] <= end[r]) {
+                heads.add(new long[] {ids.get(next[r]++), r});
+            }
+        }
+
+        /** The next id in order, or -1 at the end. */
+        private long nextId() {
+            if (heads == null) {
+                return (next.length == 1 && next[0] <= end[0]) ? ids.get(next[0]++) : -1;
+            }
+            long[] head = heads.poll();
+            if (head == null) return -1;
+            pull((int) head[1]);
+            return head[0];
         }
 
         private void advance() {
             pending = null;
-            while (pending == null && i <= end) {
-                long sid = ss.get(i++);
-                if (sid < 1) continue; // defensive: padding rows never appear in non-empty blocks
-                Node n = nodeTable.getNodeForNodeId(NodeId.pack(NodeType.SUBJECT, sid));
+            long id;
+            while (pending == null && (id = nextId()) != -1) {
+                if (id < 1 || id == last) continue; // padding rows never appear in non-empty blocks; repeats across ranges
+                last = id;
+                Node n = nodeTable.getNodeForNodeId(NodeId.pack(type, id));
                 if (n != null) {
                     pending = BindingFactory.binding(var, n);
                 }
