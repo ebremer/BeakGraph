@@ -548,7 +548,7 @@ public final class GraphVarBG {
             // default graph.
             long[] graphs = namedGraphIds(dict, root);
             if (block instanceof OpBGP bgp) {
-                graphs = holdingEveryPredicate(reader, dict, graphs, bgp.getPattern());
+                graphs = holdingEveryPredicate(reader, graphs, bgp.getPattern());
             }
             Plan plan = compile(block, first, new HashSet<>(), root.reorderTransformForGraphs(graphs), reader.getNodeTable());
             return (plan == null) ? null : Prepared.of(graphVar, null, plan, dsg, root, reader, dict, graphs);
@@ -560,12 +560,12 @@ public final class GraphVarBG {
      * names: a BGP has no rows in a graph without one of its predicates, and each graph the walk
      * visits costs an iterator per row.
      */
-    static long[] holdingEveryPredicate(HDF5Reader reader, PositionalDictionaryReader dict, long[] graphs, BasicPattern pattern) {
+    static long[] holdingEveryPredicate(HDF5Reader reader, long[] graphs, BasicPattern pattern) {
         long[] kept = graphs;
         for (Triple t : pattern) {
             Node p = t.getPredicate();
             if (!p.isURI() || BeakGraph.BOUND.equals(p)) continue;
-            long[] holders = reader.graphsWithPredicate(dict.getPredicates().locate(p));
+            long[] holders = reader.graphsWithPredicate(p);
             if (holders == null) return graphs; // no GPOS: every graph may hold it
             kept = java.util.Arrays.stream(kept).filter(g -> java.util.Arrays.binarySearch(holders, g) >= 0).toArray();
         }

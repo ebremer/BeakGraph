@@ -334,6 +334,26 @@ public class HDF5Reader implements BGReader {
         });
     }
 
+    // The same by the predicate's term, for the predicates the store holds.
+    private final ConcurrentHashMap<Node, long[]> predicateTermGraphs = new ConcurrentHashMap<>();
+
+    /**
+     * {@link #graphsWithPredicate(long)} for predicate term {@code p}. The union read asks once per
+     * input row, and looking the term up in the dictionary each time was 11% of OKN's
+     * federation/sawgraph-spatial-hydrology-01: a term the store holds is looked up once. One it
+     * lacks holds no graph, and is not kept (there is no end to such terms).
+     */
+    public long[] graphsWithPredicate(Node p) {
+        long[] kept = predicateTermGraphs.get(p);
+        if (kept != null) return kept;
+        long pi = dict.getPredicates().locate(p);
+        long[] graphs = graphsWithPredicate(pi);
+        if (graphs != null && pi >= 1) {
+            predicateTermGraphs.putIfAbsent(p, graphs);
+        }
+        return graphs;
+    }
+
     /**
      * The graphs {@code pattern} can match in when its predicate is known - a term, or a variable
      * {@code binding} gives a predicate id - from {@link #graphsWithPredicate}; null when any graph
@@ -342,7 +362,7 @@ public class HDF5Reader implements BGReader {
     private long[] graphsFor(Triple pattern, BindingNodeId binding) {
         Node p = pattern.getPredicate();
         if (p.isURI()) {
-            return graphsWithPredicate(dict.getPredicates().locate(p));
+            return graphsWithPredicate(p);
         }
         if (p.isVariable()) {
             Var v = Var.alloc(p);
@@ -553,7 +573,7 @@ public class HDF5Reader implements BGReader {
 
         LongTupleSet(int width) {
             this.width = width;
-            this.keys = new long[1 << 10][];
+            this.keys = new long[INITIAL_DEDUP_CAPACITY][];
         }
 
         boolean add(long[] key) {
@@ -597,6 +617,14 @@ public class HDF5Reader implements BGReader {
     }
 
     /**
+     * Slots a union read's dedup set starts with; it doubles as rows come. A union read is made
+     * once per input row, mostly for a handful of rows: starting at 1,024 slots, the sets were 79%
+     * of the bytes allocated on OKN's federation/sawgraph-spatial-hydrology-01 - 25 KB zeroed per
+     * row.
+     */
+    static final int INITIAL_DEDUP_CAPACITY = 16;
+
+    /**
      * Open-addressing hash set of (long, long, long) keys - the union scan's
      * dedup structure. Linear probing at &le; 50% load; grows by doubling.
      * Not thread-safe (one per union iterator).
@@ -607,7 +635,7 @@ public class HDF5Reader implements BGReader {
         private int size;
 
         LongTripleSet() {
-            alloc(1 << 10);
+            alloc(INITIAL_DEDUP_CAPACITY);
         }
 
         private void alloc(int capacity) {

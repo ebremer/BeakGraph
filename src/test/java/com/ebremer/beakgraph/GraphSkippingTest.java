@@ -147,6 +147,41 @@ class GraphSkippingTest {
         assertTrue(reads <= 2 + 2 * 3, "ex:q's 2 graphs, then ex:p3's 3 per row: " + reads);
     }
 
+    /**
+     * The union read's dedup set starts small ({@link HDF5Reader#INITIAL_DEDUP_CAPACITY}) and grows:
+     * 300 triples in each of three graphs, and 40 triple terms (four variables, the array-keyed set)
+     * in each of two, come back once each, as Jena gives them.
+     */
+    @Test
+    void theUnionRemovesRepeatsAsItsSetGrows() throws Exception {
+        StringBuilder trig = new StringBuilder("@prefix ex: <http://ex.org/> .\n");
+        for (String g : new String[] {"u1", "u2", "u3"}) {
+            trig.append("ex:").append(g).append(" {");
+            for (int i = 0; i < 300; i++) trig.append(" ex:s").append(i).append(" ex:r ex:o").append(i % 7).append(" .");
+            if (!g.equals("u3")) {
+                for (int i = 0; i < 40; i++) trig.append(" ex:t").append(i).append(" ex:says <<( ex:a").append(i).append(" ex:b ex:c").append(i % 3).append(" )>> .");
+            }
+            trig.append(" }\n");
+        }
+        Path many = dir.resolve("many.trig");
+        Files.write(many, trig.toString().getBytes(StandardCharsets.UTF_8));
+        File h5 = dir.resolve("many.h5").toFile();
+        HDF5Writer.Builder().setSource(many.toFile()).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
+        DatasetGraph dsg = DatasetGraphFactory.create();
+        RDFParser.create().source(many.toUri().toString()).lang(Lang.TRIG).parse(dsg);
+        Dataset jena = DatasetFactory.wrap(dsg);
+        try (BeakGraph g = new BeakGraph(new HDF5Reader(h5))) {
+            for (String[] q : new String[][] {
+                {"SELECT * FROM <" + UNION + "> WHERE { ?s ex:r ?o }", "300"},
+                {"SELECT * FROM <" + UNION + "> WHERE { ?t ex:says <<( ?a ?b ?c )>> }", "40"},
+            }) {
+                List<String> got = rows(g.getDataset(), q[0]);
+                assertEquals(rows(jena, q[0]), got, q[0]);
+                assertEquals(Integer.parseInt(q[1]), got.size(), q[0]);
+            }
+        }
+    }
+
     // ---------------- the GRAPH ?g walk ----------------
 
     @Test
@@ -208,6 +243,10 @@ class GraphSkippingTest {
             long defaultGraph = dict.getGraphs().locate(Quad.defaultGraphIRI);
             for (String p : new String[] {"p1", "p2", "p3", "q", "nothing"}) {
                 long[] all = reader.graphsWithPredicate(dict.getPredicates().locate(NodeFactory.createURI(NS + p)));
+                // By the term (looked up once, kept for the store's predicates): the same graphs, asked twice.
+                for (int i = 0; i < 2; i++) {
+                    assertArrayEquals(all, reader.graphsWithPredicate(NodeFactory.createURI(NS + p)), e + "by term, ex:" + p);
+                }
                 List<String> named = Arrays.stream(all).filter(id -> id != defaultGraph)
                         .mapToObj(id -> dict.getGraphs().extract(id).getURI()).sorted().collect(Collectors.toList());
                 List<String> expected = new ArrayList<>();
