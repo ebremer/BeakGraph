@@ -94,7 +94,6 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         this.Sp = reader.getIDBuffer('P');
         this.Bo = reader.getBitmapBuffer('O');
         this.So = reader.getIDBuffer('O');
-        HDTBitmapDirectory dirS = reader.getDirectory('S');
         this.dirP = reader.getDirectory('P');
         this.dirO = reader.getDirectory('O');
         this.boBit = Bo.bitReader();
@@ -179,10 +178,10 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
         // -----------------------------------------------------------------
         // select1 is 1-based. Start of Graph gi is the gi-th '1' in Bs; the end is
         // one before the next block's start.
-        long sStart = RangeSelect.blockStart(dirS, Bs, gi);
-        if (sStart == -1) return;
-        long sEnd = RangeSelect.blockEnd(dirS, Bs, gi, sStart);
-        if (sStart > sEnd) return;
+        long[] graphBlock = reader.graphBlock('S', gi);
+        if (graphBlock == null) return;
+        long sStart = graphBlock[0];
+        long sEnd = graphBlock[1];
 
         // Parallel-chunk clamp: restrict to this chunk's slice of the graph's range.
         if (sPosLo > sStart) sStart = sPosLo;

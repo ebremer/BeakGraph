@@ -59,14 +59,12 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         this.nodeTable = nodeTable;
 
         // GSPO Structure mapping
-        BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
         BitPackedUnSignedLongBuffer Ss = reader.getIDBuffer('S');
         BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
         BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
         BitPackedUnSignedLongBuffer Bo = reader.getBitmapBuffer('O');
         this.So = reader.getIDBuffer('O');
 
-        HDTBitmapDirectory dirS = reader.getDirectory('S');
         HDTBitmapDirectory dirP = reader.getDirectory('P');
         HDTBitmapDirectory dirO = reader.getDirectory('O');
 
@@ -89,11 +87,9 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         // --- Traverse GSPO ---
 
         // A. Find Subject Index under Graph
-        long sStart = RangeSelect.blockStart(dirS, Bs, gi);
-        if (sStart == -1) return;
-        long sEnd = RangeSelect.blockEnd(dirS, Bs, gi, sStart);
-        if (sStart > sEnd) return;
-        long sIndex = Ss.binarySearch(sStart, sEnd, si);
+        long[] graphBlock = reader.graphBlock('S', gi);
+        if (graphBlock == null) return;
+        long sIndex = Ss.binarySearch(graphBlock[0], graphBlock[1], si);
         if (sIndex < 0) return;
 
         // B. Find Predicate Index under Subject

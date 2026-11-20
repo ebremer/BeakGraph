@@ -25,6 +25,13 @@ public class IndexReader {
     private final HDTBitmapDirectory[] componentDirectories = new HDTBitmapDirectory[LETTERS];
     private final char[] positions;
     private boolean directoryDatasets = false;
+    // Each graph's block at a first level - {start, end}, or NO_BLOCK - once looked up. Every iterator over
+    // one graph asks for it as it is built, once per input row of a join, and it was a select1 and a scan
+    // on a level of billions of rows: the first level holds a row for every id up to the largest graph's,
+    // 10.3 billion in GSPO's S level of the OKN store, whose directory is too large to keep in memory.
+    private static final long[] NO_BLOCK = new long[0];
+    private static final int MAX_GRAPH_BLOCKS = 1 << 20;
+    private final java.util.concurrent.ConcurrentHashMap<Long, long[]> graphBlocks = new java.util.concurrent.ConcurrentHashMap<>();
     
     public IndexReader(StoreGroup index, Index indexType, long formatVersion) {
         this.indexType = indexType;
@@ -93,5 +100,27 @@ public class IndexReader {
 
     public Index getIndexType() {
         return indexType;
+    }
+
+    /**
+     * Graph {@code gi}'s block at first-level {@code component}, as
+     * {@link com.ebremer.beakgraph.hdf5.jena.RangeSelect#firstLevelRange} rules it - {start, end}
+     * inclusive, or null when the graph has no rows there - looked up once per graph and kept: the
+     * store does not change. The array is shared; callers read it only. Ids beyond the first
+     * {@value #MAX_GRAPH_BLOCKS} asked about are looked up each time, so graphs named in queries
+     * that do not exist cannot grow the map without bound.
+     */
+    public long[] graphBlock(char component, long gi) {
+        if (gi < 1) return null;
+        Long key = (gi << 7) | component;
+        long[] b = graphBlocks.get(key);
+        if (b == null) {
+            long[] r = com.ebremer.beakgraph.hdf5.jena.RangeSelect.lookUpFirstLevelRange(this, component, gi);
+            b = (r == null) ? NO_BLOCK : r;
+            if (graphBlocks.size() < MAX_GRAPH_BLOCKS) {
+                graphBlocks.putIfAbsent(key, b);
+            }
+        }
+        return (b == NO_BLOCK) ? null : b;
     }
 }

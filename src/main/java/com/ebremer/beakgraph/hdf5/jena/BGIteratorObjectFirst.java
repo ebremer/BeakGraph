@@ -4,7 +4,6 @@ import com.ebremer.beakgraph.core.NodeTable;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.readers.IndexReader;
 import com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader;
-import com.ebremer.beakgraph.utils.HDTBitmapDirectory;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicLong;
@@ -82,19 +81,14 @@ final class BGIteratorObjectFirst implements Iterator<BindingNodeId> {
         }
         // The graph's block at the GPOS predicate level; a block whose first id
         // is 0 is the writer's padding row for an empty graph.
-        BitPackedUnSignedLongBuffer bp = gpos.getBitmapBuffer('P');
         BitPackedUnSignedLongBuffer sp = gpos.getIDBuffer('P');
-        HDTBitmapDirectory dirP = gpos.getDirectory('P');
-        long pStart = RangeSelect.blockStart(dirP, bp, gi);
-        if (pStart == -1) {
+        long[] graphBlock = gpos.graphBlock('P', gi);
+        if (graphBlock == null) {
             chain = Collections.emptyIterator();
             return;
         }
-        long pEnd = RangeSelect.blockEnd(dirP, bp, gi, pStart);
-        if (pStart > pEnd || sp.get(pStart) == 0) {
-            chain = Collections.emptyIterator();
-            return;
-        }
+        long pStart = graphBlock[0];
+        long pEnd = graphBlock[1];
         Var pVar = Var.alloc(quad.getPredicate());
         chain = Iter.flatMap(LongStream.rangeClosed(pStart, pEnd).iterator(), pos -> {
             long pid = sp.get(pos);

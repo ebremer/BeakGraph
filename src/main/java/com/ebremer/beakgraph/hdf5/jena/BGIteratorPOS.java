@@ -88,14 +88,12 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         this.sPosLo = sPosLo;
         this.sPosHi = sPosHi;
 
-        BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
         BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
         BitPackedUnSignedLongBuffer Bo = reader.getBitmapBuffer('O');
         this.So = reader.getIDBuffer('O');
         this.Bs = reader.getBitmapBuffer('S');
         this.Ss = reader.getIDBuffer('S');
 
-        HDTBitmapDirectory dirP = reader.getDirectory('P');
         HDTBitmapDirectory dirO = reader.getDirectory('O');
         this.dirS = reader.getDirectory('S');
 
@@ -140,11 +138,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         // --- Traverse GPOS ---
 
         // A. Find Predicate Index under Graph
-        long pRangeStart = RangeSelect.blockStart(dirP, Bp, gi);
-        if (pRangeStart == -1) return;
-        long pRangeEnd = RangeSelect.blockEnd(dirP, Bp, gi, pRangeStart);
-        if (pRangeStart > pRangeEnd) return;
-        long pIndex = Sp.binarySearch(pRangeStart, pRangeEnd, pi);
+        long[] graphBlock = reader.graphBlock('P', gi);
+        if (graphBlock == null) return;
+        long pIndex = Sp.binarySearch(graphBlock[0], graphBlock[1], pi);
         if (pIndex < 0) return;
 
         // B. Determine raw Object Range for this Predicate

@@ -310,12 +310,59 @@ public class HDF5Reader implements BGReader {
         return dict.streamGraphIds();
     }
 
+    /** Reads of one graph by its id - the union read's and the GRAPH ?g walk's: tests count the graphs they visit. */
+    public static final java.util.concurrent.atomic.LongAdder GRAPH_READS = new java.util.concurrent.atomic.LongAdder();
+
+    // The stored graphs holding each predicate - sorted ids, per predicate id - for the store's lifetime.
+    private final ConcurrentHashMap<Long, long[]> predicateGraphs = new ConcurrentHashMap<>();
+
+    /**
+     * The ids of the stored graphs whose GPOS predicate level holds predicate id {@code pi}, sorted:
+     * the graphs a pattern with that predicate can match in. One binary search a graph, once per
+     * predicate. Null without a GPOS index.
+     */
+    public long[] graphsWithPredicate(long pi) {
+        IndexReader gpos = getIndexReader(Index.GPOS);
+        if (gpos == null) return null;
+        if (pi < 1) return new long[0];
+        return predicateGraphs.computeIfAbsent(pi, p -> {
+            com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer predicates = gpos.getIDBuffer('P');
+            return dict.streamGraphIds().filter(gid -> {
+                long[] block = gpos.graphBlock('P', gid);
+                return block != null && predicates.binarySearch(block[0], block[1], p) >= 0;
+            }).sorted().toArray();
+        });
+    }
+
+    /**
+     * The graphs {@code pattern} can match in when its predicate is known - a term, or a variable
+     * {@code binding} gives a predicate id - from {@link #graphsWithPredicate}; null when any graph
+     * may hold it.
+     */
+    private long[] graphsFor(Triple pattern, BindingNodeId binding) {
+        Node p = pattern.getPredicate();
+        if (p.isURI()) {
+            return graphsWithPredicate(dict.getPredicates().locate(p));
+        }
+        if (p.isVariable()) {
+            Var v = Var.alloc(p);
+            if (binding.containsKey(v)) {
+                long id = binding.get(v);
+                if (NodeId.type(id) == NodeType.PREDICATE) {
+                    return graphsWithPredicate(NodeId.id(id));
+                }
+            }
+        }
+        return null;
+    }
+
     /**
      * The pattern over the graph with dictionary id {@code gid}. The id is
      * handed to the iterator as resolved; the quad's graph slot is a
      * placeholder it never looks up.
      */
     private Iterator<BindingNodeId> readGraph(long gid, BindingNodeId binding, Triple pattern, ExprList filter, NodeTable nodeTable) {
+        GRAPH_READS.increment();
         Quad quadPattern = new Quad(Quad.unionGraph, pattern.getSubject(), pattern.getPredicate(), pattern.getObject());
         return new BGIteratorMaster(this, dict, binding, quadPattern, filter, nodeTable, gid);
     }
@@ -440,6 +487,13 @@ public class HDF5Reader implements BGReader {
         // paid each one's index binary searches before the first row came back
         // (spatial stores hold thousands of tile graphs).
         Iterator<Long> graphs = graphIds;
+        // Only the graphs holding the pattern's predicate: an iterator is built per graph and per
+        // input row, and OKN's federation/sawgraph-hydrology-spatial_03 spent 88% of its 82 s
+        // building them in all 50 graphs for predicates most of them lack.
+        long[] holders = graphsFor(triple, bnid);
+        if (holders != null) {
+            graphs = Iter.filter(graphs, gid -> java.util.Arrays.binarySearch(holders, gid) >= 0);
+        }
         Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gid -> readGraph(gid, bnid, triple, filter, nodeTable));
         // The dedup set is inherent to union set-semantics (rows arrive per
         // graph, not globally sorted). Up to three variables - every pattern

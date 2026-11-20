@@ -47,10 +47,16 @@ public final class RangeSelect {
      * first level, or null when the graph has no rows: an absent id, an empty
      * block, or a padding-only block (the writer pads each empty first-level
      * slot with a single all-zero dummy row, whose first id is 0). THE rule
-     * for the COUNT and DISTINCT fast paths and the parallel scan planner,
-     * which each carried a copy (BG-316).
+     * for the COUNT and DISTINCT fast paths, the parallel scan planner and
+     * the iterators, which each carried a copy (BG-316). Kept per graph by
+     * {@link IndexReader#graphBlock}; the array is shared, read it only.
      */
     public static long[] firstLevelRange(IndexReader ir, char component, long gi) {
+        return ir.graphBlock(component, gi);
+    }
+
+    /** {@link #firstLevelRange}, looked up in the index rather than kept: for {@link IndexReader#graphBlock}. */
+    public static long[] lookUpFirstLevelRange(IndexReader ir, char component, long gi) {
         if (gi < 1) return null;
         BitPackedUnSignedLongBuffer bitmap = ir.getBitmapBuffer(component);
         HDTBitmapDirectory dir = ir.getDirectory(component);

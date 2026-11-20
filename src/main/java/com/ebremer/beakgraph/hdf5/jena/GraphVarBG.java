@@ -547,9 +547,29 @@ public final class GraphVarBG {
             // counts over all of them - the root graph's own transform counts only the stored
             // default graph.
             long[] graphs = namedGraphIds(dict, root);
+            if (block instanceof OpBGP bgp) {
+                graphs = holdingEveryPredicate(reader, dict, graphs, bgp.getPattern());
+            }
             Plan plan = compile(block, first, new HashSet<>(), root.reorderTransformForGraphs(graphs), reader.getNodeTable());
             return (plan == null) ? null : Prepared.of(graphVar, null, plan, dsg, root, reader, dict, graphs);
         }
+    }
+
+    /**
+     * {@code graphs}, in their order, less those lacking a predicate one of {@code pattern}'s triples
+     * names: a BGP has no rows in a graph without one of its predicates, and each graph the walk
+     * visits costs an iterator per row.
+     */
+    static long[] holdingEveryPredicate(HDF5Reader reader, PositionalDictionaryReader dict, long[] graphs, BasicPattern pattern) {
+        long[] kept = graphs;
+        for (Triple t : pattern) {
+            Node p = t.getPredicate();
+            if (!p.isURI() || BeakGraph.BOUND.equals(p)) continue;
+            long[] holders = reader.graphsWithPredicate(dict.getPredicates().locate(p));
+            if (holders == null) return graphs; // no GPOS: every graph may hold it
+            kept = java.util.Arrays.stream(kept).filter(g -> java.util.Arrays.binarySearch(holders, g) >= 0).toArray();
+        }
+        return kept;
     }
 
     /** Whether {@code opGraph} is a block the walk answers, as far as can be said before the input is touched. */

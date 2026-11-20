@@ -406,20 +406,23 @@ class GroupOnIdsTest {
                     assertEquals(0, GroupOnIds.PARALLEL.get() - before, "grouped on the thread that asked: " + query);
                 }
                 // What a filter turns away and what a join does not find is work all the same: a count of nothing
-                // or of eight, out of 1,400 rows read, is with workers long before it is done.
+                // out of 1,400 rows read (the rings of ex:next hold no pair pointing at each other) is with
+                // workers long before it is done.
                 System.setProperty("beakgraph.group.handoff", "128");
                 for (String query : new String[] {
                         "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ex:value ?v FILTER(isIRI(?v)) } }",
-                        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:rare ?r } }"}) {
+                        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:next ?a } }"}) {
                     long before = GroupOnIds.PARALLEL.get();
                     assertEquals(rows(truth, query), rows(ds, query), query);
                     assertEquals(1, GroupOnIds.PARALLEL.get() - before, "handed to workers for the work, not the rows: " + query);
                 }
                 // But not where the graphs left have too little to do for two workers: a filter the index answers
-                // (no value is over 1000, and none is read to find that out), a lookup.
+                // (no value is over 1000, and none is read to find that out), a lookup, and a join on a predicate
+                // 8 of the 70 graphs hold - the walk visits only those.
                 for (String query : new String[] {
                         "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ex:value ?v FILTER(?v > 1000) } }",
-                        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ex:n3_4 ?p ?o } }"}) {
+                        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ex:n3_4 ?p ?o } }",
+                        "SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?a ex:next ?b . ?b ex:rare ?r } }"}) {
                     long before = GroupOnIds.PARALLEL.get();
                     assertEquals(rows(truth, query), rows(ds, query), query);
                     assertEquals(0, GroupOnIds.PARALLEL.get() - before, "too little left for workers: " + query);

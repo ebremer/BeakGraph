@@ -46,14 +46,12 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         this.parentBinding = bnid;
 
         // GPOS Structure
-        BitPackedUnSignedLongBuffer Bp = reader.getBitmapBuffer('P');
         BitPackedUnSignedLongBuffer Sp = reader.getIDBuffer('P');
         BitPackedUnSignedLongBuffer Bo = reader.getBitmapBuffer('O');
         BitPackedUnSignedLongBuffer So = reader.getIDBuffer('O');
         BitPackedUnSignedLongBuffer Bs = reader.getBitmapBuffer('S');
         this.Ss = reader.getIDBuffer('S');
 
-        HDTBitmapDirectory dirP = reader.getDirectory('P');
         HDTBitmapDirectory dirO = reader.getDirectory('O');
         HDTBitmapDirectory dirS = reader.getDirectory('S');
 
@@ -108,10 +106,10 @@ public class BGIteratorOS implements Iterator<BindingNodeId> {
         // --- Traverse GPOS ---
 
         // A. Level 2: Predicate Range for G
-        long pStart = RangeSelect.blockStart(dirP, Bp, gi);
-        if (pStart == -1) return;
-        long pEnd = RangeSelect.blockEnd(dirP, Bp, gi, pStart);
-        if (pStart > pEnd) return;
+        long[] graphBlock = reader.graphBlock('P', gi);
+        if (graphBlock == null) return;
+        long pStart = graphBlock[0];
+        long pEnd = graphBlock[1];
 
         long pIndex = Sp.binarySearch(pStart, pEnd, pi);
         if (pIndex < 0) return;
