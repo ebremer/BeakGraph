@@ -354,15 +354,49 @@ public class HDF5Reader implements BGReader {
         return graphs;
     }
 
+    /** A predicate and an object term. */
+    private record PredicateObject(Node p, Node o) {}
+
+    // The stored graphs holding each predicate and object pair asked for, up to MAX_PAIRS pairs: a
+    // query names few, but a row's value substituted into a pattern is one more each time.
+    private final ConcurrentHashMap<PredicateObject, long[]> pairGraphs = new ConcurrentHashMap<>();
+    private static final int MAX_PAIRS = 1 << 16;
+
+    /**
+     * The ids of the stored graphs holding a quad with predicate {@code p} and object {@code o}
+     * (a URI or a literal), sorted: of {@link #graphsWithPredicate(Node)}, those whose GPOS level under
+     * the predicate holds the object ({@link IndexCounts#quadsWithPredicate}, two binary searches a
+     * graph, once per pair). OKN's rdf:type is in all 50 of its graphs, but {@code ?x rdf:type
+     * fio:Facility} in one, and a union read checking a facility's type visited all 50 per row
+     * (federation/sawgraph-samples-near-PFAS-facilities). Null without a GPOS index.
+     */
+    public long[] graphsWithPredicateObject(Node p, Node o) {
+        PredicateObject key = new PredicateObject(p, o);
+        long[] kept = pairGraphs.get(key);
+        if (kept != null) return kept;
+        long[] holders = graphsWithPredicate(p);
+        if (holders == null || holders.length == 0) return holders;
+        long pi = dict.getPredicates().locate(p);
+        long oi = dict.getObjects().locate(o);
+        long[] graphs = (oi < 1) ? new long[0]
+                : java.util.Arrays.stream(holders).filter(gi -> IndexCounts.quadsWithPredicate(this, gi, pi, oi) != 0).toArray();
+        if (pairGraphs.size() < MAX_PAIRS) {
+            pairGraphs.putIfAbsent(key, graphs);
+        }
+        return graphs;
+    }
+
     /**
      * The graphs {@code pattern} can match in when its predicate is known - a term, or a variable
-     * {@code binding} gives a predicate id - from {@link #graphsWithPredicate}; null when any graph
+     * {@code binding} gives a predicate id - from {@link #graphsWithPredicate}, narrowed to
+     * {@link #graphsWithPredicateObject} when its object is a URI or a literal; null when any graph
      * may hold it.
      */
     private long[] graphsFor(Triple pattern, BindingNodeId binding) {
         Node p = pattern.getPredicate();
         if (p.isURI()) {
-            return graphsWithPredicate(p);
+            Node o = pattern.getObject();
+            return (o.isURI() || o.isLiteral()) ? graphsWithPredicateObject(p, o) : graphsWithPredicate(p);
         }
         if (p.isVariable()) {
             Var v = Var.alloc(p);

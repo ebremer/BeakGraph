@@ -136,6 +136,15 @@ class GraphSkippingTest {
     }
 
     @Test
+    void aTermObjectNarrowsTheUnionToTheGraphsHoldingThatPair() {
+        // ex:q is in g4 and g5, ex:q "4" in g4 alone.
+        assertEquals(1, graphReads("SELECT * FROM <" + UNION + "> WHERE { ?s ex:q \"4\" }", 1));
+        assertEquals(0, graphReads("SELECT * FROM <" + UNION + "> WHERE { ?s ex:q \"6\" }", 0));
+        // ex:a ex:p3 ex:b is in g3 and g4 (one row in the union), ex:p3 in g5 too.
+        assertEquals(2, graphReads("SELECT * FROM <" + UNION + "> WHERE { ?s ex:p3 ex:b }", 1));
+    }
+
+    @Test
     void anUnboundPredicateReadsEveryGraph() {
         assertEquals(5, graphReads("SELECT * FROM <" + UNION + "> WHERE { ex:h ?p ?o }", 2));
     }
@@ -243,6 +252,23 @@ class GraphSkippingTest {
             long defaultGraph = dict.getGraphs().locate(Quad.defaultGraphIRI);
             for (String p : new String[] {"p1", "p2", "p3", "q", "nothing"}) {
                 long[] all = reader.graphsWithPredicate(dict.getPredicates().locate(NodeFactory.createURI(NS + p)));
+                // With an object: the graphs SPARQL finds that pair in.
+                for (String o : new String[] {"<" + NS + "b>", "\"4\"", "\"5\"", "<" + NS + "nothing>"}) {
+                    List<String> pairNamed = new ArrayList<>();
+                    org.apache.jena.graph.Node on = o.startsWith("<") ? NodeFactory.createURI(o.substring(1, o.length() - 1))
+                            : NodeFactory.createLiteralString(o.substring(1, o.length() - 1));
+                    for (long id : reader.graphsWithPredicateObject(NodeFactory.createURI(NS + p), on)) {
+                        if (id != defaultGraph) pairNamed.add(dict.getGraphs().extract(id).getURI());
+                    }
+                    Collections.sort(pairNamed);
+                    List<String> pairExpected = new ArrayList<>();
+                    try (QueryExecution qe = QueryExecution.dataset(reference)
+                            .query(QueryFactory.create(PREFIX + "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ex:" + p + " " + o + " } }")).build()) {
+                        qe.execSelect().forEachRemaining(row -> pairExpected.add(row.get("g").toString()));
+                    }
+                    Collections.sort(pairExpected);
+                    assertEquals(pairExpected, pairNamed, e + "named graphs holding ex:" + p + " " + o);
+                }
                 // By the term (looked up once, kept for the store's predicates): the same graphs, asked twice.
                 for (int i = 0; i < 2; i++) {
                     assertArrayEquals(all, reader.graphsWithPredicate(NodeFactory.createURI(NS + p)), e + "by term, ex:" + p);

@@ -557,15 +557,17 @@ public final class GraphVarBG {
 
     /**
      * {@code graphs}, in their order, less those lacking a predicate one of {@code pattern}'s triples
-     * names: a BGP has no rows in a graph without one of its predicates, and each graph the walk
-     * visits costs an iterator per row.
+     * names - or, when the triple names its object too (a URI or a literal), that predicate with that
+     * object: a BGP has no rows in a graph without one of its triples, and each graph the walk visits
+     * costs an iterator per row.
      */
     static long[] holdingEveryPredicate(HDF5Reader reader, long[] graphs, BasicPattern pattern) {
         long[] kept = graphs;
         for (Triple t : pattern) {
             Node p = t.getPredicate();
             if (!p.isURI() || BeakGraph.BOUND.equals(p)) continue;
-            long[] holders = reader.graphsWithPredicate(p);
+            Node o = t.getObject();
+            long[] holders = (o.isURI() || o.isLiteral()) ? reader.graphsWithPredicateObject(p, o) : reader.graphsWithPredicate(p);
             if (holders == null) return graphs; // no GPOS: every graph may hold it
             kept = java.util.Arrays.stream(kept).filter(g -> java.util.Arrays.binarySearch(holders, g) >= 0).toArray();
         }
