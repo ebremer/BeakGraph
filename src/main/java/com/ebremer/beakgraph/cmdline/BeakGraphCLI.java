@@ -647,7 +647,8 @@ public class BeakGraphCLI {
     private com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arraysOptions() {
         return params.arrays
                 ? new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(params.arraysMinRows,
-                        params.arraysMinLeaves, params.arraysCompress)
+                        params.arraysMinLeaves, params.arraysCompress,
+                        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.TimeUnit.of(params.arraysTimeUnit))
                 : null;
     }
 

@@ -397,6 +397,12 @@ public final class ZarrStore implements OpenStore {
                 } else if (t.equals(DataType.INT32)) {
                     type = TypedArray.Type.I32;
                     values = a.readInts();
+                } else if (t.equals(DataType.UINT16)) {
+                    type = TypedArray.Type.U16;
+                    values = a.readInts();
+                } else if (t.equals(DataType.STRING)) {
+                    type = TypedArray.Type.STR;
+                    values = a.readStrings();
                 } else if (t.equals(DataType.BOOL)) {
                     type = TypedArray.Type.BOOL;
                     byte[] raw = a.readRawBytes();

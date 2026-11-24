@@ -113,9 +113,10 @@ public class Parameters {
     public boolean spatial = false;
 
     @Parameter(names = {"-arrays"}, converter = BooleanConverter.class,
-            description = "Also write the numeric RDF-array sequences as native typed arrays under /.BG/arrays "
-                        + "(format v7), which h5py, zarr-python, numpy and xarray read directly; a second copy, "
-                        + "the canonical store stays complete. -method 0, 2 and 3")
+            description = "Also write the RDF-array sequences as native typed arrays under /.BG/arrays "
+                        + "(format v7), which h5py, zarr-python, numpy, pandas and xarray read directly: numeric "
+                        + "tensors and ragged arrays, and record tables for sequences that mix strings, numbers "
+                        + "and dates by position; a second copy, the canonical store stays complete. -method 0, 2 and 3")
     public boolean arrays = false;
 
     @Parameter(names = {"-arrays-min-rows"},
@@ -125,6 +126,11 @@ public class Parameters {
 
     @Parameter(names = {"-arrays-min"}, description = "With -arrays: the fewest leaves a sequence packs with")
     public int arraysMinLeaves = 2;
+
+    @Parameter(names = {"-arrays-time-unit"},
+            description = "With -arrays: what the xsd:dateTime columns of record classes count since 1970: "
+                        + "s, ms, us or ns (a value finer than the unit is not packed)")
+    public String arraysTimeUnit = "us";
 
     @Parameter(names = {"-arrays-compress"}, converter = BooleanConverter.class,
             description = "With -arrays: compress the arrays (HDF5: chunked, shuffle + deflate; Zarr: sharded, zstd)")

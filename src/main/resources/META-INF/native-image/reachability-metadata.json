@@ -163,6 +163,9 @@
           "name": "arraysMinRows"
         },
         {
+          "name": "arraysTimeUnit"
+        },
+        {
           "name": "features"
         },
         {

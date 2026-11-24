@@ -144,10 +144,16 @@ public final class WritableHdfFile implements WritableStore {
                 case I64 -> Datatype.int64();
                 case I32 -> Datatype.int32();
                 case BOOL -> Datatype.bool();   // the enum {FALSE, TRUE} over int8, which h5py reads as bool
+                case U16 -> Datatype.uint16();
+                case STR -> Datatype.variableString();   // UTF-8, as h5py writes a str
             };
             Hdf5Writer.DatasetWriter ds = group.createDataset(name, type, shape);
             if (compress && array.elementCount() > 0) {
-                ds.chunked(rowChunk(shape, array.rowBytes())).shuffle().deflate(6);
+                ds.chunked(rowChunk(shape, array.rowBytes()));
+                if (array.type() != com.ebremer.beakgraph.store.TypedArray.Type.STR) {
+                    ds.shuffle();   // over variable-length ids it would only shuffle heap addresses
+                }
+                ds.deflate(6);
             }
             ds.write(array.values());
             for (java.util.Map.Entry<String, Object> a : array.attributes().entrySet()) {

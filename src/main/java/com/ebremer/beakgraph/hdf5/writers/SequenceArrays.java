@@ -30,19 +30,76 @@ import org.apache.jena.vocabulary.XSD;
  *       least {@link Options#minRows} sequences of a key is a tensor class of
  *       its own, and the key's other rows share one ragged class.</li>
  * </ul>
- * Classes are named by kind, datatype and shape, numbered 1, 2, ... in name
- * order; {@link #classes} gives each sequence row its class, 0 when unpacked.
+ * Classes are named by kind, datatype and shape. A top-level sequence that
+ * no tensor or ragged class takes may be a record (§3.5a, {@link RecordArrays}):
+ * a class {@code rec_<n>} per signature that at least {@code minRows}
+ * sequences share. Classes are numbered 1, 2, ...: the tensor and ragged
+ * classes in name order, then {@code rec_1}, {@code rec_2}, ...
+ * ({@link #classOrder}); {@link #classes} gives each sequence row its class,
+ * 0 when unpacked.
  */
 public final class SequenceArrays {
 
+    /**
+     * {@code -arrays-time-unit}: what a record class's {@code xsd:dateTime}
+     * column counts since 1970-01-01T00:00:00, one unit per store. A value
+     * finer than the unit does not pack.
+     */
+    public enum TimeUnit {
+        S("s", "seconds", 0, 1L),
+        MS("ms", "milliseconds", 3, 1_000L),
+        US("us", "microseconds", 6, 1_000_000L),
+        NS("ns", "nanoseconds", 9, 1_000_000_000L);
+
+        final String flag;
+        /** The unit's CF name. */
+        final String cf;
+        /** The fractional digits of a second it holds. */
+        final int digits;
+        final long perSecond;
+
+        TimeUnit(String flag, String cf, int digits, long perSecond) {
+            this.flag = flag;
+            this.cf = cf;
+            this.digits = digits;
+            this.perSecond = perSecond;
+        }
+
+        /** The unit {@code -arrays-time-unit} names: s, ms, us or ns. */
+        public static TimeUnit of(String flag) {
+            for (TimeUnit t : values()) {
+                if (t.flag.equals(flag)) {
+                    return t;
+                }
+            }
+            throw new IllegalArgumentException("-arrays-time-unit is s, ms, us or ns, not '" + flag + "'");
+        }
+
+        /** The unit of a dateTime column's CF {@code units}, or null. */
+        static TimeUnit ofUnits(String units) {
+            for (TimeUnit t : values()) {
+                if (RecordArrays.units(t).equals(units)) {
+                    return t;
+                }
+            }
+            return null;
+        }
+    }
+
     /** {@code -arrays}: on with these settings, or off (null). */
-    public record Options(int minRows, int minLeaves, boolean compress) {
-        public static final Options DEFAULT = new Options(16, 2, false);
+    public record Options(int minRows, int minLeaves, boolean compress, TimeUnit timeUnit) {
+        public static final Options DEFAULT = new Options(16, 2, false, TimeUnit.US);
 
         public Options {
             if (minRows < 1 || minLeaves < 1) {
                 throw new IllegalArgumentException("-arrays-min-rows and -arrays-min must be at least 1");
             }
+            java.util.Objects.requireNonNull(timeUnit, "timeUnit");
+        }
+
+        /** Microseconds, the default time unit. */
+        public Options(int minRows, int minLeaves, boolean compress) {
+            this(minRows, minLeaves, compress, TimeUnit.US);
         }
     }
 
@@ -68,6 +125,16 @@ public final class SequenceArrays {
         static Leaf of(String datatypeUri) {
             for (Leaf l : values()) {
                 if (l.datatype.equals(datatypeUri)) {
+                    return l;
+                }
+            }
+            return null;
+        }
+
+        /** The leaf its class-name tag ({@code f64}, {@code long}, ...) names, or null. */
+        static Leaf ofTag(String tag) {
+            for (Leaf l : values()) {
+                if (l.tag.equals(tag)) {
                     return l;
                 }
             }
@@ -201,11 +268,16 @@ public final class SequenceArrays {
     record Class(String name, boolean tensor, Leaf leaf, int length, int[] inner, List<Row> rows) {}
 
     private final List<Class> classes;
+    private final List<RecordArrays.RecClass> records;
     private final long[] classOfSequence;
+    private final TimeUnit timeUnit;
 
-    private SequenceArrays(List<Class> classes, long[] classOfSequence) {
+    private SequenceArrays(List<Class> classes, List<RecordArrays.RecClass> records, long[] classOfSequence,
+                           TimeUnit timeUnit) {
         this.classes = classes;
+        this.records = records;
         this.classOfSequence = classOfSequence;
+        this.timeUnit = timeUnit;
     }
 
     /**
@@ -224,13 +296,19 @@ public final class SequenceArrays {
         // key -> length -> rows, every map in a fixed order
         Map<String, TreeMap<Integer, List<Row>>> byKey = new TreeMap<>();
         Map<String, Row> keyExample = new HashMap<>();
+        List<RecordArrays.RecRow> recordCandidates = new ArrayList<>();
         for (int k = 0; k < numSequences; k++) {
             Node seq = literals.get(first + k);
             if (!topLevel.test(seq)) {
                 continue;
             }
-            Row row = probe(maxEntityId + first + k + 1, seq, options.minLeaves());
+            long objectId = maxEntityId + first + k + 1;
+            Row row = probe(objectId, seq, options.minLeaves());
             if (row == null) {
+                RecordArrays.RecRow rec = RecordArrays.probe(objectId, seq, options.timeUnit(), options.minLeaves());
+                if (rec != null) {
+                    recordCandidates.add(rec);
+                }
                 continue;
             }
             String key = row.leaf().name() + Arrays.toString(row.inner());
@@ -256,13 +334,41 @@ public final class SequenceArrays {
             }
         }
         List<Class> classes = new ArrayList<>(named.values());
+        List<RecordArrays.RecClass> records = RecordArrays.classify(recordCandidates, options.minRows());
         long[] classOf = new long[numSequences];
         for (int c = 0; c < classes.size(); c++) {
             for (Row r : classes.get(c).rows()) {
                 classOf[(int) (r.objectId() - maxEntityId - first - 1)] = c + 1;
             }
         }
-        return new SequenceArrays(classes, classOf);
+        for (int c = 0; c < records.size(); c++) {
+            for (RecordArrays.RecRow r : records.get(c).rows()) {
+                classOf[(int) (r.objectId() - maxEntityId - first - 1)] = classes.size() + c + 1;
+            }
+        }
+        return new SequenceArrays(classes, records, classOf, options.timeUnit());
+    }
+
+    private static final Pattern RECORD_NAME = Pattern.compile("rec_([1-9][0-9]{0,9})");
+
+    /**
+     * {@code names} (the groups of {@code /.BG/arrays}) in class-number order:
+     * the tensor and ragged classes in name order, then the record classes by
+     * their number ({@code rec_2} before {@code rec_10}).
+     */
+    public static List<String> classOrder(java.util.Collection<String> names) {
+        List<String> out = new ArrayList<>(names);
+        out.sort((a, b) -> {
+            java.util.regex.Matcher ma = RECORD_NAME.matcher(a);
+            java.util.regex.Matcher mb = RECORD_NAME.matcher(b);
+            boolean ra = ma.matches();
+            boolean rb = mb.matches();
+            if (ra != rb) {
+                return ra ? 1 : -1;
+            }
+            return ra ? Long.compare(Long.parseLong(ma.group(1)), Long.parseLong(mb.group(1))) : a.compareTo(b);
+        });
+        return out;
     }
 
     /**
@@ -299,7 +405,7 @@ public final class SequenceArrays {
 
     /** Whether any sequence packed: without one, a store has no {@code /.BG/arrays} and no {@code sequenceArrays}. */
     public boolean isEmpty() {
-        return classes.isEmpty();
+        return classes.isEmpty() && records.isEmpty();
     }
 
     /** Each sequence row's class number (1-based, in name order), 0 when it is not packed. */
@@ -309,7 +415,7 @@ public final class SequenceArrays {
 
     /** Writes {@code arrays/} under {@code bg} (the {@code .BG} group): a group per class, in name order. */
     public void write(WritableGroup bg, boolean compress) {
-        if (classes.isEmpty()) {
+        if (isEmpty()) {
             return;
         }
         WritableGroup arrays = bg.putGroup(Params.ARRAYS);
@@ -382,6 +488,9 @@ public final class SequenceArrays {
             }
             g.putTypedArray("seq", new TypedArray(TypedArray.Type.I64, new long[]{rows}, seq, List.of("seq"), null), compress);
         }
+        for (RecordArrays.RecClass r : records) {
+            RecordArrays.write(r, arrays, compress, timeUnit);
+        }
     }
 
     /**
@@ -394,6 +503,10 @@ public final class SequenceArrays {
     public static String verifyClass(String name, com.ebremer.beakgraph.store.StoreGroup g,
                                      com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader dict) {
         String kind = g.stringAttribute("kind");
+        if ("record".equals(kind)) {
+            return RECORD_NAME.matcher(name).matches() ? RecordArrays.verify(name, g, dict)
+                    : "a record class named '" + name + "' (expected rec_<n>)";
+        }
         boolean tensor = "tensor".equals(kind);
         if (!tensor && !"ragged".equals(kind)) {
             return "kind '" + kind + "' (expected tensor or ragged)";
@@ -443,33 +556,36 @@ public final class SequenceArrays {
         return (at == values.elementCount()) ? null : "values hold " + values.elementCount() + " elements; the rows " + at;
     }
 
-    private static boolean sameValue(TypedArray values, TypedArray.Type type, int at, Object expected) {
+    static boolean sameValue(TypedArray values, TypedArray.Type type, int at, Object expected) {
         return switch (type) {
             case F64 -> Double.doubleToRawLongBits(((double[]) values.values())[at]) == Double.doubleToRawLongBits((Double) expected);
             case F32 -> Float.floatToRawIntBits(((float[]) values.values())[at]) == Float.floatToRawIntBits((Float) expected);
             case I64 -> ((long[]) values.values())[at] == (Long) expected;
             case I32 -> ((int[]) values.values())[at] == (int) (long) (Long) expected;
             case BOOL -> ((boolean[]) values.values())[at] == (Boolean) expected;
+            case U16, STR -> false;   // no numeric leaf packs to these
         };
     }
 
-    private static Object newValues(TypedArray.Type type, int n) {
+    static Object newValues(TypedArray.Type type, int n) {
         return switch (type) {
             case F64 -> new double[n];
             case F32 -> new float[n];
             case I64 -> new long[n];
-            case I32 -> new int[n];
+            case I32, U16 -> new int[n];
             case BOOL -> new boolean[n];
+            case STR -> new String[n];
         };
     }
 
-    private static void set(Object values, TypedArray.Type type, int at, Object leaf) {
+    static void set(Object values, TypedArray.Type type, int at, Object leaf) {
         switch (type) {
             case F64 -> ((double[]) values)[at] = (Double) leaf;
             case F32 -> ((float[]) values)[at] = (Float) leaf;
             case I64 -> ((long[]) values)[at] = (Long) leaf;
             case I32 -> ((int[]) values)[at] = (int) (long) (Long) leaf;
             case BOOL -> ((boolean[]) values)[at] = (Boolean) leaf;
+            case U16, STR -> throw new IllegalArgumentException("no numeric leaf packs to " + type);
         }
     }
 }

@@ -60,6 +60,11 @@ brought and what a reader must rebuild.
   to the object ids, and `sequenceArrays` in the literals section. `-arrays-compress` chunks and
   compresses them. The canonical store stays complete, and without `-arrays` nothing changes.
   `-verify -deep` checks every packed row against its canonical elements.
+  Sequences that mix types by position, such as FHIR's `( code name ( value unit ) )`, become record
+  classes `rec_<n>`, one per signature (`list((str,str,(i64,str)))`): a typed column per position -
+  strings, IRIs, language strings with tag codes, `xsd:dateTime` and `xsd:date` as CF-annotated counts
+  that xarray decodes (`-arrays-time-unit`, default `us`), numeric blocks as N-D columns - which pandas
+  reads as a table. Every packed date rebuilds its exact lexical form, or the sequence does not pack.
 * **A relative IRI inside a triple term now stops an N-Triples export without `-base`**, as a
   top-level one does; it used to be written relative (`relativeReference` did not look inside).
 * **Triple-term pattern scans clamp to the band's end too**, not only its start, so they no longer

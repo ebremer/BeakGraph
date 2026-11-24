@@ -780,8 +780,9 @@ Consequences and invariants:
 
 ### 7.6c Native arrays: `/.BG/arrays` (*v7*, optional)
 
-A writer MAY lay a store's numeric sequences out a second time as typed arrays that array tools read
-with no knowledge of RDF (the reference writers do with `-arrays`). The canonical rows of §7.6b stay
+A writer MAY lay a store's numeric sequences, and its sequences that mix types by position (record
+classes, below), out a second time as typed arrays that array tools read with no knowledge of RDF (the
+reference writers do with `-arrays`). The canonical rows of §7.6b stay
 complete: a reader MAY ignore `/.BG/arrays` and `sequenceArrays` altogether. Their presence is sniffed.
 
 **Which sequences pack.** Only sequences that are the object of some quad (members of `objects`,
@@ -801,8 +802,9 @@ only where a leaf does; every level below the outermost is rectangular; and it h
 **Classes.** A sequence's key is (leaf datatype, inner shape), its length the outer one. Every outer
 length that at least `minRows` sequences of a key share (`-arrays-min-rows`, default 16) is a
 **tensor** class of its own, named `<tag>_<length>[x<inner>…]` (`i64_7`, `f64_2x3`); the key's other
-sequences form one **ragged** class, `<tag>_r[_<inner>…]` (`f64_r_2`). Classes are numbered 1, 2, …
-in name order (UTF-16 code-unit order).
+sequences form one **ragged** class, `<tag>_r[_<inner>…]` (`f64_r_2`). Classes are numbered 1, 2, …:
+the tensor and ragged classes in name order (UTF-16 code-unit order), then the record classes `rec_1`,
+`rec_2`, … by their number.
 
 **Layout.** One group per class under `/.BG/arrays`, with string attributes `kind` (`tensor` or
 `ragged`), `datatype` (the leaf's XSD IRI) and `shape` (the row shape, or the inner shape, `x`-joined):
@@ -825,6 +827,61 @@ little-endian, chunked by whole rows; with compression sharded by rows with zstd
 `dimension_names` (`["seq", "d1", …]` on a tensor's `values` and `mask`, `["item", "d1", …]` on a
 ragged one's, `["seq"]` on `seq`). The two containers hold the same groups, shapes, types, values and
 masks; their bytes differ by chunking and codec.
+
+**Record classes.** A top-level sequence that no tensor or ragged class takes MAY pack as a record: one
+typed column per leaf position, as a table holds it. A record leaf is one of §7.6c's numeric leaves (same
+tags and rules), or:
+
+| Leaf | Terms | Column | Packs when |
+|---|---|---|---|
+| `str` | `xsd:string` | string | the lexical form has no U+0000 and no unpaired surrogate |
+| `lang` | `rdf:langString` | string (the lexical form), and `<column>_lang`, uint16 codes into the column's `langs` attribute (the distinct tags in UTF-16 order, space-separated) | as `str`, for the form and the tag; at most 65536 tags a column |
+| `iri` | IRIs | string, the stored form (§7.7) | as `str` |
+| `dt`, `dtZ`, `dt±hh:mm` | `xsd:dateTime` with no timezone, `Z`, or that nonzero offset | int64: the time unit since 1970-01-01T00:00:00, the local time when there is no zone, else the UTC instant | the count rebuilds the exact lexical form: years 0001-9999, no trailing fractional zeros, `Z` for a zero offset, a fraction the unit holds, a count int64 holds |
+| `date` | `xsd:date` with no timezone | int32 days since 1970-01-01 | the days rebuild the exact lexical form (years 0001-9999) |
+
+The time unit is the store's (`-arrays-time-unit`: `s`, `ms`, `us` or `ns`, default `us`), the same in
+every `dt` column. A blank node, a triple term, `xsd:decimal` or any other leaf leaves a sequence
+unpacked.
+
+A record class's key is the sequence's **signature**, a function of the sequence alone:
+
+```
+signature := leaf | leaf "[" dims "]" | "(" signature ( "," signature )* ")" | "list(" signature ")"
+```
+
+- Each element of a sequence has a structural signature: its leaf, a slot, or the tuple of its elements'.
+- At the outermost level, elements that **unify** make `list(T)`: tuples of one length unify position by
+  position, equal leaves unify, and a slot unifies with a leaf (taking its type). Otherwise the sequence
+  is the tuple of its elements' signatures.
+- Then, bottom-up, a tuple whose parts are all one numeric leaf (or slots, with at least one leaf), or
+  all blocks of one leaf and shape, is a **block**, `leaf[dims]` with `x`-joined dims (`f64[768]`,
+  `i64[2x3]`): one N-D column, its slots typed by the block.
+- A signature with a slot left untyped, or an empty sequence anywhere, has no record class. The
+  sequence must also hold at least `minLeaves` leaves.
+- Spellings have no spaces: `( "a" 1 )` is `(str,i64)`, `( "a" "b" )` `list(str)`, and FHIR's
+  components `list((str,str,(i64,str)))`.
+
+Every signature that at least `minRows` sequences share is a class, named `rec_1`, `rec_2`, … in the
+order of the spellings (UTF-16). Its group has string attributes `kind` (`record`) and `signature`, and:
+
+| Array | Type | Shape | Holds |
+|---|---|---|---|
+| `starts` | int64 | `[rows + 1]`, `list(…)` only | row *r*'s items are `[starts[r], starts[r+1])` |
+| `f<path>` | the leaf's column type | `[rows]` for a tuple class, `[items]` for a list class, the block's dims appended | the leaf at that position of each row (item), row-major within a block |
+| `f<path>_lang` | uint16 | the column's | `lang` columns only |
+| `f<path>_mask` | bool | the column's | only for a column that holds a slot: true there (the value there is 0, false or `""`) |
+| `seq` | int64 | `[rows]` | each row's sequence object id, ascending |
+
+- `<path>` is the position path from 1, `_`-joined (`f3_1` is the first element of the third position);
+  in a list class, the path within the item, and a list of leaves has the one column `f`.
+- Each column has string attributes `kind` (its leaf's spelling, or the block's tag), `datatype` (the
+  datatype IRI, except on `iri`), and for dates `units` (`<seconds|milliseconds|microseconds|nanoseconds>
+  since 1970-01-01T00:00:00`, or `days since 1970-01-01`), `calendar` (`proleptic_gregorian`) and, for a
+  zoned `dt`, `timezone` (`Z` or the offset): CF metadata, which xarray decodes to `datetime64`.
+- Strings: HDF5 variable-length UTF-8 strings, chunked and deflated under compression; Zarr `data_type`
+  `string` with the `vlen-utf8` codec (zstd after it, under sharding, when compressed). uint16 is
+  `H5T_STD_U16LE` / `uint16`. Dimension names as above, `item` or `seq` first, then `d1`, ….
 
 ### 7.6 Blank nodes
 

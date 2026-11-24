@@ -439,13 +439,18 @@ public final class ZarrStoreWriter implements WritableStore {
                 case I64 -> DataType.INT64;
                 case I32 -> DataType.INT32;
                 case BOOL -> DataType.BOOL;
+                case U16 -> DataType.UINT16;
+                case STR -> DataType.STRING;   // the vlen-utf8 codec
             };
             long rows = Math.max(1, (shape.length == 0) ? 1 : shape[0]);
             long[] chunk = new long[Math.max(1, shape.length)];
             for (int i = 1; i < shape.length; i++) {
                 chunk[i] = Math.max(1, shape[i]);
             }
-            ArraySpec.Builder spec = ArraySpec.builder(shape, type).endian(java.nio.ByteOrder.LITTLE_ENDIAN);
+            ArraySpec.Builder spec = ArraySpec.builder(shape, type);
+            if (array.type() != com.ebremer.beakgraph.store.TypedArray.Type.STR) {
+                spec.endian(java.nio.ByteOrder.LITTLE_ENDIAN);
+            }
             if (compress) {
                 long sub = Math.max(1, Math.min(rows, (1L << 20) / Math.max(1, array.rowBytes())));
                 long shard = sub * Math.max(1, Math.min(rows, Math.max(1, (1L << 26) / Math.max(1, array.rowBytes()))) / sub);
@@ -468,7 +473,8 @@ public final class ZarrStoreWriter implements WritableStore {
                 case F64 -> a.writeDoubles((double[]) array.values());
                 case F32 -> a.writeFloats((float[]) array.values());
                 case I64 -> a.writeLongs((long[]) array.values());
-                case I32 -> a.writeInts((int[]) array.values());
+                case I32, U16 -> a.writeInts((int[]) array.values());
+                case STR -> a.writeStrings((String[]) array.values());
                 case BOOL -> {
                     boolean[] b = (boolean[]) array.values();
                     byte[] raw = new byte[b.length];

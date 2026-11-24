@@ -13,15 +13,20 @@ import java.util.TreeMap;
  * integers; the dimension names label the axes where the container can
  * (Zarr's {@code dimension_names}).
  *
- * @param values {@code double[]}, {@code float[]}, {@code long[]}, {@code int[]} or {@code boolean[]},
- *               as {@code type} says, holding the product of {@code shape} elements
+ * @param values {@code double[]}, {@code float[]}, {@code long[]}, {@code int[]} (also for
+ *               {@code U16}, each 0 to 65535), {@code boolean[]} or {@code String[]} (no nulls), as
+ *               {@code type} says, holding the product of {@code shape} elements
  */
 public record TypedArray(Type type, long[] shape, Object values, List<String> dimensionNames,
                          Map<String, Object> attributes) {
 
-    /** The element types: XSD's double, float, long, int and boolean. */
+    /**
+     * The element types: XSD's double, float, long, int and boolean; uint16
+     * (language codes of record classes); and variable-length UTF-8 strings,
+     * whose {@link #bytes} is a size estimate (an HDF5 variable-length id).
+     */
     public enum Type {
-        F64(8), F32(4), I64(8), I32(4), BOOL(1);
+        F64(8), F32(4), I64(8), I32(4), BOOL(1), U16(2), STR(16);
 
         private final int bytes;
 
@@ -49,9 +54,21 @@ public record TypedArray(Type type, long[] shape, Object values, List<String> di
             case F64 -> ((double[]) values).length;
             case F32 -> ((float[]) values).length;
             case I64 -> ((long[]) values).length;
-            case I32 -> ((int[]) values).length;
+            case I32, U16 -> ((int[]) values).length;
             case BOOL -> ((boolean[]) values).length;
+            case STR -> ((String[]) values).length;
         };
+        if (type == Type.U16) {
+            for (int v : (int[]) values) {
+                if (v < 0 || v > 0xFFFF) {
+                    throw new IllegalArgumentException("uint16 value " + v);
+                }
+            }
+        } else if (type == Type.STR) {
+            for (String v : (String[]) values) {
+                Objects.requireNonNull(v, "a string element");
+            }
+        }
         if (length != n) {
             throw new IllegalArgumentException(type + " values hold " + length + " elements; the shape "
                     + java.util.Arrays.toString(shape) + " needs " + n);

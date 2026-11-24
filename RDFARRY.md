@@ -9,7 +9,7 @@
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
 - Status: steps 1-5 done (2026-11-24): the v7 spec, the Jena port, v7 storage, correct SPARQL-array
   answers over it (milestone A), and every engine writing it. Step 6, the native arrays, is under way:
-  the numeric tensor and ragged classes on methods 0, 2 and 3
+  the numeric tensor and ragged classes and the record classes, on methods 0, 2 and 3
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -1041,10 +1041,26 @@ which is the rule triple terms set in v5.
   - SPECIFICATIONS.md §7.6c, and the profile exception in §3 and §3a.
   - One deviation from §3.5: `xsd:integer` and `xsd:long` both pack to int64 but are different terms,
     so they are different classes (`i64` and `long`).
-- **Left.** Record classes (§3.5a); the disk engines; the lazy list reading packed values; the Python
-  smoke test is written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`), but this machine has no
-  h5py or zarr, so it has not run: whether h5py reads Falcon's `Datatype.bool()` as numpy `bool` is
-  still to be seen.
+  - Record classes (`RecordArrays`, §3.5a): signatures with list-item unification, numeric blocks; the
+    `str`, `lang` (codes into `langs`), `iri`, `dt` (per zone) and `date` columns with CF attributes;
+    `-arrays-time-unit`; masks; `-verify -deep` re-derives every record row; string and uint16 typed
+    arrays in both containers. `RecordArraysTest` checks that every packed dateTime and date rebuilds
+    its exact lexical form, and what does not pack.
+  - Decided on the way:
+    - A list's items unify first and numeric blocks are found after, so a FHIR value with no unit,
+      `( 120 undef )`, is still the others' `(i64,str)`, not a block of two integers.
+    - Record classes number after the tensor and ragged ones, by their number (`rec_2` before
+      `rec_10`), not by name.
+    - A list of leaves has the one column `f`.
+    - A string, IRI or tag with U+0000 or an unpaired surrogate does not pack: h5py ends a string at
+      NUL, and UTF-8 cannot hold a lone surrogate.
+    - `+00:00` and `-00:00` do not pack (the canonical form is `Z`), nor years outside 0001-9999.
+    - `langs` is the tags space-separated, since attributes are strings or integers.
+- **Left.** The disk engines; the lazy list reading packed values; value-level container parity. The
+  Python smoke tests are written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`,
+  `RecordClassesTest.pythonReadsTheRecords`), but this machine has no h5py, zarr, pandas or xarray, so
+  they have not run: whether h5py reads Falcon's `Datatype.bool()` as numpy `bool`, and xarray decodes
+  the `dt` columns, is still to be seen.
 
 ### Step 7: id-native matching (P3, L)
 

@@ -402,7 +402,7 @@ public final class VerifyCommand {
         }
         PositionalDictionaryReader dict = (PositionalDictionaryReader) reader.getDictionary();
         try {
-            java.util.List<String> names = arrays.groupNames();
+            java.util.List<String> names = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.classOrder(arrays.groupNames());
             java.util.Map<Long, Integer> classOf = new java.util.HashMap<>();
             for (int c = 0; c < names.size(); c++) {
                 String name = names.get(c);

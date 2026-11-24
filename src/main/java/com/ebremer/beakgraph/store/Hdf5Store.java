@@ -210,6 +210,13 @@ public final class Hdf5Store implements OpenStore {
             } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FixedPoint fx && fx.size() == 4) {
                 type = TypedArray.Type.I32;
                 values = ds.readInts();
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FixedPoint fx && fx.size() == 2) {
+                type = TypedArray.Type.U16;
+                values = ds.readInts();
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.VariableLength v
+                    && v.kind() == com.ebremer.falcon.hdf5.datatype.Datatype.VlenKind.STRING) {
+                type = TypedArray.Type.STR;
+                values = ds.readStrings();
             } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.Enumeration) {
                 type = TypedArray.Type.BOOL;
                 int[] codes = ds.readInts();
