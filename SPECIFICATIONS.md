@@ -2,6 +2,11 @@
 
 **Format version 6 — derived from and verified against BeakGraph 0.19.0 (2026-11-14; v6 stores the id sequences block-structured, §5.1a; v5 added RDF 1.2 triple terms). A store is kept in an HDF5 file (§3) or, the same store, in a Zarr hierarchy (§3a).**
 
+> **Format v7, draft (branch `rdfarray`).** The passages marked *v7 draft* specify RDF-array
+> sequences and their empty slots (§4.1, §6.1, §7.1–§7.4, §7.6b, §7.7, §9.5, Appendix C), as planned
+> in `RDFARRY.md`.
+> No writer produces them yet, and every writer still stamps 6.
+
 This document specifies the on-disk format of a BeakGraph store (an `.h5` file, or a `.zarr` directory
 store) precisely enough that an independent implementation — in Rust, C, Python, or any other language,
 with no access to the Java source — can **create** files that the reference reader accepts and answers
@@ -225,6 +230,7 @@ mean is the rest of this document.
   | 4 | Optional `langDirs` dataset (base direction for `rdf:dirLangString`, §7.5.3). Absence = "no directional literals", which is why v3 files read unchanged. |
   | 6 | The id sequences - `S<c>` of both indexes (§8.1) and the role lists `graphs`, `subjects`, `objects` (§7.8) - are **block-structured** (§5.1a): blocks of `blockEntries` entries, each with a base and a width of its own, and a directory dataset `<name>_blocks` beside each. A dataset says which form it is in (the `blockEntries` attribute), so a v6 reader reads v3-v5 files unchanged; a v5 reader refuses a v6 file by its version, as it must. The values and their order are those of v5: only their encoding changed. |
   | 5 | RDF 1.2 triple terms: `DataType.TRIPLE_TERM` (ordinal 13) and the optional `tripleTerms` component store in the literals section (§7.6a). Triple terms occupy that section's contiguous suffix of the object id space. Absence = "no triple terms"; v3/v4 files read unchanged, and a triple-term-free v5 store is shape-identical to v4 output. |
+  | 7 (*draft*) | RDF-array sequences and their empty slots: `DataType.SEQUENCE` (ordinal 14), and the block-structured `sequenceStarts` / `sequenceElements` in the literals section (§7.6b). Sequences become that section's suffix, and triple terms the band just before it. Absence = "no sequences"; a sequence-free v7 store is shape-identical to v6 output. No writer produces v7 yet. |
 
 * **A new writer MUST stamp `formatVersion = 6`**, write the id sequences block-structured (§5.1a) and produce a correct directory (§8.4).
 
@@ -436,8 +442,8 @@ To compare nodes `a`, `b`:
 1. **Default-graph sentinels first.** If a node is `<urn:x-arq:DefaultGraph>` or
    `<urn:x-arq:DefaultGraphNode>` it ranks before every other node. If both are sentinels, compare
    them as plain terms (§6.4) — `…DefaultGraph` < `…DefaultGraphNode`.
-2. **Macro kind:** blank node (1) < IRI (2) < literal (3) < triple term (4). Different kinds order
-   by kind.
+2. **Macro kind:** blank node (1) < IRI (2) < literal (3) < triple term (4) < sequence (5, *v7
+   draft*). Different kinds order by kind.
 3. **Two blank nodes:** by label, as UTF-16 code-unit string comparison (§2; `"b10" < "b2"`).
 4. **Two IRIs:** by IRI string, UTF-16 code-unit comparison. *Relative* IRIs (§9.2) compare by their
    stored relative form (so `""` sorts before any `http://…`, and `"sib.png"` after).
@@ -447,6 +453,9 @@ To compare nodes `a`, `b`:
    term-comparator would collapse terms differing only in an embedded base-direction literal
    (§6.3's repair never fires inside a delegated comparison), corrupting id assignment.
 6. **Two literals:** §6.2.
+7. **Two sequences (*v7 draft*):** element by element, each pair compared by this whole comparator,
+   recursing as for triple terms. An empty slot (`undef`) ranks below every term. When one sequence is
+   a proper prefix of the other, the shorter ranks first. This is rdf-array's own order for sequences.
 
 ### 6.2 Literal ordering
 
@@ -565,6 +574,10 @@ Terms are partitioned into three sorted sections under `/.BG/dictionary/`:
 
 Each section is independently sorted by §6 and ids are 1-based ranks within the section.
 
+*v7 draft:* the literals section also holds every RDF-array **sequence**, top-level or nested, at any
+depth. §6.1 ranks sequences after triple terms, so they are the section's contiguous suffix, and the
+triple terms become the band just before it (§7.6b).
+
 **The object id space** is the concatenation `entities ⊕ literals`: an object's id is its entity id
 if it is an IRI/bnode, or `maxEntityId + sectionId` if it is a literal **or triple term**. Because
 the §6 order puts every bnode and IRI before every literal, and every literal before every triple
@@ -596,6 +609,7 @@ Type-specific value stores (present only when non-empty; `offsets` points into t
 | `iri` | FCD | IRI strings (absolute and relative share this store, distinguished by `datatypes`). |
 | `strings` | FCD | Lexical forms of every string-routed literal (§7.3). |
 | `tripleTerms` | bit-packed | RDF 1.2 triple-term component ids, fixed stride 3 (§7.6a). Width: `1 + MinBits(numEntities + numLiteralsSection)`, rounded to 64 if > 57. |
+| `sequenceStarts`, `sequenceElements` | block-structured (§5.1a), each with its `_blocks` directory | *v7 draft:* where each sequence's elements start, and the elements as object-space ids, 0 for an empty slot (§7.6b). |
 | `typedLiteralsDictionary` | FCD | The distinct literal datatype IRIs (§7.5.1). |
 | `langs` | FCD | The distinct language tags (§7.5.2). |
 | `integers` | bit-packed | `xsd:int` values. Width: **32** if any value is negative (two's complement), else `1 + MinBits(maxValue)`. |
@@ -623,6 +637,7 @@ column:
 | Literal, `xsd:double`, value parses | `DOUBLE` (9) | next `doubles` index | binary64 → `doubles` |
 | **Every other literal** | `STRING` (2) | next `strings` index | lexical form → `strings` FCD |
 | RDF 1.2 triple term (literals section only) | `TRIPLE_TERM` (13) | its 0-based triple-term ordinal *k* | component ids `(s, p, o)` → `tripleTerms` entries `[3k, 3k+2]` (§7.6a) |
+| RDF-array sequence (literals section only; *v7 draft*) | `SEQUENCE` (14) | its 0-based sequence ordinal *k* | element ids → `sequenceElements[starts[k], starts[k+1])`, 0 for an empty slot (§7.6b) |
 
 Notes:
 
@@ -656,7 +671,8 @@ their slots are burned.
 | 10 | `BIG_INTEGER` | dead — reserved |
 | 11 | `BIG_DECIMAL` | dead — reserved |
 | 12 | `RELATIVE_IRI` | live |
-| 13 | `TRIPLE_TERM` | live since v5 (slot 14 of 15 — one slot remains before the column widens to 6 bits) |
+| 13 | `TRIPLE_TERM` | live since v5 |
+| 14 | `SEQUENCE` | reserved for v7 (*draft*, §7.6b): the last slot before the column widens to 6 bits. No v6 store holds it |
 
 The column width is `1 + MinBits(count-of-ordinals)` — 5 bits while the enum has ≤ 15 values.
 Readers take the width from the attribute, so growth is read-compatible.
@@ -714,6 +730,49 @@ Consequences and invariants:
   component-kind guards (§9.5) apply at every depth. RDF 1.2 permits triple terms in the object
   position only; writers MUST reject them anywhere else.
 
+### 7.6b Sequences (*v7 draft*)
+
+> Draft, branch `rdfarray`: no writer produces these rows yet (`RDFARRY.md` §3.4). This section fixes
+> what the v7 writers will write.
+
+RDF-array sequences are stored **structurally**, as triple terms are. A sequence is `( e1 e2 … )`: possibly
+empty, nested freely, and on rdf-undef possibly holding empty slots, `undef`.
+
+**The rows.** A sequence row in the literals section carries `datatypes = SEQUENCE` (14) and `offsets = k`,
+its 0-based ordinal among the section's sequences in id order. Two block-structured sequences (§5.1a) in
+the literals section hold the elements:
+
+| Dataset | Entries | Meaning |
+|---|---|---|
+| `sequenceStarts` (with `sequenceStarts_blocks`) | `numSequences + 1`, non-decreasing, the first 0 | sequence *k*'s elements are `sequenceElements[starts[k], starts[k+1])`, and its length is the difference |
+| `sequenceElements` (with `sequenceElements_blocks`) | the sum of the lengths | object-space ids (§7.1); **0 is an empty slot**, since real ids are ≥ 1. Attribute `numSlots` (int64): the number of slots, 0 when the store holds none |
+
+Consequences and invariants:
+
+* **Every element has its own dictionary entry.** Ingest recurses into sequences, as into triple terms.
+  * A nested sequence is a row of the same suffix, referenced by id, so equal inner sequences are
+    stored once.
+  * Terms that occur only inside a sequence do not join the role lists (§7.8).
+* **The suffix and comparison on ids.**
+  * Sequences rank after triple terms (§6.1 rule 7), so they are the literals section's contiguous
+    suffix, and the triple terms are the band just before it.
+  * The object space is sorted, and a slot is 0. So two sequences compare exactly as their
+    element-id arrays compare lexicographically, a proper prefix first, and a reader can locate a
+    sequence on ids.
+  * Sequences that begin with the same terms are contiguous.
+* **Blank nodes inside a sequence are entity ids**, so co-reference survives the rank-derived labels
+  (§7.6), as inside triple terms.
+* **Normalization at every depth.** Numeric canonicalization (§9.3) and relative-IRI storage (§9.2)
+  apply at every depth.
+* **Positions.** A sequence stands only as an object or as an element of a sequence (§9.5).
+* **Empty cases.**
+  * If every sequence is `()`, `sequenceElements` is absent (§5.1a writes no empty sequence), and
+    `sequenceStarts` is its 8-byte tail alone.
+  * A store without sequences has neither dataset.
+* **Value semantics.** Equal sequences are one term, and duplicate quads collapse (§9.7), as in the
+  reference implementation, jena-array. rdf-array's model of 2026-11-03, in which each sequence written
+  is an occurrence of its own, is not stored.
+
 ### 7.6 Blank nodes
 
 **Blank node labels are not stored.** A bnode's row carries only its ordinal (`BNODE`, offset 0).
@@ -755,6 +814,8 @@ For validation, this is how a row becomes a term again (given row index `idx` = 
 * `TRIPLE_TERM` → read `(s, p, o) = tripleTerms[3·off … 3·off+2]`; the term is
   `<<( extract_entities(s) extract_predicates(p) extract_objectSpace(o) )>>`, where the object
   extraction recurses back through this rule for nested terms.
+* `SEQUENCE` (*v7 draft*) → for each `e` in `sequenceElements[starts[off], starts[off+1])`, in order:
+  `undef` if `e = 0`, otherwise `extract_objectSpace(e)`. A nested sequence recurses through this rule.
 
 ### 7.8 Columnar role lists: `graphs`, `subjects`, `objects`
 
@@ -1004,6 +1065,12 @@ bnode. Labels themselves are discarded (§7.6).
 * **RDF 1.2 triple terms outside the object position** — the data model permits them nowhere else.
   In the object position they are stored (v5, §7.6a); their components carry the same guards at
   every nesting depth (term subject: IRI/blank; term predicate: IRI).
+* *v7 draft:*
+  * **an RDF-array sequence outside the object position**: as a subject, predicate or graph name.
+    rdf-array's data model of 2026-11-03 forbids it, though jena-array still parses one;
+  * **a sequence inside a triple term**, an open question of rdf-array's;
+  * **`undef` anywhere but as an element of a sequence**;
+  * **nesting deeper than 1,000 levels** (§7.6b).
 * **`cdt:List`/`cdt:Map` literals whose (well-formed) value contains a blank node** at any nesting
   depth — rank-derived labels would silently sever the spec-required co-reference between the label
   inside the literal and the graph's bnode. Ill-formed composites are unreachable from parsed
@@ -1287,7 +1354,8 @@ the anchor alone cannot tell the two apart.
 * Non-canonical lexical forms of `xsd:int`/`long`/`float`/`double` object literals (§9.3) —
   including inside triple terms.
 * Any textual serialization of triple terms — they are stored structurally by component id
-  (§7.6a), never as `<<( … )>>` text.
+  (§7.6a), never as `<<( … )>>` text. Likewise (*v7 draft*) sequences: they are stored by element id
+  (§7.6b), never as `( … )` text.
 * Prefixes/namespaces, base IRIs, and any parser-level syntax (comments, `@version`, …).
 * Term→id hash tables (ids are ranks; lookup is comparison-based search).
 * Any per-quad provenance or ordering beyond the two index sort orders; a quad is either present
