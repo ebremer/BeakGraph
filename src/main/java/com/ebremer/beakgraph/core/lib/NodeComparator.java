@@ -11,9 +11,11 @@ import javax.xml.datatype.XMLGregorianCalendar;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.TextDirection;
 import org.apache.jena.sparql.core.Quad;
+import org.apache.jena.sparql.expr.Expr;
+import org.apache.jena.sparql.expr.ExprNotComparableException;
 import org.apache.jena.sparql.expr.NodeValue;
+import org.apache.jena.sparql.expr.ValueSpace;
 import org.apache.jena.sparql.expr.nodevalue.NodeValueNode;
-import org.apache.jena.sparql.util.NodeCmp;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -120,7 +122,7 @@ public class NodeComparator implements Comparator<Node> {
             // dictionary's lowest-id assumption).
             Node t1 = (n1 == null) ? Quad.defaultGraphIRI : n1;
             Node t2 = (n2 == null) ? Quad.defaultGraphIRI : n2;
-            return NodeCmp.compareRDFTerms(t1, t2);
+            return FrozenNodeCmp.compareRDFTerms(t1, t2);
         }
         if (n1isDefault) return -1;
         if (n2isDefault) return 1;
@@ -135,9 +137,9 @@ public class NodeComparator implements Comparator<Node> {
         }
 
         // 3a. Both are triple terms (macro type 4): compare STRUCTURALLY through
-        // this comparator, position by position. Delegating the pair to
-        // NodeCmp.compareRDFTerms (as every other same-kind pair does below)
-        // would re-import Finding 2 through the components: NodeCmp answers 0
+        // this comparator, position by position. Handing the pair to
+        // FrozenNodeCmp (as IRI and blank-node pairs are below) would re-import
+        // Finding 2 through the components: Jena 6.2.0's NodeCmp answers 0
         // for distinct rdf:dirLangString literals, so two triple terms
         // differing only in an embedded base direction would collapse onto one
         // dictionary id. Recursing through compare() gives components exactly
@@ -212,8 +214,9 @@ public class NodeComparator implements Comparator<Node> {
             return compareByValue(n1, nv1, group1, n2, nv2, (group1 == 0) ? 0 : temporalGroup(nv2));
         }
 
-        // 4. If they are both URIs or both BNodes, fallback to Jena's standard lexicographical sort
-        return NodeCmp.compareRDFTerms(n1, n2);
+        // 4. Both IRIs or both blank nodes: by string, in UTF-16 code-unit order
+        // (FrozenNodeCmp: Jena 6.2.0's order, kept here so a Jena upgrade cannot move it).
+        return FrozenNodeCmp.compareRDFTerms(n1, n2);
     }
 
     /** Two composite (cdt:List / cdt:Map) literals: by datatype IRI, then by lexical form (see {@link #compare}). */
@@ -295,7 +298,7 @@ public class NodeComparator implements Comparator<Node> {
             // distinct value spaces (number vs string vs dateTime vs date ...) it
             // orders by a fixed value-space rank independent of the actual values,
             // so it stays transitive there.
-            int byValue = NodeValue.compareAlways(nv1, nv2);
+            int byValue = compareAlways(nv1, nv2);
             if (byValue != 0) {
                 return byValue;
             }
@@ -314,8 +317,60 @@ public class NodeComparator implements Comparator<Node> {
     }
 
     /**
-     * Final tie-break on the exact RDF term for the literal path. Delegates to
-     * Jena's {@code NodeCmp}, then repairs one Jena 6.1.0 gap: {@code
+     * Jena's {@code NodeValue.compareAlways} as Jena 6.2.0 answered it - the sort
+     * order of {@code NVCompare.compareWithOrdering} - rebuilt from the parts of
+     * it Jena 6.3.0 left unchanged (the value-space classification and rank, and
+     * value comparison by {@code NodeValue.compare}), with the two parts 6.3.0
+     * changed frozen here: two strings compare by UTF-16 code unit, not code
+     * point, and every tie between distinct terms goes to {@link FrozenNodeCmp}.
+     * Composite pairs and language-tagged pairs never get here
+     * ({@link #compare} takes them first).
+     */
+    static int compareAlways(NodeValue nv1, NodeValue nv2) {
+        Node n1 = nv1.asNode();
+        Node n2 = nv2.asNode();
+        if (n1.equals(n2)) {
+            return 0;
+        }
+        ValueSpace vs1 = ValueSpace.valueSpace(nv1);
+        ValueSpace vs2 = ValueSpace.valueSpace(nv2);
+        // Unknown is always last in the order.
+        if (vs1 == ValueSpace.VSPACE_UNKNOWN || vs2 == ValueSpace.VSPACE_UNKNOWN) {
+            if (vs1 != ValueSpace.VSPACE_UNKNOWN) {
+                return -1;
+            }
+            if (vs2 != ValueSpace.VSPACE_UNKNOWN) {
+                return 1;
+            }
+            return FrozenNodeCmp.compareRDFTerms(n1, n2);
+        }
+        if ((vs1 == ValueSpace.VSPACE_CDT_LIST && vs2 == ValueSpace.VSPACE_CDT_LIST)
+                || (vs1 == ValueSpace.VSPACE_CDT_MAP && vs2 == ValueSpace.VSPACE_CDT_MAP)) {
+            return NodeValue.compareAlways(nv1, nv2);   // not reached: compare() orders composites itself
+        }
+        int bySpace = ValueSpace.comparisonOrder(vs1, vs2);
+        if (bySpace != 0) {
+            return Integer.signum(bySpace);
+        }
+        if (vs1 == ValueSpace.VSPACE_STRING) {
+            int byString = Integer.signum(nv1.getString().compareTo(nv2.getString()));
+            return (byString != 0) ? byString : FrozenNodeCmp.compareRDFTerms(n1, n2);
+        }
+        try {
+            int byValue = NodeValue.compare(nv1, nv2);
+            if (byValue == Expr.CMP_LESS || byValue == Expr.CMP_GREATER) {
+                return byValue;
+            }
+        } catch (ExprNotComparableException e) {
+            // Indeterminate: ordered by term below, as compareWithOrdering does.
+        }
+        return FrozenNodeCmp.compareRDFTerms(n1, n2);
+    }
+
+    /**
+     * Final tie-break on the exact RDF term for the literal path. Takes Jena
+     * 6.2.0's {@code NodeCmp} order ({@link FrozenNodeCmp}), then repairs one gap
+     * of it: {@code
      * compareRDFTerms} answers 0 for DISTINCT {@code rdf:dirLangString}
      * literals - {@code Util.isLangString} is false when a base direction is
      * present, so the comparison falls through to lexical form + datatype URI
@@ -324,8 +379,8 @@ public class NodeComparator implements Comparator<Node> {
      * id (ids ARE comparator ranks), so the remaining tie is broken on
      * (language tag, base direction). The refinement only splits pairs NodeCmp
      * already considers equal, so it cannot disturb the order of any other
-     * pair. Simplify when NodeCmp orders dirLangString correctly upstream -
-     * NodeComparatorDirLangTest#jenaNodeCmpGapStillPresent is the canary.
+     * pair. Jena 6.3.0's own NodeCmp closed the gap, but that version also moved
+     * the order (code points), so the frozen copy and this repair stay.
      * <p>
      * Precondition, here and in the language branch of {@link #compare}: the
      * language tag is compared case-sensitively, which is a strict total order
@@ -336,7 +391,7 @@ public class NodeComparator implements Comparator<Node> {
      * {@code LiteralLabelFactory} or {@code Node_Literal} directly (BG-370).
      */
     static int compareExactLiteralTerms(Node n1, Node n2) {
-        int c = NodeCmp.compareRDFTerms(n1, n2);
+        int c = FrozenNodeCmp.compareRDFTerms(n1, n2);
         if (c != 0 || n1.equals(n2)) {
             return c;
         }
@@ -417,7 +472,7 @@ public class NodeComparator implements Comparator<Node> {
         int r = a.compare(b);
         if (r == DatatypeConstants.LESSER)  return -1;
         if (r == DatatypeConstants.GREATER) return 1;
-        return NodeCmp.compareRDFTerms(n1, n2);
+        return FrozenNodeCmp.compareRDFTerms(n1, n2);
     }
 
     /**
@@ -445,7 +500,7 @@ public class NodeComparator implements Comparator<Node> {
         if (c != 0) return c;
         c = totalSeconds(d1).compareTo(totalSeconds(d2));
         if (c != 0) return c;
-        return NodeCmp.compareRDFTerms(n1, n2);
+        return FrozenNodeCmp.compareRDFTerms(n1, n2);
     }
 
     private static BigInteger totalMonths(Duration d) {

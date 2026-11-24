@@ -183,6 +183,12 @@ class FilterBoundsValueSpaceTest {
     void valueOrderedSpacesStillProduceHints() {
         assertTrue(FilterBounds.orderAgreesWithArq(NodeFactoryExtra.intToNode(5)));
         assertTrue(FilterBounds.orderAgreesWithArq(NodeFactory.createLiteralString("abc")));
+        assertTrue(FilterBounds.orderAgreesWithArq(NodeFactory.createLiteralString("퟿")));
+        // Code unit (the dictionary) and code point (ARQ since Jena 6.3.0) can
+        // disagree against a constant holding a code unit from U+D800 up.
+        assertFalse(FilterBounds.orderAgreesWithArq(NodeFactory.createLiteralString("a！")));
+        assertFalse(FilterBounds.orderAgreesWithArq(NodeFactory.createLiteralString("")));
+        assertFalse(FilterBounds.orderAgreesWithArq(NodeFactory.createLiteralString("x😀")));
         assertTrue(FilterBounds.orderAgreesWithArq(NodeFactory.createURI("http://ex.org/x")));
         assertFalse(FilterBounds.orderAgreesWithArq(NodeFactory.createLiteralLang("m", "en")));
         assertFalse(FilterBounds.orderAgreesWithArq(

@@ -29,6 +29,8 @@ import org.junit.jupiter.api.io.TempDir;
  * points last. Ids are ranks in this order, so this pins format v5 behaviour
  * for IRIs, blank-node labels, plain and language-tagged literals and
  * composite literals, and looks both spellings up again in a real store.
+ * Jena 6.3.0 moved its own comparisons to code points (GH-4300, GH-4365);
+ * the order here must not follow it (FrozenNodeCmp).
  */
 class NodeComparatorStringOrderTest {
 
@@ -97,9 +99,16 @@ class NodeComparatorStringOrderTest {
             assertEquals(1, count(ds, pre + "SELECT ?s WHERE { ?s ex:q \"" + SUPPLEMENTARY + "\"@en }"));
             assertEquals(1, count(ds, pre + "SELECT ?s WHERE { ?s ex:q \"" + HIGH_BMP + "\"@en }"));
             assertEquals(1, count(ds, pre + "SELECT ?s WHERE { ?s ex:q \"\\uE000\" }"));
-            // Range filters over these agree with ARQ (which also compares by code unit).
-            assertEquals(2, count(ds, pre + "SELECT ?s WHERE { ?s ex:q ?o FILTER(?o < \"" + HIGH_BMP + "\") }"),
-                    "the surrogate-pair string and U+E000 both sort below U+FF01");
+            // Range filters answer as ARQ does. Since Jena 6.3.0 ARQ compares
+            // strings by code point (GH-4300), so for a FILTER the surrogate-pair
+            // string is ABOVE U+FF01, though the dictionary keeps it below; a range
+            // hint around such a constant would drop it from "> U+FF01", which is
+            // why FilterBounds gives none for a constant holding a code unit from
+            // U+D800 up.
+            assertEquals(1, count(ds, pre + "SELECT ?s WHERE { ?s ex:q ?o FILTER(?o < \"" + HIGH_BMP + "\") }"),
+                    "only U+E000 sorts below U+FF01 by code point");
+            assertEquals(1, count(ds, pre + "SELECT ?s WHERE { ?s ex:q ?o FILTER(?o > \"" + HIGH_BMP + "\") }"),
+                    "the surrogate-pair string sorts above U+FF01 by code point, and the range hint must not drop it");
         }
     }
 }

@@ -4,7 +4,6 @@ import java.util.Comparator;
 import org.apache.jena.graph.Node;
 import org.apache.jena.sparql.core.Quad;
 import org.apache.jena.sparql.expr.NodeValue;
-import org.apache.jena.sparql.util.NodeCmp;
 
 /**
  * A term with its place in {@link NodeComparator}'s order worked out once.
@@ -177,7 +176,7 @@ public final class TermKey {
                 if (x.prefix != y.prefix) {
                     return Long.compareUnsigned(x.prefix, y.prefix);
                 }
-                return NodeCmp.compareRDFTerms(a.node, b.node);
+                return FrozenNodeCmp.compareRDFTerms(a.node, b.node);
             }
             case LITERAL -> {
                 return compareLiterals(a.node, x, b.node, y);

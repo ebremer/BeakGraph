@@ -103,6 +103,13 @@ final class FilterBounds {
      *       same-class stored values order exactly as XSD does, and ARQ answers
      *       every cross-class comparison false, so the rows the hint excludes
      *       would not survive the filter anyway (BG-326).</li>
+     *   <li><b>strings holding a character at or above U+D800</b>: the dictionary
+     *       orders strings by UTF-16 code unit (SPECIFICATIONS.md §2), ARQ by
+     *       code point since Jena 6.3.0 (GH-4300). The two orders disagree only
+     *       where, at the first difference, one string has a surrogate and the
+     *       other a character in U+E000-U+FFFF; a constant with no character
+     *       from U+D800 up cannot be one side of such a pair, so against it both
+     *       orders agree with every stored string.</li>
      * </ul>
      * Every other space is ordered by value with value-equal terms adjacent
      * (see {@code NodeComparator}), so the hint is over-inclusive, never lossy.
@@ -120,7 +127,20 @@ final class FilterBounds {
         if (lang != null && !lang.isEmpty()) {
             return false;
         }
+        if (hasCodeUnitFromSurrogates(value.getLiteralLexicalForm())) {
+            return false;
+        }
         return !isMixedDuration(value);
+    }
+
+    /** Whether {@code s} holds a UTF-16 code unit at or above U+D800 (a surrogate, or U+E000-U+FFFF). */
+    static boolean hasCodeUnitFromSurrogates(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) >= '\uD800') {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A well-formed xsd:duration with both a year/month and a day/time component set. */

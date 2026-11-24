@@ -4,6 +4,30 @@ Notable changes to BeakGraph and its on-disk format. The format history is
 normative (SPECIFICATIONS.md §4.1); the rest is a summary of what a release
 brought and what a reader must rebuild.
 
+## Unreleased, branch `rdfarray` - format v6 (2026-11)
+
+* **Jena 6.3.0, through Jena's `rdf-array` branch** (`6.3.0-array-SNAPSHOT`,
+  built locally; RDFARRY.md §3.1). The pins Jena 6.3.0 moved are re-synced
+  (slf4j 2.0.20, caffeine 3.3.1, commons-lang3 3.22.0, commons-codec 1.23.0).
+* **The term order no longer follows Jena's** (SPECIFICATIONS.md §2, §6).
+  - **What Jena changed.** Jena 6.3.0 compares strings by Unicode code point (GH-4300, GH-4365), where
+    6.2.0 compared them by UTF-16 code unit. `NodeComparator` took IRIs, blank-node labels, string
+    values and its exact-term tie-breaks from Jena, so on 6.3.0 it would have ordered terms differently
+    than before. Stores holding a supplementary character and one in U+E000-U+FFFF at the same place
+    in two terms would then have been searched in the wrong order.
+  - **The fix.** `FrozenNodeCmp` keeps Jena 6.2.0's order inside BeakGraph. `NodeComparator` and
+    `TermKey` use it, and the sort-order path of `compareAlways` is rebuilt around it.
+  - **Checked by bytes.** A stress fixture built with `-method 0`, `1` and `3` gives byte-identical
+    stores under 6.2.0 and under 6.3.0 with the frozen order; without it, 105 bytes of the store
+    differ. Stores need no rebuild.
+* **No range hint around a string constant holding a code unit from U+D800
+  up** (`FilterBounds`). ARQ now compares by code point and the dictionary by
+  code unit, and the two disagree only against such a constant; a hint there
+  dropped rows (`FILTER(?o > "！")` lost a string beginning with an emoji).
+* `RowValueTest` no longer depends on the tests run before it. Jena's value for a literal whose plain
+  `BaseDatatype` carries `xsd:int`'s IRI depends on Jena's JVM-wide cache. The test now requires only
+  that BeakGraph does what Jena does.
+
 ## 0.20.0 - format v6 (2026-11)
 
 * **Every pyramid level is on the integer grid, a repaired one too**

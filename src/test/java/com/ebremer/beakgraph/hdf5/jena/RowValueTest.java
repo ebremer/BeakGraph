@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.hdf5.jena;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ebremer.beakgraph.core.lib.NodeValues;
@@ -81,7 +82,19 @@ class RowValueTest {
     void aValueMadeHereIsTheValueJenaMakes() {
         int made = 0;
         for (Node term : terms()) {
-            NodeValue jena = NodeValue.makeNode(term);
+            NodeValue jena;
+            try {
+                jena = NodeValue.makeNode(term);
+            } catch (RuntimeException e) {
+                // "abc" with a plain BaseDatatype carrying xsd:int's IRI: Jena's
+                // integer maker parses it unguarded, so makeNode throws unless
+                // its JVM-wide cache already holds an equal node, which depends
+                // on the tests that ran before. NodeValues.of hands such a term
+                // to Jena; whatever Jena does, it must do the same.
+                RuntimeException ours = assertThrows(RuntimeException.class, () -> NodeValues.of(term), term.toString());
+                assertSame(e.getClass(), ours.getClass(), term.toString());
+                continue;
+            }
             NodeValue ours = NodeValues.of(term);
             String what = term + " (" + jena.getClass().getSimpleName() + ")";
             assertSame(jena.getClass(), ours.getClass(), what);

@@ -33,21 +33,32 @@ class NodeComparatorDirLangTest {
     }
 
     /**
-     * The canary: this pins the UPSTREAM Jena bug the tie-break exists to
-     * repair. When this test fails, Jena has fixed NodeCmp - file nothing,
-     * celebrate, and consider simplifying
-     * NodeComparator#compareExactLiteralTerms (its refinement then becomes
-     * unreachable but stays harmless).
+     * Pins the gap the tie-break exists to repair. Jena 6.3.0's own NodeCmp
+     * closed it, but in the same release moved its order to code points
+     * (GH-4300, GH-4365), so NodeComparator no longer delegates to Jena: it
+     * keeps Jena 6.2.0's order in FrozenNodeCmp, gap included, and
+     * NodeComparator#compareExactLiteralTerms repairs the gap there.
      */
     @Test
-    void jenaNodeCmpGapStillPresent() {
+    void frozenNodeCmpGapStillPresent() {
         Node ltr = NodeFactory.createLiteralDirLang("abc", "en", "ltr");
         Node rtl = NodeFactory.createLiteralDirLang("abc", "en", "rtl");
         Node fr = NodeFactory.createLiteralDirLang("abc", "fr", "rtl");
-        assertEquals(0, NodeCmp.compareRDFTerms(ltr, rtl),
-                "Jena fixed NodeCmp for base direction - see this test's javadoc");
-        assertEquals(0, NodeCmp.compareRDFTerms(ltr, fr),
-                "Jena fixed NodeCmp for dirLangString language tags - see this test's javadoc");
+        assertEquals(0, FrozenNodeCmp.compareRDFTerms(ltr, rtl),
+                "FrozenNodeCmp must keep Jena 6.2.0's order, which ignores the base direction");
+        assertEquals(0, FrozenNodeCmp.compareRDFTerms(ltr, fr),
+                "FrozenNodeCmp must keep Jena 6.2.0's order, which ignores a dirLangString's language tag");
+    }
+
+    /**
+     * The upstream canary: Jena 6.3.0 orders distinct dirLangString literals.
+     * Should this fail, Jena changed NodeCmp again; nothing here depends on it.
+     */
+    @Test
+    void jenaNodeCmpOrdersDirLangStringsSince630() {
+        Node ltr = NodeFactory.createLiteralDirLang("abc", "en", "ltr");
+        Node rtl = NodeFactory.createLiteralDirLang("abc", "en", "rtl");
+        assertTrue(NodeCmp.compareRDFTerms(ltr, rtl) != 0, "Jena 6.3.0 tells base directions apart");
     }
 
     /**

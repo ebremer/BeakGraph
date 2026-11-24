@@ -42,7 +42,10 @@
              the ver.* properties of org.apache.jena:jena:<version>'s POM: managed
              versions win over Jena's transitives, so a stale pin silently runs
              Jena on older libraries than it was built against (BG-195). -->
-        <jena.version>6.2.0</jena.version>
+        <!-- Branch rdfarray: Jena's rdf-array branch (jena-6.3.0 plus the
+             sequence term of RDFARRY.md), not on Maven Central: build it and
+             `mvn install` it under this version before building BeakGraph. -->
+        <jena.version>6.3.0-array-SNAPSHOT</jena.version>
         <!--<arrow.version>18.3.0</arrow.version>-->
         <!--<jaxb.version>2.4.0-b180830.0359</jaxb.version>-->
         <!--<jetty.version>11.0.26</jetty.version>-->
@@ -51,7 +54,7 @@
              jackson-dataformat-yaml/jackson-databind (declared below) - the 3.x-only
              log4j-config-yaml module is not needed and does not exist for 2.x. -->
         <log4j.version>2.26.1</log4j.version>
-        <slf4j.version>2.0.18</slf4j.version>
+        <slf4j.version>2.0.20</slf4j.version>
         <!-- Falcon (https://github.com/ebremer/falcon): the HDF5 and the Zarr
              container of every reader and every writer, the disk-based ones
              (-method 1/4/5) included. Pure JDK: no dependencies of its own and no
@@ -66,10 +69,10 @@
         <jts.ver>1.20.0</jts.ver>
         <aircompressor.version>3.6</aircompressor.version>
         <commons.pool.ver>2.13.1</commons.pool.ver>
-        <!-- Matches the version Jena 6.2.0 manages (3.2.4); declared explicitly
+        <!-- Matches the version Jena 6.3.0 manages (3.3.1); declared explicitly
              because SimpleNodeTable, FCDReader and MultiTypeDictionaryReader use
              Caffeine directly (so don't rely on a transitive dep). -->
-        <caffeine.version>3.2.4</caffeine.version>
+        <caffeine.version>3.3.1</caffeine.version>
         <!-- Heap of the native-image BUILDER JVM (-Pcmdlinenative): the analysis
              of Jena + Fuseki needs tens of GB; override with
              -Dnative.build.heap=12G on smaller machines (slower, may fail). -->
@@ -116,11 +119,11 @@
                  dependencyConvergence rule (lib profile) sees one version across
                  Jena's transitive graph (commons-csv, commons-compress and
                  commons-fileupload2 ask for older ones). Kept at the versions
-                 Jena 6.2.0 manages: re-sync on every Jena bump (BG-195). -->
+                 Jena 6.3.0 manages: re-sync on every Jena bump (BG-195). -->
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
-                <version>3.20.0</version>
+                <version>3.22.0</version>
             </dependency>
             <dependency>
                 <groupId>commons-io</groupId>
@@ -130,7 +133,7 @@
             <dependency>
                 <groupId>commons-codec</groupId>
                 <artifactId>commons-codec</artifactId>
-                <version>1.22.0</version>
+                <version>1.23.0</version>
             </dependency>
             <dependency>
                 <groupId>jakarta.servlet</groupId>

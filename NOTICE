@@ -14,6 +14,9 @@ This product bundles third-party code:
   README.md).
 * src/main/java/com/ebremer/ns/GEO.java and GEOF.java - GeoSPARQL vocabulary
   classes derived from Apache Jena (Apache License 2.0; ASF headers retained).
+* src/main/java/com/ebremer/beakgraph/core/lib/FrozenNodeCmp.java - Apache Jena
+  6.2.0's NodeCmp.compareRDFTerms term order, adapted (Apache License 2.0; ASF
+  header retained).
 * src/test/resources/w3c and src/test/resources/sparql-cdts - vendored W3C
   and SPARQL-CDT test suites under their own licenses (see the README.md and
   LICENSE files in those directories).
