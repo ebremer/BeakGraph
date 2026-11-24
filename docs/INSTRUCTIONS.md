@@ -313,9 +313,9 @@ java -jar BeakGraph.jar -src data.zarr.zip -export NQ           # a Zarr archive
   to plain triples.
 * NT/NQ/TTL/TRIG exports stream (any store size); JSON-LD has no streaming writer and
   materializes the dataset in memory - use NQ/TRIG for bulk dumps.
-* JSON-LD has no syntax for RDF 1.2 triple terms: a store holding them is refused for
-  `-export JSON-LD` (a counted failure, no output file), exactly as the SPARQL endpoint refuses
-  JSON-LD results containing them. Export such stores as NT, NQ, TTL or TRIG.
+* JSON-LD has no syntax for RDF 1.2 triple terms or RDF-array sequences: a store holding them is
+  refused for `-export JSON-LD` (a counted failure, no output file), exactly as the SPARQL endpoint
+  refuses JSON-LD results containing them. Export such stores as NT, NQ, TTL or TRIG.
 * Writes are atomic (`.tmp` then rename); an existing export is replaced.
 
 Stores keep document-relative IRIs (`<>`, `<sib.png>`, `<../x>`) in relative form. Pass
@@ -546,8 +546,9 @@ cannot be renamed: stop or drain the readers first.
 
 * One format, one reader stack, for every method and for all three container
   forms - an HDF5 file, a Zarr directory and a Zarr ZIP archive hold the same
-  arrays, byte for byte (§4a) - in format version 6: the id sequences are
-  block-structured (SPECIFICATIONS.md §5.1a). v4 added the optional `langDirs`
+  arrays, byte for byte (§4a) - in format version 7: the id sequences are
+  block-structured (SPECIFICATIONS.md §5.1a), and v7 adds RDF-array sequences
+  (`sequenceStarts` / `sequenceElements`, branch `rdfarray`). v4 added the optional `langDirs`
   dataset for RDF 1.2 base-direction literals (`"x"@en--ltr`), v5 the optional
   `tripleTerms` component store for RDF 1.2 triple terms (`<<( s p o )>>`); a
   store holding neither feature has neither dataset. v3-v5 stores remain fully
@@ -572,7 +573,7 @@ cannot be renamed: stop or drain the readers first.
 ## Format versions
 
 Every store records its on-disk format version (`formatVersion` on the `.BG` group; files written
-before versioning count as v1). `-verify` prints it on each verdict line (`OK    path  (format v6)`),
+before versioning count as v1). `-verify` prints it on each verdict line (`OK    path  (format v7)`),
 which is how to find stores that predate a change and must be rebuilt from source. A newer version
 than the running build supports is refused at open.
 
@@ -583,6 +584,7 @@ than the running build supports is refused at open.
 | v4 | 0.18.0 | `langDirs` for `rdf:dirLangString`; composite (`cdt:`) literals ordered lexically | the source contained base-direction literals (a v3 store holds them as plain `"x"@en`) or `cdt:` literals (a pre-v4 store holding them is refused at open) |
 | v5 | 0.18.0 | RDF 1.2 triple terms (`tripleTerms` component store) | the source contained triple terms (a pre-v5 build could not store them) |
 | v6 | 0.19.0 | id sequences stored in blocks, each with its own width, with an in-memory directory (SPECIFICATIONS.md §5.1a) | never for correctness: v3-v5 stores read as before; rebuild for the smaller indexes. A v6 store is refused by earlier builds |
+| v7 | branch `rdfarray` | RDF-array sequences and empty slots (`sequenceStarts` / `sequenceElements`, SPECIFICATIONS.md §7.6b); written by `-method 0` and `-method 2` | never: v3-v6 stores read as before. A v7 store is refused by earlier builds |
 
 Not every reason to rebuild is a format change, and `-verify` cannot show these: a store built with
 `-spatial` by 0.19.0 or earlier can hold pyramid levels (`hal:asWKT{s}`) with fractional vertices

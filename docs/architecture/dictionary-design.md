@@ -11,7 +11,7 @@ One strict total order does all the work
 {: .fs-6 .fw-300 }
 
 - **`NodeComparator`: a strict total order over RDF terms**
-  - Default-graph sentinel first, then blank node < IRI < literal < triple term; literals ordered by
+  - Default-graph sentinel first, then blank node < IRI < literal < triple term < sequence; literals ordered by
     VALUE (2 < 10, across the numeric datatypes), with exact-term tie-breaks so distinct terms get
     distinct positions
   - Strings compare in UTF-16 code-unit order (Java's `String.compareTo`) — an implementation in
@@ -23,9 +23,9 @@ One strict total order does all the work
 - **Three sections, two id spaces**
   - entities (IRIs + blank nodes usable as G/S/O) → ids 1..E; predicates → ids 1..P, kept apart so
     predicate ids stay narrow
-  - objects: entities keep 1..E, literals follow as E+1..E+L, with RDF 1.2 triple terms as the
-    literals' contiguous suffix — matching the macro order, so sorting quads by id tuple equals
-    sorting them by term
+  - objects: entities keep 1..E, literals follow as E+1..E+L, with RDF 1.2 triple terms and then
+    RDF-array sequences (v7) as the literals' last rows — matching the macro order, so sorting quads
+    by id tuple equals sorting them by term
 - **Value order is what range filters ride on**: value-equal literals (`"5"^^xsd:int`,
   `"5.0"^^xsd:double`) sit side by side, so `FILTER(?x > 5)` becomes a contiguous id range
   (`ValueCluster`)

@@ -7,7 +7,8 @@
   (`sparql-query.js`, `sparql-query-undef.html`) and `docs/rdfc-array.md`
 - Reference implementation: [jena-array](https://github.com/rdf-array/jena-array), branch `rdf-undef`
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
-- Status: a design and a prioritized plan. No code has been written
+- Status: steps 1-3 done (2026-11-24): the v7 spec, the Jena port, and v7 storage on `-method 0` and
+  `-method 2`. Step 4, correct queries, is next
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -842,6 +843,41 @@ which is the rule triple terms set in v5.
 - HDF5 and Zarr stores are byte-identical;
 - `-verify -deep` passes.
 
+**Status (2026-11-24): done.**
+
+- **What landed.**
+  - `DataType.SEQUENCE`, `SeqTerms` (the facade) and `CompoundTerms` (one walker for triple terms
+    and sequences, which `TripleTerms.map`, `RelativeIris`, `RelativeIRIResolver`, the blank-node
+    alignment and the numeric canonicalization now use).
+  - The ingest guards and `registerSequence`; the order (macro 5) in `NodeComparator` and `TermKey`.
+  - The writers: the encoder's `SequenceHook`, `MultiTypeDictionaryWriter`'s two stores and
+    `numSlots`, `DictionaryIds.encodeSequence`.
+  - The reader: lazy rows, the band and suffix checks at open, locate on ids, cache weights, and the
+    triple-term scans clamped to the band's end.
+  - The tools: `-verify -deep` (stores, slot count, depth bound, every row in its band), `-export`
+    (the line formats and Turtle/TriG; JSON-LD refuses, and so does the endpoint), and a recursive
+    `relativeReference`.
+  - `Params.FORMAT_VERSION` = 7, for every engine.
+- **Beyond the step.** `-method 2` shares method 0's parse, so it took sequences for a few lines and
+  builds byte-identical stores. Step 5 starts from methods 3, 1, 4 and 5, which refuse sequences on a
+  guard meanwhile.
+- **Tests.**
+  - Round trip under the fork's `IsoMatcher`: slots, empty, nested, blank nodes and triple terms
+    inside.
+  - The stores and `numSlots`; the suffix and the band; locate on ids, hit and miss.
+  - Shuffled inputs give the same bytes, and so do methods 0 and 2.
+  - HDF5 and Zarr hold the same store (`ContainerParityTest`); `-verify -deep` passes and names a
+    wrong `numSlots`.
+  - `TermKeyTest`'s every-pair-of-kinds includes sequences, and `NodeComparatorSequenceOrderTest`
+    pins §6.1 rule 7.
+  - The guards are tested directly (`SequenceIngestGuardTest`): the fork's parsers already refuse a
+    sequence inside a triple term and nesting past 500 levels.
+  - The W3C RDF 1.2 runner now stores the suites' collection objects as sequences on methods 0 and 2.
+  - Nothing else moved: the stress fixture's stores from methods 0, 1 and 3 differ from master's in
+    the version attribute and its header checksum alone. The suite: 2,591 tests pass, 92 skipped.
+- **Left for step 4.** A pattern holding a sequence with a variable or a gap is a plain miss for now;
+  delegating it to jena-array's solver is step 4's first item.
+
 ### Step 4: correct queries (P1, M), milestone A
 
 **Why:** after this step BeakGraph answers rdf-array data correctly, if not yet fast.
@@ -1048,6 +1084,11 @@ Each of these waits on the spec or on a need:
   gives array users what they need.
 - **Hostile nesting.** The depth bound guards ingest. Extract and compare can be iterative where it
   matters.
+  - The fork's parsers stop at 500 levels (`Recursion limit exceeded for nested structures`), below
+    the store's 1,000, so only programmatic input reaches BeakGraph's bound.
+- **A lazy sequence outlives its store badly.** A stored sequence reads its elements from the store when
+  asked (§3.6), so one kept after its store is closed fails on access. Results are written while the
+  store is open; a caller that keeps sequences copies them (`SeqTerms.create(new ArrayList<>(…))`).
 - **Jena's `NodeValue` initialization deadlock.** Any new code that builds `NodeValue`s on worker threads
   (a `SEQLEN` fast path, array-backed elements) goes through `NodeValues`, which initializes `NodeValue`
   first. Only a fresh-JVM CLI build shows the hang.

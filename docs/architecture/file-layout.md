@@ -7,15 +7,15 @@ permalink: /architecture/file-layout/
 
 # File layout
 
-Groups and arrays inside a store — format version 6
+Groups and arrays inside a store — format version 7
 {: .fs-6 .fw-300 }
 
 ```text
-/.BG                          attrs: numQuads, formatVersion (=6)
+/.BG                          attrs: numQuads, formatVersion (=7)
  |- dictionary/
  |   |- entities/             IRIs + blank nodes used as G, S or non-literal O
  |   |- predicates/           predicate IRIs
- |   |- literals/             every literal object, then every RDF 1.2 triple term
+ |   |- literals/             every literal object, then every RDF 1.2 triple term, then every sequence
  |   |- graphs    graphs_blocks       the DISTINCT sorted ids used in each
  |   |- subjects  subjects_blocks     position, block-structured, with their
  |   |- objects   objects_blocks      directories (graph enumeration, membership)
@@ -35,10 +35,12 @@ Groups and arrays inside a store — format version 6
   form — and has its `_blocks` directory beside it ([Integer sequences](../bit-packed-buffers/))
 - A section holds per-node columns (`datatypes`, `offsets`; in `literals` also `typedLiterals`,
   `langTags`, `langDirs`) and value stores (`iri`, `strings`, `integers`, `longs`, `floats`,
-  `doubles`, `tripleTerms`, `typedLiteralsDictionary`, `langs`), each present only when used
+  `doubles`, `tripleTerms`, `sequenceStarts`, `sequenceElements`, `typedLiteralsDictionary`,
+  `langs`), each present only when used
   ([Inside a dictionary section](../dictionary-sections/))
 - Readers find features by presence: no language tags → no `langs` / `langTags`; no triple terms → no
-  `tripleTerms`. `formatVersion` only stops older readers from misreading newer stores
+  `tripleTerms`; no sequences → no `sequenceStarts` / `sequenceElements`. `formatVersion` only stops
+  older readers from misreading newer stores
 - In Zarr the same tree is a hierarchy of groups and `uint8` arrays: `.BG/GSPO/So` is
   `.BG/GSPO/So/zarr.json` plus its chunk `.BG/GSPO/So/c/0` — about 60 arrays, some 130 files, with the
   metadata of all of them consolidated into the root `zarr.json`

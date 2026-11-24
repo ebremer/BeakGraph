@@ -38,6 +38,9 @@ For a pattern `(g, s, p, ?)`:
   requests alike
 - RDF 1.2 triple-term patterns with variables are unified on ids against `tripleTerms`
   (`TripleTermMatcher`)
+- A concrete RDF-array sequence, such as `?s :p ( 1 2 3 )`, is a constant like any other: it is
+  located on ids. Sequence patterns with variables, gaps or `UNNEST` come with the query work of
+  `RDFARRY.md` step 4
 - Optional spatial layer: geometries are Hilbert-indexed into cell ids stored as ordinary quads in
   graph `urn:x-beakgraph:Spatial`; `geof:sfIntersects` takes its candidates from GPOS range scans over
   the query region's cover and verifies each with JTS, so results are exact
