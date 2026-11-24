@@ -33,7 +33,7 @@ class DataTypeOrdinalTest {
 
     @Test
     void ordinalsMatchTheSpecificationTable() {
-        assertEquals(14, DataType.values().length, "a new kind must be APPENDED (and §7.4 extended)");
+        assertEquals(15, DataType.values().length, "a new kind must be APPENDED (and §7.4 extended)");
         assertEquals(0, DataType.BNODE.ordinal());
         assertEquals(1, DataType.IRI.ordinal());
         assertEquals(2, DataType.STRING.ordinal());
@@ -48,6 +48,7 @@ class DataTypeOrdinalTest {
         assertEquals(11, DataType.BIG_DECIMAL.ordinal());
         assertEquals(12, DataType.RELATIVE_IRI.ordinal());
         assertEquals(13, DataType.TRIPLE_TERM.ordinal());
+        assertEquals(14, DataType.SEQUENCE.ordinal());   // format v7: the last value 5 bits hold
     }
 
     @Test
@@ -58,7 +59,7 @@ class DataTypeOrdinalTest {
         File h5 = dir.resolve("dt.ttl.h5").toFile();
         Files.write(ttl.toPath(), """
             @prefix ex: <http://ex.org/> .
-            ex:s ex:p ex:o ; ex:n 1 ; ex:d 1.5 ; ex:l "x" ; ex:t <<( ex:a ex:b ex:c )>> .
+            ex:s ex:p ex:o ; ex:n 1 ; ex:d 1.5 ; ex:l "x" ; ex:t <<( ex:a ex:b ex:c )>> ; ex:q ( 1 undef ) .
             """.getBytes(StandardCharsets.UTF_8));
         HDF5Writer.Builder().setSource(ttl).setDestination(h5).setSpatial(false).setFeatures(false).build().write();
         List<String> seen = new ArrayList<>();

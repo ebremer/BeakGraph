@@ -46,6 +46,13 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     // is k. Null unless this section is triple-term-enabled and some exist.
     private final BitPackedUnSignedLongBuffer tripleTerms;
     private final TripleTermEncoder tripleTermEncoder;
+    // RDF-array sequences (format v7, SPECIFICATIONS.md §7.6b): sequence k's
+    // element ids are sequenceElements[starts[k], starts[k+1]), 0 for a slot.
+    // Both null unless this section is sequence-enabled and some exist.
+    private final BitPackedUnSignedLongBuffer sequenceStarts;
+    private final BitPackedUnSignedLongBuffer sequenceElements;
+    private final SequenceEncoder sequenceEncoder;
+    private long numSlots = 0;
     private final BitPackedUnSignedLongBuffer nativedatatypes;
     private DataOutputBuffer floats;
     private DataOutputBuffer doubles;
@@ -119,6 +126,33 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (ttWidth > 57) ttWidth = 64;
         this.tripleTerms = wantTripleTerms ? new BitPackedUnSignedLongBuffer(Path.of("tripleTerms"), ttWidth) : null;
         this.tripleTermEncoder = builder.getTripleTermEncoder();
+
+        // Sequence stores: elements are object-space ids, like a triple term's
+        // object component, so they take the same width; the starts run up to
+        // the total element count. Both are re-encoded block-structured on add().
+        boolean wantSequences = et.contains(DataType.SEQUENCE) && stats.numSequences > 0;
+        if (wantSequences && builder.getSequenceEncoder() == null) {
+            throw new IllegalStateException(
+                    "Dictionary '" + name + "' has " + stats.numSequences
+                  + " sequences but no SequenceEncoder was supplied");
+        }
+        if (wantSequences) {
+            long elementTotal = 0;
+            for (Node n : sorted) {
+                if (n.isNodeSeq()) {
+                    elementTotal += n.getSeq().size();
+                }
+            }
+            int startsWidth = 1 + MinBits(elementTotal);
+            if (startsWidth > 57) startsWidth = 64;
+            this.sequenceStarts = new BitPackedUnSignedLongBuffer(Path.of(Params.SEQUENCE_STARTS), startsWidth);
+            this.sequenceStarts.writeLong(0);
+            this.sequenceElements = new BitPackedUnSignedLongBuffer(Path.of(Params.SEQUENCE_ELEMENTS), ttWidth);
+        } else {
+            this.sequenceStarts = null;
+            this.sequenceElements = null;
+        }
+        this.sequenceEncoder = builder.getSequenceEncoder();
 
         // Only FCDWriter.add(String) can fail in this block (it declares IOException;
         // the in-memory buffer constructors cannot, BG-89). Temp variables so a
@@ -235,6 +269,19 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                         tripleTerms.writeLong(c[1]);
                         tripleTerms.writeLong(c[2]);
                         return ordinal;
+                    },
+                    (sequenceStarts == null) ? null : seq -> {
+                        // As for triple terms: element ids resolve now, nested
+                        // sequences through this section's own ranks.
+                        long ordinal = sequenceStarts.getNumEntries() - 1;
+                        for (long id : sequenceEncoder.encode(seq, this)) {
+                            sequenceElements.writeLong(id);
+                            if (id == 0) {
+                                numSlots++;
+                            }
+                        }
+                        sequenceStarts.writeLong(sequenceElements.getNumEntries());
+                        return ordinal;
                     });
         }
         encoder.encode(node);
@@ -251,6 +298,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (integers != null) integers.prepareForReading();
         if (longs != null) longs.prepareForReading();
         if (tripleTerms != null) tripleTerms.prepareForReading();
+        if (sequenceStarts != null) sequenceStarts.prepareForReading();
+        if (sequenceElements != null) sequenceElements.prepareForReading();
         nativedatatypes.prepareForReading();
         if (floats != null) floats.close();
         if (doubles != null) doubles.close();
@@ -309,6 +358,15 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         if (integers != null) integers.add(subGroup);
         if (longs != null) longs.add(subGroup);
         if (tripleTerms != null) tripleTerms.add(subGroup);
+        if (sequenceStarts != null) {
+            // Block-structured (SPECIFICATIONS.md §5.1a, §7.6b). When every
+            // sequence is (), there are no elements and no sequenceElements.
+            sequenceStarts.addBlocked(subGroup);
+            com.ebremer.beakgraph.hdf5.WritableDataset elements = sequenceElements.addBlocked(subGroup);
+            if (elements != null) {
+                elements.putAttribute(Params.NUM_SLOTS, numSlots);
+            }
+        }
         if (floats != null) floats.add(subGroup);
         if (doubles != null) doubles.add(subGroup);
         if (iri != null && iri.getNumEntries() > 0) iri.add(subGroup);
@@ -339,6 +397,15 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         long[] encode(Node tripleTerm, Dictionary ownSection);
     }
 
+    /**
+     * Resolves a sequence's element ids at encode time, in the OBJECT space,
+     * 0 for an empty slot; {@code ownSection} as for {@link TripleTermEncoder}.
+     * Implementations MUST throw on an unresolvable element.
+     */
+    public interface SequenceEncoder {
+        long[] encode(Node sequence, Dictionary ownSection);
+    }
+
     public static class Builder {
         private Set<Node> nodes = new HashSet<>();
         private ArrayList<Node> sortedNodes;
@@ -348,6 +415,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         private Set<String> typedLiterals = new HashSet<>();
         private TripleTermEncoder tripleTermEncoder;
         private long tripleTermComponentIdBound = 0;
+        private SequenceEncoder sequenceEncoder;
         /**
          * The dictionary section this writer builds: fixes the term kinds it
          * routes (SPECIFICATIONS.md §7.2) and, unless set, its group name. The
@@ -364,6 +432,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         /** Upper bound on any component id (the object-space size); sizes the tripleTerms store's bit width. */
         public Builder setTripleTermComponentIdBound(long bound) { this.tripleTermComponentIdBound = bound; return this; }
         public TripleTermEncoder getTripleTermEncoder() { return tripleTermEncoder; }
+        /** Element-id resolution for sequences; their ids share the component-id bound (the object space). */
+        public Builder setSequenceEncoder(SequenceEncoder e) { this.sequenceEncoder = e; return this; }
+        public SequenceEncoder getSequenceEncoder() { return sequenceEncoder; }
         public long getTripleTermComponentIdBound() { return tripleTermComponentIdBound; }
         public Builder setStats(Stats stats) { this.stats = stats; return this; }
         public Builder setNodes(Set<Node> nodes) { this.nodes = nodes; return this; }

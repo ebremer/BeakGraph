@@ -204,13 +204,19 @@ class W3CRdf12SuiteTest {
         // Every RDF 1.2 term kind stores since format v5: base-direction
         // literals became storable in v4 (Phase 2) and triple terms in v5
         // (Phase 3). Under rdf-array (branch rdfarray) a Turtle collection is
-        // one sequence term, which format v6 does not store yet (RDFARRY.md
-        // step 3) and which may never be a subject (rdf-array's data model of
-        // 2026-11-03): a document holding one must fail the build on a guard.
+        // one sequence term. Format v7 stores one as an object, on the engines
+        // that write it (WriterEngines.Engine.storesSequences); it may never be
+        // a subject (rdf-array's data model of 2026-11-03) nor sit inside a
+        // triple term: a document holding one must fail the build on a guard.
+        boolean objectsStore = WriterEngines.selected().storesSequences();
         Iterator<Quad> quads = dsg.find();
         while (quads.hasNext()) {
             Quad q = quads.next();
-            if (holdsSequence(q.getSubject()) || holdsSequence(q.getObject())) {
+            if (holdsSequence(q.getSubject())) {
+                return true;
+            }
+            Node o = q.getObject();
+            if (objectsStore ? (o.isTripleTerm() && holdsSequence(o)) : holdsSequence(o)) {
                 return true;
             }
         }

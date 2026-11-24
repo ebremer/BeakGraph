@@ -26,6 +26,11 @@ public class Params {
     /** The directory of the block-structured sequence {@code X} is the dataset {@code X_blocks} beside it. */
     public static final String BLOCKS_SUFFIX = "_blocks";
     public static final String NUM_BLOCKS = "numBlocks";
+    /** The literals section's sequence stores (format v7, SPECIFICATIONS.md §7.6b). */
+    public static final String SEQUENCE_STARTS = "sequenceStarts";
+    public static final String SEQUENCE_ELEMENTS = "sequenceElements";
+    /** On {@link #SEQUENCE_ELEMENTS}: how many elements are empty slots (0). */
+    public static final String NUM_SLOTS = "numSlots";
     public static final String ENTITIES = "entities";
     public static final String PREDICATES = "predicates";
     public static final String LITERALS = "literals";
@@ -63,7 +68,13 @@ public class Params {
     // Absence means "no triple terms", so v3/v4 files read unchanged; the gate
     // converts an old build's would-be "Corrupt HDF5: Unknown DataType ordinal
     // 13" into the intended "Upgrade BeakGraph".
-    public static final int FORMAT_VERSION = 6;
+    //
+    // v7: RDF-array sequences and their empty slots. Adds DataType.SEQUENCE
+    // (ordinal 14) and the optional sequenceStarts / sequenceElements stores in
+    // the literals section; sequences occupy that section's contiguous suffix,
+    // and the triple terms the band just before it. Absence means "no
+    // sequences", so a store without them has v6's shape, stamped 7.
+    public static final int FORMAT_VERSION = 7;
     // First format version whose dictionary orders composite (cdt) literals the
     // way the current NodeComparator does. Older files containing them are
     // refused at open (see the v4 note above).

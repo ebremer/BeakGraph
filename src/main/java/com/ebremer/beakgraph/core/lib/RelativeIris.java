@@ -45,15 +45,15 @@ public final class RelativeIris {
 
     /**
      * Storage form of a node: a sentinel-based IRI becomes its relative
-     * reference ({@link #toStorageForm}), recursing into triple terms so no
-     * sentinel survives however deeply nested; any other node is returned as
+     * reference ({@link #toStorageForm}), recursing into triple terms and
+     * sequences so no sentinel survives however deeply nested; any other node is returned as
      * the same instance. THE implementation for every engine - the RAM
      * builder and the disk pipeline used to carry verbatim copies with a
      * comment asking them to stay identical (BG-432, BG-297).
      */
     public static Node relativizeNode(Node n) {
-        if (n != null && n.isTripleTerm()) {
-            return TripleTerms.map(n, RelativeIris::relativizeNode);
+        if (CompoundTerms.isCompound(n)) {
+            return CompoundTerms.map(n, RelativeIris::relativizeNode);
         }
         if (n != null && n.isLiteral()) {
             // A document-relative DATATYPE IRIREF ("7"^^<scoreType>) is

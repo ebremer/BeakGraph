@@ -261,14 +261,16 @@ public final class BGSparqlService {
      * Any other dataset has no relative-stored IRIs, so nothing is rewritten.
      */
     /**
-     * True when any statement carries an RDF 1.2 triple term (object position
-     * only - the data model permits them nowhere else). Linear over the
-     * materialized CONSTRUCT/DESCRIBE result, which is already fully in RAM.
+     * True when any statement carries an RDF 1.2 triple term or an RDF-array
+     * sequence (object position only - the data models permit them nowhere
+     * else). Linear over the materialized CONSTRUCT/DESCRIBE result, which is
+     * already fully in RAM.
      */
     private static boolean containsTripleTerms(Model m) {
         var it = m.listStatements();
         while (it.hasNext()) {
-            if (it.next().getObject().asNode().isTripleTerm()) {
+            org.apache.jena.graph.Node o = it.next().getObject().asNode();
+            if (o.isTripleTerm() || o.isNodeSeq()) {
                 return true;
             }
         }
@@ -486,8 +488,8 @@ public final class BGSparqlService {
                             // JSON-LD and RDF/XML have no RDF 1.2 triple-term
                             // syntax; refuse plainly rather than emit a corrupt
                             // body or an opaque serializer failure.
-                            resp.sendError(400, "Result contains RDF 1.2 triple terms, which this response format "
-                                    + "cannot represent; request text/turtle");
+                            resp.sendError(400, "Result contains RDF 1.2 triple terms or RDF-array sequences, which "
+                                    + "this response format cannot represent; request text/turtle");
                         } else if (format.equals("jsonld")) {
                             resp.setContentType("application/ld+json");
                             out = new ResponseOutput(resp.getOutputStream(), capture);

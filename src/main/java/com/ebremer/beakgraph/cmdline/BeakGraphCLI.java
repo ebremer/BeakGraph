@@ -541,10 +541,25 @@ public class BeakGraphCLI {
         };
     }
 
-    /** The document-relative IRI a node carries - as a term or as a literal's datatype - or null. */
-    private static String relativeReference(org.apache.jena.graph.Node n) {
+    /**
+     * The document-relative IRI a node carries - as a term, as a literal's
+     * datatype, or at any depth inside a triple term or a sequence - or null.
+     * (Before format v7 the IRIs inside a triple term went unchecked, and an
+     * N-Triples export wrote them relative.)
+     */
+    static String relativeReference(org.apache.jena.graph.Node n) {
         if (n == null) {
             return null;
+        }
+        if (com.ebremer.beakgraph.core.lib.CompoundTerms.isCompound(n)) {
+            String[] found = {null};
+            com.ebremer.beakgraph.core.lib.CompoundTerms.map(n, leaf -> {
+                if (found[0] == null) {
+                    found[0] = relativeReference(leaf);
+                }
+                return leaf;
+            });
+            return found[0];
         }
         if (n.isURI() && com.ebremer.beakgraph.utils.UTIL.isRelativeIRI(n.getURI())) {
             return n.getURI();
@@ -614,6 +629,11 @@ public class BeakGraphCLI {
                         // triple-term syntax, so refuse plainly instead of emitting a
                         // corrupt document or an opaque serializer failure (BG-268).
                         throw new IllegalArgumentException("JSON-LD cannot represent RDF 1.2 triple terms ("
+                                + h5.getName() + " holds " + q.getObject() + "); export as NT, NQ, TTL or TRIG instead");
+                    }
+                    if (q.getObject().isNodeSeq()) {
+                        // Nor RDF-array sequences: jena-array maps none to @list.
+                        throw new IllegalArgumentException("JSON-LD cannot represent RDF-array sequences ("
                                 + h5.getName() + " holds " + q.getObject() + "); export as NT, NQ, TTL or TRIG instead");
                     }
                     copy.add(org.apache.jena.sparql.graph.NodeTransformLib.transform(transform, q));

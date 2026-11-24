@@ -8,8 +8,12 @@ import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.io.RandomAccessBytes;
 import com.ebremer.beakgraph.store.StoreArray;
 import com.ebremer.beakgraph.store.StoreGroup;
+import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Objects;
+import java.util.RandomAccess;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.apache.jena.cdt.CompositeDatatypeBase;
@@ -61,6 +65,16 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     // reach on its own (CHANGELOG.md "Format v5 design notes"). Volatile only for safe publication;
     // it is wired once, before any query can run.
     private volatile TripleTermResolver tripleTermResolver;
+    // RDF-array sequences (format v7, SPECIFICATIONS.md §7.6b): sequence k's
+    // element ids (object space, 0 for a slot) are
+    // sequenceElements[starts[k], starts[k+1]). sequenceStarts is null for a
+    // section without sequences; sequenceElements also when every one is ().
+    private final BitPackedUnSignedLongBuffer sequenceStarts;
+    private final BitPackedUnSignedLongBuffer sequenceElements;
+    private final long numSlots;
+    // Injected by PositionalDictionaryReader, as the triple-term resolver is:
+    // an element lives anywhere in the object space.
+    private volatile SequenceSupport sequenceSupport;
     private final long numEntries;
     // Language tags decoded once at open: the set is tiny, extract() paid an
     // FCD lookup per tagged row, and Jena re-formats every tag it is handed
@@ -73,6 +87,15 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     /** Cross-dictionary materialization of a triple term's component ids. */
     public interface TripleTermResolver {
         Node resolve(long subjectId, long predicateId, long objectId);
+    }
+
+    /**
+     * The object space a sequence's elements live in: an element id's term
+     * ({@code extract}), and a term's id ({@code locate}, below 1 for a miss).
+     */
+    public interface SequenceSupport {
+        Node extract(long objectId);
+        long locate(Node element);
     }
 
     // Tiered index, built LAZILY on first search: building it in the
@@ -88,9 +111,19 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final com.github.benmanes.caffeine.cache.Cache<Node, Long> searchCache =
             com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
                     .maximumWeight(SEARCH_CACHE_SIZE)
-                    .weigher((Node n, Long pos) ->
-                            n.isLiteral() ? 1 + (n.getLiteralLexicalForm().length() >>> 8) : 1)
+                    .weigher((Node n, Long pos) -> weightOf(n))
                     .build();
+
+    /** A probe key's cache weight: a long literal or a long sequence counts for several (SimpleNodeTable.weightOf). */
+    private static int weightOf(Node n) {
+        if (n.isLiteral()) {
+            return 1 + (n.getLiteralLexicalForm().length() >>> 8);
+        }
+        if (n.isNodeSeq()) {
+            return 1 + (n.getSeq().size() >>> 4);
+        }
+        return 1;
+    }
 
     /**
      * Sampled ids/terms plus, for the literal tier terms, their NodeValues:
@@ -113,6 +146,11 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.integers = StoreProfile.packed(d, "integers");
         this.longs = StoreProfile.packed(d, "longs");
         this.tripleTerms = StoreProfile.packed(d, "tripleTerms");
+        this.sequenceStarts = StoreProfile.packed(d, Params.SEQUENCE_STARTS);
+        this.sequenceElements = StoreProfile.packed(d, Params.SEQUENCE_ELEMENTS);
+        StoreArray elementsDS = StoreProfile.array(d, Params.SEQUENCE_ELEMENTS);
+        this.numSlots = (elementsDS != null && elementsDS.hasAttribute(Params.NUM_SLOTS))
+                ? StoreProfile.longAttr(elementsDS, Params.NUM_SLOTS) : 0;
 
         StoreGroup stringsG = StoreProfile.group(d, "strings");
         this.strings = (stringsG != null) ? new FCDReader(stringsG) : null;
@@ -132,7 +170,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         if (typedLiterals != null) requireRows("typedLiterals", typedLiterals.getNumEntries());
         if (langTags != null) requireRows("langTags", langTags.getNumEntries());
         if (langDirs != null) requireRows("langDirs", langDirs.getNumEntries());
-        checkTripleTermSuffix();
+        checkSequenceSuffix();
+        checkTripleTermBand();
     }
 
     private void requireRows(String column, long rows) {
@@ -143,26 +182,60 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     }
 
     /**
-     * The triple-term suffix (SPECIFICATIONS.md §7.4: the section's last
-     * {@code tripleTerms.numEntries / 3} rows) must agree with the datatypes
-     * column. The reader derives {@code firstTripleTermObjectId} from that
-     * count alone, so a store or writer that disagreed would have mis-clamped
-     * every triple-term scan and read component ids for plain literals without
-     * any exception (BG-82).
+     * The sequence suffix (SPECIFICATIONS.md §7.6b: the section's last
+     * {@code sequenceStarts.numEntries - 1} rows) must agree with the
+     * datatypes column, and the starts with the elements they delimit: the
+     * first 0, the last the element count. As for triple terms (BG-82), every
+     * band the reader derives comes from these counts alone.
      */
-    private void checkTripleTermSuffix() {
+    private void checkSequenceSuffix() {
+        if (sequenceStarts == null) {
+            if (sequenceElements != null) {
+                throw new IllegalStateException("Corrupt HDF5: dictionary '" + getName()
+                        + "': sequenceElements without sequenceStarts (SPECIFICATIONS.md §7.6b)");
+            }
+            return;
+        }
+        long n = sequenceStarts.getNumEntries();
+        long rows = n - 1;
+        long elements = (sequenceElements == null) ? 0 : sequenceElements.getNumEntries();
+        int seq = DataType.SEQUENCE.ordinal();
+        boolean consistent = rows >= 1 && rows <= numEntries
+                && datatype.get(numEntries - rows) == seq
+                && (rows == numEntries || datatype.get(numEntries - rows - 1) != seq)
+                && sequenceStarts.get(0) == 0
+                && sequenceStarts.get(rows) == elements
+                && numSlots >= 0 && numSlots <= elements;
+        if (!consistent) {
+            throw new IllegalStateException("Corrupt HDF5: dictionary '" + getName() + "': the sequence stores ("
+                    + n + " starts, " + elements + " elements) do not match the SEQUENCE suffix of the datatypes column");
+        }
+    }
+
+    /**
+     * The triple-term band (SPECIFICATIONS.md §7.4, §7.6b: the
+     * {@code tripleTerms.numEntries / 3} rows just before the sequences, or
+     * the section's last rows when it holds none) must agree with the
+     * datatypes column. The reader derives {@code firstTripleTermObjectId}
+     * from that count alone, so a store or writer that disagreed would have
+     * mis-clamped every triple-term scan and read component ids for plain
+     * literals without any exception (BG-82).
+     */
+    private void checkTripleTermBand() {
         if (tripleTerms == null) {
             return;
         }
         long n = tripleTerms.getNumEntries();
         long rows = n / 3;
+        long end = numEntries - sequenceRowCount();     // rows after the band: the sequences
         int tt = DataType.TRIPLE_TERM.ordinal();
-        boolean consistent = n % 3 == 0 && rows >= 1 && rows <= numEntries
-                && datatype.get(numEntries - rows) == tt
-                && (rows == numEntries || datatype.get(numEntries - rows - 1) != tt);
+        boolean consistent = n % 3 == 0 && rows >= 1 && rows <= end
+                && datatype.get(end - rows) == tt
+                && datatype.get(end - 1) == tt
+                && (rows == end || datatype.get(end - rows - 1) != tt);
         if (!consistent) {
             throw new IllegalStateException("Corrupt HDF5: dictionary '" + getName() + "': the tripleTerms store ("
-                    + n + " entries, " + rows + " terms) does not match the TRIPLE_TERM suffix of the datatypes column");
+                    + n + " entries, " + rows + " terms) does not match the TRIPLE_TERM band of the datatypes column");
         }
     }
 
@@ -299,6 +372,22 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
                 long k = off * 3;
                 yield r.resolve(tripleTerms.get(k), tripleTerms.get(k + 1), tripleTerms.get(k + 2));
             }
+            case SEQUENCE -> {
+                // A lazy row (SPECIFICATIONS.md §7.7): its length from the
+                // starts, each element read when asked for.
+                SequenceSupport support = sequenceSupport;
+                if (support == null || sequenceStarts == null) {
+                    throw new IllegalStateException("Sequence row at ID " + id + " in dictionary '"
+                            + getName() + "' but no sequence store/resolver is wired");
+                }
+                long start = sequenceStarts.get(off);
+                long length = sequenceStarts.get(off + 1) - start;
+                if (length < 0 || length > Integer.MAX_VALUE) {
+                    throw new IllegalStateException("Corrupt HDF5: sequence at ID " + id + " in dictionary '"
+                            + getName() + "' has length " + length);
+                }
+                yield com.ebremer.beakgraph.core.lib.SeqTerms.view(new SequenceRow(start, (int) length, support));
+            }
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
         return na;
@@ -334,6 +423,69 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
 
     public void setTripleTermResolver(TripleTermResolver resolver) {
         this.tripleTermResolver = resolver;
+    }
+
+    public void setSequenceSupport(SequenceSupport support) {
+        this.sequenceSupport = support;
+    }
+
+    /** Number of sequence rows in this section (its contiguous suffix, format v7). */
+    public long sequenceRowCount() {
+        return (sequenceStarts == null) ? 0 : sequenceStarts.getNumEntries() - 1;
+    }
+
+    /** How many sequence elements are empty slots (the {@code numSlots} attribute; 0 without sequences). */
+    public long numSlots() {
+        return numSlots;
+    }
+
+    /** Number of sequence elements, slots included, over every sequence of the section. */
+    public long sequenceElementCount() {
+        return (sequenceElements == null) ? 0 : sequenceElements.getNumEntries();
+    }
+
+    /**
+     * Where the elements of the sequence at section id {@code id} begin in
+     * the element store, and where they end (exclusive). The caller
+     * guarantees the id lies in the sequence suffix.
+     */
+    public long[] sequenceBounds(long id) {
+        long k = offsets.get(id - 1);
+        return new long[]{sequenceStarts.get(k), sequenceStarts.get(k + 1)};
+    }
+
+    /** Element {@code index} of the element store: an object-space id, 0 for a slot. */
+    public long sequenceElementId(long index) {
+        return sequenceElements.get(index);
+    }
+
+    /**
+     * A stored sequence's elements, read when asked for: a nonzero id is the
+     * object-space term it names (a nested sequence comes back lazy too), 0
+     * the empty slot. Immutable, like the store.
+     */
+    private final class SequenceRow extends AbstractList<Node> implements RandomAccess {
+        private final long start;
+        private final int size;
+        private final SequenceSupport support;
+
+        SequenceRow(long start, int size, SequenceSupport support) {
+            this.start = start;
+            this.size = size;
+            this.support = support;
+        }
+
+        @Override
+        public Node get(int index) {
+            Objects.checkIndex(index, size);
+            long id = sequenceElements.get(start + index);
+            return (id == 0) ? com.ebremer.beakgraph.core.lib.SeqTerms.UNDEF : support.extract(id);
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
     }
 
     /** Number of triple-term rows in this section (they form a contiguous suffix of the id space). */
@@ -373,6 +525,12 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         // memoize it (by identity - `element` is the same object throughout this
         // search) instead of re-deriving it ~log(n) times. The comparator's
         // ordering semantics are untouched: nodeValue() is the designated hook.
+        if (element.isNodeSeq()) {
+            long onIds = searchSequenceOnIds(element);
+            if (onIds != SEARCH_BY_TERMS) {
+                return onIds;
+            }
+        }
         TieredIndex tier = tieredIndex();
         ProbeComparator cmp = !element.isLiteral() ? null : new ProbeComparator(element, tier.values());
         NodeComparator order = (cmp != null) ? cmp : NodeComparator.INSTANCE;
@@ -410,6 +568,75 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             else high = midId - 1;
         }
         return -low - 1;
+    }
+
+    /** {@link #searchSequenceOnIds}' answer when the search must compare terms instead. */
+    private static final long SEARCH_BY_TERMS = Long.MIN_VALUE;
+
+    /**
+     * Searches the sequence suffix on ids (SPECIFICATIONS.md §7.6b): the
+     * probe's elements are located first, then the suffix is binary-searched
+     * comparing element-id arrays, which order exactly as the sequences do
+     * (the object space is sorted and a slot is 0), so no stored row is
+     * materialized. The same answer as the search on terms: an id, or a
+     * negative insertion point. {@link #SEARCH_BY_TERMS} when an element is
+     * not in the store (the sequence is not either, and the term search
+     * finds where it would be). A probe that is not a concrete sequence is
+     * a miss.
+     */
+    private long searchSequenceOnIds(Node seq) {
+        long rows = sequenceRowCount();
+        if (rows == 0) {
+            return -(numEntries + 1) - 1;   // every sequence ranks after every row here
+        }
+        if (!seq.isConcrete()) {
+            // A pattern (a variable or gap inside) is no term and is in no
+            // store; the comparator cannot rank it. A miss, not an exception,
+            // until sequence patterns are delegated (RDFARRY.md step 4).
+            return -(numEntries + 1) - 1;
+        }
+        SequenceSupport support = sequenceSupport;
+        if (support == null) {
+            return SEARCH_BY_TERMS;
+        }
+        List<Node> elements = seq.getSeq();
+        long[] probe = new long[elements.size()];
+        for (int i = 0; i < probe.length; i++) {
+            Node e = elements.get(i);
+            if (e.isNodeUndef()) {
+                continue;   // 0
+            }
+            long id = support.locate(e);
+            if (id < 1) {
+                return SEARCH_BY_TERMS;
+            }
+            probe[i] = id;
+        }
+        long low = numEntries - rows + 1;
+        long high = numEntries;
+        while (low <= high) {
+            long mid = low + (high - low) / 2;
+            int c = compareStoredSequence(mid, probe);
+            if (c == 0) return mid;
+            if (c < 0) low = mid + 1;
+            else high = mid - 1;
+        }
+        return -low - 1;
+    }
+
+    /** The stored sequence at section id {@code id} against element ids {@code probe}: lexicographic, a prefix first. */
+    private int compareStoredSequence(long id, long[] probe) {
+        long k = offsets.get(id - 1);
+        long start = sequenceStarts.get(k);
+        long length = sequenceStarts.get(k + 1) - start;
+        long n = Math.min(length, probe.length);
+        for (long i = 0; i < n; i++) {
+            long e = sequenceElements.get(start + i);
+            if (e != probe[(int) i]) {
+                return Long.compare(e, probe[(int) i]);
+            }
+        }
+        return Long.compare(length, probe.length);
     }
 
     /**

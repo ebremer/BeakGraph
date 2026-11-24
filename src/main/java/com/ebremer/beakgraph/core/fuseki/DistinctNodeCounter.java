@@ -104,6 +104,12 @@ final class DistinctNodeCounter {
             h = h * 31 + hash(t.getSubject());
             h = h * 31 + hash(t.getPredicate());
             h = h * 31 + hash(t.getObject());
+        } else if (n.isNodeSeq()) {
+            // Element by element, a slot as a constant of its own (format v7).
+            h = 47 * 0x9E3779B97F4A7C15L;
+            for (org.apache.jena.graph.Node e : n.getSeq()) {
+                h = h * 31 + (e.isNodeUndef() ? 53 : hash(e));
+            }
         } else {
             h = poly(29, n.toString());
         }

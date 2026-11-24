@@ -24,8 +24,11 @@ trig12-inside-2.
 - Under rdf-array they hold a sequence subject. The runner's containment split
   therefore requires the build to fail on BeakGraph's subject guard, as it
   requires for any unsupported term.
-- Until format v7 stores sequences (RDFARRY.md step 3), any document holding a
-  sequence is handled the same way.
+- Format v7 stores a sequence as an object, on the engines that write it
+  (`-method 0` and `-method 2`, RDFARRY.md step 3). There a document whose
+  collections are objects is built and checked for isomorphism like any other;
+  on the other engines, until step 5, a document holding any sequence must fail
+  the build on a guard.
 - The executed count is unchanged.
 
 ## Known upstream divergences (Jena 6.2.0)

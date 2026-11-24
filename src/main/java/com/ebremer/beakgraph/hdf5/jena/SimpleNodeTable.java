@@ -25,6 +25,12 @@ public class SimpleNodeTable implements NodeTable {
         if (n.isLiteral()) {
             return 1 + (n.getLiteralLexicalForm().length() >>> 8);
         }
+        if (n.isNodeSeq()) {
+            // A stored sequence comes back lazy and small, but a query's
+            // constant is whole; one entry-equivalent per 16 elements covers
+            // both (the elements a lazy one decodes are cached as terms).
+            return 1 + (n.getSeq().size() >>> 4);
+        }
         return 1;
     }
 
@@ -82,10 +88,11 @@ public class SimpleNodeTable implements NodeTable {
 
         long id;
 
-        // 1. Literals and RDF 1.2 triple terms live in the Object dictionary
-        // only (triple terms are the literals section's contiguous suffix).
-        if (n.isLiteral() || n.isTripleTerm()) {
-            if (n.isTripleTerm() && !n.isConcrete()) {
+        // 1. Literals, RDF 1.2 triple terms and RDF-array sequences live in
+        // the Object dictionary only (a triple-term band and a sequence suffix
+        // of the literals section).
+        if (n.isLiteral() || n.isTripleTerm() || n.isNodeSeq()) {
+            if ((n.isTripleTerm() || n.isNodeSeq()) && !n.isConcrete()) {
                 // A variable-containing triple-term PATTERN is not a term; it can
                 // never be in any store, and probing the dictionary comparator
                 // with embedded variables is undefined. (The iterators route

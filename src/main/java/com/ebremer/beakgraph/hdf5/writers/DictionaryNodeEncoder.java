@@ -22,9 +22,9 @@ import org.slf4j.LoggerFactory;
  * by both {@link MultiTypeDictionaryWriter} (in memory, every RAM engine) and
  * the huge writer's {@code StreamingDictionaryWriter} (disk-backed), whose
  * {@code addNodeInternal} bodies were line-for-line mirrors that a change to
- * one had to be copied into the other (BG-298). Triple terms differ only in
- * where their component ids come from, which the {@link TripleTermHook}
- * abstracts.
+ * one had to be copied into the other (BG-298). Triple terms and sequences
+ * differ only in where their component ids come from, which the
+ * {@link TripleTermHook} and {@link SequenceHook} abstract.
  *
  * @author Erich Bremer
  */
@@ -41,6 +41,15 @@ public final class DictionaryNodeEncoder {
     @FunctionalInterface
     public interface TripleTermHook {
         long offsetFor(Node tripleTerm) throws IOException;
+    }
+
+    /**
+     * Supplies the {@code offsets} value of a sequence, its ordinal, and
+     * records its element ids (format v7, SPECIFICATIONS.md §7.6b).
+     */
+    @FunctionalInterface
+    public interface SequenceHook {
+        long offsetFor(Node sequence) throws IOException;
     }
 
     private final String name;
@@ -60,6 +69,7 @@ public final class DictionaryNodeEncoder {
     private final Map<String, Long> langLookUp;
     private final boolean literalsPresent;
     private final TripleTermHook tripleTerms;
+    private final SequenceHook sequences;
     private long encoded = 0;
 
     /**
@@ -76,6 +86,21 @@ public final class DictionaryNodeEncoder {
                                  StringSink iri, StringSink strings, LongSink langTags, LongSink langDirs,
                                  Map<String, Long> dataTypesLookUp, Map<String, Long> langLookUp,
                                  boolean literalsPresent, TripleTermHook tripleTerms) {
+        this(name, total, offsets, datatypes, typedLiterals, integers, longs, floats, doubles, iri, strings,
+                langTags, langDirs, dataTypesLookUp, langLookUp, literalsPresent, tripleTerms, null);
+    }
+
+    /**
+     * As the constructor above, for a section that may hold sequences.
+     *
+     * @param sequences null when this section cannot hold sequences
+     */
+    public DictionaryNodeEncoder(String name, long total,
+                                 LongSink offsets, LongSink datatypes, LongSink typedLiterals,
+                                 LongSink integers, LongSink longs, RealSink floats, RealSink doubles,
+                                 StringSink iri, StringSink strings, LongSink langTags, LongSink langDirs,
+                                 Map<String, Long> dataTypesLookUp, Map<String, Long> langLookUp,
+                                 boolean literalsPresent, TripleTermHook tripleTerms, SequenceHook sequences) {
         this.name = name;
         this.total = total;
         this.offsets = offsets;
@@ -93,6 +118,7 @@ public final class DictionaryNodeEncoder {
         this.langLookUp = langLookUp;
         this.literalsPresent = literalsPresent;
         this.tripleTerms = tripleTerms;
+        this.sequences = sequences;
     }
 
     /** Nodes encoded so far. */
@@ -239,8 +265,24 @@ public final class DictionaryNodeEncoder {
             offsets.writeLong(offset);
             datatypes.writeInteger(DataType.TRIPLE_TERM.ordinal());
             perNodeZeros();
+        } else if (node.isNodeSeq()) {
+            if (sequences == null) {
+                // As for triple terms: the stats pass never counted it, or this
+                // engine does not store sequences yet.
+                throw new IllegalStateException(
+                        "Sequence reached dictionary '" + name + "' without sequence support: " + node);
+            }
+            long offset;
+            try {
+                offset = sequences.offsetFor(node);
+            } catch (IOException ex) {
+                throw new UncheckedIOException("Failed to record sequence elements: " + node, ex);
+            }
+            offsets.writeLong(offset);
+            datatypes.writeInteger(DataType.SEQUENCE.ordinal());
+            perNodeZeros();
         } else {
-            // A node that is neither blank, URI, literal nor triple term (e.g. a
+            // A node that is neither blank, URI, literal, triple term nor sequence (e.g. a
             // variable) would write NO buffer entries at all, leaving
             // offsets/datatypes one entry short of the sorted node list.
             throw new IllegalStateException("Unsupported node kind in dictionary '" + name + "': " + node);

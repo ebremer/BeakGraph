@@ -178,7 +178,7 @@ class ReaderProfileAndInvariantsTest {
         File bad = StoreCopies.copy(withTripleTerms, dir.resolve("ttshort.h5").toFile(), (path, attr, value) ->
                 (path.endsWith("/dictionary/literals/tripleTerms") && attr.equals(Params.NUM_ENTRIES)) ? ((Number) value).longValue() - 3 : value);
         String m = rootMessage(assertThrows(IllegalStateException.class, () -> new HDF5Reader(bad)));
-        assertTrue(m.contains("tripleTerms") && m.contains("TRIPLE_TERM suffix"), m);
+        assertTrue(m.contains("tripleTerms") && m.contains("TRIPLE_TERM band"), m);
     }
 
     // --- BG-340 ----------------------------------------------------------

@@ -111,6 +111,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
                 return; // pattern cannot match anything in this store
             }
             minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
+            maxObjId = Math.min(maxObjId, dict.lastTripleTermObjectId());   // the sequences follow the band
         }
 
         // 1. Resolve Graph

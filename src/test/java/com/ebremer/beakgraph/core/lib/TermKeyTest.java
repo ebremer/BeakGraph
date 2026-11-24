@@ -119,6 +119,28 @@ class TermKeyTest {
         nodes.add(NodeFactory.createTripleTerm(Triple.create(a, b, typed("1.0", XSDDatatype.XSDdouble))));
         nodes.add(NodeFactory.createTripleTerm(Triple.create(a, b,
                 NodeFactory.createTripleTerm(Triple.create(b, a, NodeFactory.createLiteralDirLang("n", "ar", "rtl"))))));
+        // RDF-array sequences (format v7): empty, slots, prefixes, nesting,
+        // mixed kinds, a triple term and a dirLang literal inside.
+        Node one = typed("1", XSDDatatype.XSDint);
+        Node oneD = typed("1.0", XSDDatatype.XSDdouble);
+        Node undef = SeqTerms.UNDEF;
+        nodes.add(SeqTerms.create(List.of()));
+        nodes.add(SeqTerms.create(List.of(undef)));
+        nodes.add(SeqTerms.create(List.of(undef, undef)));
+        nodes.add(SeqTerms.create(List.of(one)));
+        nodes.add(SeqTerms.create(List.of(oneD)));
+        nodes.add(SeqTerms.create(List.of(one, undef)));
+        nodes.add(SeqTerms.create(List.of(one, a)));
+        nodes.add(SeqTerms.create(List.of(one, one)));
+        nodes.add(SeqTerms.create(List.of(a)));
+        nodes.add(SeqTerms.create(List.of(NodeFactory.createBlankNode("b1"), a)));
+        nodes.add(SeqTerms.create(List.of(Quad.defaultGraphIRI)));
+        nodes.add(SeqTerms.create(List.of(NodeFactory.createLiteralDirLang("n", "ar", "rtl"))));
+        nodes.add(SeqTerms.create(List.of(NodeFactory.createLiteralDirLang("n", "ar", "ltr"))));
+        nodes.add(SeqTerms.create(List.of(NodeFactory.createTripleTerm(Triple.create(a, b, a)))));
+        nodes.add(SeqTerms.create(List.of(SeqTerms.create(List.of()))));
+        nodes.add(SeqTerms.create(List.of(SeqTerms.create(List.of(one)), undef)));
+        nodes.add(SeqTerms.create(List.of(SeqTerms.create(List.of(undef)))));
         return nodes;
     }
 

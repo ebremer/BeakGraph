@@ -2,6 +2,7 @@ package com.ebremer.beakgraph.cmdline;
 
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.lib.NodeComparator;
+import com.ebremer.beakgraph.core.lib.SeqTerms;
 import com.ebremer.beakgraph.hdf5.BitPackedUnSignedLongBuffer;
 import com.ebremer.beakgraph.hdf5.Index;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
@@ -141,6 +142,10 @@ public final class VerifyCommand {
             formatVersion = reader.getFormatVersion();
             checkStructure(reader, problems);
             checkDictionaryOrder(reader, problems);
+            if (deep && problems.isEmpty()) {
+                checkCompoundBands(reader, problems);
+                checkSequences(reader, problems);
+            }
             if (deep && problems.isEmpty()) {
                 deepScan(reader, problems);
             }
@@ -289,6 +294,124 @@ public final class VerifyCommand {
         } catch (Exception e) {
             problems.add("dictionary " + name + ": " + rootMessage(e));
         }
+    }
+
+    /**
+     * Deep: every row of the literals section is where its kind says
+     * (SPECIFICATIONS.md §7.1, §7.6b): a triple term exactly inside the
+     * triple-term band, a sequence exactly inside the sequence suffix. The
+     * open-time checks read only the bands' ends; a stray row inside would
+     * clamp scans wrongly and read the wrong stores.
+     */
+    private static void checkCompoundBands(HDF5Reader reader, List<String> problems) {
+        PositionalDictionaryReader dict = (PositionalDictionaryReader) reader.getDictionary();
+        Dictionary objects = dict.getObjects();
+        long first = dict.getSubjects().getNumberOfNodes() + 1;
+        long last = objects.getNumberOfNodes();
+        try {
+            for (long id = first; id <= last; id++) {
+                Node n = objects.extract(id);
+                if (n.isTripleTerm() != dict.isTripleTermObjectId(id)) {
+                    problems.add("dictionary literals: object id " + id + " (" + n + ") "
+                            + (n.isTripleTerm() ? "is a triple term outside" : "lies inside") + " the triple-term band");
+                    return;
+                }
+                if (n.isNodeSeq() != dict.isSequenceObjectId(id)) {
+                    problems.add("dictionary literals: object id " + id + " (" + n + ") "
+                            + (n.isNodeSeq() ? "is a sequence outside" : "lies inside") + " the sequence suffix");
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            problems.add("dictionary literals: " + rootMessage(e));
+        }
+    }
+
+    /**
+     * Deep, format v7 (SPECIFICATIONS.md §7.6b): the sequence stores. The
+     * starts delimit the elements in id order, contiguously, from 0 to the
+     * element count; every element is 0 (a slot) or an object id; the slots
+     * number {@code numSlots}; and no sequence nests deeper than
+     * {@link SeqTerms#MAX_DEPTH} levels, which also rules out a sequence that
+     * holds itself at any depth. That the suffix ascends on element-id arrays
+     * is the order check's: every adjacent pair is compared there.
+     */
+    private static void checkSequences(HDF5Reader reader, List<String> problems) {
+        PositionalDictionaryReader dict = (PositionalDictionaryReader) reader.getDictionary();
+        long first = dict.firstSequenceObjectId();
+        long last = dict.lastSequenceObjectId();
+        if (first > last) {
+            return;
+        }
+        long objectCount = dict.getObjects().getNumberOfNodes();
+        try {
+            long expectedStart = 0;
+            long slots = 0;
+            for (long id = first; id <= last; id++) {
+                long[] bounds = dict.sequenceBounds(id);
+                if (bounds[0] != expectedStart || bounds[1] < bounds[0]) {
+                    problems.add("sequence " + id + ": its elements are [" + bounds[0] + ", " + bounds[1]
+                            + ") but the sequence before it ends at " + expectedStart
+                            + " (sequenceStarts must delimit the elements in id order)");
+                    return;
+                }
+                expectedStart = bounds[1];
+                for (long e : dict.sequenceElementIds(id)) {
+                    if (e == 0) {
+                        slots++;
+                    } else if (e < 0 || e > objectCount) {
+                        problems.add("sequence " + id + ": element id " + e + " is not an object id (1.." + objectCount + ")");
+                        return;
+                    }
+                }
+            }
+            if (expectedStart != dict.sequenceElementCount()) {
+                problems.add("sequenceStarts ends at " + expectedStart + " but sequenceElements holds "
+                        + dict.sequenceElementCount() + " elements");
+                return;
+            }
+            if (slots != dict.numSlots()) {
+                problems.add("sequenceElements holds " + slots + " slots but numSlots records " + dict.numSlots());
+                return;
+            }
+            Map<Long, Integer> depths = new java.util.HashMap<>();
+            for (long id = first; id <= last; id++) {
+                if (depth(dict, id, depths, 1) < 0) {
+                    problems.add("sequence " + id + " nests deeper than " + SeqTerms.MAX_DEPTH
+                            + " levels or holds itself (SPECIFICATIONS.md §9.5)");
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            problems.add("sequences: " + rootMessage(e));
+        }
+    }
+
+    /** The nesting depth of sequence {@code id} (1 for one without nested sequences), or -1 past the bound. */
+    private static int depth(PositionalDictionaryReader dict, long id, Map<Long, Integer> known, int level) {
+        Integer d = known.get(id);
+        if (d != null) {
+            return d;
+        }
+        if (level > SeqTerms.MAX_DEPTH) {
+            return -1;
+        }
+        int deepest = 0;
+        for (long e : dict.sequenceElementIds(id)) {
+            if (dict.isSequenceObjectId(e)) {
+                int inner = depth(dict, e, known, level + 1);
+                if (inner < 0) {
+                    return -1;
+                }
+                deepest = Math.max(deepest, inner);
+            }
+        }
+        int mine = deepest + 1;
+        if (mine + level - 1 > SeqTerms.MAX_DEPTH) {
+            return -1;
+        }
+        known.put(id, mine);
+        return mine;
     }
 
     /** Triples sampled per graph for the {@code ?s p o} probes through GPOS. */

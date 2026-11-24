@@ -19,9 +19,12 @@ public enum DictionarySection {
     ENTITIES(Params.ENTITIES, EnumSet.of(DataType.IRI, DataType.RELATIVE_IRI, DataType.BNODE)),
     /** Predicates: IRIs only, in their own id space. */
     PREDICATES(Params.PREDICATES, EnumSet.of(DataType.IRI, DataType.RELATIVE_IRI)),
-    /** Object literals of every stored kind, plus RDF 1.2 triple terms (the section's suffix). */
+    /**
+     * Object literals of every stored kind, then RDF 1.2 triple terms (a band)
+     * and RDF-array sequences (the section's suffix, format v7).
+     */
     LITERALS(Params.LITERALS, EnumSet.of(DataType.INTEGER, DataType.LONG, DataType.FLOAT, DataType.DOUBLE,
-            DataType.STRING, DataType.TRIPLE_TERM));
+            DataType.STRING, DataType.TRIPLE_TERM, DataType.SEQUENCE));
 
     private final String groupName;
     private final Set<DataType> routes;

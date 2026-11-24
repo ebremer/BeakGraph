@@ -39,6 +39,10 @@ public class Stats {
     // the literals section's tripleTerms component store.
     public long numTripleTerms = 0;
 
+    // RDF-array sequences (distinct, all nesting depths; format v7). Drives
+    // allocation of the literals section's sequenceStarts / sequenceElements.
+    public long numSequences = 0;
+
     /**
      * The bit width the dictionary writer allocates for the integers section:
      * 0 when there are none, 32 when a negative value forces the full
@@ -86,6 +90,7 @@ public class Stats {
             Number of Floats      : %d
             Number of Doubles     : %d
             Number of Triple terms: %d
+            Number of Sequences   : %d
 
             MaxInteger            : %s
             MaxLong               : %s
@@ -112,6 +117,7 @@ public class Stats {
             numFloat,
             numDouble,
             numTripleTerms,
+            numSequences,
             present(numInteger, maxInteger),
             present(numLong, maxLong),
             present(numInteger, minInteger),

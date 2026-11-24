@@ -17,7 +17,7 @@ import org.apache.jena.sparql.expr.NodeValue;
  * them:
  * <ul>
  *   <li><b>Terms of different kinds</b> by the kind's rank: the default
- *       graph's names, blank nodes, IRIs, literals, triple terms.</li>
+ *       graph's names, blank nodes, IRIs, literals, triple terms, sequences.</li>
  *   <li><b>Two blank nodes or two IRIs</b> by the first seven characters,
  *       packed into a long ({@link #prefix}), and by the whole label or IRI
  *       when those are the same.</li>
@@ -56,6 +56,7 @@ public final class TermKey {
     private static final int IRI = 2;
     private static final int LITERAL = 3;
     private static final int TRIPLE_TERM = 4;
+    private static final int SEQUENCE = 5;
 
     private static final int BY_VALUE = 0;
     private static final int COMPOSITE = 1;
@@ -154,6 +155,9 @@ public final class TermKey {
         if (n.isTripleTerm()) {
             return new Place(TRIPLE_TERM, 0);
         }
+        if (n.isNodeSeq()) {
+            return new Place(SEQUENCE, 0);
+        }
         return new Place(NOT_A_TERM, 0);
     }
 
@@ -182,7 +186,8 @@ public final class TermKey {
                 return compareLiterals(a.node, x, b.node, y);
             }
             default -> {
-                // The default graph's two names; two triple terms, compared part by part.
+                // The default graph's two names; two triple terms, or two
+                // sequences, compared part by part.
                 return NodeComparator.INSTANCE.compare(a.node, b.node);
             }
         }
@@ -228,8 +233,8 @@ public final class TermKey {
      * An 8-byte key with the ONE property that matters: {@code prefix(a) !=
      * prefix(b)} implies unsigned key order equals NodeComparator order; equal
      * keys decide nothing. Byte 7 is the macro rank (default-graph sentinels
-     * 0, bnode 1, URI 2, literal or triple term 3 - NodeComparator's macro
-     * order, literals before triple terms left to it); bytes 6..0 are the
+     * 0, bnode 1, URI 2, literal, triple term or sequence 3 - NodeComparator's
+     * macro order, the order among those three left to it); bytes 6..0 are the
      * first chars of the label/URI, ASCII-compared exactly as
      * {@code String.compareTo} does. Any char &ge; 0xFF becomes a terminal
      * 0xFF marker (chars past it are NOT encoded - encoding them would

@@ -66,8 +66,9 @@ public class PositionalDictionaryWriter implements AutoCloseable {
         this.maxEntityId = entitiesdict.getNumberOfNodes();
 
         // 3. Build the Isolated Literal Dictionary (O native literals + RDF 1.2
-        // triple terms, which macro-rank after every literal and so form a
-        // contiguous suffix of this section - CHANGELOG.md "Format v5 design notes").
+        // triple terms, which macro-rank after every literal - CHANGELOG.md
+        // "Format v5 design notes" - and RDF-array sequences after them, the
+        // section's contiguous suffix, format v7).
         literalsdict = new MultiTypeDictionaryWriter.Builder()
             .setName("literals")
             .setNodes(builder.getLiterals())
@@ -75,6 +76,7 @@ public class PositionalDictionaryWriter implements AutoCloseable {
             .setStats(builder.getStats())
             .section(DictionarySection.LITERALS)
             .setTripleTermEncoder(this::encodeTripleTerm)
+            .setSequenceEncoder(this::encodeSequence)
             .setTripleTermComponentIdBound(maxEntityId + builder.getLiterals().size())
             .build();
 
@@ -160,6 +162,11 @@ public class PositionalDictionaryWriter implements AutoCloseable {
      */
     private long[] encodeTripleTerm(Node tt, Dictionary ownSection) {
         return DictionaryIds.encodeTripleTerm(tt, entitiesdict::locate, predicatesdict::locate, ownSection::locate, maxEntityId);
+    }
+
+    /** Element-id resolution for the literals section's sequences, as {@link #encodeTripleTerm} (format v7). */
+    private long[] encodeSequence(Node seq, Dictionary ownSection) {
+        return DictionaryIds.encodeSequence(seq, entitiesdict::locate, ownSection::locate, maxEntityId);
     }
 
     public long locateObject(Node element) {

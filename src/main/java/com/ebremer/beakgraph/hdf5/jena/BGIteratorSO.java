@@ -123,6 +123,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
             // clamp the scan to it (a triple-term-free store empties the range
             // immediately via the lowerBound below).
             minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
+            maxObjId = Math.min(maxObjId, dict.lastTripleTermObjectId());   // the sequences follow the band
         }
         boolean oUnbound = oTTPattern
                 || (oNode.isVariable() && (bnid == null || !bnid.containsKey(Var.alloc(oNode))));

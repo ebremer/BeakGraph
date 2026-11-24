@@ -296,6 +296,74 @@ class ExportTest {
         assertTrue(ds.getDefaultModel().isIsomorphicWith(expectedTriples()));
     }
 
+    @Test
+    void ntExportRoundTripsSequencesOnBothPaths() throws Exception {
+        // RDF-array sequences (format v7): both writers spell them ( ... ) with
+        // undef for a slot, byte-identically, and they parse back term-exactly.
+        String seqTriples =
+                "<http://ex.org/r> <http://ex.org/list> ( \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> \"x\" <http://ex.org/i> ) .\n"
+              + "<http://ex.org/r> <http://ex.org/slots> ( \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> undef ( undef ) ) .\n"
+              + "<http://ex.org/r> <http://ex.org/empty> ( ) .\n"
+              + "<http://ex.org/r> <http://ex.org/tt> ( <<( <http://ex.org/a> <http://ex.org/b> \"c\" )>> ) .\n";
+        File h5 = buildStore("seqs", seqTriples);
+        Path out = dir.resolve("seqs.nt");
+
+        runExport(h5, "NT", false);
+        byte[] fastpath = Files.readAllBytes(out);
+        String text = new String(fastpath, StandardCharsets.UTF_8);
+        assertTrue(text.contains("undef") && (text.contains("( )") || text.contains("()")), text);
+
+        Files.delete(out);
+        withoutFastPath(() -> runExport(h5, "NT", false));
+        org.junit.jupiter.api.Assertions.assertArrayEquals(fastpath, Files.readAllBytes(out),
+                "fastpath must stay byte-identical to the generic writer");
+
+        Dataset ds = parse(out, Lang.NTRIPLES, false);
+        Model expected = ModelFactory.createDefaultModel();
+        RDFDataMgr.read(expected, new java.io.ByteArrayInputStream(
+                seqTriples.getBytes(StandardCharsets.UTF_8)), Lang.NTRIPLES);
+        assertTrue(org.apache.jena.sparql.util.IsoMatcher.isomorphic(expected.getGraph(), ds.getDefaultModel().getGraph()),
+                "exported sequences must round-trip term-exactly:\n" + text);
+    }
+
+    @Test
+    void jsonLdExportRefusesSequences() throws Exception {
+        File h5 = buildStore("seqjsonld", "<http://ex.org/r> <http://ex.org/list> ( <http://ex.org/x> \"y\" ) .\n");
+        Parameters p = new Parameters();
+        p.src = h5;
+        p.export = "JSON-LD";
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.export();
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount(), "the export is a counted failure, not a corrupt document");
+        assertFalse(Files.exists(dir.resolve("seqjsonld.jsonld")), "no output file");
+    }
+
+    @Test
+    void ntExportFindsRelativeIrisInsideCompoundTerms() throws Exception {
+        // relativeReference recurses into sequences and triple terms: before
+        // format v7 a relative IRI inside a triple term reached N-Triples as is.
+        File src = dir.resolve("relseq.ttl").toFile();
+        Files.writeString(src.toPath(), "<http://ex.org/a> <http://ex.org/p> ( <img.png> ) .\n"
+                + "<http://ex.org/a> <http://ex.org/q> <<( <http://ex.org/s> <http://ex.org/p> <x.png> )>> .\n");
+        File h5 = dir.resolve("relseq.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(h5).build().write();
+        Parameters p = new Parameters();
+        p.src = h5;
+        p.export = "NT";
+        BeakGraphCLI cli = new BeakGraphCLI(p);
+        cli.export();
+        assertEquals(1, cli.getFileCounter().getFailedConversionFileCount(), "NT cannot carry a relative IRI inside a term");
+        p.base = "http://host/data/relseq.h5";
+        cli = new BeakGraphCLI(p);
+        cli.export();
+        assertEquals(0, cli.getFileCounter().getFailedConversionFileCount());
+        String nt = Files.readString(dir.resolve("relseq.nt"));
+        assertTrue(nt.contains("( <http://host/data/img.png> )"), nt);
+        assertTrue(nt.contains("<http://host/data/x.png> )>>"), nt);
+        assertEquals("img.png", BeakGraphCLI.relativeReference(org.apache.jena.graph.NodeFactory.createSeqNode(
+                java.util.List.of(org.apache.jena.graph.NodeFactory.createURI("img.png")))));
+    }
+
     /** BG-268: JSON-LD has no RDF 1.2 triple-term syntax, so the export refuses plainly, like the endpoint. */
     @Test
     void jsonLdExportRefusesTripleTerms() throws Exception {

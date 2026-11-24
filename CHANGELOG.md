@@ -4,8 +4,38 @@ Notable changes to BeakGraph and its on-disk format. The format history is
 normative (SPECIFICATIONS.md §4.1); the rest is a summary of what a release
 brought and what a reader must rebuild.
 
-## Unreleased, branch `rdfarray` - format v6 (2026-11)
+## Unreleased, branch `rdfarray` - format v7 (2026-11)
 
+* **Format v7: RDF-array sequences and their empty slots** (SPECIFICATIONS.md §7.6b; RDFARRY.md
+  step 3).
+  - **What is stored.** A sequence `( 1 undef ( 2 ) )` is a row of the literals section,
+    `DataType.SEQUENCE` (ordinal 14). Its elements are object-space ids in the block-structured
+    `sequenceStarts` / `sequenceElements`, with 0 for a slot, and `numSlots` counts the slots.
+    Nested sequences are rows of their own, so an inner sequence that recurs is stored once.
+  - **The order.** Sequences are a fifth macro kind, after triple terms: element by element, a slot
+    below every term, a proper prefix first (§6.1). They are the literals section's suffix, and the
+    triple terms become the band just before it. Two stored sequences compare as their element-id
+    arrays do, so a reader locates one on ids without reading any stored row.
+  - **Reading.** A stored sequence comes back lazy (`NodeFactory.createSeqNodeView`): its length from
+    the starts, each element read when asked for.
+  - **Where.** `-method 0` writes sequences, and so does `-method 2`, which shares its parse; the
+    other engines refuse a document holding one, on a guard, until step 5.
+  - **Guards (§9.5).** A sequence as subject, predicate or graph name; a sequence inside a triple
+    term; `undef` outside a sequence; nesting deeper than 1,000 levels.
+  - **Normalization at every depth.** Relative IRIs, numeric canonicalization (`( "042"^^xsd:int )`
+    is stored as `( 42 )`) and blank-node scoping recurse into sequences, through one compound-term
+    walker (`CompoundTerms`) shared with triple terms.
+  - **Tools.** `-verify -deep` checks the sequence stores, the slot count, the nesting bound, and
+    that each triple term and sequence row lies in its band. `-export` writes sequences in
+    N-Triples, N-Quads, Turtle and TriG, and refuses them in JSON-LD, as it refuses triple terms.
+  - **Stamped 7 by every engine.** A store without sequences is shape-identical to a v6 one: the
+    stress fixture's stores from `-method 0`, `1` and `3` differ from master's in the version
+    attribute and its object header's checksum alone (5 bytes). A v6 build refuses a v7 store by its
+    version.
+* **A relative IRI inside a triple term now stops an N-Triples export without `-base`**, as a
+  top-level one does; it used to be written relative (`relativeReference` did not look inside).
+* **Triple-term pattern scans clamp to the band's end too**, not only its start, so they no longer
+  read the sequence rows after it.
 * **Jena 6.3.0, through Jena's `rdf-array` branch** (`6.3.0-array-SNAPSHOT`,
   built locally; RDFARRY.md §3.1). The pins Jena 6.3.0 moved are re-synced
   (slf4j 2.0.20, caffeine 3.3.1, commons-lang3 3.22.0, commons-codec 1.23.0).

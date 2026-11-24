@@ -33,6 +33,15 @@ public final class WriterEngines {
             factory.create(src, dest).write();
         }
 
+        /**
+         * Whether this engine stores RDF-array sequences (format v7): method 0,
+         * and method 2, which shares its parse (RDFARRY.md step 3). The others
+         * refuse them until step 5.
+         */
+        public boolean storesSequences() {
+            return name.startsWith("method0") || name.startsWith("method2");
+        }
+
         @Override
         public String toString() {
             return name;

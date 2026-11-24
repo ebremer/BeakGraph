@@ -202,6 +202,31 @@ class ContainerParityTest {
     }
 
     @Test
+    void sequencesAreTheSameStoreInBothContainers() throws Exception {
+        // Format v7 (RDFARRY.md step 3): the sequence stores and their numSlots
+        // attribute, in both containers, from the engines that write them.
+        Path src = write("seq.trig", com.ebremer.beakgraph.RdfArraySequenceStorageTest.fixture());
+        SortedMap<String, String> first = null;
+        for (WriterEngines.Engine engine : WriterEngines.all()
+                .filter(e -> e.name().startsWith("method0") || e.name().startsWith("method2")).toList()) {
+            Path h5 = dir.resolve("seq-" + engine.name() + ".h5");
+            Path zarr = dir.resolve("seq-" + engine.name() + ".zarr");
+            engine.buildStore(src.toFile(), h5.toFile());
+            engine.buildStore(src.toFile(), zarr.toFile());
+            SortedMap<String, String> inHdf5 = describeHdf5(h5);
+            assertTrue(inHdf5.containsKey(".BG/dictionary/literals/sequenceStarts")
+                    && inHdf5.containsKey(".BG/dictionary/literals/sequenceElements_blocks"), inHdf5.keySet().toString());
+            assertTrue(inHdf5.get(".BG/dictionary/literals/sequenceElements").contains("numSlots=4"),
+                    inHdf5.get(".BG/dictionary/literals/sequenceElements"));
+            assertEquals(inHdf5, describeZarr(zarr), engine.name() + ": the same groups, arrays, bytes and attributes");
+            if (first == null) {
+                first = inHdf5;
+            }
+            assertEquals(first, inHdf5, engine.name() + " against method 0");
+        }
+    }
+
+    @Test
     void theReadersAnswerTheSameFromBothContainers() throws Exception {
         Path src = write("mixed.trig", StoreParity.mixedTrig());
         for (WriterEngines.Engine engine : WriterEngines.all().filter(e -> e.name().startsWith("method0") || e.name().startsWith("method4")).toList()) {

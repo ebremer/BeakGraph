@@ -6,6 +6,8 @@ import java.util.Collections;
 import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.fuseki.BGVoIDSD;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
+import com.ebremer.beakgraph.core.lib.CompoundTerms;
+import com.ebremer.beakgraph.core.lib.SeqTerms;
 import com.ebremer.beakgraph.core.lib.Stats;
 import com.ebremer.beakgraph.core.lib.TripleTerms;
 import com.ebremer.beakgraph.utils.RdfSources;
@@ -223,8 +225,8 @@ public class PositionalDictionaryWriterBuilder {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
         Node o = quad.getObject();
-        boolean oTT = o.isTripleTerm();
-        if (!(g.isBlank() || s.isBlank() || o.isBlank() || oTT)) {
+        boolean oCompound = CompoundTerms.isCompound(o);
+        if (!(g.isBlank() || s.isBlank() || o.isBlank() || oCompound)) {
             return quad;
         }
         java.util.function.UnaryOperator<Node> align = n -> n.isBlank()
@@ -232,7 +234,9 @@ public class PositionalDictionaryWriterBuilder {
                 : n;
         Node g2 = align.apply(g);
         Node s2 = align.apply(s);
-        Node o2 = oTT ? TripleTerms.map(o, align) : align.apply(o);
+        // A blank node inside a triple term or a sequence shares the quad's
+        // document scope, at any depth, in first-encounter order.
+        Node o2 = oCompound ? CompoundTerms.map(o, align) : align.apply(o);
         if (g2 == g && s2 == s && o2 == o) {
             return quad;
         }
@@ -282,9 +286,10 @@ public class PositionalDictionaryWriterBuilder {
         Node o = quad.getObject();
         // Inside a triple term the same duplicate-"equal"-entries hazard applies
         // to the term's OBJECT component (subjects/predicates cannot be
-        // literals), so the node-level rule recurses through map().
-        Node canon = o.isTripleTerm()
-                ? TripleTerms.map(o, PositionalDictionaryWriterBuilder::canonicalizeNumericNode)
+        // literals), and inside a sequence to every element, so the node-level
+        // rule recurses through map(): ( "042"^^xsd:int ) is stored as ( 42 ).
+        Node canon = CompoundTerms.isCompound(o)
+                ? CompoundTerms.map(o, PositionalDictionaryWriterBuilder::canonicalizeNumericNode)
                 : canonicalizeNumericNode(o);
         if (canon == o) return quad;
         return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canon);
@@ -408,6 +413,17 @@ public class PositionalDictionaryWriterBuilder {
         }
     }
 
+    /**
+     * One quad through the ingest guards and registration, as a parse feeds
+     * them. Package-private for the guard tests: the parsers refuse most of
+     * what the guards refuse (a sequence inside a triple term, undef outside a
+     * sequence, nesting past their own bound) before it reaches a build, so
+     * the guards are exercised directly, as {@link #requirePredicate} is.
+     */
+    void processQuadForTest(Quad quad) {
+        ProcessQuad(quad);
+    }
+
     private void ProcessQuad(Quad quad) {
         Node g = quad.getGraph();
         Node s = quad.getSubject();
@@ -422,7 +438,7 @@ public class PositionalDictionaryWriterBuilder {
             } else if (g.isURI()) {
                 stats.numIRI++;
             } else {
-                throw new IllegalStateException("Unexpected graph node type (not URI or blank): " + g);
+                throw new IllegalStateException("Unexpected graph node type (not URI or blank" + SeqTerms.positionNote(g) + "): " + g);
             }
             entities.add(g);
         }
@@ -435,7 +451,7 @@ public class PositionalDictionaryWriterBuilder {
                 // Same guard as the graph and object positions: any other node kind
                 // (e.g. a triple term) writes no dictionary entry and silently
                 // desynchronizes every id after it. Fail the build loudly instead.
-                throw new IllegalStateException("Unexpected subject node type (not URI or blank): " + s);
+                throw new IllegalStateException("Unexpected subject node type (not URI or blank" + SeqTerms.positionNote(s) + "): " + s);
             }
             entities.add(s);
         }
@@ -448,6 +464,8 @@ public class PositionalDictionaryWriterBuilder {
             registerLiteral(o);
         } else if (o.isTripleTerm()) {
             registerTripleTerm(o);
+        } else if (o.isNodeSeq()) {
+            registerSequence(o, 0);
         } else {
             if (!entities.contains(o)) {
                 if (o.isBlank()) {
@@ -455,7 +473,8 @@ public class PositionalDictionaryWriterBuilder {
                 } else if (o.isURI()) {
                     stats.numIRI++;
                 } else {
-                    throw new IllegalStateException("Unexpected object node type (not URI, blank, literal, or triple term): " + o);
+                    throw new IllegalStateException("Unexpected object node type (not URI, blank, literal, triple term "
+                            + "or sequence" + SeqTerms.positionNote(o) + "): " + o);
                 }
                 entities.add(o);
             }
@@ -474,7 +493,7 @@ public class PositionalDictionaryWriterBuilder {
      */
     public static void requirePredicate(Node p) {
         if (!p.isURI()) {
-            throw new IllegalStateException("Unexpected predicate node type (not URI): " + p);
+            throw new IllegalStateException("Unexpected predicate node type (not URI" + SeqTerms.positionNote(p) + "): " + p);
         }
     }
 
@@ -547,6 +566,12 @@ public class PositionalDictionaryWriterBuilder {
                             registerLiteral(n);
                         } else if (n.isBlank() || n.isURI()) {
                             registerEntity(n);
+                        } else if (n.isNodeSeq()) {
+                            // An open question of rdf-array's (#5), refused as
+                            // jena-array refuses it (SPECIFICATIONS.md §9.5).
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term object: a sequence inside a triple term is not stored: "
+                                    + n + " in " + tt);
                         } else {
                             throw new IllegalStateException(
                                     "Unexpected triple-term object node type: " + n + " in " + tt);
@@ -565,6 +590,39 @@ public class PositionalDictionaryWriterBuilder {
         });
         stats.numTripleTerms++;
         literals.add(tt);
+    }
+
+    /**
+     * Records a sequence and, recursively, every element into the dictionary
+     * sets (SPECIFICATIONS.md §7.6b), as {@link #registerTripleTerm} does for a
+     * triple term: elements get dictionary entries, not role-list membership,
+     * a nested sequence is a term of its own in the literals section (its
+     * suffix, macro rank 5), and a slot is nobody's entry. Element kinds are
+     * guarded loudly at every depth. {@code depth} is 0 for an object.
+     */
+    private void registerSequence(Node seq, int depth) {
+        CompoundTerms.requireDepth(seq, depth);
+        if (literals.contains(seq)) {
+            return; // elements were registered when the sequence first appeared
+        }
+        for (Node e : SeqTerms.elements(seq)) {
+            if (e.isNodeUndef()) {
+                continue;
+            }
+            if (e.isLiteral()) {
+                registerLiteral(e);
+            } else if (e.isBlank() || e.isURI()) {
+                registerEntity(e);
+            } else if (e.isTripleTerm()) {
+                registerTripleTerm(e);
+            } else if (e.isNodeSeq()) {
+                registerSequence(e, depth + 1);
+            } else {
+                throw new IllegalStateException("Unexpected sequence element node type: " + e + " in " + seq);
+            }
+        }
+        stats.numSequences++;
+        literals.add(seq);
     }
     
     private boolean parsed = false;

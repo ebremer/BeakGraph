@@ -38,6 +38,11 @@ public class PositionalDictionaryReader implements GSPODictionary {
     // is branch-free and always false.
     private final long firstTripleTermObjectId;
     private final long lastTripleTermObjectId;
+    // RDF-array sequences (format v7) occupy the object space's CONTIGUOUS
+    // SUFFIX, and the triple terms the band just before it. The same sentinels
+    // when the store holds none.
+    private final long firstSequenceObjectId;
+    private final long lastSequenceObjectId;
     private final BitPackedUnSignedLongBuffer graphs;
     private final BitPackedUnSignedLongBuffer subjects;
     private final BitPackedUnSignedLongBuffer objects;
@@ -65,31 +70,112 @@ public class PositionalDictionaryReader implements GSPODictionary {
         // id resolves through the object space - which recurses right back
         // through this resolver for nested triple terms.
         long ttRows = (literals != null) ? literals.tripleTermRowCount() : 0;
+        long seqRows = (literals != null) ? literals.sequenceRowCount() : 0;
+        long lastObjectId = maxEntityId + ((literals != null) ? literals.getNumberOfNodes() : 0);
         if (ttRows > 0) {
             literals.setTripleTermResolver((s, p, o) ->
                 org.apache.jena.graph.NodeFactory.createTripleTerm(
                     entities.extract(s), predicates.extract(p), objectsDict.extract(o)));
-            this.firstTripleTermObjectId = maxEntityId + literals.getNumberOfNodes() - ttRows + 1;
-            this.lastTripleTermObjectId = maxEntityId + literals.getNumberOfNodes();
+            this.firstTripleTermObjectId = lastObjectId - seqRows - ttRows + 1;
+            this.lastTripleTermObjectId = lastObjectId - seqRows;
         } else {
             this.firstTripleTermObjectId = Long.MAX_VALUE;
             this.lastTripleTermObjectId = Long.MIN_VALUE;
         }
+        // Sequence elements live anywhere in the object space, nested
+        // sequences included, so the literals section is handed the space.
+        if (seqRows > 0) {
+            literals.setSequenceSupport(new MultiTypeDictionaryReader.SequenceSupport() {
+                @Override
+                public Node extract(long objectId) {
+                    return objectsDict.extract(objectId);
+                }
+
+                @Override
+                public long locate(Node element) {
+                    return objectsDict.locate(element);
+                }
+            });
+            this.firstSequenceObjectId = lastObjectId - seqRows + 1;
+            this.lastSequenceObjectId = lastObjectId;
+        } else {
+            this.firstSequenceObjectId = Long.MAX_VALUE;
+            this.lastSequenceObjectId = Long.MIN_VALUE;
+        }
     }
 
-    /** True when {@code objectId} denotes a stored RDF 1.2 triple term (the contiguous suffix of the object space). */
+    /** True when {@code objectId} denotes a stored RDF-array sequence (the contiguous suffix of the object space). */
+    public boolean isSequenceObjectId(long objectId) {
+        return objectId >= firstSequenceObjectId && objectId <= lastSequenceObjectId;
+    }
+
+    /** First object-space id of the sequence suffix; {@code Long.MAX_VALUE} when the store holds none. */
+    public long firstSequenceObjectId() {
+        return firstSequenceObjectId;
+    }
+
+    /** Last object-space id of the sequence suffix; {@code Long.MIN_VALUE} when the store holds none. */
+    public long lastSequenceObjectId() {
+        return lastSequenceObjectId;
+    }
+
+    /** How many sequence elements of the store are empty slots: 0 keeps every slot-free fast path (RDFARRY.md §3.7). */
+    public long numSlots() {
+        return (literals == null) ? 0 : literals.numSlots();
+    }
+
+    /**
+     * Where the elements of the stored sequence with object id
+     * {@code objectId} begin and end (exclusive) in the element store; the
+     * caller guarantees {@link #isSequenceObjectId}.
+     */
+    public long[] sequenceBounds(long objectId) {
+        return literals.sequenceBounds(objectId - maxEntityId);
+    }
+
+    /** Number of sequence elements of the store, slots included. */
+    public long sequenceElementCount() {
+        return (literals == null) ? 0 : literals.sequenceElementCount();
+    }
+
+    /** The length of the stored sequence with object id {@code objectId}; the caller guarantees {@link #isSequenceObjectId}. */
+    public long sequenceLength(long objectId) {
+        long[] bounds = literals.sequenceBounds(objectId - maxEntityId);
+        return bounds[1] - bounds[0];
+    }
+
+    /**
+     * The element ids of the stored sequence with object id {@code objectId}:
+     * object-space ids, 0 for an empty slot. The caller guarantees
+     * {@link #isSequenceObjectId}.
+     */
+    public long[] sequenceElementIds(long objectId) {
+        long[] bounds = literals.sequenceBounds(objectId - maxEntityId);
+        long[] ids = new long[Math.toIntExact(bounds[1] - bounds[0])];
+        for (int i = 0; i < ids.length; i++) {
+            ids[i] = literals.sequenceElementId(bounds[0] + i);
+        }
+        return ids;
+    }
+
     /** Whether the literals section holds any cdt:List / cdt:Map literal (see {@code Params.CDT_LEXICAL_ORDER_MIN_VERSION}). */
     public boolean literalsContainCompositeDatatype() {
         return literals != null && literals.hasCompositeDatatype();
     }
 
+    /** True when {@code objectId} denotes a stored RDF 1.2 triple term (a contiguous band of the object space). */
     public boolean isTripleTermObjectId(long objectId) {
         return objectId >= firstTripleTermObjectId && objectId <= lastTripleTermObjectId;
     }
 
-    /** First object-space id of the triple-term suffix; {@code Long.MAX_VALUE} when the store holds none. */
+    /** First object-space id of the triple-term band; {@code Long.MAX_VALUE} when the store holds none. */
     public long firstTripleTermObjectId() {
         return firstTripleTermObjectId;
+    }
+
+    /** Last object-space id of the triple-term band; {@code Long.MIN_VALUE} when the store holds none. */
+    public long lastTripleTermObjectId() {
+        return lastTripleTermObjectId;
     }
 
     /**
@@ -162,9 +248,9 @@ public class PositionalDictionaryReader implements GSPODictionary {
 
             @Override
             public long search(Node element) {
-                // Triple terms live in the literals section too (its contiguous
-                // suffix), so they share the literal routing here.
-                if (element.isLiteral() || element.isTripleTerm()) {
+                // Triple terms and sequences live in the literals section too
+                // (a band and its suffix), so they share the literal routing here.
+                if (element.isLiteral() || element.isTripleTerm() || element.isNodeSeq()) {
                     // No literals section: every literal ranks after the whole
                     // entity block, so the insertion point is maxEntityId + 1 -
                     // exactly what a present-but-smaller section would answer.

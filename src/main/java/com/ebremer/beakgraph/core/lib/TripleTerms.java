@@ -3,7 +3,6 @@ package com.ebremer.beakgraph.core.lib;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 import org.apache.jena.graph.Node;
-import org.apache.jena.graph.NodeFactory;
 import org.apache.jena.graph.Triple;
 
 /**
@@ -72,16 +71,10 @@ public final class TripleTerms {
      * numeric canonicalization) plug in unchanged.
      */
     public static Node map(Node tripleTerm, UnaryOperator<Node> f) {
-        Triple t = tripleTerm.getTriple();
-        Node s = t.getSubject();
-        Node p = t.getPredicate();
-        Node o = t.getObject();
-        Node s2 = f.apply(s);
-        Node p2 = f.apply(p);
-        Node o2 = o.isTripleTerm() ? map(o, f) : f.apply(o);
-        if (s2 == s && p2 == p && o2 == o) {
-            return tripleTerm;
-        }
-        return NodeFactory.createTripleTerm(s2, p2, o2);
+        // One recursion for both compound kinds (CompoundTerms): an object that
+        // is a sequence is rebuilt element by element too, so a normalization
+        // reaches a leaf inside a sequence inside a triple term before the
+        // ingest guard refuses that nesting with its own message.
+        return CompoundTerms.map(tripleTerm, f);
     }
 }

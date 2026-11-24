@@ -26,7 +26,12 @@ public enum DataType {
     // resolve recursively). Ordinals are the on-disk encoding: append only,
     // never reorder. This is value 14 of 15 before the datatypes column widens
     // from 5 to 6 bits.
-    TRIPLE_TERM(org.apache.jena.graph.Triple.class, -1);
+    TRIPLE_TERM(org.apache.jena.graph.Triple.class, -1),
+    // RDF-array sequence ( e1 e2 ... ) (format v7). The row's offsets entry is
+    // the sequence's ordinal k: its elements are sequenceElements[starts[k],
+    // starts[k+1]), object-space ids with 0 for an empty slot (undef). The last
+    // value the 5-bit datatypes column holds.
+    SEQUENCE(java.util.List.class, -1);
 
     private final Class<?> clazz;
     private final int sizeInBytes;

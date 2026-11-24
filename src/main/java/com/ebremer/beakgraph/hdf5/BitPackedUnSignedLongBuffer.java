@@ -671,13 +671,15 @@ public class BitPackedUnSignedLongBuffer implements DictionarySinks.LongSink {
      * As {@link #add}, in the block-structured form (SPECIFICATIONS.md §5.1a): how
      * the index id sequences are stored. The dataset is {@code name}, its directory
      * {@code name + "_blocks"}.
+     *
+     * @return the dataset, for further attributes; null when the buffer is empty and nothing was added
      */
-    public void addBlocked(WritableGroup group) {
+    public WritableDataset addBlocked(WritableGroup group) {
         if (buffer == null) {
             throw new IllegalStateException("This buffer is a read view; the write API is unavailable");
         }
         prepareForReading();
-        BlockedEncoder.add(group, path.toString(), numEntries, this::get);
+        return BlockedEncoder.add(group, path.toString(), numEntries, this::get);
     }
 
     private static final int WHOLE_RANGE = Integer.MIN_VALUE;

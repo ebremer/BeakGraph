@@ -32,7 +32,9 @@ import org.slf4j.LoggerFactory;
  *   <li>literals (3), by value - numerically, temporally, lexicographically -
  *       with an exact-term tie-break so value-equal distinct terms stay distinct;</li>
  *   <li>RDF 1.2 triple terms (4), structurally: subject, then predicate, then
- *       object, each through this comparator.</li>
+ *       object, each through this comparator;</li>
+ *   <li>RDF-array sequences (5, format v7), element by element through this
+ *       comparator, an empty slot below every term and a proper prefix first.</li>
  * </ol>
  * Language-tagged literals are compared on the tag as stored; see the note at
  * {@link #compareExactLiteralTerms} for the tag-formatting precondition.
@@ -127,7 +129,7 @@ public class NodeComparator implements Comparator<Node> {
         if (n1isDefault) return -1;
         if (n2isDefault) return 1;
 
-        // 2. Enforce RDF Term Macro-Ordering (BNode < URI < Literal < TripleTerm)
+        // 2. Enforce RDF Term Macro-Ordering (BNode < URI < Literal < TripleTerm < Sequence)
         // This ensures the sorted array perfectly aligns with how IDs are chunked
         int type1 = getMacroType(n1);
         int type2 = getMacroType(n2);
@@ -158,6 +160,16 @@ public class NodeComparator implements Comparator<Node> {
                 return c;
             }
             return compare(t1.getObject(), t2.getObject());
+        }
+
+        // 3b. Both are sequences (macro type 5, SPECIFICATIONS.md §6.1 rule 7):
+        // element by element through this comparator, recursing as triple
+        // terms do and for the same reason; a slot below every term; a proper
+        // prefix first. Since the object space is sorted by this order and a
+        // stored slot is 0, two stored sequences compare as their element-id
+        // arrays do, which is what lets a reader locate one on ids.
+        if (n1.isNodeSeq() && n2.isNodeSeq()) {
+            return compareSequences(n1, n2);
         }
 
         // 3. Both nodes are the SAME RDF Term Type.
@@ -217,6 +229,31 @@ public class NodeComparator implements Comparator<Node> {
         // 4. Both IRIs or both blank nodes: by string, in UTF-16 code-unit order
         // (FrozenNodeCmp: Jena 6.2.0's order, kept here so a Jena upgrade cannot move it).
         return FrozenNodeCmp.compareRDFTerms(n1, n2);
+    }
+
+    /** Two sequences, element by element (see {@link #compare}). */
+    private int compareSequences(Node n1, Node n2) {
+        java.util.List<Node> a = n1.getSeq();
+        java.util.List<Node> b = n2.getSeq();
+        int size1 = a.size();
+        int size2 = b.size();
+        for (int i = 0, n = Math.min(size1, size2); i < n; i++) {
+            Node e1 = a.get(i);
+            Node e2 = b.get(i);
+            boolean slot1 = e1.isNodeUndef();
+            boolean slot2 = e2.isNodeUndef();
+            if (slot1 || slot2) {
+                if (slot1 && slot2) {
+                    continue;
+                }
+                return slot1 ? -1 : 1;
+            }
+            int c = compare(e1, e2);
+            if (c != 0) {
+                return c;
+            }
+        }
+        return Integer.compare(size1, size2);
     }
 
     /** Two composite (cdt:List / cdt:Map) literals: by datatype IRI, then by lexical form (see {@link #compare}). */
@@ -530,17 +567,20 @@ public class NodeComparator implements Comparator<Node> {
 
     /**
      * Maps a Node to its macro kind: BNode (1) < URI (2) < Literal (3) <
-     * TripleTerm (4) - the order SPECIFICATIONS.md §6 fixes for the dictionary.
-     * An RDF 1.2 triple term ({@code Node_Triple}) ranks after every literal
-     * and is compared structurally in {@link #compare}. Anything else
-     * (a variable, {@code Node.ANY}) is not an RDF term and cannot be ranked.
+     * TripleTerm (4) < Sequence (5) - the order SPECIFICATIONS.md §6 fixes for
+     * the dictionary. An RDF 1.2 triple term ({@code Node_Triple}) ranks after
+     * every literal, an RDF-array sequence after every triple term, and both
+     * are compared structurally in {@link #compare}. Anything else (a
+     * variable, {@code Node.ANY}, a slot outside a sequence) is not an RDF
+     * term and cannot be ranked.
      */
     private int getMacroType(Node n) {
         if (n.isBlank()) return 1;
         if (n.isURI()) return 2;
         if (n.isLiteral()) return 3;
         if (n.isTripleTerm()) return 4;
-        throw new IllegalArgumentException("Not an RDF term (blank node, IRI, literal or triple term): " + n);
+        if (n.isNodeSeq()) return 5;
+        throw new IllegalArgumentException("Not an RDF term (blank node, IRI, literal, triple term or sequence): " + n);
     }
 
     static boolean isDefaultGraph(Node n) {

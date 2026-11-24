@@ -83,13 +83,15 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
                 .setStats(stats)
                 .section(DictionarySection.LITERALS);
 
-        if (stats.numTripleTerms > 0) {
-            // Triple-term component ids resolve against COMPLETED entities and
-            // predicates dictionaries (CHANGELOG.md "Format v5 design notes"'s parallel-writer
+        if (stats.numTripleTerms > 0 || stats.numSequences > 0) {
+            // Triple-term component ids and sequence element ids resolve
+            // against COMPLETED entities and predicates dictionaries
+            // (CHANGELOG.md "Format v5 design notes"'s parallel-writer
             // sequencing constraint): join those two first, then build the
-            // literals section. Triple-term-free datasets - the case that
-            // matters for throughput - keep the historical full concurrency in
-            // the else branch.
+            // literals section. Datasets with neither - the case that matters
+            // for throughput - keep the historical full concurrency in the
+            // else branch. This engine shares method 0's parse, so it takes
+            // sequences (format v7) as method 0 does.
             entitiesdict = joinDictionary(entitiesTask, "entities");
             predicatesdict = joinDictionary(predicatesTask, "predicates");
             final DictionaryWriter ents = entitiesdict;
@@ -97,6 +99,7 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
             final long maxEnt = entitiesdict.getNumberOfNodes();
             literalsBuilder
                     .setTripleTermEncoder((tt, own) -> encodeTripleTerm(tt, ents, preds, own, maxEnt))
+                    .setSequenceEncoder((seq, own) -> DictionaryIds.encodeSequence(seq, ents::locate, own::locate, maxEnt))
                     .setTripleTermComponentIdBound(maxEnt + builder.getLiterals().size());
             literalsdict = joinDictionary(pool.submit(literalsBuilder::build), "literals");
         } else {

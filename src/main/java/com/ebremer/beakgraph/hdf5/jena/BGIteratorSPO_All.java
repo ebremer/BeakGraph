@@ -171,6 +171,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 return; // pattern cannot match anything in this store
             }
             minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
+            maxObjId = Math.min(maxObjId, dict.lastTripleTermObjectId());   // the sequences follow the band
         }
 
         // -----------------------------------------------------------------

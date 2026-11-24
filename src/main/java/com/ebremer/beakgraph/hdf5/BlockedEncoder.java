@@ -203,10 +203,11 @@ public final class BlockedEncoder {
      * as an empty bit-packed buffer adds none.
      *
      * @param at the value at an index, asked for every index in order, twice
+     * @return the dataset {@code name}, for further attributes; null when nothing was added
      */
-    public static void add(WritableGroup group, String name, long numEntries, LongUnaryOperator at) {
+    public static WritableDataset add(WritableGroup group, String name, long numEntries, LongUnaryOperator at) {
         if (numEntries == 0) {
-            return;
+            return null;
         }
         try {
             Layout layout = layout(numEntries, counting(at));
@@ -222,6 +223,7 @@ public final class BlockedEncoder {
             ds.putAttribute(Params.NUM_ENTRIES, numEntries);
             ds.putAttribute(Params.BLOCK_ENTRIES, layout.blockEntries);
             group.putDataset(name + Params.BLOCKS_SUFFIX, layout.directory);
+            return ds;
         } catch (IOException e) {
             throw new UncheckedIOException(e);      // nothing here does I/O: the values and the sink are in memory
         }

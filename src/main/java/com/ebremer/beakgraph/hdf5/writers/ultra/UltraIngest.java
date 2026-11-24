@@ -475,6 +475,7 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
         into.minDouble = Math.min(into.minDouble, part.minDouble);
         into.numDouble += part.numDouble;
         into.numTripleTerms += part.numTripleTerms;
+        into.numSequences += part.numSequences;
         into.numStrings += part.numStrings;
         into.longestStringLength = Math.max(into.longestStringLength, part.longestStringLength);
         into.shortestStringLength = Math.min(into.shortestStringLength, part.shortestStringLength);
