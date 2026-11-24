@@ -167,6 +167,85 @@ public final class Hdf5Store implements OpenStore {
         public long attribute(String name) {
             return integer(group, name);
         }
+
+        @Override
+        public String stringAttribute(String name) {
+            return string(group, name);
+        }
+
+        @Override
+        public java.util.List<String> groupNames() {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            for (Hdf5Object child : group.children()) {
+                if (child instanceof Group) {
+                    names.add(child.name());
+                }
+            }
+            java.util.Collections.sort(names);
+            return names;
+        }
+
+        @Override
+        public TypedArray typedArray(String name) {
+            Hdf5Object n = group.child(name).orElse(null);
+            if (n == null) {
+                return null;
+            }
+            if (!(n instanceof Dataset ds)) {
+                throw new IllegalStateException("'" + n.path() + "' must be a typed array; found " + kind(n));
+            }
+            com.ebremer.falcon.hdf5.datatype.Datatype t = ds.datatype();
+            long[] shape = ds.dataspace().dimensions();
+            TypedArray.Type type;
+            Object values;
+            if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FloatingPoint fp && fp.size() == 8) {
+                type = TypedArray.Type.F64;
+                values = ds.readDoubles();
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FloatingPoint fp && fp.size() == 4) {
+                type = TypedArray.Type.F32;
+                values = ds.readFloats();
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FixedPoint fx && fx.size() == 8) {
+                type = TypedArray.Type.I64;
+                values = ds.readLongs();
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FixedPoint fx && fx.size() == 4) {
+                type = TypedArray.Type.I32;
+                values = ds.readInts();
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.Enumeration) {
+                type = TypedArray.Type.BOOL;
+                int[] codes = ds.readInts();
+                boolean[] b = new boolean[codes.length];
+                for (int i = 0; i < codes.length; i++) {
+                    b[i] = codes[i] != 0;
+                }
+                values = b;
+            } else {
+                throw new IllegalStateException("'" + ds.path() + "' has element type " + t
+                        + ", which no typed array of /.BG/arrays holds");
+            }
+            java.util.Map<String, Object> attributes = new java.util.TreeMap<>();
+            for (Attribute a : ds.attributes()) {
+                Object v = isString(a) ? a.readStrings()[0] : (Object) a.readLong();
+                attributes.put(a.name(), v);
+            }
+            return new TypedArray(type, shape, values, null, attributes);
+        }
+    }
+
+    private static boolean isString(Attribute a) {
+        com.ebremer.falcon.hdf5.datatype.Datatype t = a.datatype();
+        return t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.StringType
+                || t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.VariableLength;
+    }
+
+    private static String string(Hdf5Object on, String name) {
+        Attribute a = on.attribute(name).orElse(null);
+        if (a == null) {
+            return null;
+        }
+        if (!isString(a)) {
+            throw new IllegalStateException("Attribute '" + name + "' on '" + on.path() + "' must be a string");
+        }
+        return a.readStrings()[0];
     }
 
     private record Hdf5Array(Dataset dataset, RangeReader reader) implements StoreArray {

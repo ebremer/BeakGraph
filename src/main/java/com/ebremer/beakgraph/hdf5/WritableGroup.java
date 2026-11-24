@@ -43,4 +43,18 @@ public interface WritableGroup {
 
     /** Writes a scalar integer attribute (64-bit in HDF5). */
     void putAttribute(String name, long value);
+
+    /** Writes a string attribute (a UTF-8 string in HDF5, a JSON string in Zarr): for {@code /.BG/arrays} only. */
+    void putAttribute(String name, String value);
+
+    /**
+     * Creates a typed N-D array of {@code /.BG/arrays} (format v7, RDFARRY.md
+     * §3.5), little-endian, with its attributes. Raw by default: contiguous and
+     * unfiltered in HDF5, chunked by whole rows with the bytes codec alone in
+     * Zarr. {@code compress} chunks it by rows and compresses it the way each
+     * container's stock readers read: shuffle + deflate in HDF5, sharding with
+     * zstd inside in Zarr. Zarr records the dimension names; HDF5 has no
+     * place for them without dimension scales.
+     */
+    void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress);
 }

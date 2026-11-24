@@ -64,6 +64,10 @@ class SpillFCDWriterBatchTest {
         @Override public WritableDataset createDataset(String name, long length) { throw new UnsupportedOperationException(); }
         @Override public void putAttribute(String name, int value) { attributes.put(name, (long) value); }
         @Override public void putAttribute(String name, long value) { attributes.put(name, value); }
+        @Override public void putAttribute(String name, String value) { throw new UnsupportedOperationException(); }
+        @Override public void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress) {
+            throw new UnsupportedOperationException();
+        }
     }
 
     private static List<String> strings() {

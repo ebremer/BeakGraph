@@ -45,4 +45,19 @@ public interface StoreGroup {
 
     /** Integer attribute {@code name}, whatever width the container stores it in. */
     long attribute(String name);
+
+    /** A string attribute of this group, or null when it has none of that name (format v7, {@code /.BG/arrays}). */
+    String stringAttribute(String name);
+
+    /** The names of this group's child groups, in name order. */
+    java.util.List<String> groupNames();
+
+    /**
+     * The typed array {@code name} of {@code /.BG/arrays} (format v7, RDFARRY.md
+     * §3.5), read whole - its type, shape, values, dimension names where the
+     * container keeps them, and attributes - or null when absent. Unlike
+     * {@link #array}, any layout and codec the container's library reads is
+     * accepted.
+     */
+    TypedArray typedArray(String name);
 }

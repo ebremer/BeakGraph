@@ -342,6 +342,84 @@ public final class ZarrStore implements OpenStore {
         public long attribute(String name) {
             return integer(group, name);
         }
+
+        @Override
+        public String stringAttribute(String name) {
+            JsonValue v = group.attributes().find(name).orElse(null);
+            if (v == null) {
+                return null;
+            }
+            try {
+                return v.asString();
+            } catch (RuntimeException e) {
+                throw new IllegalStateException("Attribute '" + name + "' on '" + slashed(group) + "' must be a string", e);
+            }
+        }
+
+        @Override
+        public java.util.List<String> groupNames() {
+            java.util.List<String> names = new java.util.ArrayList<>();
+            try {
+                for (ZarrNode child : group.children()) {
+                    if (child instanceof ZarrGroup) {
+                        names.add(child.name());
+                    }
+                }
+            } catch (ZarrException e) {
+                throw new IllegalStateException("'" + slashed(group) + "' in " + source + " cannot be listed: " + e.getMessage(), e);
+            }
+            java.util.Collections.sort(names);
+            return names;
+        }
+
+        @Override
+        public TypedArray typedArray(String name) {
+            ZarrNode n = child(name);
+            if (n == null) {
+                return null;
+            }
+            if (!(n instanceof ZarrArray a)) {
+                throw new IllegalStateException("'" + slashed(n) + "' must be a typed array; found a group");
+            }
+            DataType t = a.dataType();
+            TypedArray.Type type;
+            Object values;
+            try {
+                if (t.equals(DataType.FLOAT64)) {
+                    type = TypedArray.Type.F64;
+                    values = a.readDoubles();
+                } else if (t.equals(DataType.FLOAT32)) {
+                    type = TypedArray.Type.F32;
+                    values = a.readFloats();
+                } else if (t.equals(DataType.INT64)) {
+                    type = TypedArray.Type.I64;
+                    values = a.readLongs();
+                } else if (t.equals(DataType.INT32)) {
+                    type = TypedArray.Type.I32;
+                    values = a.readInts();
+                } else if (t.equals(DataType.BOOL)) {
+                    type = TypedArray.Type.BOOL;
+                    byte[] raw = a.readRawBytes();
+                    boolean[] b = new boolean[raw.length];
+                    for (int i = 0; i < raw.length; i++) {
+                        b[i] = raw[i] != 0;
+                    }
+                    values = b;
+                } else {
+                    throw new IllegalStateException("'" + slashed(a) + "' has data type " + t.name()
+                            + ", which no typed array of /.BG/arrays holds");
+                }
+            } catch (ZarrException e) {
+                throw new IllegalStateException("Array '" + slashed(a) + "' is unreadable: " + e.getMessage(), e);
+            }
+            java.util.Map<String, Object> attributes = new java.util.TreeMap<>();
+            for (java.util.Map.Entry<String, JsonValue> e : a.attributes().members().entrySet()) {
+                JsonValue v = e.getValue();
+                attributes.put(e.getKey(), (v instanceof com.ebremer.falcon.zarr.json.JsonString) ? v.asString() : (Object) v.asNumber().longValue());
+            }
+            java.util.List<String> dims = a.dimensionNames().orElse(null);
+            return new TypedArray(type, a.shape(), values, dims, attributes);
+        }
     }
 
     /** Whether {@code a} is an array of the profile: 1-D bytes in a regular grid, stored with the bytes codec alone. */

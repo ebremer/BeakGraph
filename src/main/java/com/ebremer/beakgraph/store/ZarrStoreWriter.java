@@ -342,8 +342,8 @@ public final class ZarrStoreWriter implements WritableStore {
     /** A node whose attributes are written once, when the store is committed. */
     private abstract class Node {
 
-        /** Sorted by name: the same store whatever order a writer sets them in. */
-        private final Map<String, Long> attributes = new TreeMap<>();
+        /** Sorted by name: the same store whatever order a writer sets them in. Integers or strings. */
+        private final Map<String, Object> attributes = new TreeMap<>();
 
         Node() {
             nodes.add(this);
@@ -351,7 +351,7 @@ public final class ZarrStoreWriter implements WritableStore {
 
         abstract ZarrNode node();
 
-        final void attribute(String name, long value) {
+        final void attribute(String name, Object value) {
             Objects.requireNonNull(name, "name");
             if (finished) {
                 throw new IllegalStateException("Zarr store " + path + " is already finished");
@@ -363,9 +363,7 @@ public final class ZarrStoreWriter implements WritableStore {
             if (attributes.isEmpty()) {
                 return;
             }
-            JsonObject.Builder json = JsonObject.builder();
-            attributes.forEach(json::put);
-            node().setAttributes(json.build());
+            node().setAttributes(json(attributes));
         }
     }
 
@@ -412,13 +410,88 @@ public final class ZarrStoreWriter implements WritableStore {
 
         @Override
         public void putAttribute(String name, int value) {
-            attribute(name, value);
+            attribute(name, (long) value);
         }
 
         @Override
         public void putAttribute(String name, long value) {
             attribute(name, value);
         }
+
+        @Override
+        public void putAttribute(String name, String value) {
+            attribute(name, Objects.requireNonNull(value, "value"));
+        }
+
+        /**
+         * Through Falcon's own array writer, typed and little-endian, the
+         * attributes and dimension names in its metadata. Raw: chunks of whole
+         * rows of at most {@code chunkMax} bytes, the bytes codec alone.
+         * Compressed: shards of whole rows holding sub-chunks of rows, zstd
+         * inside them.
+         */
+        @Override
+        public void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress) {
+            long[] shape = array.shape();
+            DataType type = switch (array.type()) {
+                case F64 -> DataType.FLOAT64;
+                case F32 -> DataType.FLOAT32;
+                case I64 -> DataType.INT64;
+                case I32 -> DataType.INT32;
+                case BOOL -> DataType.BOOL;
+            };
+            long rows = Math.max(1, (shape.length == 0) ? 1 : shape[0]);
+            long[] chunk = new long[Math.max(1, shape.length)];
+            for (int i = 1; i < shape.length; i++) {
+                chunk[i] = Math.max(1, shape[i]);
+            }
+            ArraySpec.Builder spec = ArraySpec.builder(shape, type).endian(java.nio.ByteOrder.LITTLE_ENDIAN);
+            if (compress) {
+                long sub = Math.max(1, Math.min(rows, (1L << 20) / Math.max(1, array.rowBytes())));
+                long shard = sub * Math.max(1, Math.min(rows, Math.max(1, (1L << 26) / Math.max(1, array.rowBytes()))) / sub);
+                chunk[0] = Math.max(sub, shard);
+                long[] inner = chunk.clone();
+                inner[0] = sub;
+                spec.chunkShape(chunk).sharding(inner).zstd();
+            } else {
+                chunk[0] = Math.max(1, Math.min(rows, chunkMax / Math.max(1, array.rowBytes())));
+                spec.chunkShape(chunk);
+            }
+            if (array.dimensionNames() != null) {
+                spec.dimensionNames(array.dimensionNames().toArray(String[]::new));
+            }
+            if (!array.attributes().isEmpty()) {
+                spec.attributes(json(array.attributes()));
+            }
+            ZarrArray a = group.createArray(name, spec.build());
+            switch (array.type()) {
+                case F64 -> a.writeDoubles((double[]) array.values());
+                case F32 -> a.writeFloats((float[]) array.values());
+                case I64 -> a.writeLongs((long[]) array.values());
+                case I32 -> a.writeInts((int[]) array.values());
+                case BOOL -> {
+                    boolean[] b = (boolean[]) array.values();
+                    byte[] raw = new byte[b.length];
+                    for (int i = 0; i < b.length; i++) {
+                        raw[i] = b[i] ? (byte) 1 : 0;
+                    }
+                    a.writeRawBytes(raw);
+                }
+            }
+        }
+    }
+
+    /** Attributes as JSON: strings as strings, integers as numbers, in name order. */
+    private static JsonObject json(Map<String, Object> attributes) {
+        JsonObject.Builder json = JsonObject.builder();
+        for (Map.Entry<String, Object> e : new TreeMap<>(attributes).entrySet()) {
+            if (e.getValue() instanceof String s) {
+                json.put(e.getKey(), s);
+            } else {
+                json.put(e.getKey(), ((Number) e.getValue()).longValue());
+            }
+        }
+        return json.build();
     }
 
     private final class Dataset extends Node implements WritableDataset {

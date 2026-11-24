@@ -129,6 +129,45 @@ public final class WritableHdfFile implements WritableStore {
         public void putAttribute(String name, long value) {
             group.attribute(name, Datatype.int64(), SCALAR, new long[]{value});
         }
+
+        @Override
+        public void putAttribute(String name, String value) {
+            group.stringAttribute(name, value);
+        }
+
+        @Override
+        public void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress) {
+            long[] shape = array.shape();
+            Datatype type = switch (array.type()) {
+                case F64 -> Datatype.float64();
+                case F32 -> Datatype.float32();
+                case I64 -> Datatype.int64();
+                case I32 -> Datatype.int32();
+                case BOOL -> Datatype.bool();   // the enum {FALSE, TRUE} over int8, which h5py reads as bool
+            };
+            Hdf5Writer.DatasetWriter ds = group.createDataset(name, type, shape);
+            if (compress && array.elementCount() > 0) {
+                ds.chunked(rowChunk(shape, array.rowBytes())).shuffle().deflate(6);
+            }
+            ds.write(array.values());
+            for (java.util.Map.Entry<String, Object> a : array.attributes().entrySet()) {
+                if (a.getValue() instanceof String s) {
+                    ds.stringAttribute(a.getKey(), s);
+                } else {
+                    ds.attribute(a.getKey(), Datatype.int64(), SCALAR, new long[]{(Long) a.getValue()});
+                }
+            }
+        }
+    }
+
+    /** Whole rows, at most about 1 MiB a chunk (HDF5 chunks are 4 GiB at most, and a reader decodes one at a time). */
+    static long[] rowChunk(long[] shape, long rowBytes) {
+        long[] chunk = new long[shape.length];
+        for (int i = 1; i < shape.length; i++) {
+            chunk[i] = Math.max(1, shape[i]);
+        }
+        chunk[0] = Math.max(1, Math.min(Math.max(1, shape[0]), (1L << 20) / Math.max(1, rowBytes)));
+        return chunk;
     }
 
     private static final class Hdf5Dataset implements WritableDataset {
