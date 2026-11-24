@@ -769,27 +769,47 @@ which is the rule triple terms set in v5.
 
 **Work:**
 
-- **Done 2026-11-24:**
-  - the `rdf-array` branch at `jena-6.3.0`, with its own version;
-  - the reactor built and installed;
-  - the `rdfarray` branch pointed at it, with the pins re-synced;
-  - the trial merge of §3.1, which sized the work below.
-- Merge jena-array's core and ARQ changes onto the branch (§3.1): resolve the hand-written conflicts,
-  re-apply the moved files' changes, and rename to 6.x names.
-- Fetch JavaCC 7.0.13 from Maven Central and regenerate the grammar, merging rdf-array's productions with
-  6.x's `<<(`, reifiers and annotations.
-- Port the solver changes over 6.x's RDF 1.2 solver.
-- Add the lazy `Node_Seq` constructor and, optionally, the CSV spelling.
-- Commit layer by layer: core, RIOT, grammar, algebra and solver, results, tests.
-- Check that the GraalVM native build and the shade plugin see one Jena.
+- **Done, 2026-11-24.** The port is on Jena's `rdf-array` branch, `7ee350db0b..335ff4d986`. Its notes are
+  in that branch's `doc/rdf-array.md`.
+  - **The merge** (§3.1): every conflict resolved, the moved files' changes re-applied, and 6.x names
+    used throughout.
+  - **The grammar**: `main.jj` merged with 6.x's `<<(`, reifiers and `LANG_DIR`; the parsers regenerated
+    with JavaCC 7.0.13 (SHA-1 checked), with no choice conflicts.
+  - **The solver**: jena-array's `SolverRX3`/`SolverRX4`, with 6.x's `makeAbortable`. TDB1 and TDB2 take
+    the matcher's several results.
+  - **6.x adaptations**: `CONSTRUCT` through 6.x's `TemplateLib` (blank nodes renewed, unbound
+    variables written as slots); `NodeUtils.isValidAsRDF` and the Model API (`StatementImpl.createObject`)
+    accept sequences; `G` and `GraphList` read a sequence as a list; the results comparison goes through
+    6.x's `BNodeIso`.
+  - **`NodeFactory.createSeqNodeView`**, the lazy constructor of §3.1.
+  - **The commits**: layer by layer, as Erich Bremer, no co-author line.
+- **Done: BeakGraph on the fork.**
+  - BeakGraph compiles against the fork unchanged.
+  - Its W3C and SPARQL-CDT runners read a manifest's `mf:entries ( … )` as a sequence term, through
+    `ManifestLists`.
+  - Two W3C RDF 1.2 documents with a collection as subject now check that BeakGraph refuses the sequence
+    subject (`src/test/resources/w3c/rdf12/README.md`).
+- **Left:**
+  - the CSV spelling (optional);
+  - the GraalVM native build against the fork;
+  - jena-arq's ladder-dependent tests (`TestGList`, `TestList`), to flag with a sequence counterpart each;
+  - writers with no sequence spelling (JSON-LD, RDF/XML, Thrift, Protobuf). BeakGraph refuses those
+    outputs for sequences anyway (§3.6).
 
 **Done when:**
 
 - the fork's own suites pass on 6.3.0: `TestUndefSlots` (43), `TestSequenceQueries`,
   `TestArraySyntaxExamples`, `TestLangSequences`, `Scripts_RdfArrayContrib` (58) and
   `Scripts_RdfArrayContribSPARQL` (207);
+  - **Met, 2026-11-24:** 43, 39, 14 and 14. The contrib suites ran 54 and 204, which are all the entries
+    of the copied manifests.
+  - jena-core: all 10,181 tests pass. jena-arq: 89 of 12,322 fail, and only in the two known kinds
+    (ladder-dependent tests, writers without a sequence spelling); the fork's `doc/rdf-array.md` lists
+    them.
 - BeakGraph's whole existing test suite and the W3C RDF 1.2 / SPARQL 1.2 suites pass unchanged on the
   forked Jena. Nothing in a sequence-free store may change.
+  - **Met, except two RDF 1.2 documents that put a collection in the subject position.** They are now
+    sequence subjects, which BeakGraph refuses, and the runner checks that it does.
 
 ### Step 3: v7 storage on `-method 0` (P1, M)
 

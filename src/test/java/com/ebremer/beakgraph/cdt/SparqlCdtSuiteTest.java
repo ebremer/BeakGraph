@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import com.ebremer.beakgraph.w3c.ManifestLists;
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.lib.CdtTerms;
@@ -70,8 +71,8 @@ class SparqlCdtSuiteTest {
         Resource manifest = top.listResourcesWithProperty(
                 top.createProperty(MF, "include")).nextResource();
         List<DynamicNode> containers = new ArrayList<>();
-        Iterator<RDFNode> includes = manifest.getProperty(top.createProperty(MF, "include"))
-                .getObject().as(org.apache.jena.rdf.model.RDFList.class).iterator();
+        Iterator<RDFNode> includes = ManifestLists.members(manifest.getProperty(top.createProperty(MF, "include"))
+                .getObject());
         while (includes.hasNext()) {
             containers.add(subManifest(toPath(includes.next().asResource().getURI())));
         }
@@ -83,8 +84,8 @@ class SparqlCdtSuiteTest {
         Resource manifest = m.listResourcesWithProperty(
                 m.createProperty(MF, "entries")).nextResource();
         List<DynamicTest> tests = new ArrayList<>();
-        Iterator<RDFNode> entries = manifest.getProperty(m.createProperty(MF, "entries"))
-                .getObject().as(org.apache.jena.rdf.model.RDFList.class).iterator();
+        Iterator<RDFNode> entries = ManifestLists.members(manifest.getProperty(m.createProperty(MF, "entries"))
+                .getObject());
         while (entries.hasNext()) {
             Resource entry = entries.next().asResource();
             String name = entry.getProperty(m.createProperty(MF, "name")).getString();

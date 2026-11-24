@@ -67,8 +67,8 @@ class W3CSparql12SuiteTest {
         Resource manifest = top.listResourcesWithProperty(
                 top.createProperty(MF, "include")).nextResource();
         List<DynamicNode> containers = new ArrayList<>();
-        Iterator<RDFNode> includes = manifest.getProperty(top.createProperty(MF, "include"))
-                .getObject().as(org.apache.jena.rdf.model.RDFList.class).iterator();
+        Iterator<RDFNode> includes = ManifestLists.members(manifest.getProperty(top.createProperty(MF, "include"))
+                .getObject());
         while (includes.hasNext()) {
             containers.add(subManifest(toPath(includes.next().asResource().getURI())));
         }
@@ -80,8 +80,8 @@ class W3CSparql12SuiteTest {
         Resource manifest = m.listResourcesWithProperty(
                 m.createProperty(MF, "entries")).nextResource();
         List<DynamicTest> tests = new ArrayList<>();
-        Iterator<RDFNode> entries = manifest.getProperty(m.createProperty(MF, "entries"))
-                .getObject().as(org.apache.jena.rdf.model.RDFList.class).iterator();
+        Iterator<RDFNode> entries = ManifestLists.members(manifest.getProperty(m.createProperty(MF, "entries"))
+                .getObject());
         while (entries.hasNext()) {
             Resource entry = entries.next().asResource();
             String type = entry.getProperty(org.apache.jena.vocabulary.RDF.type)

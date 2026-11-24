@@ -91,8 +91,8 @@ class W3CRdf12SuiteTest {
                 .getObject().asResource().getURI();
 
         List<DynamicTest> tests = new ArrayList<>();
-        Iterator<RDFNode> entries = manifest.getProperty(m.createProperty(MF, "entries"))
-                .getObject().as(org.apache.jena.rdf.model.RDFList.class).iterator();
+        Iterator<RDFNode> entries = ManifestLists.members(manifest.getProperty(m.createProperty(MF, "entries"))
+                .getObject());
         while (entries.hasNext()) {
             Resource entry = entries.next().asResource();
             String type = entry.getProperty(org.apache.jena.vocabulary.RDF.type)
@@ -201,9 +201,29 @@ class W3CRdf12SuiteTest {
     }
 
     private static boolean containsUnsupportedTerms(DatasetGraph dsg) {
-        // Empty since format v5: base-direction literals became storable in v4
-        // (Phase 2) and triple terms in v5 (Phase 3), so every RDF 1.2 term
-        // kind stores and the whole suite asserts round-trip conformance.
+        // Every RDF 1.2 term kind stores since format v5: base-direction
+        // literals became storable in v4 (Phase 2) and triple terms in v5
+        // (Phase 3). Under rdf-array (branch rdfarray) a Turtle collection is
+        // one sequence term, which format v6 does not store yet (RDFARRY.md
+        // step 3) and which may never be a subject (rdf-array's data model of
+        // 2026-11-03): a document holding one must fail the build on a guard.
+        Iterator<Quad> quads = dsg.find();
+        while (quads.hasNext()) {
+            Quad q = quads.next();
+            if (holdsSequence(q.getSubject()) || holdsSequence(q.getObject())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean holdsSequence(Node n) {
+        if (n.isNodeSeq()) {
+            return true;
+        }
+        if (n.isTripleTerm()) {
+            return holdsSequence(n.getTriple().getSubject()) || holdsSequence(n.getTriple().getObject());
+        }
         return false;
     }
 

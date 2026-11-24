@@ -13,6 +13,21 @@ Runner: `com.ebremer.beakgraph.w3c.W3CRdf12SuiteTest` — a manifest-driven
 JUnit @TestFactory. To refresh, re-copy from a newer rdf-tests commit and
 update the hash above; new manifest entries appear as tests automatically.
 
+## rdf-array (branch `rdfarray`)
+
+Under rdf-array a Turtle collection `( … )` is one sequence term, not an
+`rdf:first`/`rdf:rest` ladder, and a sequence may not be a subject (rdf-array's
+data model of 2026-11-03). Two positive-syntax documents put a collection in the
+subject position: rdf-turtle/syntax turtle12-inside-2 and rdf-trig/syntax
+trig12-inside-2.
+
+- Under rdf-array they hold a sequence subject. The runner's containment split
+  therefore requires the build to fail on BeakGraph's subject guard, as it
+  requires for any unsupported term.
+- Until format v7 stores sequences (RDFARRY.md step 3), any document holding a
+  sequence is handled the same way.
+- The executed count is unchanged.
+
 ## Known upstream divergences (Jena 6.2.0)
 
 Four negative-syntax documents, all in rdf-n-triples/syntax, are ACCEPTED by
