@@ -61,6 +61,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
             AtomicPublish.build(dest, tmp -> {
                 ParallelPositionalDictionaryWriterBuilder db = new ParallelPositionalDictionaryWriterBuilder();
                 db.setVoidMode(builder.getVoidMode());
+                db.setArrays(builder.getArrays());
                 db.setVoidDatasetIri(builder.getVoidDatasetIri());
                 db.setSourceRoot(builder.getSourceRoot());
                 try (ParallelPositionalDictionaryWriter w = db
@@ -98,6 +99,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
                         w.add(hdt);
                         gspo.add(hdt);
                         gpos.add(hdt);
+                        w.addArrays(hdt);
                         hdfFile.commit();
                     }
                 }

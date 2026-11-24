@@ -111,6 +111,10 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
 
         // Cache this for fast offset math in locateObject
         this.maxEntityId = entitiesdict.getNumberOfNodes();
+        // -arrays (format v7): the same classification as method 0 over the same sorted section.
+        this.arraysOptions = builder.getArrays();
+        this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(arraysOptions, literalsdict,
+                maxEntityId, builder.getUniqueObjects());
 
         // 4. Initialize Bit-Packed Buffers for columnar ID lists
         // Determine required bit-widths based on the dictionary sizes
@@ -222,6 +226,16 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
                 DictionaryIds.objectId(element, literalsdict::locate, entitiesdict::locate, maxEntityId), "Object", element);
     }
 
+
+    private final com.ebremer.beakgraph.hdf5.writers.SequenceArrays sequenceArrays;
+    private final com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arraysOptions;
+
+    /** Writes {@code /.BG/arrays} under {@code group} when {@code -arrays} packed any sequence. */
+    public void addArrays(WritableGroup group) {
+        if (sequenceArrays != null) {
+            sequenceArrays.write(group, arraysOptions.compress());
+        }
+    }
 
     public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);

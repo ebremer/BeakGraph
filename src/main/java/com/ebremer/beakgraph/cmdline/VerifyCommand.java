@@ -66,7 +66,7 @@ public final class VerifyCommand {
         this(root, deep, System.out);
     }
 
-    VerifyCommand(File root, boolean deep, PrintStream out) {
+    public VerifyCommand(File root, boolean deep, PrintStream out) {
         this.root = root;
         this.deep = deep;
         this.out = out;
@@ -145,6 +145,7 @@ public final class VerifyCommand {
             if (deep && problems.isEmpty()) {
                 checkCompoundBands(reader, problems);
                 checkSequences(reader, problems);
+                checkArrays(reader, problems);
             }
             if (deep && problems.isEmpty()) {
                 deepScan(reader, problems);
@@ -384,6 +385,53 @@ public final class VerifyCommand {
             }
         } catch (Exception e) {
             problems.add("sequences: " + rootMessage(e));
+        }
+    }
+
+    /**
+     * Deep, {@code -arrays} (format v7, RDFARRY.md §3.5): every packed row of
+     * {@code /.BG/arrays} rebuilds exactly the canonical elements of the
+     * sequence its {@code seq} names, slots included; rows ascend by id; and
+     * the literals section's {@code sequenceArrays} names that class for
+     * that sequence, and 0 for every sequence no class holds.
+     */
+    private static void checkArrays(HDF5Reader reader, List<String> problems) {
+        com.ebremer.beakgraph.store.StoreGroup arrays = reader.bgGroup().group(com.ebremer.beakgraph.Params.ARRAYS);
+        if (arrays == null) {
+            return;
+        }
+        PositionalDictionaryReader dict = (PositionalDictionaryReader) reader.getDictionary();
+        try {
+            java.util.List<String> names = arrays.groupNames();
+            java.util.Map<Long, Integer> classOf = new java.util.HashMap<>();
+            for (int c = 0; c < names.size(); c++) {
+                String name = names.get(c);
+                com.ebremer.beakgraph.store.StoreGroup g = arrays.group(name);
+                String problem = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.verifyClass(name, g, dict);
+                if (problem != null) {
+                    problems.add("arrays/" + name + ": " + problem);
+                    return;
+                }
+                for (long id : (long[]) g.typedArray("seq").values()) {
+                    classOf.put(id, c + 1);
+                }
+            }
+            long[] recorded = dict.sequenceArrayClasses();
+            if (recorded == null) {
+                problems.add("/.BG/arrays is present but the literals section has no sequenceArrays");
+                return;
+            }
+            for (int k = 0; k < recorded.length; k++) {
+                long id = dict.firstSequenceObjectId() + k;
+                long expected = classOf.getOrDefault(id, 0);
+                if (recorded[k] != expected) {
+                    problems.add("sequenceArrays gives sequence " + id + " class " + recorded[k] + " but "
+                            + (expected == 0 ? "no class holds it" : "class " + expected + " (" + names.get((int) expected - 1) + ") does"));
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            problems.add("arrays: " + rootMessage(e));
         }
     }
 

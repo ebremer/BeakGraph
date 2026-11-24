@@ -643,6 +643,14 @@ public class BeakGraphCLI {
         }
     }
 
+    /** {@code -arrays} and its settings, or null without it. */
+    private com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arraysOptions() {
+        return params.arrays
+                ? new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(params.arraysMinRows,
+                        params.arraysMinLeaves, params.arraysCompress)
+                : null;
+    }
+
     /** The VoID statistics mode for this run: NONE unless -void or -voidsketch was given. */
     private com.ebremer.beakgraph.core.VoidMode voidMode() {
         if (params.voidExact) {
@@ -691,6 +699,10 @@ public class BeakGraphCLI {
     /** Package-private so tests can substitute a writer (e.g. one that fails with an Error). */
     BeakGraphWriter newWriter(File source, List<File> sources, File dest) throws IOException {
         int method = effectiveMethod();
+        if (params.arrays && method != 0 && method != 2 && method != 3) {
+            // RDFARRY.md step 6: the in-memory engines first; refused, never ignored.
+            throw new IllegalArgumentException("-arrays is written by -method 0, 2 and 3 so far, not -method " + method);
+        }
         switch (method) {
             case 1 -> {
                 // Disk-based build: same output format, but sorting/indexing
@@ -725,6 +737,7 @@ public class BeakGraphCLI {
                         .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
+                        .setArrays(arraysOptions())
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
@@ -739,6 +752,7 @@ public class BeakGraphCLI {
                         .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
+                        .setArrays(arraysOptions())
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
@@ -798,7 +812,8 @@ public class BeakGraphCLI {
                         .setVoidMode(voidMode())
                         .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
-                        .setFeatures(params.features);
+                        .setFeatures(params.features)
+                        .setArrays(arraysOptions());
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 return builder.build();

@@ -89,6 +89,18 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
         return voidDatasetIri;
     }
 
+    protected com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arrays;
+
+    /** {@code -arrays}: the native arrays of {@code /.BG/arrays} (format v7), or null (the default) for none. */
+    public T setArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options) {
+        this.arrays = options;
+        return self();
+    }
+
+    public com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options getArrays() {
+        return arrays;
+    }
+
     public T setSpatial(boolean flag) {
         this.spatial = flag;
         return self();

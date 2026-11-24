@@ -151,6 +151,18 @@
           "name": "export"
         },
         {
+          "name": "arrays"
+        },
+        {
+          "name": "arraysCompress"
+        },
+        {
+          "name": "arraysMinLeaves"
+        },
+        {
+          "name": "arraysMinRows"
+        },
+        {
           "name": "features"
         },
         {

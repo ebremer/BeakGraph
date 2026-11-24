@@ -53,6 +53,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private final BitPackedUnSignedLongBuffer sequenceElements;
     private final SequenceEncoder sequenceEncoder;
     private long numSlots = 0;
+    // -arrays: each sequence row's array class (RDFARRY.md §3.5), set before add().
+    private long[] sequenceArrays;
     private final BitPackedUnSignedLongBuffer nativedatatypes;
     private DataOutputBuffer floats;
     private DataOutputBuffer doubles;
@@ -366,6 +368,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             if (elements != null) {
                 elements.putAttribute(Params.NUM_SLOTS, numSlots);
             }
+            if (sequenceArrays != null) {
+                long[] classes = sequenceArrays;
+                com.ebremer.beakgraph.hdf5.BlockedEncoder.add(subGroup, Params.SEQUENCE_ARRAYS, classes.length, i -> classes[(int) i]);
+            }
         }
         if (floats != null) floats.add(subGroup);
         if (doubles != null) doubles.add(subGroup);
@@ -378,6 +384,15 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     }
 
     @Override public List<Node> getNodes() { return sorted; }
+
+    /** Each sequence row's array class, 0 when unpacked: written as {@code sequenceArrays} (format v7, -arrays). */
+    public void setSequenceArrays(long[] classes) {
+        long rows = (sequenceStarts == null) ? 0 : sequenceStarts.getNumEntries() - 1;
+        if (classes.length != rows) {
+            throw new IllegalStateException(classes.length + " sequence classes for " + rows + " sequences");
+        }
+        this.sequenceArrays = classes.clone();
+    }
 
     // --- UNSUPPORTED METHODS IN WRITER CONTEXT ---
     @Override public Stream<Node> streamNodes() { throw new UnsupportedOperationException(); }

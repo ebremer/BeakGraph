@@ -72,7 +72,8 @@ misreading *newer* files; it is not consulted to locate data.
   `MinBits(256)=9`).
 * **Byte-rounded width** — `ceil(w / 8) * 8`, with a floor of 8 (a computed width of 0 becomes 8).
 
-Integer byte order is **big-endian everywhere**. Text is **UTF-8** on disk; "string length" in
+Integer byte order is **big-endian everywhere** - except in the optional native arrays of
+`/.BG/arrays` (*v7*, §7.6c), which are typed and little-endian for array tools. Text is **UTF-8** on disk; "string length" in
 prefix coding means **UTF-16 code units** (§5.5.3 — this is a deliberate Java-ism that must be
 reproduced). **String comparison** throughout the term order (§6) is likewise **UTF-16
 code-unit order** — Java `String.compareTo` — *not* Unicode code-point order. The two differ only
@@ -91,7 +92,9 @@ the reference reader bypasses most of the HDF5 data model and reads dataset byte
 
 1. **Datasets are 1-dimensional arrays of 8-bit signed integers** (Java `byte[]`; HDF5 type class
    integer, size 1). The reader treats every dataset as an opaque byte region; the HDF5 element type
-   is never used to interpret values.
+   is never used to interpret values. *v7:* the one exception is the optional subtree `/.BG/arrays`
+   (§7.6c), whose datasets are typed, N-dimensional, little-endian, and may be chunked and filtered;
+   rules 1 and 2 hold everywhere else.
 2. **Storage layout MUST be contiguous.** The reader memory-maps (or range-reads) every dataset's byte
    extent directly from the file at `dataAddress`. Chunked, compact, or filtered (compressed/shuffled)
    layouts are **not readable**; the reference reader rejects such a dataset at open with a message
@@ -143,7 +146,8 @@ As with HDF5, the profile is narrow because the reference reader reads dataset b
 2. **A dataset is a 1-dimensional array of `uint8`** in a `regular` chunk grid, whose `codecs` are
    exactly `[{"name": "bytes"}]`: no compression, no checksum, no sharding, no transposition. A chunk's
    stored value is then that part of the dataset's bytes, unchanged, and can be memory-mapped or read a
-   range at a time. An array of any other shape, element type or codecs is **not readable**; the
+   range at a time (*v7:* except under `/.BG/arrays`, §7.6c). An array of any other shape, element
+   type or codecs is **not readable**; the
    reference reader rejects it with a message naming it and this rule (it accepts `int8` elements too,
    as HDF5 stores them). As in HDF5 (§3, item 3), compression happens inside BeakGraph's own encodings.
 3. **Chunks.** The array's `shape` is `[n]`, the dataset's length in bytes. A dataset of up to 2^30
@@ -773,6 +777,54 @@ Consequences and invariants:
 * **Value semantics.** Equal sequences are one term, and duplicate quads collapse (§9.7), as in the
   reference implementation, jena-array. rdf-array's model of 2026-11-03, in which each sequence written
   is an occurrence of its own, is not stored.
+
+### 7.6c Native arrays: `/.BG/arrays` (*v7*, optional)
+
+A writer MAY lay a store's numeric sequences out a second time as typed arrays that array tools read
+with no knowledge of RDF (the reference writers do with `-arrays`). The canonical rows of §7.6b stay
+complete: a reader MAY ignore `/.BG/arrays` and `sequenceArrays` altogether. Their presence is sniffed.
+
+**Which sequences pack.** Only sequences that are the object of some quad (members of `objects`,
+§7.8). A sequence packs when every leaf is a literal of one packable datatype, or a slot; a slot stands
+only where a leaf does; every level below the outermost is rectangular; and it has at least
+`minLeaves` leaves (the reference writers' `-arrays-min`, default 2). A leaf packs losslessly as:
+
+| Datatype | Array type | Class tag | Packs when |
+|---|---|---|---|
+| `xsd:double` | float64 | `f64` | always (§9.3 stores the value) |
+| `xsd:float` | float32 | `f32` | always |
+| `xsd:integer` | int64 | `i64` | the lexical form is canonical (`-?(0\|[1-9][0-9]*)`) and fits in 64 bits |
+| `xsd:long` | int64 | `long` | always |
+| `xsd:int` | int32 | `i32` | always |
+| `xsd:boolean` | bool | `bool` | the lexical form is `true` or `false` |
+
+**Classes.** A sequence's key is (leaf datatype, inner shape), its length the outer one. Every outer
+length that at least `minRows` sequences of a key share (`-arrays-min-rows`, default 16) is a
+**tensor** class of its own, named `<tag>_<length>[x<inner>…]` (`i64_7`, `f64_2x3`); the key's other
+sequences form one **ragged** class, `<tag>_r[_<inner>…]` (`f64_r_2`). Classes are numbered 1, 2, …
+in name order (UTF-16 code-unit order).
+
+**Layout.** One group per class under `/.BG/arrays`, with string attributes `kind` (`tensor` or
+`ragged`), `datatype` (the leaf's XSD IRI) and `shape` (the row shape, or the inner shape, `x`-joined):
+
+| Array | Type | Shape | Holds |
+|---|---|---|---|
+| `values` | the leaf's array type, little-endian | tensor `[rows, length, inner…]`, ragged `[items, inner…]` | the leaves, row-major, rows in ascending object id |
+| `starts` | int64 | `[rows + 1]`, ragged only | row *r* is `values[starts[r], starts[r+1])` |
+| `mask` | bool | `values`' shape, only if a slot occurs | true at a slot (the value there is 0 or false) |
+| `seq` | int64 | `[rows]` | each row's sequence object id, ascending |
+
+The literals section then also holds `sequenceArrays`, block-structured (§5.1a), one entry per sequence
+row: its class number, 0 when it did not pack. A store with no packed sequence has neither.
+
+**Each container its own way.** HDF5: `H5T_IEEE_F64LE`, `H5T_IEEE_F32LE`, `H5T_STD_I64LE`,
+`H5T_STD_I32LE`, and bool as the enumeration `{FALSE = 0, TRUE = 1}` over int8 (what h5py reads as
+numpy `bool`); contiguous, or with compression chunked by whole rows and filtered by shuffle and
+deflate. Zarr: `data_type` `float64`, `float32`, `int64`, `int32`, `bool`, the `bytes` codec
+little-endian, chunked by whole rows; with compression sharded by rows with zstd inside; and
+`dimension_names` (`["seq", "d1", …]` on a tensor's `values` and `mask`, `["item", "d1", …]` on a
+ragged one's, `["seq"]` on `seq`). The two containers hold the same groups, shapes, types, values and
+masks; their bytes differ by chunking and codec.
 
 ### 7.6 Blank nodes
 

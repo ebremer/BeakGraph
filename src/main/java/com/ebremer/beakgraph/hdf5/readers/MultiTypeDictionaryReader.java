@@ -72,6 +72,8 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final BitPackedUnSignedLongBuffer sequenceStarts;
     private final BitPackedUnSignedLongBuffer sequenceElements;
     private final long numSlots;
+    // -arrays: each sequence row's array class (null without one).
+    private final BitPackedUnSignedLongBuffer sequenceArrays;
     // Injected by PositionalDictionaryReader, as the triple-term resolver is:
     // an element lives anywhere in the object space.
     private volatile SequenceSupport sequenceSupport;
@@ -148,6 +150,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.tripleTerms = StoreProfile.packed(d, "tripleTerms");
         this.sequenceStarts = StoreProfile.packed(d, Params.SEQUENCE_STARTS);
         this.sequenceElements = StoreProfile.packed(d, Params.SEQUENCE_ELEMENTS);
+        this.sequenceArrays = StoreProfile.packed(d, Params.SEQUENCE_ARRAYS);
         StoreArray elementsDS = StoreProfile.array(d, Params.SEQUENCE_ELEMENTS);
         this.numSlots = (elementsDS != null && elementsDS.hasAttribute(Params.NUM_SLOTS))
                 ? StoreProfile.longAttr(elementsDS, Params.NUM_SLOTS) : 0;
@@ -432,6 +435,18 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     /** Number of sequence rows in this section (its contiguous suffix, format v7). */
     public long sequenceRowCount() {
         return (sequenceStarts == null) ? 0 : sequenceStarts.getNumEntries() - 1;
+    }
+
+    /** Each sequence row's {@code /.BG/arrays} class, 0 when unpacked; null without {@code -arrays}. */
+    public long[] sequenceArrayClasses() {
+        if (sequenceArrays == null) {
+            return null;
+        }
+        long[] out = new long[Math.toIntExact(sequenceArrays.getNumEntries())];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = sequenceArrays.get(i);
+        }
+        return out;
     }
 
     /** How many sequence elements are empty slots (the {@code numSlots} attribute; 0 without sequences). */

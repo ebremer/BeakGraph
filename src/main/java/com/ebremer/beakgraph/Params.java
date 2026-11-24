@@ -31,6 +31,10 @@ public class Params {
     public static final String SEQUENCE_ELEMENTS = "sequenceElements";
     /** On {@link #SEQUENCE_ELEMENTS}: how many elements are empty slots (0). */
     public static final String NUM_SLOTS = "numSlots";
+    /** With -arrays (format v7, RDFARRY.md §3.5): each sequence row's array class, 0 when unpacked. */
+    public static final String SEQUENCE_ARRAYS = "sequenceArrays";
+    /** The native arrays' group under {@code .BG}. */
+    public static final String ARRAYS = "arrays";
     public static final String ENTITIES = "entities";
     public static final String PREDICATES = "predicates";
     public static final String LITERALS = "literals";

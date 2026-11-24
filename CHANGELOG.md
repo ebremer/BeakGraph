@@ -52,6 +52,14 @@ brought and what a reader must rebuild.
     and runs over HDF5 and Zarr stores: 340 of 349 pass, 9 aborted with the reason (update tests;
     Jena's CSV writer). The fork's `TestUndefSlots`, `TestSequenceQueries` and
     `TestArraySyntaxExamples` run over stores too: 94 pass, 3 disabled with the reason.
+* **`-arrays`: native typed arrays under `/.BG/arrays`** (RDFARRY.md step 6, SPECIFICATIONS.md §7.6c;
+  methods 0, 2 and 3 so far). The numeric sequences - `xsd:double`, `float`, `integer` (canonical),
+  `long`, `int` and `boolean` leaves, rectangular below the top - are written a second time as
+  little-endian typed arrays that h5py, zarr-python, numpy and xarray read directly: a tensor class per
+  shared length (`-arrays-min-rows`), a ragged class per key otherwise, a `mask` for slots, `seq` back
+  to the object ids, and `sequenceArrays` in the literals section. `-arrays-compress` chunks and
+  compresses them. The canonical store stays complete, and without `-arrays` nothing changes.
+  `-verify -deep` checks every packed row against its canonical elements.
 * **A relative IRI inside a triple term now stops an N-Triples export without `-base`**, as a
   top-level one does; it used to be written relative (`relativeReference` did not look inside).
 * **Triple-term pattern scans clamp to the band's end too**, not only its start, so they no longer

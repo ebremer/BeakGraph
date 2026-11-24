@@ -133,6 +133,11 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return literals.sequenceBounds(objectId - maxEntityId);
     }
 
+    /** Each sequence's {@code /.BG/arrays} class in id order, 0 when unpacked; null without {@code -arrays}. */
+    public long[] sequenceArrayClasses() {
+        return (literals == null) ? null : literals.sequenceArrayClasses();
+    }
+
     /** Number of sequence elements of the store, slots included. */
     public long sequenceElementCount() {
         return (literals == null) ? 0 : literals.sequenceElementCount();

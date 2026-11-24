@@ -8,7 +8,8 @@
 - Reference implementation: [jena-array](https://github.com/rdf-array/jena-array), branch `rdf-undef`
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
 - Status: steps 1-5 done (2026-11-24): the v7 spec, the Jena port, v7 storage, correct SPARQL-array
-  answers over it (milestone A), and every engine writing it. Step 6, the native arrays, is next
+  answers over it (milestone A), and every engine writing it. Step 6, the native arrays, is under way:
+  the numeric tensor and ragged classes on methods 0, 2 and 3
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -1023,6 +1024,27 @@ which is the rule triple terms set in v5.
   test;
 - the engines agree on `/.BG/arrays` (byte-identical for 0, 2 and 3 in one container);
 - `-arrays` off leaves stores byte-identical to step 5's.
+
+**Status (2026-11-24): in progress.**
+
+- **Done.**
+  - The store abstraction, both containers (`TypedArray`; `WritableGroup.putTypedArray` and string
+    attributes; `StoreGroup.typedArray`, `stringAttribute`, `groupNames`): HDF5 through Falcon's typed
+    datasets, Zarr through Falcon's array writer with `dimension_names`; raw, or `-arrays-compress`
+    (shuffle + deflate; sharding + zstd).
+  - The numeric classifier and writer (`SequenceArrays`): tensor and ragged classes, masks, `seq`, and
+    `sequenceArrays` in the literals section, on methods 0, 2 and 3, byte-identical. The CLI's
+    `-arrays`, `-arrays-min-rows`, `-arrays-min`, `-arrays-compress`; the disk engines refuse `-arrays`
+    for now, never ignore it.
+  - `-verify -deep` re-derives every packed row from its canonical elements and checks
+    `sequenceArrays`.
+  - SPECIFICATIONS.md §7.6c, and the profile exception in §3 and §3a.
+  - One deviation from §3.5: `xsd:integer` and `xsd:long` both pack to int64 but are different terms,
+    so they are different classes (`i64` and `long`).
+- **Left.** Record classes (§3.5a); the disk engines; the lazy list reading packed values; the Python
+  smoke test is written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`), but this machine has no
+  h5py or zarr, so it has not run: whether h5py reads Falcon's `Datatype.bool()` as numpy `bool` is
+  still to be seen.
 
 ### Step 7: id-native matching (P3, L)
 

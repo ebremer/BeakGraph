@@ -109,6 +109,16 @@ public class PositionalDictionaryWriterBuilder {
     private BGVoIDSD xvoid;
     private com.ebremer.beakgraph.core.VoidMode voidMode = com.ebremer.beakgraph.core.VoidMode.NONE;
 
+    private SequenceArrays.Options arrays;
+
+    /** {@code -arrays} (format v7, RDFARRY.md §3.5): the native arrays, or null for none. */
+    public PositionalDictionaryWriterBuilder setArrays(SequenceArrays.Options options) {
+        this.arrays = options;
+        return this;
+    }
+
+    public SequenceArrays.Options getArrays() { return arrays; }
+
     /** VoID statistics mode (NONE default, EXACT = -void, SKETCH = -voidsketch). */
     public PositionalDictionaryWriterBuilder setVoidMode(com.ebremer.beakgraph.core.VoidMode mode) {
         this.voidMode = mode;

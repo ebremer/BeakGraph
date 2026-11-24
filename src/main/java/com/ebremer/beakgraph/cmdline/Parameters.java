@@ -112,6 +112,24 @@ public class Parameters {
                         + "(adds the urn:x-beakgraph:Spatial graph and grid-tile graphs)")
     public boolean spatial = false;
 
+    @Parameter(names = {"-arrays"}, converter = BooleanConverter.class,
+            description = "Also write the numeric RDF-array sequences as native typed arrays under /.BG/arrays "
+                        + "(format v7), which h5py, zarr-python, numpy and xarray read directly; a second copy, "
+                        + "the canonical store stays complete. -method 0, 2 and 3")
+    public boolean arrays = false;
+
+    @Parameter(names = {"-arrays-min-rows"},
+            description = "With -arrays: the sequences of one type, inner shape and length it takes for a tensor "
+                        + "class of their own (the rest of a type and inner shape share a ragged class)")
+    public int arraysMinRows = 16;
+
+    @Parameter(names = {"-arrays-min"}, description = "With -arrays: the fewest leaves a sequence packs with")
+    public int arraysMinLeaves = 2;
+
+    @Parameter(names = {"-arrays-compress"}, converter = BooleanConverter.class,
+            description = "With -arrays: compress the arrays (HDF5: chunked, shuffle + deflate; Zarr: sharded, zstd)")
+    public boolean arraysCompress = false;
+
     @Parameter(names = {"-features"}, converter = BooleanConverter.class,
             description = "With -spatial: also derive 2-D shape features (area, axes, ...) per geometry")
     public boolean features = false;

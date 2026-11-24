@@ -844,6 +844,9 @@ public class HDF5Reader implements BGReader {
 
     @Override public GSPODictionary getDictionary() { return dict; }
 
+    /** The store's {@code .BG} group: for the tools that read what the engine does not ({@code /.BG/arrays}). */
+    public StoreGroup bgGroup() { return hdt; }
+
     @Override
     public Iterator<Node> listGraphNodes() {
         checkOpen();

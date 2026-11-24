@@ -30,6 +30,9 @@ public class PositionalDictionaryWriter implements AutoCloseable {
     private final String name;
     private final Quad[] quads;
     private final long maxEntityId;
+    // -arrays (format v7): the native arrays, null without -arrays or packable sequences.
+    private final SequenceArrays sequenceArrays;
+    private final SequenceArrays.Options arraysOptions;
     
     // Columnar ID Storage
     private final BitPackedUnSignedLongBuffer graphs;
@@ -79,6 +82,10 @@ public class PositionalDictionaryWriter implements AutoCloseable {
             .setSequenceEncoder(this::encodeSequence)
             .setTripleTermComponentIdBound(maxEntityId + builder.getLiterals().size())
             .build();
+
+        // 3b. -arrays: classify the top-level sequences (RDFARRY.md §3.5).
+        this.arraysOptions = builder.getArrays();
+        this.sequenceArrays = SequenceArrays.of(arraysOptions, literalsdict, maxEntityId, builder.getUniqueObjects());
 
         // 4. Initialize Bit-Packed Buffers for columnar ID lists
         // Determine required bit-widths based on the dictionary sizes
@@ -175,6 +182,13 @@ public class PositionalDictionaryWriter implements AutoCloseable {
     }
 
    
+    /** Writes {@code /.BG/arrays} under {@code group} (the {@code .BG} group) when {@code -arrays} packed any sequence. */
+    public void addArrays(WritableGroup group) {
+        if (sequenceArrays != null) {
+            sequenceArrays.write(group, arraysOptions.compress());
+        }
+    }
+
     public void add(WritableGroup group) {
         WritableGroup dictionary = group.putGroup(name);
         

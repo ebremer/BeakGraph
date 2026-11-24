@@ -92,6 +92,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 logger.info("Stage 3/4: GSPO/GPOS indexes (packed keys, sort, dedup, parallel emission)");
                 UltraBGIndex[] indexes = UltraBGIndex.buildBoth(dict, ingest, pool);
                 dict.awaitStorage();
+                dict.classifyArrays(builder.getArrays(), ingest.getUniqueObjects());
                 // The rank maps and the ingest's node sets served the packing pass
                 // and the column fills, which awaitStorage() has just joined; drop
                 // them before the HDF5 emission allocates its buffers (BG-115).
@@ -108,6 +109,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                     dict.add(hdt);
                     indexes[0].add(hdt);
                     indexes[1].add(hdt);
+                    dict.addArrays(hdt);
                     hdfFile.commit();
                 }
                 logger.info("HDF5 file written in {} ms", (System.nanoTime() - ioStart) / 1_000_000L);

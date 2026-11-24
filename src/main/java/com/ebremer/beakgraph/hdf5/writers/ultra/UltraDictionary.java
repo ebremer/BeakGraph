@@ -277,6 +277,29 @@ final class UltraDictionary {
         }
     }
 
+    private com.ebremer.beakgraph.hdf5.writers.SequenceArrays sequenceArrays;
+    private com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arraysOptions;
+
+    /**
+     * {@code -arrays} (format v7): classifies the top-level sequences, as the
+     * other in-memory writers do, over the sorted literals section. After
+     * {@link #awaitStorage()} and before the ingest's node sets are released:
+     * {@code topLevel} is the set of objects.
+     */
+    void classifyArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options, java.util.Set<Node> topLevel)
+            throws IOException {
+        awaitStorage();
+        this.arraysOptions = options;
+        this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(options, literalsdict, maxEntityId, topLevel);
+    }
+
+    /** Writes {@code /.BG/arrays} under {@code group} when {@code -arrays} packed any sequence. */
+    void addArrays(WritableGroup group) {
+        if (sequenceArrays != null) {
+            sequenceArrays.write(group, arraysOptions.compress());
+        }
+    }
+
     /** Same group layout and gating as the other in-memory writers. */
     void add(WritableGroup group) throws IOException {
         awaitStorage();
