@@ -1070,7 +1070,14 @@ which is the rule triple terms set in v5.
     or in one Java array. Zarr writes a chunk (a shard) at a time; a typed array's raw chunk is at most
     16 MiB now. Writing in pieces gives the bytes one piece gives (`ArrayPiecesTest`), and method 0's
     stores are byte-identical to before.
-- **Left.** The lazy list reading packed values; value-level container parity. The
+  - Value-level container parity (`ContainerParityTest.arraysAreTheSameValuesInBothContainers`): the
+    same bytes outside `/.BG/arrays`, and the same classes, arrays, types, shapes, values and attributes
+    in it, raw and compressed.
+- **Left.** The lazy list reading packed values. Measured first (2026-11-24, in process, synthetic: 2,000
+  sequences of 256 doubles): reading all 512k elements through the canonical elements takes about
+  105 ms, making a Node from each value of a `double[]` about 45 ms, so packed reads would at most
+  double the speed of element reads on numeric vectors, at the cost of a read view over typed arrays
+  (mapped when raw, chunk-decoded when compressed). Step 9 needs that view anyway. The
   Python smoke tests are written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`,
   `RecordClassesTest.pythonReadsTheRecords`), but this machine has no h5py, zarr, pandas or xarray, so
   they have not run: whether h5py reads Falcon's `Datatype.bool()` as numpy `bool`, and xarray decodes
