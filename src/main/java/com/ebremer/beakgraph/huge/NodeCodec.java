@@ -33,6 +33,10 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
     private static final byte T_LITERAL_LANG = 3;
     private static final byte T_LITERAL_DIRLANG = 4;
     private static final byte T_TRIPLE_TERM = 5;
+    // RDF-array (format v7): a sequence is its length, then its elements; a
+    // slot is a tag alone, and stands only as an element.
+    private static final byte T_SEQUENCE = 6;
+    private static final byte T_UNDEF = 7;
 
     private NodeCodec() {}
 
@@ -79,6 +83,18 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
             writeNode(out, t.getSubject());
             writeNode(out, t.getPredicate());
             writeNode(out, t.getObject());
+        } else if (n.isNodeSeq()) {
+            // Recursive like a triple term; the ingest bounds the nesting.
+            out.writeByte(T_SEQUENCE);
+            java.util.List<Node> el = n.getSeq();
+            HugeIO.writeVarLong(out, el.size());
+            for (Node e : el) {
+                if (e.isNodeUndef()) {
+                    out.writeByte(T_UNDEF);
+                } else {
+                    writeNode(out, e);
+                }
+            }
         } else {
             // Same stance as ProcessQuad: a node kind the store cannot represent
             // must abort the build, not silently skew it.
@@ -117,6 +133,18 @@ public final class NodeCodec implements ExternalSorter.Codec<Node> {
                 Node o = readNode(in);
                 yield NodeFactory.createTripleTerm(s, p, o);
             }
+            case T_SEQUENCE -> {
+                long len = HugeIO.readVarLong(in);
+                if (len < 0 || len > Integer.MAX_VALUE - 8) {
+                    throw new IOException("Corrupt spill record: sequence length " + len);
+                }
+                Node[] el = new Node[(int) len];
+                for (int i = 0; i < el.length; i++) {
+                    el[i] = readNode(in);
+                }
+                yield NodeFactory.createSeqNode(java.util.Arrays.asList(el));
+            }
+            case T_UNDEF -> Node.UNDEF;
             default -> throw new IOException("Corrupt spill record: unknown node tag " + tag);
         };
     }

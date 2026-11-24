@@ -7,9 +7,8 @@
   (`sparql-query.js`, `sparql-query-undef.html`) and `docs/rdfc-array.md`
 - Reference implementation: [jena-array](https://github.com/rdf-array/jena-array), branch `rdf-undef`
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
-- Status: steps 1-4 done (2026-11-24): the v7 spec, the Jena port, v7 storage on `-method 0` and
-  `-method 2`, and correct SPARQL-array answers over it (milestone A). Step 5, the other engines, is
-  next
+- Status: steps 1-5 done (2026-11-24): the v7 spec, the Jena port, v7 storage, correct SPARQL-array
+  answers over it (milestone A), and every engine writing it. Step 6, the native arrays, is next
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -955,6 +954,44 @@ which is the rule triple terms set in v5.
   0, 2 and 3, isomorphic for 1, 4 and 5;
 - `TermSpillBudgetTest` covers long sequences;
 - the CI engine matrix (`ci.yml`:49-56) also runs the step 4 harness on `method1` and `method3`.
+
+**Status (2026-11-24): done.**
+
+- **`-method 2`** came with step 3: it shares method 0's parse, and its literals section takes the
+  sequence encoder once the entities and predicates are joined.
+- **`-method 3`.** `UltraIngest.buildSets` registers sequences through the same walk as method 0,
+  `SeqTerms.walk` (the guards and the element kinds in one place, where triple terms have a mirror
+  per engine), `buildStats` counts them, and `UltraDictionary` resolves elements by binary search
+  over its sorted arrays, as it resolves components.
+- **`-method 1`, `4` and `5`**, all through `HugeBuildPipeline`:
+  - `NodeCodec` has `T_SEQUENCE` (a length, then the elements) and `T_UNDEF`;
+    `HugeRecords.estimateBytes` weighs a sequence by its elements.
+  - The ingest walks each sequence (per occurrence, like every disk-engine stat) and spills its
+    elements to the interior sorters; `mergeRange` puts sequences in the literal space; blank-node
+    scoping and numeric canonicalization go through `CompoundTerms`.
+  - `HugeSequences`, beside `HugeTripleTerms`: the encode writes the starts (the prefix sums of the
+    lengths) and spills `(element, global index)` for every element that is not a slot; after the
+    encode one term-ordered pass resolves them against the dictionary files, and an index-ordered
+    sort lays them out, writing 0 for the indexes no record carries. `StreamingDictionaryWriter`
+    writes both stores block-structured, `numSlots` on the elements.
+- **Tests.**
+  - A sequence case in each engine's parity test: byte-identical for 0, 2 and 3, and equivalent and
+    structurally identical for 1, 4 and 5. Its fixture has slots, nesting, blank nodes, a triple
+    term and a 3,000-element sequence, and the huge test's small batches spill it in several runs.
+  - `StoreParity`'s isomorphism check is `IsoMatcher` now: the legacy `GraphMatcher` takes compound
+    terms as ground and leaves the blank nodes inside them out of the bijection.
+  - `RdfArraySequenceStorageTest` builds the fixture with all six engines and checks the disk
+    engines' guards.
+  - `TermSpillBudgetTest` builds long sequences (each over the byte budget on its own) on
+    `-method 1` and compares them with method 0.
+  - The step 4 harness and the W3C suites pass on `method1` and `method3` too, and CI's engine
+    matrix runs them.
+- **Measured on the way.** A 40,000-element test under a 32 KiB spill budget took a minute on
+  Windows, 13 s of it in creating spill files (Defender): the budget's doing, not the sequences'. The
+  test now uses fewer, larger runs.
+- **Open: the branch's CI.** It needs Jena's `rdf-array` branch, which no repository publishes, so CI
+  on `rdfarray` fails at dependency resolution until the fork is published or built in CI (true
+  since step 2).
 
 ### Step 6: native arrays (P2, L), milestone B
 

@@ -45,15 +45,17 @@ jobs:
         run: |
           mvn -B -Plib -DskipTests install
           mvn -B -DskipTests -f benchmarks/pom.xml package
-      - name: RDF 1.2 / SPARQL 1.2 suites on the disk and parallel engines
-        # The vendored W3C suites and the triple-term tests build through the
-        # engine named by beakgraph.test.engine (method 0 in the run above).
-        # Re-run them on the disk pipeline (method 1) and the parallel one
-        # (method 3) so the six-engine conformance claim is tested, not assumed.
+      - name: RDF 1.2 / SPARQL 1.2 / rdf-array suites on the disk and parallel engines
+        # The vendored W3C suites, the triple-term tests and the rdf-array
+        # harness (rdf-tests-contrib and the fork's ported engine tests,
+        # RDFARRY.md step 4) build through the engine named by
+        # beakgraph.test.engine (method 0 in the run above). Re-run them on the
+        # disk pipeline (method 1) and the parallel one (method 3) so the
+        # six-engine conformance claim is tested, not assumed.
         if: matrix.os == 'ubuntu-latest'
         run: |
-          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest' -Dbeakgraph.test.engine=method1
-          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest' -Dbeakgraph.test.engine=method3
+          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest,RdfArrayContribSuiteTest,UndefSlotsStoreTest,SequenceQueriesStoreTest,ArraySyntaxExamplesStoreTest' -Dbeakgraph.test.engine=method1
+          mvn -B -Plib test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='W3CRdf12SuiteTest,W3CSparql12SuiteTest,RDF12TripleTermTest,RdfArrayContribSuiteTest,UndefSlotsStoreTest,SequenceQueriesStoreTest,ArraySyntaxExamplesStoreTest' -Dbeakgraph.test.engine=method3
 
   native-image:
     # Manual / weekly: builds the GraalVM native binary and runs a conversion

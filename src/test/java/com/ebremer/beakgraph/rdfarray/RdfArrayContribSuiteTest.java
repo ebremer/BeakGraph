@@ -87,10 +87,9 @@ class RdfArrayContribSuiteTest {
     /** data-set key and container -> built store, or the guard's message when the build is refused. */
     private static final Map<String, Object> STORES = new HashMap<>();
 
+    /** The engine named by -Dbeakgraph.test.engine (method 0 by default): every one stores sequences. */
     private static WriterEngines.Engine engine() {
-        WriterEngines.Engine e = WriterEngines.selected();
-        Assumptions.assumeTrue(e.storesSequences(), e.name() + " does not store sequences yet (RDFARRY.md step 5)");
-        return e;
+        return WriterEngines.selected();
     }
 
     // ------------------------------------------------------------------ RDF

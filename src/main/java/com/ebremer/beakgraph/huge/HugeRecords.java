@@ -94,6 +94,16 @@ public final class HugeRecords {
             Triple t = n.getTriple();
             return 64 + estimateBytes(t.getSubject()) + estimateBytes(t.getPredicate()) + estimateBytes(t.getObject());
         }
+        if (n.isNodeSeq()) {
+            // The node, its element array, and each element (a slot is shared).
+            long b = 64 + 16 + 8L * n.getSeq().size();
+            for (Node e : n.getSeq()) {
+                if (!e.isNodeUndef()) {
+                    b += estimateBytes(e);
+                }
+            }
+            return b;
+        }
         return 64;
     }
 

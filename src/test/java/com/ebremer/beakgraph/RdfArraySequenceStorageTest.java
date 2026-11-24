@@ -380,13 +380,30 @@ public class RdfArraySequenceStorageTest {
     }
 
     @Test
-    void otherEnginesRefuseSequencesUntilStepFive() throws Exception {
-        Path src = dir.resolve("other.ttl");
-        Files.writeString(src, "<http://ex.org/a> <http://ex.org/p> ( 1 2 ) .\n");
-        for (WriterEngines.Engine e : WriterEngines.all().filter(e -> !e.storesSequences()).toList()) {
-            File out = dir.resolve("other-" + e.name() + ".h5").toFile();
+    void everyEngineStoresSequences() throws Exception {
+        // RDFARRY.md step 5: all six engines, the disk ones through HugeSequences.
+        Path src = dir.resolve("engines.trig");
+        Files.writeString(src, fixture());
+        DatasetGraph expected = parsed(fixture());
+        for (WriterEngines.Engine e : WriterEngines.all().toList()) {
+            File out = dir.resolve("engines-" + e.name() + ".h5").toFile();
+            e.buildStore(src.toFile(), out);
+            try (BeakGraph b = BG.getBeakGraph(out)) {
+                assertTrue(IsoMatcher.isomorphic(expected, stored(b)), e.name() + " round trip");
+                assertEquals(4L, dictionary(b).numSlots(), e.name() + " numSlots");
+            }
+        }
+    }
+
+    @Test
+    void theDiskEnginesRefuseWhatMethodZeroRefuses() throws Exception {
+        // The guards are one walk (SeqTerms.walk) for every engine.
+        for (WriterEngines.Engine e : WriterEngines.all().filter(WriterEngines.Engine::diskBased).toList()) {
+            Path src = dir.resolve("subject-" + e.name() + ".ttl");
+            Files.writeString(src, "( 1 ) <http://ex.org/p> <http://ex.org/o> .\n");
+            File out = dir.resolve("subject-" + e.name() + ".h5").toFile();
             Exception ex = assertThrows(Exception.class, () -> e.buildStore(src.toFile(), out), e.name());
-            assertTrue(chain(ex).contains("Unexpected"), e.name() + ": " + chain(ex));
+            assertTrue(chain(ex).contains("Unexpected") && chain(ex).contains("only as an object"), e.name() + ": " + chain(ex));
         }
     }
 

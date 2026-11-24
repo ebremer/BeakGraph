@@ -107,6 +107,16 @@ class HugeUltraWriterParityTest {
 
     /** BG-182: the SPATIAL graph and the derived features must match the sequential build. */
     @Test
+    void sequences() throws Exception {
+        // RDF-array sequences (format v7, RDFARRY.md step 5): equivalent to method 0.
+        writeBoth("seq.trig", StoreParity.sequenceTrig(), false, false);
+        Path ref = dir.resolve("seq.trig.seq.h5");
+        Path other = dir.resolve("seq.trig.hugeultra.h5");
+        StoreParity.assertStoresEquivalent(ref, other, StoreParity.SEQUENCE_PROBES);
+        StoreParity.assertSameStructure(ref, other);
+    }
+
+    @Test
     void spatialAndFeaturesParity() throws Exception {
         String trig = StoreParity.SPATIAL_TRIG;
         writeBoth("hu-spatial.trig", trig, true, true);

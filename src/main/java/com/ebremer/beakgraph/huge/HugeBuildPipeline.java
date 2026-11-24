@@ -460,6 +460,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
         final HugeTripleTerms ttSupport = (stats.numTripleTerms > 0)
                 ? track(new HugeTripleTerms(provider, workDir, predFinalIds))
                 : null;
+        // Sequence machinery likewise (format v7): element references spill
+        // during the literals encode and resolve against the same files.
+        final HugeSequences seqSupport = (stats.numSequences > 0)
+                ? track(new HugeSequences(provider, workDir))
+                : null;
         final StreamingDictionaryWriter[] dicts = new StreamingDictionaryWriter[3];
         // With a pool, a section's terms are decoded and its strings compressed
         // by the pool's threads, this many pieces ahead of the stage's own
@@ -488,6 +493,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
                         dicts[2] = track(new StreamingDictionaryWriter(workDir, "literals", numLiterals, stats,
                                 DictionarySection.LITERALS,
                                 dataTypes, langSet, langDirSeen, ttSupport, stagePool, ahead));
+                        if (seqSupport != null) {
+                            dicts[2].setSequenceSupport(seqSupport);
+                        }
                         try (var s = sortedTerms(litFile, ahead)) {
                             dicts[2].encode(s);
                         }
@@ -497,6 +505,10 @@ public final class HugeBuildPipeline implements AutoCloseable {
                         if (ttSupport != null && ttSupport.count() > 0) {
                             dicts[2].setTripleTermsBuffer(
                                     ttSupport.resolve(entFile, litFile, numEntities, numEntities + numLiterals));
+                        }
+                        if (seqSupport != null && seqSupport.count() > 0) {
+                            dicts[2].setSequenceElementsBuffer(
+                                    seqSupport.resolve(entFile, litFile, numEntities, numEntities + numLiterals));
                         }
                     }
                 });
@@ -725,10 +737,10 @@ public final class HugeBuildPipeline implements AutoCloseable {
     }
 
     private static Node scopeNode(Node n, String scope) {
-        if (n.isTripleTerm()) {
-            // Blank nodes inside a triple term share the quad's document scope -
-            // the same prefix keeps inside/outside co-reference intact.
-            return TripleTerms.map(n, c -> scopeNode(c, scope));
+        if (com.ebremer.beakgraph.core.lib.CompoundTerms.isCompound(n)) {
+            // Blank nodes inside a triple term or a sequence share the quad's
+            // document scope - the same prefix keeps inside/outside co-reference intact.
+            return com.ebremer.beakgraph.core.lib.CompoundTerms.map(n, c -> scopeNode(c, scope));
         }
         return n.isBlank() ? NodeFactory.createBlankNode(scope + n.getBlankNodeLabel()) : n;
     }
@@ -754,6 +766,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
             collectLiteralStats(o);
         } else if (o.isTripleTerm()) {
             collectTripleTerm(o);
+        } else if (o.isNodeSeq()) {
+            collectSequence(o);
         } else {
             countEntityKind(o, "object");
         }
@@ -789,7 +803,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
             stats.numIRI++;
         } else {
             // Same guard as ProcessQuad: an unstorable node kind aborts the build.
-            throw new IllegalStateException("Unexpected " + position + " node type: " + n);
+            throw new IllegalStateException("Unexpected " + position + " node type"
+                    + com.ebremer.beakgraph.core.lib.SeqTerms.positionNote(n) + ": " + n);
         }
     }
 
@@ -833,6 +848,10 @@ public final class HugeBuildPipeline implements AutoCloseable {
                                 if (n.isLiteral()) {
                                     collectLiteralStats(n);
                                     iLitSorter.add(new TermRow(n, 0));
+                                } else if (n.isNodeSeq()) {
+                                    throw new IllegalStateException(
+                                            "Unexpected triple-term object: a sequence inside a triple term is not stored: "
+                                            + n + " in " + tt);
                                 } else {
                                     countEntityKind(n, "triple-term object");
                                     iEntSorter.add(new TermRow(n, 0));
@@ -856,6 +875,65 @@ public final class HugeBuildPipeline implements AutoCloseable {
             });
         } catch (UncheckedIOException ex) {
             throw ex.getCause();
+        }
+    }
+
+    /**
+     * Sequence object (mirrors ProcessQuad.registerSequence through the one
+     * shared walk, {@link com.ebremer.beakgraph.core.lib.SeqTerms#walk}, and its
+     * guards; per occurrence like every stat here): stats.numSequences gates
+     * the sequence stores, nested sequences and literal, triple-term and
+     * nested-sequence elements spill to the interior literal sorter, entity
+     * elements to the interior entity sorter, so dictionary derivation sees
+     * every one. The sequence itself is the row's object.
+     */
+    private void collectSequence(Node seq) throws IOException {
+        if (iEntSorter == null) {
+            iEntSorter = track(provider.termSorter(workDir, "icol-ent"));
+            iLitSorter = track(provider.termSorter(workDir, "icol-lit"));
+        }
+        stats.numSequences++;
+        try {
+            com.ebremer.beakgraph.core.lib.SeqTerms.walk(seq, new com.ebremer.beakgraph.core.lib.SeqTerms.ElementVisitor() {
+                @Override
+                public void literal(Node n) {
+                    collectLiteralStats(n);
+                    spill(iLitSorter, n);
+                }
+
+                @Override
+                public void entity(Node n) {
+                    countEntityKind(n, "sequence element");
+                    spill(iEntSorter, n);
+                }
+
+                @Override
+                public void tripleTerm(Node n) {
+                    try {
+                        collectTripleTerm(n);
+                    } catch (IOException ex) {
+                        throw new UncheckedIOException(ex);
+                    }
+                    spill(iLitSorter, n);
+                }
+
+                @Override
+                public boolean nestedSequence(Node n) {
+                    stats.numSequences++;
+                    spill(iLitSorter, n);
+                    return true;
+                }
+            });
+        } catch (UncheckedIOException ex) {
+            throw ex.getCause();
+        }
+    }
+
+    private static void spill(RecordSorter<TermRow> sorter, Node n) {
+        try {
+            sorter.add(new TermRow(n, 0));
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
         }
     }
 
@@ -905,8 +983,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
      */
     public static Quad canonicalizeNumericObject(Quad quad) {
         Node o = quad.getObject();
-        Node canon = o.isTripleTerm()
-                ? TripleTerms.map(o, PositionalDictionaryWriterBuilder::canonicalizeNumericNode)
+        Node canon = com.ebremer.beakgraph.core.lib.CompoundTerms.isCompound(o)
+                ? com.ebremer.beakgraph.core.lib.CompoundTerms.map(o, PositionalDictionaryWriterBuilder::canonicalizeNumericNode)
                 : PositionalDictionaryWriterBuilder.canonicalizeNumericNode(o);
         if (canon == o) return quad;
         return new Quad(quad.getGraph(), quad.getSubject(), quad.getPredicate(), canon);
@@ -1195,7 +1273,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 // only for term-equal nodes.
                 if (last == null || !(last == key || last.node().equals(key.node()))) {
                     Node term = key.node();
-                    literalSpace = term.isLiteral() || term.isTripleTerm();
+                    literalSpace = term.isLiteral() || term.isTripleTerm() || term.isNodeSeq();
                     if (literalSpace) {
                         literals.append(term);
                         code = (literals.count() << 1) | 1;

@@ -188,7 +188,7 @@ class UndefSlotsStoreTest {
     @Test public void sequenceSubjectsAreRefused() {
         // BeakGraph's reading of turtle_nested_and_subject: the build fails on the subject guard.
         IllegalStateException e = assertThrows(IllegalStateException.class, ()->parse("(undef (undef 1)) :p 2 ."));
-        assertTrue(e.getMessage().startsWith("Unexpected subject node type"), e.getMessage());
+        assertTrue(e.getMessage().contains("Unexpected subject node type"), e.getMessage());
     }
 
     // ---- Patterns

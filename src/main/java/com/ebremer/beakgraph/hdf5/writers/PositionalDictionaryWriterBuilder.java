@@ -465,7 +465,7 @@ public class PositionalDictionaryWriterBuilder {
         } else if (o.isTripleTerm()) {
             registerTripleTerm(o);
         } else if (o.isNodeSeq()) {
-            registerSequence(o, 0);
+            registerSequence(o);
         } else {
             if (!entities.contains(o)) {
                 if (o.isBlank()) {
@@ -598,29 +598,26 @@ public class PositionalDictionaryWriterBuilder {
      * triple term: elements get dictionary entries, not role-list membership,
      * a nested sequence is a term of its own in the literals section (its
      * suffix, macro rank 5), and a slot is nobody's entry. Element kinds are
-     * guarded loudly at every depth. {@code depth} is 0 for an object.
+     * guarded loudly at every depth ({@link SeqTerms#walk}, shared with the
+     * ultra ingest).
      */
-    private void registerSequence(Node seq, int depth) {
-        CompoundTerms.requireDepth(seq, depth);
+    private void registerSequence(Node seq) {
         if (literals.contains(seq)) {
             return; // elements were registered when the sequence first appeared
         }
-        for (Node e : SeqTerms.elements(seq)) {
-            if (e.isNodeUndef()) {
-                continue;
+        SeqTerms.walk(seq, new SeqTerms.ElementVisitor() {
+            @Override public void literal(Node n) { registerLiteral(n); }
+            @Override public void entity(Node n) { registerEntity(n); }
+            @Override public void tripleTerm(Node n) { registerTripleTerm(n); }
+            @Override public boolean nestedSequence(Node n) {
+                if (literals.contains(n)) {
+                    return false;
+                }
+                stats.numSequences++;
+                literals.add(n);
+                return true;
             }
-            if (e.isLiteral()) {
-                registerLiteral(e);
-            } else if (e.isBlank() || e.isURI()) {
-                registerEntity(e);
-            } else if (e.isTripleTerm()) {
-                registerTripleTerm(e);
-            } else if (e.isNodeSeq()) {
-                registerSequence(e, depth + 1);
-            } else {
-                throw new IllegalStateException("Unexpected sequence element node type: " + e + " in " + seq);
-            }
-        }
+        });
         stats.numSequences++;
         literals.add(seq);
     }

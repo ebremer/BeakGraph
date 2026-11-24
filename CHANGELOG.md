@@ -18,8 +18,11 @@ brought and what a reader must rebuild.
     arrays do, so a reader locates one on ids without reading any stored row.
   - **Reading.** A stored sequence comes back lazy (`NodeFactory.createSeqNodeView`): its length from
     the starts, each element read when asked for.
-  - **Where.** `-method 0` writes sequences, and so does `-method 2`, which shares its parse; the
-    other engines refuse a document holding one, on a guard, until step 5.
+  - **Where.** Every engine (RDFARRY.md step 5). Methods 0, 2 and 3 build the same bytes; the
+    disk engines (1, 4 and 5) build an isomorphic store, resolving the elements as they resolve
+    triple-term components: spilled as (term, index), merge-joined with the dictionary, laid out
+    by index, the slots written as 0 without a spill (`HugeSequences`). One walk with the guards,
+    `SeqTerms.walk`, registers elements in every ingest.
   - **Guards (§9.5).** A sequence as subject, predicate or graph name; a sequence inside a triple
     term; `undef` outside a sequence; nesting deeper than 1,000 levels.
   - **Normalization at every depth.** Relative IRIs, numeric canonicalization (`( "042"^^xsd:int )`

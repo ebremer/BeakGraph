@@ -79,6 +79,42 @@ public final class StoreParity {
     }
 
     /** The geometry fixture: polygons, a multipolygon, a point, a CRS-prefixed WKT and a degenerate ring. */
+    /**
+     * RDF-array sequences (format v7) for the engine parity tests: slots, empty
+     * and nested sequences, blank nodes and a triple term inside, named graphs.
+     * {@link #sequenceTrigStable()} is it without blank nodes.
+     */
+    public static String sequenceTrig() {
+        return com.ebremer.beakgraph.RdfArraySequenceStorageTest.fixture() + """
+            @prefix : <http://ex.org/> .
+            :long :list ( %s ) .
+            :g2 { :b :deep ( ( ( ( 1 ) ) ) undef ( ) ) . }
+            """.formatted(String.join(" ", java.util.Collections.nCopies(3000, "7")));
+    }
+
+    /** {@link #sequenceTrig()} without its blank nodes: every engine builds the same bytes from it. */
+    public static String sequenceTrigStable() {
+        StringBuilder sb = new StringBuilder();
+        for (String line : sequenceTrig().split("\n")) {
+            if (!line.contains("_:")) {
+                sb.append(line).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Queries every engine's sequence store must answer alike: patterns (delegated) and constants (on ids). */
+    public static final String[] SEQUENCE_PROBES = {
+        // Rows that print a blank node would differ by label alone: isomorphism covers those.
+        "SELECT ?p ?o WHERE { <http://ex.org/a> ?p ?o FILTER(?p != <http://ex.org/bnode>) }",
+        "SELECT ?s WHERE { ?s <http://ex.org/list> ( 1 2 3 ) }",
+        "SELECT ?x ?y WHERE { ?s <http://ex.org/slots> ( ?x ?y 3 ) }",
+        "SELECT ?g ?s WHERE { GRAPH ?g { ?s <http://ex.org/list> ?l } }",
+        "SELECT ?n WHERE { <http://ex.org/long> <http://ex.org/list> ?l BIND(SEQLEN(?l) AS ?n) }",
+        "SELECT ?m WHERE { <http://ex.org/a> <http://ex.org/nested> ?l UNNEST(?l AS ?m) }",
+        "SELECT ?x WHERE { GRAPH <http://ex.org/g2> { ?s ?p ( ( ( ( ?x ) ) ) ... ) } }",
+    };
+
     public static final String SPATIAL_TRIG = """
             @prefix ex: <http://ex.org/> .
             @prefix geo: <http://www.opengis.net/ont/geosparql#> .
@@ -139,13 +175,16 @@ public final class StoreParity {
 
             Model defA = graphModel(da, null);
             Model defB = graphModel(db, null);
-            assertTrue(defA.isIsomorphicWith(defB),
+            // IsoMatcher, not Model.isIsomorphicWith: the legacy GraphMatcher
+            // takes triple terms and sequences as ground terms, so a blank node
+            // inside one never joins the bijection.
+            assertTrue(org.apache.jena.sparql.util.IsoMatcher.isomorphic(defA.getGraph(), defB.getGraph()),
                     "default graphs must be isomorphic (" + seqH5.getFileName() + "=" + defA.size() + ", " + parH5.getFileName() + "=" + defB.size() + ")");
             for (String g : graphNames(da)) {
                 if (!g.startsWith("http") && !g.startsWith("urn")) continue; // skip any non-URI form
                 Model ga = graphModel(da, g);
                 Model gb = graphModel(db, g);
-                assertTrue(ga.isIsomorphicWith(gb),
+                assertTrue(org.apache.jena.sparql.util.IsoMatcher.isomorphic(ga.getGraph(), gb.getGraph()),
                         "graph <" + g + "> must be isomorphic (" + seqH5.getFileName() + "=" + ga.size() + ", " + parH5.getFileName() + "=" + gb.size() + ")");
             }
             for (String probe : probes) {

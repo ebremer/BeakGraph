@@ -584,7 +584,7 @@ than the running build supports is refused at open.
 | v4 | 0.18.0 | `langDirs` for `rdf:dirLangString`; composite (`cdt:`) literals ordered lexically | the source contained base-direction literals (a v3 store holds them as plain `"x"@en`) or `cdt:` literals (a pre-v4 store holding them is refused at open) |
 | v5 | 0.18.0 | RDF 1.2 triple terms (`tripleTerms` component store) | the source contained triple terms (a pre-v5 build could not store them) |
 | v6 | 0.19.0 | id sequences stored in blocks, each with its own width, with an in-memory directory (SPECIFICATIONS.md §5.1a) | never for correctness: v3-v5 stores read as before; rebuild for the smaller indexes. A v6 store is refused by earlier builds |
-| v7 | branch `rdfarray` | RDF-array sequences and empty slots (`sequenceStarts` / `sequenceElements`, SPECIFICATIONS.md §7.6b); written by `-method 0` and `-method 2` | never: v3-v6 stores read as before. A v7 store is refused by earlier builds |
+| v7 | branch `rdfarray` | RDF-array sequences and empty slots (`sequenceStarts` / `sequenceElements`, SPECIFICATIONS.md §7.6b); written by every engine | never: v3-v6 stores read as before. A v7 store is refused by earlier builds |
 
 Not every reason to rebuild is a format change, and `-verify` cannot show these: a store built with
 `-spatial` by 0.19.0 or earlier can hold pyramid levels (`hal:asWKT{s}`) with fractional vertices

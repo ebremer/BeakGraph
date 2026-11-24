@@ -75,6 +75,16 @@ class HugeWriterParityTest {
     }
 
     @Test
+    void sequences() throws Exception {
+        // RDF-array sequences (format v7, RDFARRY.md step 5): equivalent to method 0.
+        writeBoth("seq.trig", StoreParity.sequenceTrig(), false, false);
+        Path ref = dir.resolve("seq.trig.ram.h5");
+        Path other = dir.resolve("seq.trig.huge.h5");
+        StoreParity.assertStoresEquivalent(ref, other, StoreParity.SEQUENCE_PROBES);
+        StoreParity.assertSameStructure(ref, other);
+    }
+
+    @Test
     void spatialAndFeaturesParity() throws Exception {
         String trig = StoreParity.SPATIAL_TRIG;
         writeBoth("spatial.trig", trig, true, true);

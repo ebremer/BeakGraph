@@ -54,6 +54,50 @@ class TermSpillBudgetTest {
                 NodeFactory.createURI("http://ex.org/s"), NodeFactory.createURI("http://ex.org/p"), large));
         assertTrue(HugeRecords.estimateBytes(tt) > HugeRecords.estimateBytes(large), "a triple term counts its components");
         assertTrue(HugeRecords.TERM_ROW_BYTES.applyAsLong(new HugeRecords.TermRow(large, 1)) > 8192);
+        // A sequence counts its elements (format v7): a long one weighs what it holds.
+        Node seq = com.ebremer.beakgraph.core.lib.SeqTerms.create(java.util.Collections.nCopies(10_000,
+                NodeFactory.createLiteralDT("7", XSDDatatype.XSDint)));
+        assertTrue(HugeRecords.estimateBytes(seq) > 10_000L * 64, "10,000 elements, each estimated");
+        Node withSlots = com.ebremer.beakgraph.core.lib.SeqTerms.create(java.util.Collections.nCopies(10_000,
+                com.ebremer.beakgraph.core.lib.SeqTerms.UNDEF));
+        assertTrue(HugeRecords.estimateBytes(withSlots) >= 10_000L * 8, "a slot is a reference");
+    }
+
+    @Test
+    void wholeBuildOfLongSequencesWithATinyByteBudgetMatchesTheRamWriter() throws Exception {
+        // RDFARRY.md step 5: long sequences spill on the byte budget like long
+        // literals, and so do their element references.
+        Random rnd = new Random(11);
+        StringBuilder nt = new StringBuilder();
+        // Each sequence alone is over the budget (a run of one), and the element
+        // references spill several runs: enough to cross every spill path without
+        // the hundreds of run files a smaller budget costs on Windows.
+        for (int i = 0; i < 8; i++) {
+            nt.append("<http://ex.org/s").append(i).append("> <http://ex.org/p> (");
+            int n = 1000 + rnd.nextInt(1000);
+            for (int j = 0; j < n; j++) {
+                nt.append(j % 97 == 0 ? " undef" : " \"" + rnd.nextInt(5000) + "\"^^<http://www.w3.org/2001/XMLSchema#int>");
+            }
+            nt.append(" ( <http://ex.org/e").append(i % 7).append("> ) ) .\n");
+        }
+        File src = dir.resolve("long.nt").toFile();
+        Files.write(src.toPath(), nt.toString().getBytes(StandardCharsets.UTF_8));
+        File ram = dir.resolve("long.ram.h5").toFile();
+        File huge = dir.resolve("long.huge.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(ram).setSpatial(false).setFeatures(false).build().write();
+        HugeHDF5Writer.Builder().setSource(src).setDestination(huge).setSpatial(false).setFeatures(false)
+                .setWorkDirectory(Files.createDirectories(dir.resolve("longwork")))
+                .setTermSpillBatch(1 << 18).setIdSpillBatch(1 << 21).setMergeFanIn(3)
+                .setTermSpillBytes(128 << 10)
+                .build().write();
+        try (BeakGraph a = new BeakGraph(new HDF5Reader(ram));
+             BeakGraph b = new BeakGraph(new HDF5Reader(huge))) {
+            Model ma = construct(a);
+            Model mb = construct(b);
+            assertEquals(8, ma.size());
+            assertTrue(org.apache.jena.sparql.util.IsoMatcher.isomorphic(ma.getGraph(), mb.getGraph()),
+                    "byte-budgeted build of long sequences must be isomorphic to the RAM writer's");
+        }
     }
 
     @Test

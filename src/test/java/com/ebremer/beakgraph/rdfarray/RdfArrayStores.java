@@ -39,10 +39,9 @@ final class RdfArrayStores {
         this.dir = dir;
     }
 
+    /** The engine named by -Dbeakgraph.test.engine (method 0 by default). */
     private static WriterEngines.Engine engine() {
-        WriterEngines.Engine e = WriterEngines.selected();
-        return e.storesSequences() ? e
-                : WriterEngines.all().filter(WriterEngines.Engine::storesSequences).findFirst().orElseThrow();
+        return WriterEngines.selected();
     }
 
     /**

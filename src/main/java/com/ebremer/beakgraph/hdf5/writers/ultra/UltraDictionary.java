@@ -116,6 +116,8 @@ final class UltraDictionary {
                 // would race them. Binary search over the same arrays yields
                 // identical ids (ids ARE ranks in these arrays).
                 .setTripleTermEncoder((tt, own) -> encodeTripleTerm(tt, ents, preds, lits))
+                .setSequenceEncoder((seq, own) -> DictionaryIds.encodeSequence(seq,
+                        n -> rankOf(ents, n), n -> rankOf(lits, n), ents.length))
                 .setTripleTermComponentIdBound((long) ents.length + lits.length)
                 .build());
 

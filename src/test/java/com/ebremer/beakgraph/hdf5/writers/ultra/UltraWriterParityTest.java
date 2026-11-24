@@ -72,6 +72,17 @@ class UltraWriterParityTest {
     }
 
     @Test
+    void sequences() throws Exception {
+        // RDF-array sequences (format v7, RDFARRY.md step 5): byte-identical to method 0.
+        writeBoth("seq.trig", StoreParity.sequenceTrig(), false, false);
+        Path seq = dir.resolve("seq.trig.seq.h5");
+        Path other = dir.resolve("seq.trig.ultra.h5");
+        StoreParity.assertStoresEquivalent(seq, other, StoreParity.SEQUENCE_PROBES);
+        StoreParity.assertSameStructure(seq, other);
+        StoreParity.assertSameBytes(seq, other);
+    }
+
+    @Test
     void spatialAndFeaturesParity() throws Exception {
         String trig = StoreParity.SPATIAL_TRIG;
         writeBoth("spatial.trig", trig, true, true);

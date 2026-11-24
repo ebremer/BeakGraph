@@ -213,6 +213,25 @@ class PlaidWriterParityTest {
     }
 
     @Test
+    void sequences() throws Exception {
+        // RDF-array sequences (format v7, RDFARRY.md step 5): equivalent to method 0.
+        File src = dir.resolve("seq.trig").toFile();
+        Files.writeString(src.toPath(), StoreParity.sequenceTrig());
+        File seq = dir.resolve("seq.trig.seq.h5").toFile();
+        File plaid = dir.resolve("seq.trig.plaid.h5").toFile();
+        com.ebremer.beakgraph.hdf5.writers.HDF5Writer.Builder().setSource(src).setDestination(seq).build().write();
+        PlaidHDF5Writer.Builder()
+                .setSource(src)
+                .setDestination(plaid)
+                .setWorkDirectory(Files.createDirectories(dir.resolve("seqwork")))
+                .setCores(3)
+                .build()
+                .write();
+        StoreParity.assertStoresEquivalent(seq.toPath(), plaid.toPath(), StoreParity.SEQUENCE_PROBES);
+        StoreParity.assertSameStructure(seq.toPath(), plaid.toPath());
+    }
+
+    @Test
     void singleFileBuildStillWorks() throws Exception {
         File src = dir.resolve("one.ttl").toFile();
         Files.write(src.toPath(),

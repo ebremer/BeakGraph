@@ -4,8 +4,8 @@
 
 > **Format v7 (branch `rdfarray`).** The passages marked *v7* specify RDF-array sequences and their
 > empty slots (§4.1, §6.1, §7.1–§7.4, §7.6b, §7.7, §9.5, Appendix C), as planned in `RDFARRY.md`.
-> Every writer stamps 7. The in-memory engines `-method 0` and `-method 2` write sequences
-> (`RDFARRY.md` step 3); the others refuse a document that holds one, on a §9.5 guard, until step 5.
+> Every writer stamps 7, and every engine writes sequences (`RDFARRY.md` steps 3 and 5): methods 0, 2
+> and 3 the same bytes, methods 1, 4 and 5 an isomorphic store.
 > A store without sequences is shape-identical to a v6 one.
 
 This document specifies the on-disk format of a BeakGraph store (an `.h5` file, or a `.zarr` directory
@@ -734,8 +734,7 @@ Consequences and invariants:
 
 ### 7.6b Sequences (*v7*)
 
-> Branch `rdfarray`: `-method 0` and `-method 2` write these rows (`RDFARRY.md` §3.4, step 3); the other
-> engines refuse sequences until step 5.
+> Branch `rdfarray`: every engine writes these rows (`RDFARRY.md` §3.4, steps 3 and 5).
 
 RDF-array sequences are stored **structurally**, as triple terms are. A sequence is `( e1 e2 … )`: possibly
 empty, nested freely, and on rdf-undef possibly holding empty slots, `undef`.

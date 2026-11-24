@@ -304,10 +304,12 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 // Same guards as the sequential ProcessQuad: any other node kind
                 // (e.g. a triple term) would silently desynchronize the dictionary.
                 if (!g.isBlank() && !g.isURI()) {
-                    throw new IllegalStateException("Unexpected graph node type (not URI or blank): " + g);
+                    throw new IllegalStateException("Unexpected graph node type (not URI or blank"
+                            + com.ebremer.beakgraph.core.lib.SeqTerms.positionNote(g) + "): " + g);
                 }
                 if (!s.isBlank() && !s.isURI()) {
-                    throw new IllegalStateException("Unexpected subject node type (not URI or blank): " + s);
+                    throw new IllegalStateException("Unexpected subject node type (not URI or blank"
+                            + com.ebremer.beakgraph.core.lib.SeqTerms.positionNote(s) + "): " + s);
                 }
                 requirePredicate(p);
                 uniqueGraphs.add(g);
@@ -320,9 +322,12 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
                     registerLiteralSet(o);
                 } else if (o.isTripleTerm()) {
                     registerTripleTermSet(o);
+                } else if (o.isNodeSeq()) {
+                    registerSequenceSet(o);
                 } else {
                     if (!o.isBlank() && !o.isURI()) {
-                        throw new IllegalStateException("Unexpected object node type (not URI, blank, literal, or triple term): " + o);
+                        throw new IllegalStateException("Unexpected object node type (not URI, blank, literal, triple term "
+                                + "or sequence" + com.ebremer.beakgraph.core.lib.SeqTerms.positionNote(o) + "): " + o);
                     }
                     entities.add(o);
                 }
@@ -382,6 +387,10 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
                             registerLiteralSet(n);
                         } else if (n.isBlank() || n.isURI()) {
                             entities.add(n);
+                        } else if (n.isNodeSeq()) {
+                            throw new IllegalStateException(
+                                    "Unexpected triple-term object: a sequence inside a triple term is not stored: "
+                                    + n + " in " + tt);
                         } else {
                             throw new IllegalStateException(
                                     "Unexpected triple-term object node type: " + n + " in " + tt);
@@ -395,6 +404,24 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 // The ongoing walk covers its components; just register the term.
                 literals.add(nested);
             }
+        });
+    }
+
+    /**
+     * Parallel mirror of the sequential builder's registerSequence, through
+     * the one shared walk ({@link com.ebremer.beakgraph.core.lib.SeqTerms#walk})
+     * and its guards: the sequence, its nested sequences and every element join
+     * the dictionary sets, never the role lists. Counted later, in buildStats.
+     */
+    private void registerSequenceSet(Node seq) {
+        if (!literals.add(seq)) {
+            return; // elements were registered when the sequence first appeared
+        }
+        com.ebremer.beakgraph.core.lib.SeqTerms.walk(seq, new com.ebremer.beakgraph.core.lib.SeqTerms.ElementVisitor() {
+            @Override public void literal(Node n) { registerLiteralSet(n); }
+            @Override public void entity(Node n) { entities.add(n); }
+            @Override public void tripleTerm(Node n) { registerTripleTermSet(n); }
+            @Override public boolean nestedSequence(Node n) { return literals.add(n); }
         });
     }
 
@@ -422,6 +449,8 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
                             // literal value spaces to count - only their tally,
                             // which sizes the tripleTerms component store.
                             st.numTripleTerms++;
+                        } else if (lits[i].isNodeSeq()) {
+                            st.numSequences++;   // likewise: sizes the sequence stores
                         } else {
                             countLiteralStats(lits[i], st);
                         }

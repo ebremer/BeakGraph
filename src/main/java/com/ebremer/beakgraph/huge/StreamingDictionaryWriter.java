@@ -63,6 +63,12 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     // files are complete - CHANGELOG.md "Format v5 design notes").
     private final HugeTripleTerms ttSupport;
     private SpillBitPackedBuffer tripleTerms;
+    // RDF-array sequences (format v7): the encode pass writes each row's
+    // ordinal into offsets, and the starts and element references through
+    // seqSupport; the resolved element store arrives afterwards via
+    // setSequenceElementsBuffer, as the triple-term store does.
+    private HugeSequences seqSupport;
+    private SpillBitPackedBuffer sequenceElements;
     private final HashMap<String, Long> dataTypesLookUp = new HashMap<>();
     private final HashMap<String, Long> langLookUp = new HashMap<>();
     private final boolean literalsPresent;
@@ -215,7 +221,8 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             encoder = new DictionaryNodeEncoder(name, nodeCount, offsets, nativedatatypes, typedLiterals,
                     integers, longs, floats, doubles, iri, strings, langTags, langDirs,
                     dataTypesLookUp, langLookUp, literalsPresent,
-                    (ttSupport == null) ? null : ttSupport::onTripleTerm);
+                    (ttSupport == null) ? null : ttSupport::onTripleTerm,
+                    (seqSupport == null) ? null : seqSupport::onSequence);
         }
         encoder.encode(node);
         encoded++;
@@ -252,11 +259,31 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         this.tripleTerms = resolved;
     }
 
+    /**
+     * Sequence support for the literals section of a store holding sequences
+     * (format v7); must be set before {@link #encode}.
+     */
+    void setSequenceSupport(HugeSequences support) {
+        if (!Params.LITERALS.equals(name)) {
+            throw new IllegalArgumentException("Dictionary '" + name + "' does not hold sequences");
+        }
+        this.seqSupport = support;
+    }
+
+    /** Installs the resolved element store; must be called before {@link #transferTo} when sequences were encoded. */
+    void setSequenceElementsBuffer(SpillBitPackedBuffer resolved) {
+        this.sequenceElements = resolved;
+    }
+
     /** Writes this dictionary as a subgroup, mirroring MultiTypeDictionaryWriter.add(). */
     void transferTo(StreamingHdf5Group group) throws IOException {
         if (ttSupport != null && ttSupport.count() > 0 && tripleTerms == null) {
             throw new IllegalStateException("Dictionary '" + name + "' encoded " + ttSupport.count()
                     + " triple terms but the resolved component store was never installed");
+        }
+        if (seqSupport != null && seqSupport.count() > 0 && sequenceElements == null) {
+            throw new IllegalStateException("Dictionary '" + name + "' encoded " + seqSupport.count()
+                    + " sequences but the resolved element store was never installed");
         }
         StreamingHdf5Group subGroup = group.putGroup(name);
         if (typedLiterals != null) typedLiterals.transferTo(subGroup, "typedLiterals");
@@ -270,6 +297,11 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         if (integers != null) integers.transferTo(subGroup, "integers");
         if (longs != null) longs.transferTo(subGroup, "longs");
         if (tripleTerms != null) tripleTerms.transferTo(subGroup, "tripleTerms");
+        if (seqSupport != null && seqSupport.count() > 0) {
+            // Block-structured, as the in-memory writer writes them (§5.1a, §7.6b).
+            seqSupport.starts().transferBlockedTo(subGroup, Params.SEQUENCE_STARTS);
+            sequenceElements.transferBlockedTo(subGroup, Params.SEQUENCE_ELEMENTS, Params.NUM_SLOTS, seqSupport.slots());
+        }
         if (floats != null) floats.transferTo(subGroup, "floats");
         if (doubles != null) doubles.transferTo(subGroup, "doubles");
         if (iri != null && iri.getNumEntries() > 0) iri.transferTo(subGroup);
@@ -285,6 +317,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         offsets.close();
         nativedatatypes.close();
         if (tripleTerms != null) tripleTerms.close();
+        if (sequenceElements != null) sequenceElements.close();
         if (typedLiterals != null) typedLiterals.close();
         if (integers != null) integers.close();
         if (longs != null) longs.close();

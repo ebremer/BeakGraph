@@ -60,6 +60,58 @@ public final class SeqTerms {
         return NodeFactory.createSeqNodeView(elements);
     }
 
+    /** Receives each element of a sequence, all nesting depths, by kind (see {@link #walk}). */
+    public interface ElementVisitor {
+        /** A literal element. */
+        void literal(Node n);
+
+        /** An IRI or blank node element: an entity. */
+        void entity(Node n);
+
+        /** A triple-term element; its own components are the visitor's to register. */
+        void tripleTerm(Node n);
+
+        /**
+         * A NESTED sequence: a term of its own. Answers whether to walk into it,
+         * which a visitor declines for one it has registered already.
+         */
+        boolean nestedSequence(Node n);
+    }
+
+    /**
+     * THE walk every ingest registers a sequence's elements with (each engine
+     * mirrored the triple-term walk once, and they drifted): every element, in
+     * order, at every depth, by kind, with the §9.5 guards - a slot is no
+     * term and is skipped, and an element of any other kind, or nesting past
+     * {@link #MAX_DEPTH}, is refused loudly. {@code seq} itself is not
+     * delivered: the caller holds it.
+     */
+    public static void walk(Node seq, ElementVisitor visitor) {
+        walk(seq, visitor, 0);
+    }
+
+    private static void walk(Node seq, ElementVisitor visitor, int depth) {
+        CompoundTerms.requireDepth(seq, depth);
+        for (Node e : seq.getSeq()) {
+            if (e.isNodeUndef()) {
+                continue;
+            }
+            if (e.isLiteral()) {
+                visitor.literal(e);
+            } else if (e.isBlank() || e.isURI()) {
+                visitor.entity(e);
+            } else if (e.isTripleTerm()) {
+                visitor.tripleTerm(e);
+            } else if (e.isNodeSeq()) {
+                if (visitor.nestedSequence(e)) {
+                    walk(e, visitor, depth + 1);
+                }
+            } else {
+                throw new IllegalStateException("Unexpected sequence element node type: " + e + " in " + seq);
+            }
+        }
+    }
+
     /**
      * The clause a position guard adds to its refusal when the refused node is
      * a sequence or a slot: where each may stand (SPECIFICATIONS.md §9.5).

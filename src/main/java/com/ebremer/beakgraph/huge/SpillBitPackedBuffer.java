@@ -150,6 +150,16 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
      * and a transfer buffer, whatever the sequence's length.
      */
     void transferBlockedTo(StreamingHdf5Group group, String name) throws IOException {
+        transferBlockedTo(group, name, null, 0);
+    }
+
+    /**
+     * As {@link #transferBlockedTo(StreamingHdf5Group, String)}, with one more
+     * 64-bit attribute {@code extraName} on the dataset after the standard ones
+     * (when not null): {@code sequenceElements}' {@code numSlots}, written in
+     * the order the in-memory writer writes it.
+     */
+    void transferBlockedTo(StreamingHdf5Group group, String name, String extraName, long extraValue) throws IOException {
         complete();
         if (numEntries == 0) {
             Files.deleteIfExists(file);
@@ -179,6 +189,9 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
             ds.putAttribute(Params.WIDTH, layout.maxWidth);
             ds.putAttribute(Params.NUM_ENTRIES, numEntries);
             ds.putAttribute(Params.BLOCK_ENTRIES, layout.blockEntries);
+            if (extraName != null) {
+                ds.putAttribute(extraName, extraValue);
+            }
         }
         try (StreamingHdf5Dataset directory = group.createByteDataset(name + Params.BLOCKS_SUFFIX, layout.directory.length)) {
             directory.write(layout.directory);
