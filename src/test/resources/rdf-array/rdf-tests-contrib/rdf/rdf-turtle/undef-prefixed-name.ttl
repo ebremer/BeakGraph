@@ -1,0 +1,2 @@
+PREFIX undef: <http://example/>
+undef:s undef:p (undef:o undef undef:) .

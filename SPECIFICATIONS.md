@@ -1191,7 +1191,9 @@ midpoints around a float/double constant; `(float) c` / `(double) c` for a decim
 constant when the section holds float / double rows), because ARQ compares mixed numeric types by
 lossy promotion while the dictionary orders them exactly (§6.2.4), and the cluster is scanned rather
 than skipped for `>` / `<`; no range narrowing at all around a composite, language-tagged or
-mixed-duration constant (§6.2 rules 1–3: their dictionary order is not ARQ's comparison order); graph
+mixed-duration constant (§6.2 rules 1–3: their dictionary order is not ARQ's comparison order), nor
+(*v7*) around a sequence, whose literal elements rank by §6.2 too; a concrete sequence located on
+element ids (§7.6b); graph
 enumeration and membership via the `graphs` list; union-graph scans; HTTP range reading (a
 consequence of the contiguous-dataset profile, §3 — no format work needed).
 

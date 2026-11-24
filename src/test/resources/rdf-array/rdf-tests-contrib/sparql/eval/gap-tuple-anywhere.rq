@@ -1,0 +1,4 @@
+PREFIX : <http://example/>
+SELECT ?obs ?v ?unit WHERE {
+  ?obs :component ( ... ( "8480-6" ?name ( ?v ?unit ) ) ... )
+}

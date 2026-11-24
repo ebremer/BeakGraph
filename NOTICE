@@ -17,6 +17,12 @@ This product bundles third-party code:
 * src/main/java/com/ebremer/beakgraph/core/lib/FrozenNodeCmp.java - Apache Jena
   6.2.0's NodeCmp.compareRDFTerms term order, adapted (Apache License 2.0; ASF
   header retained).
-* src/test/resources/w3c and src/test/resources/sparql-cdts - vendored W3C
-  and SPARQL-CDT test suites under their own licenses (see the README.md and
-  LICENSE files in those directories).
+* src/test/java/com/ebremer/beakgraph/rdfarray/UndefSlotsStoreTest.java,
+  SequenceQueriesStoreTest.java and ArraySyntaxExamplesStoreTest.java - Apache
+  Jena's rdf-array branch tests TestUndefSlots, TestSequenceQueries and
+  TestArraySyntaxExamples, ported to BeakGraph stores (Apache License 2.0; ASF
+  headers retained).
+* src/test/resources/w3c, src/test/resources/sparql-cdts and
+  src/test/resources/rdf-array - vendored W3C, SPARQL-CDT and rdf-array contrib
+  test suites under their own licenses (see the README.md and LICENSE files in
+  those directories).

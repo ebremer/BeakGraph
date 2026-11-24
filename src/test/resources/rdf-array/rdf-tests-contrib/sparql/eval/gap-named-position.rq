@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?x ?i WHERE { :poly :points ( ...?pre ?x ... ) BIND(SEQLEN(?pre) + 1 AS ?i) }

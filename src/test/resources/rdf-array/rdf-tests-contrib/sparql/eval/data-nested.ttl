@@ -1,0 +1,11 @@
+@prefix : <http://example/> .
+:obs1 :component ( ( "8480-6" "systolic"  ( 120 "mm[Hg]" ) )
+                   ( "8462-4" "diastolic" (  80 "mm[Hg]" ) ) ) .
+:obs2 :component ( ( "8480-6" "systolic"  ( 150 "mm[Hg]" ) )
+                   ( "8462-4" "diastolic" (  95 "mm[Hg]" ) ) ) .
+:obs3 :component ( ( "8480-6" "systolic"  ( "high" "mm[Hg]" ) ) ) .
+:m1   :matrix ( ( 1 2 3 ) ( 4 5 6 ) ) .
+:m2   :matrix ( ( 1 2 3 ) ( 4 5 ) ) .
+:poly :points ( ( 0 0 ) ( 3 0 ) ( 3 4 ) ) .
+:kv   :pairs  ( "a" 1 "b" 2 "c" 3 ) .
+:tree :node   ( "root" ( ( "left" ( ) ) ( "right" ( ( "leaf" ( ) ) ) ) ) ) .

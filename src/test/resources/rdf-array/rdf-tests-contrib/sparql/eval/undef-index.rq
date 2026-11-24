@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?one ?two ?d { :x :p ?s BIND(?s[1] AS ?one) BIND(?s[2] AS ?two) BIND(COALESCE(?s[2], 'none') AS ?d) }

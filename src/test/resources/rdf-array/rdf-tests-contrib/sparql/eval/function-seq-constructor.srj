@@ -1,0 +1,31 @@
+{
+  "head": {
+    "vars": [
+      "seq"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "seq": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "1"
+            },
+            {
+              "type": "uri",
+              "value": "http://example/a"
+            },
+            {
+              "type": "seq",
+              "value": []
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

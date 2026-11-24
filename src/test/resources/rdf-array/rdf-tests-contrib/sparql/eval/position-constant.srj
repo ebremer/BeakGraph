@@ -1,0 +1,18 @@
+{
+  "head": {
+    "vars": [
+      "e"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "e": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "2"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s ?o { ?s :p ?o } ORDER BY ?o

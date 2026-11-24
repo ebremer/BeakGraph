@@ -1,0 +1,1 @@
+("1"^^<http://www.w3.org/2001/XMLSchema#integer> "2"^^<http://www.w3.org/2001/XMLSchema#integer>) <http://example/p> <http://example/o> .

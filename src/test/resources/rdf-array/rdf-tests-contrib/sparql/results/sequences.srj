@@ -1,0 +1,7 @@
+{"head": {"vars":["s","seq"]},
+"results": { "bindings": [
+{"seq":{"value":"not a sequence","type":"literal"},"s":{"value":"http://example/w","type":"uri"}},
+{"seq":{"value":[{"value":"1","type":"literal","datatype":"http://www.w3.org/2001/XMLSchema#integer"},{"value":"2","type":"literal","datatype":"http://www.w3.org/2001/XMLSchema#integer"},{"value":"3","type":"literal","datatype":"http://www.w3.org/2001/XMLSchema#integer"}],"type":"seq"},"s":{"value":"http://example/x","type":"uri"}},
+{"seq":{"value":[{"value":"http://example/a","type":"uri"},{"value":[{"value":"http://example/b","type":"uri"},{"value":"http://example/c","type":"uri"}],"type":"seq"}],"type":"seq"},"s":{"value":"http://example/y","type":"uri"}},
+{"seq":{"value":[],"type":"seq"},"s":{"value":"http://example/z","type":"uri"}}
+]}}

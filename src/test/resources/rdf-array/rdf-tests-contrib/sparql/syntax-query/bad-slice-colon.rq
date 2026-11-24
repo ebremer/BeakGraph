@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT * { ?s :p ?o BIND(?o[2:4] AS ?x) }

@@ -1,0 +1,22 @@
+{
+  "head": {
+    "vars": [
+      "child",
+      "grandchild"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "child": {
+          "type": "literal",
+          "value": "right"
+        },
+        "grandchild": {
+          "type": "literal",
+          "value": "leaf"
+        }
+      }
+    ]
+  }
+}

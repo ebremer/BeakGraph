@@ -1,0 +1,4 @@
+PREFIX : <http://example/>
+SELECT ?child ?grandchild WHERE {
+  :tree :node ( "root" ( ... ( ?child ( ... ( ?grandchild ?kids ) ... ) ) ... ) )
+}

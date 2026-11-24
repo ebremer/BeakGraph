@@ -39,8 +39,12 @@ For a pattern `(g, s, p, ?)`:
 - RDF 1.2 triple-term patterns with variables are unified on ids against `tripleTerms`
   (`TripleTermMatcher`)
 - A concrete RDF-array sequence, such as `?s :p ( 1 2 3 )`, is a constant like any other: it is
-  located on ids. Sequence patterns with variables, gaps or `UNNEST` come with the query work of
-  `RDFARRY.md` step 4
+  located on ids
+- A basic graph pattern holding a sequence pattern (a variable, gap or nested pattern inside
+  `( … )`) goes whole to jena-array's solver over the store's `find`, in written order, with its
+  filters after it: a variable at an empty slot stays unbound, which the id-level planner does not
+  know yet. `UNNEST`, `SEQLEN`, indexes and slices are Jena's, over lazily read stored sequences
+  (`RDFARRY.md` §3.7)
 - Optional spatial layer: geometries are Hilbert-indexed into cell ids stored as ordinary quads in
   graph `urn:x-beakgraph:Spatial`; `geof:sfIntersects` takes its candidates from GPOS range scans over
   the query region's cover and verifies each with JTS, so results are exact

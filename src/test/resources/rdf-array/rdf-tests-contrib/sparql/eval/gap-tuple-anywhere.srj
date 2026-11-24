@@ -1,0 +1,57 @@
+{
+  "head": {
+    "vars": [
+      "obs",
+      "v",
+      "unit"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "obs": {
+          "type": "uri",
+          "value": "http://example/obs1"
+        },
+        "v": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "120"
+        },
+        "unit": {
+          "type": "literal",
+          "value": "mm[Hg]"
+        }
+      },
+      {
+        "obs": {
+          "type": "uri",
+          "value": "http://example/obs2"
+        },
+        "v": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "150"
+        },
+        "unit": {
+          "type": "literal",
+          "value": "mm[Hg]"
+        }
+      },
+      {
+        "obs": {
+          "type": "uri",
+          "value": "http://example/obs3"
+        },
+        "v": {
+          "type": "literal",
+          "value": "high"
+        },
+        "unit": {
+          "type": "literal",
+          "value": "mm[Hg]"
+        }
+      }
+    ]
+  }
+}

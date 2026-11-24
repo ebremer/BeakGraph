@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s ?e { ?s :p ?seq UNNEST(?seq AS ?e) } ORDER BY ?s ?e

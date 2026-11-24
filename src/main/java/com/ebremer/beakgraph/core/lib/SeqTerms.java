@@ -76,6 +76,31 @@ public final class SeqTerms {
     }
 
     /**
+     * Whether {@code n} is a sequence PATTERN, or holds one at any depth: a
+     * sequence with a variable, a gap or a nested pattern inside, which no
+     * store holds and which only matching answers. A concrete sequence (slots
+     * included) is a term like any other, and is not one.
+     */
+    public static boolean isPattern(Node n) {
+        return n != null && !n.isConcrete() && holdsSequence(n);
+    }
+
+    /** Whether a position of {@code t} is a sequence pattern ({@link #isPattern}). */
+    public static boolean holdsPattern(org.apache.jena.graph.Triple t) {
+        return isPattern(t.getSubject()) || isPattern(t.getPredicate()) || isPattern(t.getObject());
+    }
+
+    /** Whether a triple of {@code bgp} holds a sequence pattern ({@link #isPattern}). */
+    public static boolean holdsPattern(Iterable<org.apache.jena.graph.Triple> bgp) {
+        for (org.apache.jena.graph.Triple t : bgp) {
+            if (holdsPattern(t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Whether {@code n} is a sequence or holds one at any depth: a sequence
      * element of a sequence, or a component of a triple term.
      */

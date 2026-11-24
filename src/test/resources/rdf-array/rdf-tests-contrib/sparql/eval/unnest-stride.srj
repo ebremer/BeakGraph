@@ -1,0 +1,45 @@
+{
+  "head": {
+    "vars": [
+      "k",
+      "v"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "k": {
+          "type": "literal",
+          "value": "a"
+        },
+        "v": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        }
+      },
+      {
+        "k": {
+          "type": "literal",
+          "value": "b"
+        },
+        "v": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "2"
+        }
+      },
+      {
+        "k": {
+          "type": "literal",
+          "value": "c"
+        },
+        "v": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "3"
+        }
+      }
+    ]
+  }
+}

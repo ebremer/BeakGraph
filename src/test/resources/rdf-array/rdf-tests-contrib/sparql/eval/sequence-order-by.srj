@@ -1,0 +1,86 @@
+{
+  "head": {
+    "vars": [
+      "s",
+      "o"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/w"
+        },
+        "o": {
+          "type": "literal",
+          "value": "not a sequence"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/z"
+        },
+        "o": {
+          "type": "seq",
+          "value": []
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/y"
+        },
+        "o": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "uri",
+              "value": "http://example/a"
+            },
+            {
+              "type": "seq",
+              "value": [
+                {
+                  "type": "uri",
+                  "value": "http://example/b"
+                },
+                {
+                  "type": "uri",
+                  "value": "http://example/c"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/x"
+        },
+        "o": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "1"
+            },
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "2"
+            },
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "3"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

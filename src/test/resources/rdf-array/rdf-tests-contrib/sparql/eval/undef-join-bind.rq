@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s ?a ?b ?c { BIND(5 AS ?b) ?s :p (?a ?b ?c) }

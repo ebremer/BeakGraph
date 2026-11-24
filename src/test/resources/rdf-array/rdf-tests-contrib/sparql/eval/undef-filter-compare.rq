@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s { ?s :p (?a ?b ?c) FILTER(?b > 0) }

@@ -1,0 +1,5 @@
+@prefix : <http://example/> .
+:x :p (1 2 3) .
+:y :p (:a (:b :c)) .
+:z :p () .
+:w :p "not a sequence" .

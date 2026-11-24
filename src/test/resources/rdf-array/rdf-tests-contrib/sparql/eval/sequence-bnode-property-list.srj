@@ -1,0 +1,17 @@
+{
+  "head": {
+    "vars": [
+      "code"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "code": {
+          "type": "literal",
+          "value": "1234-5"
+        }
+      }
+    ]
+  }
+}

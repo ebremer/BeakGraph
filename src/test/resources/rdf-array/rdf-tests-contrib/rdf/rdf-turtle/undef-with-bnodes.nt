@@ -1,0 +1,2 @@
+_:b0 <http://example/q> (undef) .
+<http://example/x> <http://example/p> (_:b1 undef _:b0) .

@@ -1,0 +1,112 @@
+{
+  "head": {
+    "vars": [
+      "m",
+      "i",
+      "cols"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "m": {
+          "type": "uri",
+          "value": "http://example/m1"
+        },
+        "i": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        },
+        "cols": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "2"
+            },
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "3"
+            }
+          ]
+        }
+      },
+      {
+        "m": {
+          "type": "uri",
+          "value": "http://example/m1"
+        },
+        "i": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "2"
+        },
+        "cols": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "5"
+            },
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "6"
+            }
+          ]
+        }
+      },
+      {
+        "m": {
+          "type": "uri",
+          "value": "http://example/m2"
+        },
+        "i": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        },
+        "cols": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "2"
+            },
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "3"
+            }
+          ]
+        }
+      },
+      {
+        "m": {
+          "type": "uri",
+          "value": "http://example/m2"
+        },
+        "i": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "2"
+        },
+        "cols": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "5"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

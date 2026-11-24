@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT * { ?s :p ?o FILTER(?o IN (?a) && ?o IN ?a && ?o NOT IN SEQ(1, 2) && 3 IN ?a[1]) }

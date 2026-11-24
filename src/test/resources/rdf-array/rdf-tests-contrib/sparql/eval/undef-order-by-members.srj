@@ -1,0 +1,47 @@
+{
+  "head": {
+    "vars": [
+      "s"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/e"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/b"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/a"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/d"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/c"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/f"
+        }
+      }
+    ]
+  }
+}

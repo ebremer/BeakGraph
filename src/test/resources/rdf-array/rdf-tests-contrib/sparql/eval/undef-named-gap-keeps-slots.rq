@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?h ?t { :x :p ( ?h ...?t ) }

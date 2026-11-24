@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s { ?s :p ?v FILTER(sameTerm(?v, SEQ(1, undef, 3))) }

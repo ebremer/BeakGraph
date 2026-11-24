@@ -1,0 +1,34 @@
+{
+  "head": {
+    "vars": [
+      "x0",
+      "last"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "x0": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "0"
+        },
+        "last": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "3"
+            },
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "4"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

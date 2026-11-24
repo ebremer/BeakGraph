@@ -1,0 +1,2 @@
+<http://x> <http://p> ( _:b ( _:b ) ) .
+_:b <http://q> "c" .

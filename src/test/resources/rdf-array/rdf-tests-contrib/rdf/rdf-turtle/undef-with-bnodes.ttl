@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+:x :p (_:a undef [ :q (undef) ]) .

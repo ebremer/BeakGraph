@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s WHERE { ?s :points ?pts FILTER(SEQ(3, 4) IN ?pts) }

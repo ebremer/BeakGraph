@@ -7,8 +7,9 @@
   (`sparql-query.js`, `sparql-query-undef.html`) and `docs/rdfc-array.md`
 - Reference implementation: [jena-array](https://github.com/rdf-array/jena-array), branch `rdf-undef`
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
-- Status: steps 1-3 done (2026-11-24): the v7 spec, the Jena port, and v7 storage on `-method 0` and
-  `-method 2`. Step 4, correct queries, is next
+- Status: steps 1-4 done (2026-11-24): the v7 spec, the Jena port, v7 storage on `-method 0` and
+  `-method 2`, and correct SPARQL-array answers over it (milestone A). Step 5, the other engines, is
+  next
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -898,6 +899,34 @@ which is the rule triple terms set in v5.
   `TestUndefSlots` and the array-syntax §4.1 examples pass over BeakGraph stores;
 - every existing parity test (`AlgebraShapeParityTest`, `RangePushdownParityTest`, …) is unchanged.
 
+**Status (2026-11-24): done, milestone A.**
+
+- **Delegation.** `OpExecutorBG.optimizeExecuteTriples` and `PatternMatchBG.execute` hand a BGP
+  holding a sequence pattern (`SeqTerms.isPattern`: a variable, a gap or a nested pattern inside)
+  whole to `PatternMatchData` (jena-array's `SolverRX3`) over the store's `find`, in written order,
+  with the filters after it. A concrete sequence stays on ids. `GraphVarBG` (and so `GroupOnIds`)
+  leaves such patterns to Jena; `OptionalHashJoin` treats a sequence-valued key as a literal one.
+- **Guards.** `FilterBounds.orderAgreesWithArq` gives no hint around a sequence; `ResultCache.walk`
+  visits `OpUnnest` (and `OpUnfold`, a gap it had); the endpoint and `-export` refuse sequences in
+  JSON-LD and RDF/XML (step 3).
+- **Slot-aware variable analysis, as far as layer A needs it.** Delegated BGPs are neither reordered
+  nor split by filter placement, which is where a slot's unbound variable could mislead the id-level
+  planner. Of the analyses outside a BGP, `MinusJoin.boundVars` already counts no variable inside a
+  sequence as certain, and `PathMerge` and `BGReorderTransform` use variables only for costs and
+  groupings whose answers are the same either way. Keying on `numSlots` buys speed, so it moves to
+  step 7 with the id-level matcher, and so does `SlotPolicy`: under delegation the five open
+  decisions are jena-array's.
+- **The harness.** `RdfArrayContribSuiteTest` runs the vendored rdf-tests-contrib (`rdf-undef`) over
+  HDF5 and Zarr stores: 340 of 349 pass. The 9 aborted, each with its reason, are the 7 update tests
+  (read-only stores) and the CSV test on both containers, where Jena's own writer has no sequence
+  spelling. The fork's `TestUndefSlots`, `TestSequenceQueries` and `TestArraySyntaxExamples` are
+  ported to stores (`rdfarray/*StoreTest`): 94 pass, and 3 are disabled with the reason (two update
+  tests, one sequence subject).
+- **Found on the way.** The lazy-row hazard of §6, through Jena's NodeValue cache; fixed by keeping
+  read elements.
+- **Not yet fast.** A delegated BGP runs triple by triple through `find`, without the id-level
+  planner. Step 7 brings it back onto ids.
+
 ### Step 5: the other five engines (P2, L)
 
 **Work:**
@@ -1087,8 +1116,13 @@ Each of these waits on the spec or on a need:
   - The fork's parsers stop at 500 levels (`Recursion limit exceeded for nested structures`), below
     the store's 1,000, so only programmatic input reaches BeakGraph's bound.
 - **A lazy sequence outlives its store badly.** A stored sequence reads its elements from the store when
-  asked (§3.6), so one kept after its store is closed fails on access. Results are written while the
-  store is open; a caller that keeps sequences copies them (`SeqTerms.create(new ArrayList<>(…))`).
+  asked (§3.6), so one kept after its store is closed fails on access.
+  - It happened in step 4: Jena's JVM-wide NodeValue cache kept lazy sequences, and a later, equal
+    sequence from another store compared against one after its store had closed ("Already closed").
+  - The fix: a row keeps every element it reads. A cache hashes a key before keeping it, which reads
+    them all, so a cached row never reads its store again.
+  - What is left: a row a caller keeps unread past its store's closing. Results are written while
+    the store is open; a caller that keeps sequences copies them (`SeqTerms.create(new ArrayList<>(…))`).
 - **Jena's `NodeValue` initialization deadlock.** Any new code that builds `NodeValue`s on worker threads
   (a `SEQLEN` fast path, array-backed elements) goes through `NodeValues`, which initializes `NodeValue`
   first. Only a fresh-JVM CLI build shows the hang.

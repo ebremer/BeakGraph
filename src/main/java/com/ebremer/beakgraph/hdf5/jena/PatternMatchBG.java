@@ -32,7 +32,37 @@ public class PatternMatchBG {
     /** Number of BGPs executed by the id-level engine - tests pin that a plan shape does not fall back to Jena's. */
     public static final java.util.concurrent.atomic.AtomicLong HITS = new java.util.concurrent.atomic.AtomicLong();
 
+    /** BGPs handed whole to Jena's solver because they hold a sequence pattern: tests see which way a query went. */
+    public static final java.util.concurrent.atomic.AtomicLong DELEGATED = new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * {@code bgp}, which holds a sequence pattern ({@code SeqTerms.isPattern}),
+     * solved by Jena's generic matcher - jena-array's {@code SolverRX3}, over
+     * this graph's {@code find} - in the order written, then {@code filter}
+     * applied to every row. The matcher binds a variable at an empty slot to
+     * nothing and lets a bound one through a slot (rdf-undef §3), which the
+     * id-level solver does not know yet (RDFARRY.md step 7).
+     */
+    static QueryIterator delegate(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter,
+                                  ExecutionContext execCxt) {
+        DELEGATED.incrementAndGet();
+        ExecutionContext onGraph = (execCxt.getActiveGraph() == bGraph) ? execCxt
+                : ExecutionContext.copyChangeActiveGraph(execCxt, bGraph);
+        QueryIterator it = org.apache.jena.sparql.engine.main.solver.PatternMatchData.execute(bGraph, bgp, input, null, onGraph);
+        if (filter != null) {
+            for (Expr e : filter) {
+                it = new org.apache.jena.sparql.engine.iterator.QueryIterFilterExpr(it, e, execCxt);
+            }
+        }
+        return it;
+    }
+
     public static QueryIterator execute(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
+        if (com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(bgp)) {
+            // Every caller hands filter exprs here as hints only and applies
+            // them itself: the pattern alone goes to Jena's solver.
+            return delegate(bGraph, bgp, input, null, execCxt);
+        }
         HITS.incrementAndGet();
         List<Triple> triples = new ArrayList<>(bgp.getList());
         List<Abortable> killList = new ArrayList<>();

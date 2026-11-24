@@ -1,0 +1,40 @@
+{
+  "head": {
+    "vars": [
+      "s",
+      "v"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/s2"
+        },
+        "v": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/s1"
+        },
+        "v": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/s4"
+        }
+      }
+    ]
+  }
+}

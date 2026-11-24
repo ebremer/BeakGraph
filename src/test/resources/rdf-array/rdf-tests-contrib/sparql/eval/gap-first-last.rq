@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?x0 ?last WHERE { :poly :points ( ( ?x0 ?y0 ) ... ?last ) }

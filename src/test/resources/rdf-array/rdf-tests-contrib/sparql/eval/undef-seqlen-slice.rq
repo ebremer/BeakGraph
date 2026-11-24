@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?n ?t { :x :p ?s BIND(SEQLEN(?s) AS ?n) BIND(?s[2...3] AS ?t) }

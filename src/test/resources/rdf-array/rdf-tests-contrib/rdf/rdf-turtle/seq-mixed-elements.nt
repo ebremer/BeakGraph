@@ -1,0 +1,3 @@
+(<http://example/a>) <http://example/r> <http://example/z> .
+<http://example/x> <http://example/q> () .
+<http://example/x> <http://example/p> ("1"^^<http://www.w3.org/2001/XMLSchema#integer> ("2"^^<http://www.w3.org/2001/XMLSchema#integer> "3"^^<http://www.w3.org/2001/XMLSchema#integer>) <http://example/y> "s"@en) .

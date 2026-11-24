@@ -208,6 +208,17 @@ class ResultCacheTest {
     }
 
     @Test
+    void anUnstableExpressionInsideUnnestOrUnfoldIsNeverKept() {
+        // RDFARRY.md §3.7: the two operators hold an expression Jena's walker does not visit.
+        assertFalse(ResultCache.stable(QueryFactory.create("SELECT ?m WHERE { UNNEST(SEQ(RAND(), 1) AS ?m) }",
+                org.apache.jena.query.Syntax.syntaxARQ)));
+        assertFalse(ResultCache.stable(QueryFactory.create("SELECT ?m WHERE { UNFOLD(STRUUID() AS ?m) }",
+                org.apache.jena.query.Syntax.syntaxARQ)));
+        assertTrue(ResultCache.stable(QueryFactory.create("SELECT ?m WHERE { UNNEST(SEQ(1, 2) AS ?m) }",
+                org.apache.jena.query.Syntax.syntaxARQ)));
+    }
+
+    @Test
     void aServiceCallIsNeverKept() {
         assertFalse(ResultCache.stable(QueryFactory.create("SELECT * WHERE { SERVICE <http://example.org/sparql> { ?s ?p ?o } }")));
         assertFalse(ResultCache.stable(QueryFactory.create(

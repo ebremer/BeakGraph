@@ -1,0 +1,26 @@
+{
+  "head": {
+    "vars": [
+      "m"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "m": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        }
+      },
+      {},
+      {
+        "m": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "3"
+        }
+      }
+    ]
+  }
+}

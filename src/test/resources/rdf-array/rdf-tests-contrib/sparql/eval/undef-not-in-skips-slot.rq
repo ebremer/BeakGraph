@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s { :x :p ?v BIND(:x AS ?s) FILTER(2 NOT IN ?v) }

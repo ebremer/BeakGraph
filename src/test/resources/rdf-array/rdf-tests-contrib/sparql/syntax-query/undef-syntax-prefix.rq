@@ -1,0 +1,3 @@
+PREFIX : <http://example/>
+PREFIX undef: <http://example/>
+SELECT * { undef:s undef:p ( undef:o undef undef: ) }

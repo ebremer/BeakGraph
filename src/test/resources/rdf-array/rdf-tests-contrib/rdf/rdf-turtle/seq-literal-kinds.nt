@@ -1,0 +1,1 @@
+<http://example/x> <http://example/p> ("true"^^<http://www.w3.org/2001/XMLSchema#boolean> "1.5"^^<http://www.w3.org/2001/XMLSchema#decimal> "1e0"^^<http://www.w3.org/2001/XMLSchema#double> "x" "y"@fr) .

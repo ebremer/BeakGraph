@@ -1,0 +1,3 @@
+PREFIX : <http://example/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+:x :p (true 1.5 1e0 "x"^^xsd:string "y"@fr) .

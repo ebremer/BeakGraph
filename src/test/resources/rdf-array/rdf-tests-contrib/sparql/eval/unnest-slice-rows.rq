@@ -1,0 +1,6 @@
+PREFIX : <http://example/>
+SELECT ?m ?i ?cols WHERE {
+  ?m :matrix ?rows .
+  UNNEST(?rows AS ?row AT ?i)
+  BIND(?row[2...3] AS ?cols)
+}

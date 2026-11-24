@@ -249,9 +249,13 @@ public final class GraphVarBG {
                 && org.apache.jena.datatypes.xsd.XSDDatatype.XSDstring.equals(n.getLiteralDatatype()));
     }
 
-    /** A triple term that holds variables: matched by unification, which the walk leaves to the ordinary path. */
+    /**
+     * A triple term that holds variables, or a sequence pattern: matched by
+     * unification (and a sequence pattern by jena-array's solver), which the
+     * walk leaves to the ordinary path.
+     */
     private static boolean isPattern(Node n) {
-        return n.isTripleTerm() && !n.isConcrete();
+        return (n.isTripleTerm() && !n.isConcrete()) || com.ebremer.beakgraph.core.lib.SeqTerms.isPattern(n);
     }
 
     /** EXISTS and NOT EXISTS: a graph pattern of their own, which is run against the graph a row is being solved in. */

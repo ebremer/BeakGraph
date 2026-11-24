@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s ?a ?c { ?s :p (?a undef ?c) }

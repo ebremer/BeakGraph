@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?m ?i { :x :p ?s UNNEST(?s AS ?m AT ?i) FILTER(BOUND(?m)) } ORDER BY ?i

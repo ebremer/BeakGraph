@@ -1,0 +1,74 @@
+{
+  "head": {
+    "vars": [
+      "s",
+      "e"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/x"
+        },
+        "e": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/x"
+        },
+        "e": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "2"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/x"
+        },
+        "e": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "3"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/y"
+        },
+        "e": {
+          "type": "uri",
+          "value": "http://example/a"
+        }
+      },
+      {
+        "s": {
+          "type": "uri",
+          "value": "http://example/y"
+        },
+        "e": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "uri",
+              "value": "http://example/b"
+            },
+            {
+              "type": "uri",
+              "value": "http://example/c"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

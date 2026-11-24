@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?v { :x :p ?v FILTER(2 IN ?v) }

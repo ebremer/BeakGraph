@@ -164,6 +164,10 @@ final class ResultCache {
             }
             @Override public void visit(OpOrder o) { exprs.walk(o.getConditions()); }
             @Override public void visit(OpTopN t) { exprs.walk(t.getConditions()); }
+            // SPARQL-array's UNNEST and SPARQL-CDT's UNFOLD each hold an
+            // expression of their own: UNNEST(SEQ(RAND()) AS ?x) is not stable.
+            @Override public void visit(org.apache.jena.sparql.algebra.op.OpUnnest u) { exprs.walk(u.getExpr()); }
+            @Override public void visit(org.apache.jena.sparql.algebra.op.OpUnfold u) { exprs.walk(u.getExpr()); }
         });
     }
 

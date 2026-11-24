@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT * { ?s :p ?o BIND(?o[2...4] AS ?x) BIND(?o[...SEQLEN(?o) - 1] AS ?y) BIND(?o[2...][1] AS ?z) }

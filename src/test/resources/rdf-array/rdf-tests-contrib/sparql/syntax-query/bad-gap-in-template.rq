@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+CONSTRUCT { ?s :p ( ?a ... ) } WHERE { ?s :p ?a }

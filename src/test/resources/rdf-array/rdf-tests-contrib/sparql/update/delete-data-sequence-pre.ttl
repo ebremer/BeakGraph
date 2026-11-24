@@ -1,0 +1,2 @@
+@prefix : <http://example/> .
+:n :p (4 5) ; :q () .

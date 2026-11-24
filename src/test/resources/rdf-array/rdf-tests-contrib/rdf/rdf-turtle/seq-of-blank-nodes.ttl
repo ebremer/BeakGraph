@@ -1,0 +1,3 @@
+PREFIX : <http://example/>
+:x :p ([] [ :q 1 ] _:b) .
+_:b :q 2 .

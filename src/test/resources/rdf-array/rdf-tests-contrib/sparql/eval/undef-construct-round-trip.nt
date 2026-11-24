@@ -1,0 +1,2 @@
+<http://example/x> <http://example/q> ("3"^^<http://www.w3.org/2001/XMLSchema#integer> undef "1"^^<http://www.w3.org/2001/XMLSchema#integer>) .
+<http://example/y> <http://example/q> ("3"^^<http://www.w3.org/2001/XMLSchema#integer> "2"^^<http://www.w3.org/2001/XMLSchema#integer> "1"^^<http://www.w3.org/2001/XMLSchema#integer>) .

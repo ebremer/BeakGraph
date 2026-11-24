@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?e { :s :idx ?i . :s :p ?seq BIND(?seq[?i] AS ?e) }

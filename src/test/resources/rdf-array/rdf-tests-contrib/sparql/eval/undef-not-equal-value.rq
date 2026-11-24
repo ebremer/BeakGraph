@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s { :x :p ?v BIND(:x AS ?s) FILTER(?v != SEQ(1, 2, 3)) }

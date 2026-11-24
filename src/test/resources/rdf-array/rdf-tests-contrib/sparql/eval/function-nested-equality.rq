@@ -1,0 +1,5 @@
+PREFIX : <http://example/>
+SELECT ?m ?n WHERE {
+  ?m :matrix ?rows FILTER(?rows = SEQ(SEQ(1, 2, 3), SEQ(4, 5, 6)))
+  ?n :matrix ( ( 1 2 3 ) ( 4 5 6 ) )
+}

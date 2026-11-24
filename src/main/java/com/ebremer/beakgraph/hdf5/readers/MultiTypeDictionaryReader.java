@@ -463,11 +463,24 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
      * A stored sequence's elements, read when asked for: a nonzero id is the
      * object-space term it names (a nested sequence comes back lazy too), 0
      * the empty slot. Immutable, like the store.
+     *
+     * <p>Each element read is kept. That is what makes a row safe in Jena's
+     * JVM-wide caches (the NodeValue cache above all), which outlive the
+     * store: a cache hashes a key before it keeps it, which reads every
+     * element, so a row a cache holds never reads its store again, and a
+     * later, equal sequence from another store compares against the kept
+     * elements. A row a caller keeps unread after its store is closed fails
+     * when read (RDFARRY.md §6).
      */
     private final class SequenceRow extends AbstractList<Node> implements RandomAccess {
         private final long start;
         private final int size;
         private final SequenceSupport support;
+        // Benign races: two threads that both find an element missing store
+        // the same immutable term; a reference write is atomic.
+        private Node[] read;
+        private int hash;
+        private boolean hashed;
 
         SequenceRow(long start, int size, SequenceSupport support) {
             this.start = start;
@@ -478,13 +491,37 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         @Override
         public Node get(int index) {
             Objects.checkIndex(index, size);
-            long id = sequenceElements.get(start + index);
-            return (id == 0) ? com.ebremer.beakgraph.core.lib.SeqTerms.UNDEF : support.extract(id);
+            Node[] kept = read;
+            if (kept == null) {
+                kept = new Node[size];
+                read = kept;
+            }
+            Node n = kept[index];
+            if (n == null) {
+                long id = sequenceElements.get(start + index);
+                n = (id == 0) ? com.ebremer.beakgraph.core.lib.SeqTerms.UNDEF : support.extract(id);
+                kept[index] = n;
+            }
+            return n;
         }
 
         @Override
         public int size() {
             return size;
+        }
+
+        @Override
+        public int hashCode() {
+            if (!hashed) {
+                hash = super.hashCode();    // reads, and so keeps, every element
+                hashed = true;
+            }
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o == this || super.equals(o);
         }
     }
 

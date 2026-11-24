@@ -1,0 +1,32 @@
+{
+  "head": {
+    "vars": [
+      "n",
+      "t"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "n": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "3"
+        },
+        "t": {
+          "type": "seq",
+          "value": [
+            {
+              "type": "undef"
+            },
+            {
+              "type": "literal",
+              "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+              "value": "3"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

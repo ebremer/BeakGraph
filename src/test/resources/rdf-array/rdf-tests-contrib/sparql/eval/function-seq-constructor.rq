@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?seq { BIND(SEQ(1, :a, SEQ()) AS ?seq) }

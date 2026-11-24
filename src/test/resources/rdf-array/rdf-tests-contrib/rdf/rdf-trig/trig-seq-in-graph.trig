@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+:g { :x :p (1 2) }

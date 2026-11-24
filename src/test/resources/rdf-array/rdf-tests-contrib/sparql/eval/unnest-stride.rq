@@ -1,0 +1,7 @@
+PREFIX : <http://example/>
+SELECT ?k ?v WHERE {
+  :kv :pairs ?p .
+  UNNEST(?p AS ?k AT ?i)
+  BIND(?p[?i + 1] AS ?v)
+  FILTER(?i - 2 * FLOOR(?i / 2) = 1)
+}

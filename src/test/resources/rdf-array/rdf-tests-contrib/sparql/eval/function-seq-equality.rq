@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?s { ?s :p ?seq FILTER(?seq = SEQ(1, 2, 3)) }

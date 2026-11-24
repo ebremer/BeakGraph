@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+CONSTRUCT { ?s :q ( undef ?c ) } WHERE { ?s :p ?c }

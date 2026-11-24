@@ -1,0 +1,24 @@
+{
+  "head": {
+    "vars": [
+      "one",
+      "two",
+      "d"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "one": {
+          "type": "literal",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer",
+          "value": "1"
+        },
+        "d": {
+          "type": "literal",
+          "value": "none"
+        }
+      }
+    ]
+  }
+}

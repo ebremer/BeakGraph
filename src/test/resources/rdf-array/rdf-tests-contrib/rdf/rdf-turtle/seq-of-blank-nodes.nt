@@ -1,0 +1,3 @@
+_:b0 <http://example/q> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .
+_:b1 <http://example/q> "2"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example/x> <http://example/p> (_:b2 _:b0 _:b1) .

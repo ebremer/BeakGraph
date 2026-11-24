@@ -32,6 +32,23 @@ brought and what a reader must rebuild.
     stress fixture's stores from `-method 0`, `1` and `3` differ from master's in the version
     attribute and its object header's checksum alone (5 bytes). A v6 build refuses a v7 store by its
     version.
+* **SPARQL-array over v7 stores** (RDFARRY.md step 4, layer A of §3.7).
+  - **Delegation.** A BGP holding a sequence pattern (a variable, gap or nested pattern inside
+    `( … )`) goes whole to jena-array's solver over the store, in written order, its filters after
+    it; no reordering and no filter placement inside, since a variable at an empty slot stays
+    unbound. A concrete sequence stays on the id path. The `GRAPH ?g` walk and the group-on-ids
+    route leave such patterns to Jena.
+  - **A stored sequence keeps the elements it has read.** Jena's JVM-wide NodeValue cache kept lazy
+    sequences past their store's closing, and a later, equal sequence compared against one read a
+    closed store ("Already closed"). A cache hashes a key first, which now reads and keeps every
+    element.
+  - **Guards.** No range hint around a sequence constant (its literal elements rank by §6, not by
+    ARQ); the result cache sees `RAND()` and friends inside `UNNEST` (and inside SPARQL-CDT's
+    `UNFOLD`, which it missed before).
+  - **Conformance.** The rdf-array contrib suite (rdf-tests-contrib, branch `rdf-undef`) is vendored
+    and runs over HDF5 and Zarr stores: 340 of 349 pass, 9 aborted with the reason (update tests;
+    Jena's CSV writer). The fork's `TestUndefSlots`, `TestSequenceQueries` and
+    `TestArraySyntaxExamples` run over stores too: 94 pass, 3 disabled with the reason.
 * **A relative IRI inside a triple term now stops an N-Triples export without `-base`**, as a
   top-level one does; it used to be written relative (`relativeReference` did not look inside).
 * **Triple-term pattern scans clamp to the band's end too**, not only its start, so they no longer

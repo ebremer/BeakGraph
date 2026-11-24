@@ -1,0 +1,2 @@
+PREFIX : <http://example/>
+SELECT ?x { ?s :p ?x } ORDER BY (?x[1])

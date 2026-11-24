@@ -178,6 +178,15 @@ public class OpExecutorBG extends OpExecutor {
         if (!input.hasNext()) {
             return input;
         }
+        if (com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(pattern)) {
+            // A sequence pattern (RDFARRY.md §3.7, layer A): the whole BGP to
+            // jena-array's solver, in written order, the filters after it. Not
+            // reordered and no filter placed inside: a variable at an empty slot
+            // stays unbound, which neither the statistics nor Jena's placement
+            // knows, and the redline's "a bound variable is compatible with a
+            // slot" is what makes the written order's answers the right ones.
+            return PatternMatchBG.delegate(graph, pattern, input, exprs, execCxt);
+        }
         if ( pattern.size() >= 2 ) {
             ReorderTransformation transform = graph.getReorderTransform();
             if ( transform != null ) {

@@ -111,12 +111,18 @@ final class FilterBounds {
      *       from U+D800 up cannot be one side of such a pair, so against it both
      *       orders agree with every stored string.</li>
      * </ul>
+     * Nor is a hint given around an <b>RDF-array sequence</b>: the dictionary
+     * orders sequences element by element in its own order (§6), where a
+     * literal element ranks as above, not as ARQ ranks it (RDFARRY.md §3.7).
      * Every other space is ordered by value with value-equal terms adjacent
      * (see {@code NodeComparator}), so the hint is over-inclusive, never lossy.
      * The enclosing OpFilter evaluates the comparison either way; skipping the
      * hint only costs the narrowing.
      */
     static boolean orderAgreesWithArq(Node value) {
+        if (value.isNodeSeq()) {
+            return false;
+        }
         if (!value.isLiteral()) {
             return true;
         }

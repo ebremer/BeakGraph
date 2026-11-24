@@ -1,0 +1,22 @@
+{
+  "head": {
+    "vars": [
+      "m",
+      "n"
+    ]
+  },
+  "results": {
+    "bindings": [
+      {
+        "m": {
+          "type": "uri",
+          "value": "http://example/m1"
+        },
+        "n": {
+          "type": "uri",
+          "value": "http://example/m1"
+        }
+      }
+    ]
+  }
+}

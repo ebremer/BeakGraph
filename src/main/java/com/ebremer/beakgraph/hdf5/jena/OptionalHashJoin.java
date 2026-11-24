@@ -169,7 +169,8 @@ public final class OptionalHashJoin {
                 // Bound in an object position: an entity shares its id with the subject position, but a
                 // literal is never a subject, and a triple term goes Jena's way.
                 Node term = row.get(s);
-                if (term.isLiteral()) {
+                if (term.isLiteral() || term.isNodeSeq()) {
+                    // Nor is a sequence (rdf-array forbids it there).
                     out.add(row);
                     return;
                 }

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sparql xmlns="http://www.w3.org/2005/sparql-results#" xmlns:its="http://www.w3.org/2005/11/its" its:version="2.0">
+  <head>
+    <variable name="s"/>
+    <variable name="seq"/>
+  </head>
+  <results>
+    <result>
+      <binding name="seq">
+        <literal>not a sequence</literal>
+      </binding>
+      <binding name="s">
+        <uri>http://example/w</uri>
+      </binding>
+    </result>
+    <result>
+      <binding name="seq">
+        <seq>
+          <literal datatype="http://www.w3.org/2001/XMLSchema#integer">1</literal>
+          <literal datatype="http://www.w3.org/2001/XMLSchema#integer">2</literal>
+          <literal datatype="http://www.w3.org/2001/XMLSchema#integer">3</literal>
+        </seq>
+      </binding>
+      <binding name="s">
+        <uri>http://example/x</uri>
+      </binding>
+    </result>
+    <result>
+      <binding name="seq">
+        <seq>
+          <uri>http://example/a</uri>
+          <seq>
+            <uri>http://example/b</uri>
+            <uri>http://example/c</uri>
+          </seq>
+        </seq>
+      </binding>
+      <binding name="s">
+        <uri>http://example/y</uri>
+      </binding>
+    </result>
+    <result>
+      <binding name="seq">
+        <seq>
+        </seq>
+      </binding>
+      <binding name="s">
+        <uri>http://example/z</uri>
+      </binding>
+    </result>
+  </results>
+</sparql>

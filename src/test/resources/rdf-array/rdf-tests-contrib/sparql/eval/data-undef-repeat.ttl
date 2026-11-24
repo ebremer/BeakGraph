@@ -1,0 +1,5 @@
+@prefix : <http://example/> .
+:s1 :p (1 undef) .
+:s2 :p (undef 1) .
+:s3 :p (1 2) .
+:s4 :p (undef undef) .

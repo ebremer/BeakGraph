@@ -1,0 +1,5 @@
+PREFIX : <http://example/>
+SELECT ?h ?t ?t2 WHERE {
+  :poly :points ( ?h ...?t ) .
+  :poly :points ?pts BIND(?pts[2...] AS ?t2)
+}

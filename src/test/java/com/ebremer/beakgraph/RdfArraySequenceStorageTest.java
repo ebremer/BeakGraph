@@ -207,19 +207,47 @@ public class RdfArraySequenceStorageTest {
     }
 
     @Test
-    void aSequencePatternWithAVariableIsNoError() {
-        // Until step 4 hands sequence patterns to jena-array's solver, one is
-        // a plain miss on the store's id path; it must not throw from the
-        // comparator, which cannot rank a variable.
-        String q = "SELECT * WHERE { ?s <http://ex.org/list> ( ?x 2 3 ) }";
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> {
-            try (org.apache.jena.query.QueryExecution qe =
-                         org.apache.jena.query.QueryExecutionFactory.create(q, bg.getDataset())) {
-                org.apache.jena.query.ResultSetFormatter.consume(qe.execSelect());
-            }
-        });
+    void aSequencePatternGoesToJenaArraysSolverAndAConstantStaysOnIds() {
+        // RDFARRY.md §3.7, layer A: a BGP holding a sequence pattern is handed
+        // whole to jena-array's solver; a concrete sequence is located on ids.
+        long delegated = com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get();
+        String q = "SELECT ?x WHERE { ?s <http://ex.org/list> ( ?x 2 3 ) }";
+        try (org.apache.jena.query.QueryExecution qe =
+                     org.apache.jena.query.QueryExecutionFactory.create(q, bg.getDataset())) {
+            org.apache.jena.query.ResultSet rs = qe.execSelect();
+            assertEquals(integer(1), rs.next().get("x").asNode(), "the default graph's ( 1 2 3 )");
+            assertFalse(rs.hasNext());
+        }
+        assertTrue(com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get() > delegated, "delegated");
+        long before = com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get();
+        String c = "SELECT ?s WHERE { ?s <http://ex.org/list> ( 1 2 3 ) }";
+        try (org.apache.jena.query.QueryExecution qe =
+                     org.apache.jena.query.QueryExecutionFactory.create(c, bg.getDataset())) {
+            assertEquals(1, org.apache.jena.query.ResultSetFormatter.consume(qe.execSelect()));
+        }
+        assertEquals(before, com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get(), "a constant is not delegated");
+        // A pattern is no term: the dictionary answers it with a miss, never by ranking a variable.
         assertEquals(-1, dictionary(bg).getObjects().locate(SeqTerms.create(List.of(
                 org.apache.jena.sparql.core.Var.alloc("x"), integer(2)))));
+    }
+
+    @Test
+    void aSequenceCachedByJenaOutlivesItsStore() throws Exception {
+        // Jena's JVM-wide NodeValue cache keeps the lazy sequences a query
+        // compares; a later, equal sequence from another store meets the kept
+        // one there after its store is closed (RDFARRY.md §6).
+        Path src = dir.resolve("outlive.ttl");
+        Files.writeString(src, "<http://ex.org/a> <http://ex.org/p> ( 1 2 ) , ( 3 4 ) .\n");
+        String q = "SELECT ?o WHERE { ?s ?p ?o } ORDER BY ?o";
+        for (int round = 0; round < 2; round++) {
+            File out = dir.resolve("outlive" + round + ".h5").toFile();
+            method0().buildStore(src.toFile(), out);
+            try (BeakGraph b = BG.getBeakGraph(out);
+                 org.apache.jena.query.QueryExecution qe =
+                         org.apache.jena.query.QueryExecutionFactory.create(q, b.getDataset())) {
+                assertEquals(2, org.apache.jena.query.ResultSetFormatter.consume(qe.execSelect()), "round " + round);
+            }
+        }
     }
 
     @Test

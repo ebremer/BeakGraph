@@ -1,0 +1,5 @@
+s,seq
+http://example/w,not a sequence
+http://example/x,"(""1"" ""2"" ""3"")"
+http://example/y,(http://example/a (http://example/b http://example/c))
+http://example/z,()
