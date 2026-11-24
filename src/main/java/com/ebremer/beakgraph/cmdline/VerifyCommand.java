@@ -139,6 +139,9 @@ public final class VerifyCommand {
             }
         }
         try (HDF5Reader reader = new HDF5Reader(f.toFile())) {
+            // The canonical store is what is checked, and /.BG/arrays against it (checkArrays):
+            // a reader that read packed sequences from their arrays would check them against themselves.
+            ((PositionalDictionaryReader) reader.getDictionary()).disablePackedReads();
             formatVersion = reader.getFormatVersion();
             checkStructure(reader, problems);
             checkDictionaryOrder(reader, problems);

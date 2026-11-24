@@ -104,6 +104,35 @@ public class PositionalDictionaryReader implements GSPODictionary {
         }
     }
 
+    /**
+     * From now on, reads the sequences {@code /.BG/arrays} packs from their
+     * arrays (RDFARRY.md §3.6); {@code arrays} gives the group, or null, on the
+     * first such read. A store without {@code sequenceArrays} is unaffected.
+     */
+    public void enablePackedReads(java.util.function.Supplier<com.ebremer.beakgraph.store.StoreGroup> arrays) {
+        if (literals != null && firstSequenceObjectId != Long.MAX_VALUE) {
+            literals.enablePackedReads(arrays, firstSequenceObjectId);
+        }
+    }
+
+    /**
+     * From now on, reads every sequence from its canonical elements: a verifier
+     * checks the canonical store, and checks {@code /.BG/arrays} against it.
+     */
+    public void disablePackedReads() {
+        if (literals != null) {
+            literals.disablePackedReads();
+        }
+    }
+
+    /** The sequence at {@code objectId} from its canonical elements, never from {@code /.BG/arrays} ({@code -verify -deep}). */
+    public Node extractCanonicalSequence(long objectId) {
+        if (!isSequenceObjectId(objectId)) {
+            throw new IllegalArgumentException("object " + objectId + " is no sequence");
+        }
+        return literals.extractCanonicalSequence(objectId - maxEntityId);
+    }
+
     /** True when {@code objectId} denotes a stored RDF-array sequence (the contiguous suffix of the object space). */
     public boolean isSequenceObjectId(long objectId) {
         return objectId >= firstSequenceObjectId && objectId <= lastSequenceObjectId;

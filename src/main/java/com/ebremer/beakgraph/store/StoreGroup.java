@@ -60,4 +60,11 @@ public interface StoreGroup {
      * accepted.
      */
     TypedArray typedArray(String name);
+
+    /**
+     * The typed array {@code name} of {@code /.BG/arrays} to be read a box of
+     * rows at a time ({@link TypedArrayView}), or null when absent: what
+     * BeakGraph reads packed sequences through (RDFARRY.md §3.6).
+     */
+    TypedArrayView typedArrayView(String name);
 }

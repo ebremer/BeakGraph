@@ -375,22 +375,7 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
                 long k = off * 3;
                 yield r.resolve(tripleTerms.get(k), tripleTerms.get(k + 1), tripleTerms.get(k + 2));
             }
-            case SEQUENCE -> {
-                // A lazy row (SPECIFICATIONS.md §7.7): its length from the
-                // starts, each element read when asked for.
-                SequenceSupport support = sequenceSupport;
-                if (support == null || sequenceStarts == null) {
-                    throw new IllegalStateException("Sequence row at ID " + id + " in dictionary '"
-                            + getName() + "' but no sequence store/resolver is wired");
-                }
-                long start = sequenceStarts.get(off);
-                long length = sequenceStarts.get(off + 1) - start;
-                if (length < 0 || length > Integer.MAX_VALUE) {
-                    throw new IllegalStateException("Corrupt HDF5: sequence at ID " + id + " in dictionary '"
-                            + getName() + "' has length " + length);
-                }
-                yield com.ebremer.beakgraph.core.lib.SeqTerms.view(new SequenceRow(start, (int) length, support));
-            }
+            case SEQUENCE -> sequence(id, off, true);
             default -> throw new IllegalStateException("Unsupported DataType: " + dt);
         };
         return na;
@@ -433,6 +418,67 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     }
 
     /** Number of sequence rows in this section (its contiguous suffix, format v7). */
+    /**
+     * The sequence row at section id {@code id} (sequence ordinal {@code k}) as
+     * a lazy list (SPECIFICATIONS.md §7.7): its length from the starts, each
+     * element read when asked for - from {@code /.BG/arrays} when
+     * {@code packed} and a tensor or ragged class holds it (RDFARRY.md §3.6),
+     * else from its canonical elements.
+     */
+    private Node sequence(long id, long k, boolean packed) {
+        SequenceSupport support = sequenceSupport;
+        if (support == null || sequenceStarts == null) {
+            throw new IllegalStateException("Sequence row at ID " + id + " in dictionary '"
+                    + getName() + "' but no sequence store/resolver is wired");
+        }
+        long start = sequenceStarts.get(k);
+        long length = sequenceStarts.get(k + 1) - start;
+        if (length < 0 || length > Integer.MAX_VALUE) {
+            throw new IllegalStateException("Corrupt HDF5: sequence at ID " + id + " in dictionary '"
+                    + getName() + "' has length " + length);
+        }
+        PackedSequences p = packedSequences;
+        List<Node> elements = (packed && p != null) ? p.row(k, (int) length) : null;
+        return com.ebremer.beakgraph.core.lib.SeqTerms.view(
+                (elements != null) ? elements : new SequenceRow(start, (int) length, support));
+    }
+
+    /**
+     * The sequence row at section id {@code id} from its canonical elements,
+     * never from {@code /.BG/arrays}: what {@code -verify -deep} checks the
+     * arrays against.
+     */
+    public Node extractCanonicalSequence(long id) {
+        long idx = id - 1;
+        if (idx < 0 || idx >= numEntries) {
+            throw new IllegalArgumentException("id [" + id + "] must be from 1 to " + getNumberOfNodes());
+        }
+        int typeOrdinal = (int) datatype.get(idx);
+        if (typeOrdinal < 0 || typeOrdinal >= DT_VALUES.length || DT_VALUES[typeOrdinal] != DataType.SEQUENCE) {
+            throw new IllegalArgumentException("id [" + id + "] is no sequence row");
+        }
+        return sequence(id, offsets.get(idx), false);
+    }
+
+    private volatile PackedSequences packedSequences;
+
+    /** Reads every sequence from its canonical elements from now on. */
+    void disablePackedReads() {
+        packedSequences = null;
+    }
+
+    /**
+     * Reads the sequences that {@code /.BG/arrays} packs from their arrays
+     * from now on, when this section has {@code sequenceArrays}; the group is
+     * fetched on the first such read.
+     */
+    void enablePackedReads(java.util.function.Supplier<com.ebremer.beakgraph.store.StoreGroup> arrays,
+                           long firstSequenceObjectId) {
+        if (sequenceArrays != null && sequenceStarts != null) {
+            packedSequences = new PackedSequences(arrays, sequenceArrays, firstSequenceObjectId);
+        }
+    }
+
     public long sequenceRowCount() {
         return (sequenceStarts == null) ? 0 : sequenceStarts.getNumEntries() - 1;
     }

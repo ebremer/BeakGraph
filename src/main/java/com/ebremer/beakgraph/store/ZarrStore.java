@@ -78,6 +78,9 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  */
 public final class ZarrStore implements OpenStore {
 
+    /** The decoded-chunk cache of each typed-array view (RDFARRY.md §3.6): a few chunks or shards of rows. */
+    static final long TYPED_VIEW_CACHE = 16L << 20;
+
     /** A store that maps nothing: the bytes fetched at a time, and the blocks kept of all its arrays together. */
     private static volatile int cacheBlock = Integer.getInteger("beakgraph.zarr.cache.block", 128 * 1024);
     private static volatile int cacheBlocks = Integer.getInteger("beakgraph.zarr.cache.blocks", 256);
@@ -370,6 +373,81 @@ public final class ZarrStore implements OpenStore {
             }
             java.util.Collections.sort(names);
             return names;
+        }
+
+        @Override
+        public TypedArrayView typedArrayView(String name) {
+            ZarrNode n = child(name);
+            if (n == null) {
+                return null;
+            }
+            if (!(n instanceof ZarrArray plain)) {
+                throw new IllegalStateException("'" + slashed(n) + "' must be a typed array; found a group");
+            }
+            DataType t = plain.dataType();
+            TypedArray.Type type;
+            if (t.equals(DataType.FLOAT64)) {
+                type = TypedArray.Type.F64;
+            } else if (t.equals(DataType.FLOAT32)) {
+                type = TypedArray.Type.F32;
+            } else if (t.equals(DataType.INT64)) {
+                type = TypedArray.Type.I64;
+            } else if (t.equals(DataType.INT32)) {
+                type = TypedArray.Type.I32;
+            } else if (t.equals(DataType.UINT16)) {
+                type = TypedArray.Type.U16;
+            } else if (t.equals(DataType.STRING)) {
+                type = TypedArray.Type.STR;
+            } else if (t.equals(DataType.BOOL)) {
+                type = TypedArray.Type.BOOL;
+            } else {
+                throw new IllegalStateException("'" + slashed(plain) + "' has data type " + t.name()
+                        + ", which no typed array of /.BG/arrays holds");
+            }
+            // A handle of its own with a decoded-chunk cache: the rows of one
+            // sequence after another come out of the same chunk or shard.
+            ZarrArray a = plain.withChunkCache(TYPED_VIEW_CACHE);
+            long[] shape = a.shape();
+            TypedArrayView direct = new TypedArrayView() {
+                @Override
+                public TypedArray.Type type() {
+                    return type;
+                }
+
+                @Override
+                public long[] shape() {
+                    return shape.clone();
+                }
+
+                @Override
+                public Object readRows(long first, long count) {
+                    long[][] box = TypedArrayView.box(shape, first, count);
+                    try {
+                        com.ebremer.falcon.zarr.Selection s = a.select(box[0], box[1]);
+                        return switch (type) {
+                            case F64 -> s.readDoubles();
+                            case F32 -> s.readFloats();
+                            case I64 -> s.readLongs();
+                            case I32, U16 -> s.readInts();
+                            case STR -> s.readStrings();
+                            case BOOL -> {
+                                byte[] raw = s.readRawBytes();
+                                boolean[] b = new boolean[raw.length];
+                                for (int i = 0; i < raw.length; i++) {
+                                    b[i] = raw[i] != 0;
+                                }
+                                yield b;
+                            }
+                        };
+                    } catch (ZarrException e) {
+                        throw new IllegalStateException("Array '" + slashed(a) + "' is unreadable: " + e.getMessage(), e);
+                    }
+                }
+            };
+            // Falcon caches whole chunks only, not the sub-chunks of a shard: a row
+            // read out of a compressed shard would decode its sub-chunk every time.
+            // Such an array is read a sub-chunk of rows at a time, the last few kept.
+            return a.hasRawChunks() ? direct : new BlockCachedView(direct, Math.max(1, a.innerChunkShape()[0]));
         }
 
         @Override

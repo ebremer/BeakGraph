@@ -784,6 +784,9 @@ A writer MAY lay a store's numeric sequences, and its sequences that mix types b
 classes, below), out a second time as typed arrays that array tools read with no knowledge of RDF (the
 reference writers do with `-arrays`). The canonical rows of §7.6b stay
 complete: a reader MAY ignore `/.BG/arrays` and `sequenceArrays` altogether. Their presence is sniffed.
+A reader MAY instead read a packed sequence's elements from its class's `values` and `mask`, as the
+reference reader does for tensor and ragged classes: the terms are the ones the canonical elements give,
+because a leaf packs only when its value rebuilds it.
 
 **Which sequences pack.** Only sequences that are the object of some quad (members of `objects`,
 §7.8). A sequence packs when every leaf is a literal of one packable datatype, or a slot; a slot stands

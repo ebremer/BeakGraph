@@ -8,8 +8,9 @@
 - Reference implementation: [jena-array](https://github.com/rdf-array/jena-array), branch `rdf-undef`
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
 - Status: steps 1-5 done (2026-11-24): the v7 spec, the Jena port, v7 storage, correct SPARQL-array
-  answers over it (milestone A), and every engine writing it. Step 6, the native arrays, is under way:
-  the numeric tensor and ragged classes and the record classes, on every engine
+  answers over it (milestone A), and every engine writing it. Step 6, the native arrays (milestone B),
+  is done on every engine, packed reads included; only its opt-in Python smoke tests have yet to run
+  where h5py and zarr are installed. Step 7 is next
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -1027,7 +1028,7 @@ which is the rule triple terms set in v5.
 - the engines agree on `/.BG/arrays` (byte-identical for 0, 2 and 3 in one container);
 - `-arrays` off leaves stores byte-identical to step 5's.
 
-**Status (2026-11-24): in progress.**
+**Status (2026-11-24): done, but for the Python smoke tests, which have not run here.**
 
 - **Done.**
   - The store abstraction, both containers (`TypedArray`; `WritableGroup.putTypedArray` and string
@@ -1073,12 +1074,32 @@ which is the rule triple terms set in v5.
   - Value-level container parity (`ContainerParityTest.arraysAreTheSameValuesInBothContainers`): the
     same bytes outside `/.BG/arrays`, and the same classes, arrays, types, shapes, values and attributes
     in it, raw and compressed.
-- **Left.** The lazy list reading packed values. Measured first (2026-11-24, in process, synthetic: 2,000
-  sequences of 256 doubles): reading all 512k elements through the canonical elements takes about
-  105 ms, making a Node from each value of a `double[]` about 45 ms, so packed reads would at most
-  double the speed of element reads on numeric vectors, at the cost of a read view over typed arrays
-  (mapped when raw, chunk-decoded when compressed). Step 9 needs that view anyway. The
-  Python smoke tests are written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`,
+  - Packed reads (§3.6, `PackedSequences`): a sequence a tensor or ragged class holds reads its elements
+    from `values` and `mask`.
+    - Each term is made as the dictionary makes it (by value for double, float, long and int; the
+      canonical lexical form for integer and boolean). An inner level is a view over the same row, and a
+      row's values are read on the first `get`.
+    - A sequence finds its row by a binary search of a sample of `seq` (every 256th id), then of one
+      stretch of it.
+    - Record classes read their canonical elements: their strings are in the dictionary anyway.
+    - The arrays are read through `StoreGroup.typedArrayView`, a box of rows at a time, never whole:
+      HDF5 through Falcon's chunk cache; Zarr through a handle with its own chunk cache and, for
+      compressed shards, `BlockCachedView`. Falcon caches whole chunks, not a shard's sub-chunks, so
+      without it every row read out of a shard decoded its sub-chunk again: 14 s instead of 0.1 s for
+      the measurement below.
+    - On by default for local stores; `-Dbeakgraph.arrays.read=false` turns it off. Not yet over HTTP:
+      the canonical path's reads go through BeakGraph's block cache and range reads there, and what
+      packed reads cost in requests is to be measured (by requests and bytes, not loopback time). `-verify` reads canonically, since
+      it checks the canonical store and then the arrays against it.
+    - Tests: `PackedReadsTest` (every sequence of the fixtures, packed against canonical, term by term,
+      in both containers, raw and compressed, and a query either way). The contrib suite and the ported
+      engine tests over `-arrays` stores (`-Dbeakgraph.test.arrays=1,1`): 446 pass on methods 0, 1 and
+      3; CI runs it on method 1.
+    - Measured (2026-11-24, in process, synthetic: 2,000 sequences of 256 doubles, reading all 512k
+      elements, a fresh reader per round): canonical 120-200 ms, packed 55-130 ms, about twice as fast,
+      in both containers raw and compressed. The bound was 45 ms, making a Node from each value of a
+      `double[]`.
+- **Left.** The Python smoke tests are written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`,
   `RecordClassesTest.pythonReadsTheRecords`), but this machine has no h5py, zarr, pandas or xarray, so
   they have not run: whether h5py reads Falcon's `Datatype.bool()` as numpy `bool`, and xarray decodes
   the `dt` columns, is still to be seen.

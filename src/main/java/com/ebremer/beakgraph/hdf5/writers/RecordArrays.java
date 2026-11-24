@@ -788,7 +788,7 @@ final class RecordArrays {
             if (!dict.isSequenceObjectId(seq[r])) {
                 return "row " + r + " names object " + seq[r] + ", which is no sequence";
             }
-            RecRow row = probe(seq[r], dict.getObjects().extract(seq[r]), unit, 1);
+            RecRow row = probe(seq[r], dict.extractCanonicalSequence(seq[r]), unit, 1);
             if (row == null || !row.signature().equals(signature)) {
                 return "row " + r + " (sequence " + seq[r] + ") does not have the signature " + signature;
             }

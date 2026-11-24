@@ -871,7 +871,7 @@ public final class SequenceArrays {
             if (!dict.isSequenceObjectId(seq[r])) {
                 return "row " + r + " names object " + seq[r] + ", which is no sequence";
             }
-            Row row = probe(seq[r], dict.getObjects().extract(seq[r]), 1);
+            Row row = probe(seq[r], dict.extractCanonicalSequence(seq[r]), 1);
             if (row == null || row.leaf() != leaf) {
                 return "row " + r + " (sequence " + seq[r] + ") does not pack as " + leaf.datatype;
             }

@@ -104,6 +104,11 @@ public class HDF5Reader implements BGReader {
      *
      * @param uri identifies the data for {@link #getURI()} and messages
      */
+    /** Whether {@code uri} names a store on this machine (no scheme, or file:). */
+    private static boolean isLocal(URI uri) {
+        return uri == null || uri.getScheme() == null || "file".equalsIgnoreCase(uri.getScheme());
+    }
+
     public HDF5Reader(OpenStore store, URI uri) {
         this.store = store;
         try {
@@ -147,6 +152,14 @@ public class HDF5Reader implements BGReader {
                         "Not a BeakGraph file (no '" + Params.BG + "/" + Params.DICTIONARY + "' group): " + uri);
             }
             this.dict = new PositionalDictionaryReader(dictionary);
+            if (PackedSequences.enabled() && isLocal(uri)) {
+                // Packed sequences read their values from /.BG/arrays (RDFARRY.md §3.6); the group
+                // opens on the first such read, so a store opens without touching it. Local stores
+                // only, for now: over HTTP the canonical path's reads go through BeakGraph's block
+                // cache and range reads, and what packed reads cost in requests is not measured yet.
+                final StoreGroup bgGroup = hdt;
+                dict.enablePackedReads(() -> StoreProfile.group(bgGroup, Params.ARRAYS));
+            }
             // Lower bound: format v4 changed how composite (cdt) literals are
             // ordered, and ids are comparator ranks. A pre-v4 file holding them
             // would open fine and then silently miss terms on every lookup.

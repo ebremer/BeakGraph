@@ -186,6 +186,70 @@ public final class Hdf5Store implements OpenStore {
         }
 
         @Override
+        public TypedArrayView typedArrayView(String name) {
+            Hdf5Object n = group.child(name).orElse(null);
+            if (n == null) {
+                return null;
+            }
+            if (!(n instanceof Dataset ds)) {
+                throw new IllegalStateException("'" + n.path() + "' must be a typed array; found " + kind(n));
+            }
+            TypedArray.Type type = typeOf(ds);
+            long[] shape = ds.dataspace().dimensions();
+            return new TypedArrayView() {
+                @Override
+                public TypedArray.Type type() {
+                    return type;
+                }
+
+                @Override
+                public long[] shape() {
+                    return shape.clone();
+                }
+
+                @Override
+                public Object readRows(long first, long count) {
+                    long[][] box = TypedArrayView.box(shape, first, count);
+                    // Falcon reads a contiguous box by ranges, and a chunked one through the file's chunk cache.
+                    com.ebremer.falcon.hdf5.Selection s = ds.select(box[0], box[1]);
+                    return switch (type) {
+                        case F64 -> s.readDoubles();
+                        case F32 -> s.readFloats();
+                        case I64 -> s.readLongs();
+                        case I32, U16 -> s.readInts();
+                        case STR -> s.readStrings();
+                        case BOOL -> {
+                            int[] codes = s.readInts();
+                            boolean[] b = new boolean[codes.length];
+                            for (int i = 0; i < codes.length; i++) {
+                                b[i] = codes[i] != 0;
+                            }
+                            yield b;
+                        }
+                    };
+                }
+            };
+        }
+
+        /** The {@link TypedArray.Type} of a typed dataset of /.BG/arrays. */
+        private static TypedArray.Type typeOf(Dataset ds) {
+            com.ebremer.falcon.hdf5.datatype.Datatype t = ds.datatype();
+            if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FloatingPoint fp && (fp.size() == 8 || fp.size() == 4)) {
+                return fp.size() == 8 ? TypedArray.Type.F64 : TypedArray.Type.F32;
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.FixedPoint fx
+                    && (fx.size() == 8 || fx.size() == 4 || fx.size() == 2)) {
+                return fx.size() == 8 ? TypedArray.Type.I64 : fx.size() == 4 ? TypedArray.Type.I32 : TypedArray.Type.U16;
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.VariableLength v
+                    && v.kind() == com.ebremer.falcon.hdf5.datatype.Datatype.VlenKind.STRING) {
+                return TypedArray.Type.STR;
+            } else if (t instanceof com.ebremer.falcon.hdf5.datatype.Datatype.Enumeration) {
+                return TypedArray.Type.BOOL;
+            }
+            throw new IllegalStateException("'" + ds.path() + "' has element type " + t
+                    + ", which no typed array of /.BG/arrays holds");
+        }
+
+        @Override
         public TypedArray typedArray(String name) {
             Hdf5Object n = group.child(name).orElse(null);
             if (n == null) {

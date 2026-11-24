@@ -65,6 +65,8 @@ brought and what a reader must rebuild.
   strings, IRIs, language strings with tag codes, `xsd:dateTime` and `xsd:date` as CF-annotated counts
   that xarray decodes (`-arrays-time-unit`, default `us`), numeric blocks as N-D columns - which pandas
   reads as a table. Every packed date rebuilds its exact lexical form, or the sequence does not pack.
+  BeakGraph reads the sequences of tensor and ragged classes from their arrays, about twice as fast as
+  from their canonical elements, with the same terms; `-Dbeakgraph.arrays.read=false` turns that off.
 * **A relative IRI inside a triple term now stops an N-Triples export without `-base`**, as a
   top-level one does; it used to be written relative (`relativeReference` did not look inside).
 * **Triple-term pattern scans clamp to the band's end too**, not only its start, so they no longer
