@@ -162,6 +162,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /** Non-null: Pass A runs through it instead of the sequential loop (-method 5). */
     private final ParallelIngest parallelIngest;
     private File sourceRoot;
+    /** {@code -arrays}: on with these settings, or off (null). */
+    private com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arrays;
     /** Rows a range of the term order holds at least: fewer rows than two of them are merged as one range. */
     private long minRangeRows = Long.getLong("beakgraph.build.rangeRows", 1L << 18);
 
@@ -194,6 +196,12 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /** Merge mode: root the documents' stored relative references are taken from (see {@link RelativeIris#parseBase}). */
     public HugeBuildPipeline setSourceRoot(File root) {
         this.sourceRoot = root;
+        return this;
+    }
+
+    /** {@code -arrays} (format v7, RDFARRY.md §3.5): the native arrays, as the in-memory engines write them; null for none. */
+    public HugeBuildPipeline setArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options) {
+        this.arrays = options;
         return this;
     }
 
@@ -424,7 +432,14 @@ public final class HugeBuildPipeline implements AutoCloseable {
         final long[] literalBase = new long[ranges];
         long entitiesSoFar = 0;
         long literalsSoFar = 0;
+        long sequencesSoFar = 0;
+        java.util.BitSet topSequences = new java.util.BitSet();
         for (int r = 0; r < ranges; r++) {
+            java.util.BitSet top = merged[r].topSequences;
+            for (int i = top.nextSetBit(0); i >= 0; i = top.nextSetBit(i + 1)) {
+                topSequences.set(Math.toIntExact(sequencesSoFar + i));
+            }
+            sequencesSoFar += merged[r].sequences;
             entityParts.add(merged[r].entities);
             literalParts.add(merged[r].literals);
             entityBase[r] = entitiesSoFar;
@@ -442,6 +457,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                         + " rows where " + rows + " were added (a spill run is truncated)");
             }
         }
+        final long numSequences = sequencesSoFar;
         final RecordSegments<Node> entFile = new RecordSegments<>(entityParts);
         final RecordSegments<Node> litFile = new RecordSegments<>(literalParts);
         long numEntities = entFile.count();
@@ -465,6 +481,15 @@ public final class HugeBuildPipeline implements AutoCloseable {
         final HugeSequences seqSupport = (stats.numSequences > 0)
                 ? track(new HugeSequences(provider, workDir))
                 : null;
+        // -arrays: the encode probes each top-level sequence as it reaches it
+        // (the sequences are the literals' suffix, so the first is object
+        // numEntities + numLiterals - numSequences + 1).
+        final HugeArrays arraysSupport = (arrays != null && seqSupport != null)
+                ? track(new HugeArrays(arrays, topSequences, numEntities + numLiterals - numSequences + 1, workDir, 64))
+                : null;
+        if (arraysSupport != null) {
+            seqSupport.setArrays(arraysSupport);
+        }
         final StreamingDictionaryWriter[] dicts = new StreamingDictionaryWriter[3];
         // With a pool, a section's terms are decoded and its strings compressed
         // by the pool's threads, this many pieces ahead of the stage's own
@@ -509,6 +534,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
                         if (seqSupport != null && seqSupport.count() > 0) {
                             dicts[2].setSequenceElementsBuffer(
                                     seqSupport.resolve(entFile, litFile, numEntities, numEntities + numLiterals));
+                        }
+                        if (arraysSupport != null) {
+                            dicts[2].setSequenceArrays(arraysSupport.classNumbers());   // the classes decided
                         }
                     }
                 });
@@ -604,6 +632,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
             }
             gspo.transferTo(hdt);
             gpos.transferTo(hdt);
+            if (arraysSupport != null) {
+                arraysSupport.write(hdt.writable());   // after the indexes, as the in-memory writers write it
+            }
         }
         logger.info("{} assembly complete", container);
     }
@@ -1199,8 +1230,14 @@ public final class HugeBuildPipeline implements AutoCloseable {
         runStages(what, workers);
     }
 
-    /** What the merge of one range leaves: its distinct terms, and each column's rows with their terms' codes. */
-    private record RangeOutput(RecordFile<Node> entities, RecordFile<Node> literals, RangeIds[] ids) {}
+    /**
+     * What the merge of one range leaves: its distinct terms, each column's
+     * rows with their terms' codes, its distinct sequences, and which of them
+     * are the object of a quad (by their place among the range's sequences):
+     * the top-level ones {@code -arrays} classifies.
+     */
+    private record RangeOutput(RecordFile<Node> entities, RecordFile<Node> literals, RangeIds[] ids,
+                               long sequences, java.util.BitSet topSequences) {}
 
     /** The head of one column's cursor in a range's merge. */
     private static final class Head {
@@ -1250,6 +1287,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
             track(new RangeIds(workDir.resolve("scol.ids." + range))),
             track(new RangeIds(workDir.resolve("ocol.ids." + range)))};
         List<Head> heads = new ArrayList<>(COLUMNS);
+        long sequences = 0;
+        java.util.BitSet topSequences = new java.util.BitSet();
         try {
             PriorityQueue<Head> heap = new PriorityQueue<>(COLUMNS, (a, b) -> TermKey.compare(a.row.key(), b.row.key()));
             for (int c = 0; c < COLUMNS; c++) {
@@ -1265,6 +1304,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
             long code = 0;
             boolean literalSpace = false;
             long n = 0;
+            boolean sequence = false;
             while (!heap.isEmpty()) {
                 Head head = heap.poll();
                 TermKey key = head.row.key();
@@ -1273,7 +1313,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 // only for term-equal nodes.
                 if (last == null || !(last == key || last.node().equals(key.node()))) {
                     Node term = key.node();
-                    literalSpace = term.isLiteral() || term.isTripleTerm() || term.isNodeSeq();
+                    sequence = term.isNodeSeq();
+                    if (sequence) {
+                        sequences++;
+                    }
+                    literalSpace = term.isLiteral() || term.isTripleTerm() || sequence;
                     if (literalSpace) {
                         literals.append(term);
                         code = (literals.count() << 1) | 1;
@@ -1289,6 +1333,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 // a dictionary entry in the wrong section.
                 if (literalSpace != (head.column == INTERIOR_LITERALS) && head.column != O) {
                     throw new IllegalStateException("Unexpected " + ROLES[head.column] + " node type: " + key.node());
+                }
+                if (sequence && head.column == O) {
+                    topSequences.set(Math.toIntExact(sequences - 1));   // an object of a quad, not only an element
                 }
                 // Every row this column has of the term: they follow one
                 // another, and the term is still the smallest there is.
@@ -1317,7 +1364,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
         for (RangeIds column : ids) {
             column.finish();
         }
-        return new RangeOutput(entities, literals, ids);
+        return new RangeOutput(entities, literals, ids, sequences, topSequences);
     }
 
     /**

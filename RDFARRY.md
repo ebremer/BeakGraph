@@ -9,7 +9,7 @@
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
 - Status: steps 1-5 done (2026-11-24): the v7 spec, the Jena port, v7 storage, correct SPARQL-array
   answers over it (milestone A), and every engine writing it. Step 6, the native arrays, is under way:
-  the numeric tensor and ragged classes and the record classes, on methods 0, 2 and 3
+  the numeric tensor and ragged classes and the record classes, on every engine
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -427,8 +427,10 @@ engine, so all six engines agree.
     gets a class of its own, with `values` of shape [rows, length, inner…]: an embedding store's
     `f64_768`, a roster's `i64_7`.
   - *Ragged class*: the key's other rows share one class, with `starts`.
-  - A disk engine spills rows per key and length while it encodes the suffix. It then writes each tensor
-    class from its spill, and merges a key's remaining lengths into its ragged class by id.
+  - A disk engine counts the buckets (key and length, or signature) and spills each packable row while
+    it encodes the suffix. Once the counts decide the classes, it sorts the rows by (class, id) and
+    writes each class from a file of its own rows. (As built in step 6: one spill and one sort, not a
+    spill per key and length, which could mean thousands of files.)
 - **Minimum size.** At least `-arrays-min` leaves, default 2.
 - **Names and numbering.** A tensor class is named by its type and row shape (`f64_768`, `i64_7`,
   `i64_2x3`), a ragged class by its type and inner shape (`f64_r`, `f64_r_2`). Classes are numbered 1, 2,
@@ -460,7 +462,7 @@ engine, so all six engines agree.
 | | HDF5 (`.h5`) | Zarr (`.zarr`, `.zarr.zip`) |
 |---|---|---|
 | Element type | `H5T_IEEE_F64LE`, `H5T_STD_I64LE`, …; bool as the enum `{FALSE, TRUE}` over int8, which h5py reads as numpy `bool` | `data_type` `float64`, `int64`, …, `bool` |
-| Default layout | **contiguous, unfiltered**: BeakGraph maps it (`storageSegment`) and reads it over HTTP by ranges, exactly as it reads `.BG` today | codecs `[bytes{endian: little}]`, chunked by whole rows, at most 2^30 bytes a chunk: mapped through `chunkSegment` |
+| Default layout | **contiguous, unfiltered**: BeakGraph maps it (`storageSegment`) and reads it over HTTP by ranges, exactly as it reads `.BG` today | codecs `[bytes{endian: little}]`, chunked by whole rows, at most 16 MiB a chunk (a streaming writer holds one): mapped through `chunkSegment` |
 | `-arrays-compress` | chunked by rows, **shuffle + deflate**: the filters stock h5py reads without hdf5plugin | **`sharding_indexed`**: inner chunks of rows, codecs `[bytes, zstd]`, index `[bytes, crc32c]`. Few files, and a remote read fetches the shard index and the inner chunks it needs |
 | Labels | attributes only: Falcon cannot write dimension scales, so xarray needs h5netcdf's `phony_dims`. Writing the H5DS attributes is a Falcon addition (vlen of object references, under the next -SNAPSHOT), optional | `dimension_names`: `["seq", "d1", …]` on `values` and `mask`, `["seq"]` on `seq`, which xarray reads as the arrays' dimensions |
 | Attributes | string attributes (the 64 KiB cap does not matter here) | JSON |
@@ -1034,8 +1036,7 @@ which is the rule triple terms set in v5.
     (shuffle + deflate; sharding + zstd).
   - The numeric classifier and writer (`SequenceArrays`): tensor and ragged classes, masks, `seq`, and
     `sequenceArrays` in the literals section, on methods 0, 2 and 3, byte-identical. The CLI's
-    `-arrays`, `-arrays-min-rows`, `-arrays-min`, `-arrays-compress`; the disk engines refuse `-arrays`
-    for now, never ignore it.
+    `-arrays`, `-arrays-min-rows`, `-arrays-min`, `-arrays-compress`.
   - `-verify -deep` re-derives every packed row from its canonical elements and checks
     `sequenceArrays`.
   - SPECIFICATIONS.md §7.6c, and the profile exception in §3 and §3a.
@@ -1056,7 +1057,20 @@ which is the rule triple terms set in v5.
       NUL, and UTF-8 cannot hold a lone surrogate.
     - `+00:00` and `-00:00` do not pack (the canonical form is `Z`), nor years outside 0001-9999.
     - `langs` is the tags space-separated, since attributes are strings or integers.
-- **Left.** The disk engines; the lazy list reading packed values; value-level container parity. The
+  - The disk engines (methods 1, 4 and 5), byte-identical to method 0, arrays and all
+    (`DiskEngineArraysTest`):
+    - The merge marks which sequences are the object of a quad (a bit per sequence).
+    - The literals encode probes each one as it reaches it (`HugeArrays`), counts it in the shared
+      `SequenceArrays.Classifier`, and spills its row.
+    - The counts decide the classes; `sequenceArrays` streams from the per-sequence buckets.
+    - At assembly the rows are sorted by (class, id), and each class is written from a file of its
+      own rows.
+  - One class writer for every engine: one pass over a class's rows per array, through the new
+    streaming `WritableGroup.createTypedArray` (`TypedArrayWriter`), so a class need not fit in memory
+    or in one Java array. Zarr writes a chunk (a shard) at a time; a typed array's raw chunk is at most
+    16 MiB now. Writing in pieces gives the bytes one piece gives (`ArrayPiecesTest`), and method 0's
+    stores are byte-identical to before.
+- **Left.** The lazy list reading packed values; value-level container parity. The
   Python smoke tests are written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`,
   `RecordClassesTest.pythonReadsTheRecords`), but this machine has no h5py, zarr, pandas or xarray, so
   they have not run: whether h5py reads Falcon's `Datatype.bool()` as numpy `bool`, and xarray decodes

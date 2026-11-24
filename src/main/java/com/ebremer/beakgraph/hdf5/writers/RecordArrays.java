@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.jena.graph.Node;
@@ -570,132 +569,110 @@ final class RecordArrays {
         return w;
     }
 
-    /** A record class: {@code rec_<n>}, its signature, and rows in id order. */
-    record RecClass(String name, String signature, boolean list, Sig item, List<Column> columns, List<RecRow> rows) {
-    }
-
     /** At most this many language tags in one {@code lang} column: its codes are uint16. */
     static final int MAX_LANGS = 1 << 16;
 
     /**
-     * The record classes of {@code candidates} (in id order): a class per
-     * signature that at least {@code minRows} sequences share, named
-     * {@code rec_1}, {@code rec_2}, … in the order of their spellings.
+     * Writes the record class {@code c} under {@code arrays}, an array at a
+     * time from its rows: starts (a list class), then per column its values,
+     * its {@code _lang} codes and its {@code _mask}, then seq.
      */
-    static List<RecClass> classify(List<RecRow> candidates, int minRows) {
-        Map<String, List<RecRow>> bySignature = new TreeMap<>();
-        for (RecRow r : candidates) {
-            bySignature.computeIfAbsent(r.signature(), x -> new ArrayList<>()).add(r);
-        }
-        List<RecClass> classes = new ArrayList<>();
-        for (Map.Entry<String, List<RecRow>> e : bySignature.entrySet()) {
-            List<RecRow> rows = e.getValue();
-            if (rows.size() < minRows) {
-                continue;
-            }
-            RecRow first = rows.get(0);
-            List<Column> columns = columns(first.item());
-            RecClass c = new RecClass(null, e.getKey(), first.list(), first.item(), columns, rows);
-            boolean fits = true;
-            for (Column col : columns) {
-                if (col.leaf().kind() == Kind.LANG && langTags(c, col).size() > MAX_LANGS) {
-                    fits = false;   // more tags than uint16 codes: the class is not written, its rows stay canonical
-                }
-            }
-            if (fits) {
-                classes.add(new RecClass("rec_" + (classes.size() + 1), e.getKey(), first.list(), first.item(), columns, rows));
-            }
-        }
-        return classes;
-    }
-
-    /** The distinct language tags of a {@code lang} column, in code order. */
-    private static List<String> langTags(RecClass c, Column col) {
-        TreeSet<String> tags = new TreeSet<>();
-        int width = itemWidth(c.columns());
-        for (RecRow r : c.rows()) {
-            for (int j = 0; j < r.items(); j++) {
-                Object v = r.leaves()[j * width + col.offset()];
-                if (v != null) {
-                    tags.add(((String[]) v)[1]);
-                }
-            }
-        }
-        return new ArrayList<>(tags);
-    }
-
-    /** Writes the class's group under {@code arrays}: starts, a column per position (with _lang and _mask), and seq. */
-    static void write(RecClass c, WritableGroup arrays, boolean compress, SequenceArrays.TimeUnit unit) {
+    static void writeClass(SequenceArrays.ClassDef c, SequenceArrays.RowSource rows, WritableGroup arrays, boolean compress,
+                           SequenceArrays.TimeUnit unit) {
         WritableGroup g = arrays.putGroup(c.name());
         g.putAttribute("kind", "record");
         g.putAttribute("signature", c.signature());
-        int rows = c.rows().size();
-        long items = 0;
-        for (RecRow r : c.rows()) {
-            items += r.items();
-        }
         if (c.list()) {
-            long[] starts = new long[rows + 1];
-            for (int i = 0; i < rows; i++) {
-                starts[i + 1] = starts[i] + c.rows().get(i).items();
-            }
-            g.putTypedArray("starts", new TypedArray(TypedArray.Type.I64, new long[]{rows + 1L}, starts,
-                    List.of("bound"), null), compress);
+            SequenceArrays.starts(g, c.rows(), compress, rows, row -> ((RecRow) row).items());
         }
         int width = itemWidth(c.columns());
-        for (Column col : c.columns()) {
+        long length = c.list() ? c.items() : c.rows();
+        for (int ci = 0; ci < c.columns().size(); ci++) {
+            Column col = c.columns().get(ci);
             long[] shape = new long[1 + col.dims().length];
             List<String> dimNames = new ArrayList<>();
-            shape[0] = items;
+            shape[0] = length;
             dimNames.add(c.list() ? "item" : "seq");
             for (int i = 0; i < col.dims().length; i++) {
                 shape[1 + i] = col.dims()[i];
                 dimNames.add("d" + (i + 1));
             }
-            int total = Math.toIntExact(items * col.width());
             TypedArray.Type type = col.leaf().columnType();
-            Object values = newValues(type, total);
-            boolean[] mask = new boolean[total];
-            boolean anySlot = false;
-            List<String> tags = (col.leaf().kind() == Kind.LANG) ? langTags(c, col) : null;
-            int[] codes = (tags == null) ? null : new int[total];
-            int at = 0;
-            for (RecRow r : c.rows()) {
-                for (int j = 0; j < r.items(); j++) {
-                    for (int w = 0; w < col.width(); w++) {
-                        Object v = r.leaves()[j * width + col.offset() + w];
-                        if (v == null) {
-                            mask[at] = true;
-                            anySlot = true;
-                        } else {
+            List<String> tags = c.tags().get(ci);
+            SequenceArrays.pass(g, col.name(), type, shape, dimNames, attributes(col.leaf(), unit, tags), compress, rows,
+                    new Leaves(col, width) {
+                        @Override
+                        void put(Object piece, int at, Object v) {
                             switch (col.leaf().kind()) {
-                                case NUMBER -> SequenceArrays.set(values, type, at, v);
-                                case STRING, IRI -> ((String[]) values)[at] = (String) v;
-                                case LANG -> {
-                                    ((String[]) values)[at] = ((String[]) v)[0];
-                                    codes[at] = Collections.binarySearch(tags, ((String[]) v)[1]);
-                                }
-                                case DATETIME -> ((long[]) values)[at] = (Long) v;
-                                case DATE -> ((int[]) values)[at] = Math.toIntExact((Long) v);
+                                case NUMBER -> SequenceArrays.set(piece, type, at, v);
+                                case STRING, IRI -> ((String[]) piece)[at] = (String) v;
+                                case LANG -> ((String[]) piece)[at] = ((String[]) v)[0];
+                                case DATETIME -> ((long[]) piece)[at] = (Long) v;
+                                case DATE -> ((int[]) piece)[at] = Math.toIntExact((Long) v);
                             }
                         }
-                        at++;
+                    });
+            if (tags != null) {
+                SequenceArrays.pass(g, col.name() + "_lang", TypedArray.Type.U16, shape, dimNames, null, compress, rows,
+                        new Leaves(col, width) {
+                            @Override
+                            void put(Object piece, int at, Object v) {
+                                ((int[]) piece)[at] = Collections.binarySearch(tags, ((String[]) v)[1]);
+                            }
+                        });
+            }
+            if (c.columnSlot()[ci]) {
+                SequenceArrays.pass(g, col.name() + "_mask", TypedArray.Type.BOOL, shape, dimNames, null, compress, rows,
+                        new Leaves(col, width) {
+                            @Override
+                            void slot(Object piece, int at) {
+                                ((boolean[]) piece)[at] = true;
+                            }
+
+                            @Override
+                            void put(Object piece, int at, Object v) {
+                            }
+                        });
+            }
+        }
+        SequenceArrays.seq(g, c.rows(), compress, rows);
+    }
+
+    /** A column's leaves of each row, item by item: {@link #put} a value, {@link #slot} a slot (left as it is). */
+    private abstract static class Leaves implements SequenceArrays.Filler {
+        private final Column col;
+        private final int width;
+
+        Leaves(Column col, int width) {
+            this.col = col;
+            this.width = width;
+        }
+
+        abstract void put(Object piece, int at, Object v);
+
+        void slot(Object piece, int at) {
+        }
+
+        @Override
+        public int elements(Object row) {
+            return ((RecRow) row).items() * col.width();
+        }
+
+        @Override
+        public void fill(Object row, Object piece, int at) {
+            RecRow r = (RecRow) row;
+            for (int j = 0; j < r.items(); j++) {
+                for (int w = 0; w < col.width(); w++) {
+                    Object v = r.leaves()[j * width + col.offset() + w];
+                    if (v == null) {
+                        slot(piece, at);
+                    } else {
+                        put(piece, at, v);
                     }
+                    at++;
                 }
             }
-            g.putTypedArray(col.name(), new TypedArray(type, shape, values, dimNames, attributes(col.leaf(), unit, tags)), compress);
-            if (codes != null) {
-                g.putTypedArray(col.name() + "_lang", new TypedArray(TypedArray.Type.U16, shape, codes, dimNames, null), compress);
-            }
-            if (anySlot) {
-                g.putTypedArray(col.name() + "_mask", new TypedArray(TypedArray.Type.BOOL, shape, mask, dimNames, null), compress);
-            }
         }
-        long[] seq = new long[rows];
-        for (int i = 0; i < rows; i++) {
-            seq[i] = c.rows().get(i).objectId();
-        }
-        g.putTypedArray("seq", new TypedArray(TypedArray.Type.I64, new long[]{rows}, seq, List.of("seq"), null), compress);
     }
 
     /** "microseconds since 1970-01-01T00:00:00": a dateTime column's CF units. */
@@ -729,15 +706,6 @@ final class RecordArrays {
             }
         }
         return a;
-    }
-
-    private static Object newValues(TypedArray.Type type, int n) {
-        if (type == TypedArray.Type.STR) {
-            String[] s = new String[n];
-            java.util.Arrays.fill(s, "");
-            return s;
-        }
-        return SequenceArrays.newValues(type, n);
     }
 
     /**

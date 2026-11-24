@@ -89,7 +89,14 @@ class ContainerParityTest {
         }
     }
 
-    /** Every node of an HDF5 store: its path, and for an array its length and bytes, each with its attributes. */
+    /**
+     * The native arrays' subtree (format v7, -arrays): typed, chunked and
+     * compressed by each container its own way, so compared by value
+     * ({@link #arraysAreTheSameValuesInBothContainers}), never by bytes.
+     */
+    private static final String ARRAYS = ".BG/" + Params.ARRAYS;
+
+    /** Every node of an HDF5 store but {@link #ARRAYS}: its path, and for an array its length and bytes, each with its attributes. */
     static SortedMap<String, String> describeHdf5(Path h5) throws IOException {
         SortedMap<String, String> out = new TreeMap<>();
         try (Hdf5File f = Hdf5File.open(h5)) {
@@ -105,6 +112,9 @@ class ContainerParityTest {
                 attributes.put(a.name(), a.readLong());
             }
             String path = child.path().substring(1);
+            if (path.equals(ARRAYS)) {
+                continue;
+            }
             if (child instanceof Group sub) {
                 out.put(path, "group " + attributes);
                 describe(sub, out);
@@ -127,6 +137,9 @@ class ContainerParityTest {
 
     private static void describe(ZarrGroup g, SortedMap<String, String> out) {
         for (ZarrNode child : g.children()) {
+            if (child.path().equals(ARRAYS)) {
+                continue;
+            }
             SortedMap<String, Long> attributes = new TreeMap<>();
             for (Map.Entry<String, com.ebremer.falcon.zarr.json.JsonValue> a : child.attributes().members().entrySet()) {
                 attributes.put(a.getKey(), a.getValue().asNumber().longValue());
@@ -223,6 +236,79 @@ class ContainerParityTest {
                 first = inHdf5;
             }
             assertEquals(first, inHdf5, engine.name() + " against method 0");
+        }
+    }
+
+    /**
+     * RDFARRY.md step 6's container parity: with {@code -arrays}, both
+     * containers hold the same bytes outside {@code /.BG/arrays}, and in it
+     * the same classes, arrays, types, shapes, values (bit for bit), masks and
+     * attributes, raw and compressed; only the chunking and codecs differ.
+     */
+    @Test
+    void arraysAreTheSameValuesInBothContainers() throws Exception {
+        Path src = write("arrays.ttl", com.ebremer.beakgraph.rdfarray.DiskEngineArraysTest.data());
+        for (boolean compress : new boolean[]{false, true}) {
+            com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options o =
+                    new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(1, 2, compress);
+            Path h5 = dir.resolve("arrays-" + compress + ".h5");
+            Path zarr = dir.resolve("arrays-" + compress + ".zarr");
+            for (Path out : List.of(h5, zarr)) {
+                com.ebremer.beakgraph.hdf5.writers.HDF5Writer.Builder().setSource(src.toFile())
+                        .setDestination(out.toFile()).setArrays(o).build().write();
+            }
+            assertEquals(describeHdf5(h5), describeZarr(zarr), "outside " + ARRAYS + ", the same bytes");
+            SortedMap<String, String> inHdf5 = new TreeMap<>();
+            try (Hdf5File f = Hdf5File.open(h5); OpenStore open = OpenStore.open(h5)) {
+                for (Hdf5Object c : ((Group) f.root().child(ARRAYS).orElseThrow()).children()) {
+                    List<String> arrays = new ArrayList<>();
+                    for (Hdf5Object a : ((Group) c).children()) {
+                        arrays.add(a.name());
+                    }
+                    describeArrays(open, c.name(), arrays, inHdf5);
+                }
+            }
+            SortedMap<String, String> inZarr = new TreeMap<>();
+            try (OpenStore open = OpenStore.open(zarr)) {
+                ZarrGroup arraysGroup = (ZarrGroup) Zarr.openGroup(FileSystemStore.openReadOnly(zarr), false)
+                        .child(ARRAYS).orElseThrow();
+                for (ZarrNode c : arraysGroup.children()) {
+                    List<String> arrays = new ArrayList<>();
+                    for (ZarrNode a : ((ZarrGroup) c).children()) {
+                        arrays.add(a.name());
+                    }
+                    describeArrays(open, c.name(), arrays, inZarr);
+                }
+            }
+            assertTrue(inHdf5.size() > 40 && inHdf5.keySet().stream().anyMatch(k -> k.endsWith("/f3_1")), inHdf5.keySet().toString());
+            assertEquals(inHdf5, inZarr, "compress " + compress + ": the same arrays by value");
+        }
+    }
+
+    /** A class's string attributes and each of its arrays: type, shape, values exactly, attributes. */
+    private static void describeArrays(OpenStore open, String name, List<String> arrays, SortedMap<String, String> out) {
+        StoreGroup g = open.root().group(".BG").group(Params.ARRAYS).group(name);
+        out.put(name, "class " + g.stringAttribute("kind") + " " + g.stringAttribute("datatype") + " "
+                + g.stringAttribute("shape") + " " + g.stringAttribute("signature"));
+        for (String a : arrays) {
+            TypedArray t = g.typedArray(a);
+            String values = switch (t.type()) {
+                case F64 -> java.util.Arrays.toString(java.util.Arrays.stream((double[]) t.values())
+                        .mapToLong(Double::doubleToRawLongBits).toArray());
+                case F32 -> {
+                    float[] f = (float[]) t.values();
+                    int[] bits = new int[f.length];
+                    for (int i = 0; i < f.length; i++) {
+                        bits[i] = Float.floatToRawIntBits(f[i]);
+                    }
+                    yield java.util.Arrays.toString(bits);
+                }
+                case I64 -> java.util.Arrays.toString((long[]) t.values());
+                case I32, U16 -> java.util.Arrays.toString((int[]) t.values());
+                case BOOL -> java.util.Arrays.toString((boolean[]) t.values());
+                case STR -> java.util.Arrays.toString((String[]) t.values());
+            };
+            out.put(name + "/" + a, t.type() + " " + java.util.Arrays.toString(t.shape()) + " " + values + " " + t.attributes());
         }
     }
 

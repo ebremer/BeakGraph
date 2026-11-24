@@ -56,5 +56,23 @@ public interface WritableGroup {
      * zstd inside in Zarr. Zarr records the dimension names; HDF5 has no
      * place for them without dimension scales.
      */
-    void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress);
+    default void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress) {
+        try (com.ebremer.beakgraph.store.TypedArrayWriter w = createTypedArray(name, array.type(), array.shape(),
+                array.dimensionNames(), array.attributes(), compress)) {
+            w.append(array.values());
+        }
+    }
+
+    /**
+     * Creates a typed array of {@code /.BG/arrays} to be written by whole rows
+     * (format v7, RDFARRY.md §3.5), as {@link #putTypedArray} writes one, for an
+     * array too large to hold. Its first dimension is the rows; every dimension
+     * after it must be positive.
+     *
+     * @param dimensionNames one per dimension, or null
+     * @param attributes     string or integer attributes, or null
+     */
+    com.ebremer.beakgraph.store.TypedArrayWriter createTypedArray(String name,
+            com.ebremer.beakgraph.store.TypedArray.Type type, long[] shape, java.util.List<String> dimensionNames,
+            java.util.Map<String, Object> attributes, boolean compress);
 }

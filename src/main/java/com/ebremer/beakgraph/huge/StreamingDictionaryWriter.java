@@ -68,6 +68,8 @@ final class StreamingDictionaryWriter implements AutoCloseable {
     // seqSupport; the resolved element store arrives afterwards via
     // setSequenceElementsBuffer, as the triple-term store does.
     private HugeSequences seqSupport;
+    /** {@code -arrays}: each sequence row's class number, written as {@code sequenceArrays}; null without one. */
+    private SpillBitPackedBuffer sequenceArrays;
     private SpillBitPackedBuffer sequenceElements;
     private final HashMap<String, Long> dataTypesLookUp = new HashMap<>();
     private final HashMap<String, Long> langLookUp = new HashMap<>();
@@ -263,6 +265,11 @@ final class StreamingDictionaryWriter implements AutoCloseable {
      * Sequence support for the literals section of a store holding sequences
      * (format v7); must be set before {@link #encode}.
      */
+    /** {@code -arrays}: each sequence row's class (format v7, §7.6c), or null when none packed. */
+    void setSequenceArrays(SpillBitPackedBuffer classes) {
+        this.sequenceArrays = classes;
+    }
+
     void setSequenceSupport(HugeSequences support) {
         if (!Params.LITERALS.equals(name)) {
             throw new IllegalArgumentException("Dictionary '" + name + "' does not hold sequences");
@@ -301,6 +308,9 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             // Block-structured, as the in-memory writer writes them (§5.1a, §7.6b).
             seqSupport.starts().transferBlockedTo(subGroup, Params.SEQUENCE_STARTS);
             sequenceElements.transferBlockedTo(subGroup, Params.SEQUENCE_ELEMENTS, Params.NUM_SLOTS, seqSupport.slots());
+            if (sequenceArrays != null) {
+                sequenceArrays.transferBlockedTo(subGroup, Params.SEQUENCE_ARRAYS);
+            }
         }
         if (floats != null) floats.transferTo(subGroup, "floats");
         if (doubles != null) doubles.transferTo(subGroup, "doubles");
@@ -318,6 +328,7 @@ final class StreamingDictionaryWriter implements AutoCloseable {
         nativedatatypes.close();
         if (tripleTerms != null) tripleTerms.close();
         if (sequenceElements != null) sequenceElements.close();
+        if (sequenceArrays != null) sequenceArrays.close();
         if (typedLiterals != null) typedLiterals.close();
         if (integers != null) integers.close();
         if (longs != null) longs.close();

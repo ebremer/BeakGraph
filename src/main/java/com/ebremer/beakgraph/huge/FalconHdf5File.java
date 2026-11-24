@@ -113,6 +113,11 @@ public final class FalconHdf5File implements StreamingHdf5File {
         }
 
         @Override
+        public WritableGroup writable() {
+            return group;
+        }
+
+        @Override
         public StreamingHdf5Group putGroup(String childName) throws IOException {
             try {
                 return new FalconGroup(group.putGroup(childName), child(childName));

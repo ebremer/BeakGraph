@@ -34,4 +34,14 @@ public interface StreamingHdf5Group {
      * @param length total number of bytes the dataset will hold; must be &gt; 0
      */
     StreamingHdf5Dataset createByteDataset(String name, long length) throws IOException;
+
+    /**
+     * The store group itself, for what is not a byte dataset: the typed
+     * arrays of {@code /.BG/arrays} (format v7, {@code -arrays}).
+     *
+     * @throws UnsupportedOperationException if this backend has none
+     */
+    default com.ebremer.beakgraph.hdf5.WritableGroup writable() {
+        throw new UnsupportedOperationException(getClass().getName() + " writes byte datasets only");
+    }
 }

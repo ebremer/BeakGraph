@@ -84,6 +84,13 @@ public final class ZarrStoreWriter implements WritableStore {
      */
     private static volatile long chunkMax = Long.getLong("beakgraph.zarr.chunk.max", 1L << 30);
 
+    /**
+     * A typed array's raw chunk is at most this (16 MiB) or {@link #chunkMax}:
+     * a streaming writer holds one chunk of rows, and a disk engine writes
+     * arrays larger than its memory.
+     */
+    static final long TYPED_CHUNK_MAX = 1L << 24;
+
     /** The time every entry of an archive carries: the first a ZIP entry can. */
     private static final LocalDateTime ARCHIVE_TIME = LocalDateTime.of(1980, 1, 1, 0, 0);
 
@@ -426,14 +433,25 @@ public final class ZarrStoreWriter implements WritableStore {
         /**
          * Through Falcon's own array writer, typed and little-endian, the
          * attributes and dimension names in its metadata. Raw: chunks of whole
-         * rows of at most {@code chunkMax} bytes, the bytes codec alone.
-         * Compressed: shards of whole rows holding sub-chunks of rows, zstd
-         * inside them.
+         * rows of at most {@link #TYPED_CHUNK_MAX} (and {@code chunkMax})
+         * bytes, the bytes codec alone. Compressed: shards of whole rows
+         * holding sub-chunks of rows, zstd inside them. Rows are written a
+         * chunk (a shard) at a time, so a writer holds at most one.
          */
         @Override
-        public void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress) {
-            long[] shape = array.shape();
-            DataType type = switch (array.type()) {
+        public com.ebremer.beakgraph.store.TypedArrayWriter createTypedArray(String name,
+                com.ebremer.beakgraph.store.TypedArray.Type elementType, long[] dims, List<String> dimensionNames,
+                Map<String, Object> attributes, boolean compress) {
+            long[] shape = dims.clone();
+            long rowElements = com.ebremer.beakgraph.store.TypedArray.rowElements(shape);
+            if (shape.length == 0 || rowElements == 0) {
+                throw new IllegalArgumentException("typed array '" + name + "' of shape " + java.util.Arrays.toString(shape)
+                        + ": rows of at least one element");
+            }
+            long rowBytes = rowElements * elementType.bytes();
+            List<String> names = com.ebremer.beakgraph.store.TypedArray.checkedDimensionNames(dimensionNames, shape.length);
+            Map<String, Object> attrs = com.ebremer.beakgraph.store.TypedArray.checkedAttributes(attributes);
+            DataType type = switch (elementType) {
                 case F64 -> DataType.FLOAT64;
                 case F32 -> DataType.FLOAT32;
                 case I64 -> DataType.INT64;
@@ -442,47 +460,145 @@ public final class ZarrStoreWriter implements WritableStore {
                 case U16 -> DataType.UINT16;
                 case STR -> DataType.STRING;   // the vlen-utf8 codec
             };
-            long rows = Math.max(1, (shape.length == 0) ? 1 : shape[0]);
-            long[] chunk = new long[Math.max(1, shape.length)];
+            long rows = Math.max(1, shape[0]);
+            long[] chunk = new long[shape.length];
             for (int i = 1; i < shape.length; i++) {
-                chunk[i] = Math.max(1, shape[i]);
+                chunk[i] = shape[i];
             }
             ArraySpec.Builder spec = ArraySpec.builder(shape, type);
-            if (array.type() != com.ebremer.beakgraph.store.TypedArray.Type.STR) {
+            if (elementType != com.ebremer.beakgraph.store.TypedArray.Type.STR) {
                 spec.endian(java.nio.ByteOrder.LITTLE_ENDIAN);
             }
             if (compress) {
-                long sub = Math.max(1, Math.min(rows, (1L << 20) / Math.max(1, array.rowBytes())));
-                long shard = sub * Math.max(1, Math.min(rows, Math.max(1, (1L << 26) / Math.max(1, array.rowBytes()))) / sub);
+                long sub = Math.max(1, Math.min(rows, (1L << 20) / rowBytes));
+                long shard = sub * Math.max(1, Math.min(rows, Math.max(1, (1L << 26) / rowBytes)) / sub);
                 chunk[0] = Math.max(sub, shard);
                 long[] inner = chunk.clone();
                 inner[0] = sub;
                 spec.chunkShape(chunk).sharding(inner).zstd();
             } else {
-                chunk[0] = Math.max(1, Math.min(rows, chunkMax / Math.max(1, array.rowBytes())));
+                chunk[0] = Math.max(1, Math.min(rows, Math.min(chunkMax, TYPED_CHUNK_MAX) / rowBytes));
                 spec.chunkShape(chunk);
             }
-            if (array.dimensionNames() != null) {
-                spec.dimensionNames(array.dimensionNames().toArray(String[]::new));
+            if (names != null) {
+                spec.dimensionNames(names.toArray(String[]::new));
             }
-            if (!array.attributes().isEmpty()) {
-                spec.attributes(json(array.attributes()));
+            if (!attrs.isEmpty()) {
+                spec.attributes(json(attrs));
             }
             ZarrArray a = group.createArray(name, spec.build());
-            switch (array.type()) {
-                case F64 -> a.writeDoubles((double[]) array.values());
-                case F32 -> a.writeFloats((float[]) array.values());
-                case I64 -> a.writeLongs((long[]) array.values());
-                case I32, U16 -> a.writeInts((int[]) array.values());
-                case STR -> a.writeStrings((String[]) array.values());
+            return new TypedRows(a, elementType, shape, rowElements, chunk[0]);
+        }
+    }
+
+    /**
+     * Writes a typed array by regions of whole chunks (whole shards): rows
+     * gather in a buffer of one block until it fills, and an append that
+     * starts on a block boundary writes its whole blocks straight through.
+     */
+    private static final class TypedRows implements com.ebremer.beakgraph.store.TypedArrayWriter {
+
+        private final ZarrArray array;
+        private final com.ebremer.beakgraph.store.TypedArray.Type type;
+        private final long[] shape;
+        private final long rowElements;
+        private final long blockRows;
+        /** Rows written to the array, and rows waiting in the buffer. */
+        private long flushed;
+        private Object buffer;
+        private int buffered;   // elements
+        private boolean closed;
+
+        TypedRows(ZarrArray array, com.ebremer.beakgraph.store.TypedArray.Type type, long[] shape, long rowElements,
+                  long blockRows) {
+            this.array = array;
+            this.type = type;
+            this.shape = shape;
+            this.rowElements = rowElements;
+            this.blockRows = blockRows;
+        }
+
+        /** The rows of the block being filled: a whole block, or what is left of the array. */
+        private long blockElements() {
+            return Math.min(blockRows, shape[0] - flushed) * rowElements;
+        }
+
+        @Override
+        public void append(Object values) {
+            int n = com.ebremer.beakgraph.store.TypedArray.checkedLength(type, values);
+            long queued = flushed * rowElements + buffered;
+            if (n % rowElements != 0 || queued + n > shape[0] * rowElements) {
+                throw new IllegalArgumentException(n + " elements appended to '" + array.path() + "' of shape "
+                        + java.util.Arrays.toString(shape) + " after " + queued / rowElements + " rows");
+            }
+            int at = 0;
+            if (buffered == 0) {
+                // Whole blocks, or the array's end, straight from the caller's values.
+                long rowsIn = n / rowElements;
+                long direct = (flushed + rowsIn == shape[0]) ? rowsIn : (rowsIn / blockRows) * blockRows;
+                if (direct > 0) {
+                    int len = Math.toIntExact(direct * rowElements);
+                    write(flushed, direct, (len == n) ? values : com.ebremer.beakgraph.store.TypedArray.slice(type, values, 0, len));
+                    flushed += direct;
+                    at = len;
+                }
+            }
+            while (at < n) {
+                if (buffer == null) {
+                    buffer = com.ebremer.beakgraph.store.TypedArray.newValues(type, Math.toIntExact(blockElements()));
+                }
+                int room = Math.toIntExact(blockElements()) - buffered;
+                int take = Math.min(room, n - at);
+                System.arraycopy(values, at, buffer, buffered, take);
+                buffered += take;
+                at += take;
+                if (buffered == blockElements()) {
+                    long r = buffered / rowElements;
+                    write(flushed, r, buffer);
+                    flushed += r;
+                    buffer = null;
+                    buffered = 0;
+                }
+            }
+        }
+
+        private void write(long firstRow, long rows, Object values) {
+            long[] offset = new long[shape.length];
+            offset[0] = firstRow;
+            long[] count = shape.clone();
+            count[0] = rows;
+            com.ebremer.falcon.zarr.Selection region = (firstRow == 0 && rows == shape[0])
+                    ? array.selectAll() : array.select(offset, count);
+            switch (type) {
+                case F64 -> region.writeDoubles((double[]) values);
+                case F32 -> region.writeFloats((float[]) values);
+                case I64 -> region.writeLongs((long[]) values);
+                case I32, U16 -> region.writeInts((int[]) values);
+                case STR -> region.writeStrings((String[]) values);
                 case BOOL -> {
-                    boolean[] b = (boolean[]) array.values();
+                    boolean[] b = (boolean[]) values;
                     byte[] raw = new byte[b.length];
                     for (int i = 0; i < b.length; i++) {
                         raw[i] = b[i] ? (byte) 1 : 0;
                     }
-                    a.writeRawBytes(raw);
+                    region.writeRawBytes(raw);
                 }
+            }
+        }
+
+        @Override
+        public void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            if (buffered > 0) {
+                throw new IllegalStateException("typed array '" + array.path() + "' ends inside a block: "
+                        + (flushed + buffered / rowElements) + " of its " + shape[0] + " rows");
+            }
+            if (flushed != shape[0]) {
+                throw new IllegalStateException("typed array '" + array.path() + "' has " + flushed + " of its "
+                        + shape[0] + " rows");
             }
         }
     }

@@ -116,7 +116,7 @@ public class Parameters {
             description = "Also write the RDF-array sequences as native typed arrays under /.BG/arrays "
                         + "(format v7), which h5py, zarr-python, numpy, pandas and xarray read directly: numeric "
                         + "tensors and ragged arrays, and record tables for sequences that mix strings, numbers "
-                        + "and dates by position; a second copy, the canonical store stays complete. -method 0, 2 and 3")
+                        + "and dates by position; a second copy, the canonical store stays complete")
     public boolean arrays = false;
 
     @Parameter(names = {"-arrays-min-rows"},

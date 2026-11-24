@@ -135,10 +135,24 @@ public final class WritableHdfFile implements WritableStore {
             group.stringAttribute(name, value);
         }
 
+        /**
+         * A typed dataset written by boxes of whole rows: contiguous (Falcon
+         * writes each box at its place), or chunked by rows and filtered, each
+         * chunk compressed once its rows are in. The attributes follow the data.
+         */
         @Override
-        public void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress) {
-            long[] shape = array.shape();
-            Datatype type = switch (array.type()) {
+        public com.ebremer.beakgraph.store.TypedArrayWriter createTypedArray(String name,
+                com.ebremer.beakgraph.store.TypedArray.Type elementType, long[] dims, java.util.List<String> dimensionNames,
+                java.util.Map<String, Object> attributes, boolean compress) {
+            long[] shape = dims.clone();
+            long elements = com.ebremer.beakgraph.store.TypedArray.elementCount(shape);
+            long rowElements = com.ebremer.beakgraph.store.TypedArray.rowElements(shape);
+            if (shape.length == 0 || rowElements == 0) {
+                throw new IllegalArgumentException("typed array '" + name + "' of shape " + Arrays.toString(shape)
+                        + ": rows of at least one element");
+            }
+            java.util.Map<String, Object> attrs = com.ebremer.beakgraph.store.TypedArray.checkedAttributes(attributes);
+            Datatype type = switch (elementType) {
                 case F64 -> Datatype.float64();
                 case F32 -> Datatype.float32();
                 case I64 -> Datatype.int64();
@@ -148,21 +162,53 @@ public final class WritableHdfFile implements WritableStore {
                 case STR -> Datatype.variableString();   // UTF-8, as h5py writes a str
             };
             Hdf5Writer.DatasetWriter ds = group.createDataset(name, type, shape);
-            if (compress && array.elementCount() > 0) {
-                ds.chunked(rowChunk(shape, array.rowBytes()));
-                if (array.type() != com.ebremer.beakgraph.store.TypedArray.Type.STR) {
+            if (compress && elements > 0) {
+                ds.chunked(rowChunk(shape, rowElements * elementType.bytes()));
+                if (elementType != com.ebremer.beakgraph.store.TypedArray.Type.STR) {
                     ds.shuffle();   // over variable-length ids it would only shuffle heap addresses
                 }
                 ds.deflate(6);
             }
-            ds.write(array.values());
-            for (java.util.Map.Entry<String, Object> a : array.attributes().entrySet()) {
-                if (a.getValue() instanceof String s) {
-                    ds.stringAttribute(a.getKey(), s);
-                } else {
-                    ds.attribute(a.getKey(), Datatype.int64(), SCALAR, new long[]{(Long) a.getValue()});
+            return new com.ebremer.beakgraph.store.TypedArrayWriter() {
+                private long rows;
+                private boolean closed;
+
+                @Override
+                public void append(Object values) {
+                    int n = com.ebremer.beakgraph.store.TypedArray.checkedLength(elementType, values);
+                    if (n % rowElements != 0 || rows + n / rowElements > shape[0]) {
+                        throw new IllegalArgumentException(n + " elements appended to '" + name + "' of shape "
+                                + Arrays.toString(shape) + " after " + rows + " rows");
+                    }
+                    long[] offset = new long[shape.length];
+                    offset[0] = rows;
+                    long[] count = shape.clone();
+                    count[0] = n / rowElements;
+                    if (n > 0 || elements == 0) {
+                        ds.write(offset, count, values);
+                    }
+                    rows += count[0];
                 }
-            }
+
+                @Override
+                public void close() {
+                    if (closed) {
+                        return;
+                    }
+                    closed = true;
+                    if (rows != shape[0]) {
+                        throw new IllegalStateException("typed array '" + name + "' has " + rows + " of its "
+                                + shape[0] + " rows");
+                    }
+                    for (java.util.Map.Entry<String, Object> a : attrs.entrySet()) {
+                        if (a.getValue() instanceof String s) {
+                            ds.stringAttribute(a.getKey(), s);
+                        } else {
+                            ds.attribute(a.getKey(), Datatype.int64(), SCALAR, new long[]{(Long) a.getValue()});
+                        }
+                    }
+                }
+            };
         }
     }
 

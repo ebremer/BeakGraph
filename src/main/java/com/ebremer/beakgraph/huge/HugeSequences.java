@@ -33,6 +33,8 @@ final class HugeSequences implements AutoCloseable {
     private long count = 0;
     private long elements = 0;
     private long slots = 0;
+    /** {@code -arrays}: the encode's sequences go to it too; null without it. */
+    private HugeArrays arrays;
 
     HugeSequences(SorterProvider provider, Path workDir) throws IOException {
         this.provider = provider;
@@ -51,6 +53,9 @@ final class HugeSequences implements AutoCloseable {
      */
     long onSequence(Node seq) throws IOException {
         long k = count++;
+        if (arrays != null) {
+            arrays.onSequence(k, seq);
+        }
         List<Node> el = seq.getSeq();
         for (int i = 0; i < el.size(); i++) {
             Node e = el.get(i);
@@ -67,6 +72,11 @@ final class HugeSequences implements AutoCloseable {
 
     long count() {
         return count;
+    }
+
+    /** {@code -arrays}: hands every sequence of the encode to {@code a} as well, in order. */
+    void setArrays(HugeArrays a) {
+        this.arrays = a;
     }
 
     long elementCount() {

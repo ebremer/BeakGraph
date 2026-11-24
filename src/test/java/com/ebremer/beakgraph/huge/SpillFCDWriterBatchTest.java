@@ -65,7 +65,9 @@ class SpillFCDWriterBatchTest {
         @Override public void putAttribute(String name, int value) { attributes.put(name, (long) value); }
         @Override public void putAttribute(String name, long value) { attributes.put(name, value); }
         @Override public void putAttribute(String name, String value) { throw new UnsupportedOperationException(); }
-        @Override public void putTypedArray(String name, com.ebremer.beakgraph.store.TypedArray array, boolean compress) {
+        @Override public com.ebremer.beakgraph.store.TypedArrayWriter createTypedArray(String name,
+                com.ebremer.beakgraph.store.TypedArray.Type type, long[] shape, List<String> dimensionNames,
+                java.util.Map<String, Object> attributes, boolean compress) {
             throw new UnsupportedOperationException();
         }
     }

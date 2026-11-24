@@ -53,7 +53,7 @@ brought and what a reader must rebuild.
     Jena's CSV writer). The fork's `TestUndefSlots`, `TestSequenceQueries` and
     `TestArraySyntaxExamples` run over stores too: 94 pass, 3 disabled with the reason.
 * **`-arrays`: native typed arrays under `/.BG/arrays`** (RDFARRY.md step 6, SPECIFICATIONS.md §7.6c;
-  methods 0, 2 and 3 so far). The numeric sequences - `xsd:double`, `float`, `integer` (canonical),
+  every engine, the disk engines byte-identical to method 0). The numeric sequences - `xsd:double`, `float`, `integer` (canonical),
   `long`, `int` and `boolean` leaves, rectangular below the top - are written a second time as
   little-endian typed arrays that h5py, zarr-python, numpy and xarray read directly: a tensor class per
   shared length (`-arrays-min-rows`), a ragged class per key otherwise, a `mask` for slots, `seq` back

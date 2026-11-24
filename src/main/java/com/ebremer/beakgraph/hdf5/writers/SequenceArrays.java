@@ -264,18 +264,220 @@ public final class SequenceArrays {
         return true;
     }
 
-    /** A class: its name, kind, leaf, row shape (tensor) or inner shape (ragged), and rows in id order. */
-    record Class(String name, boolean tensor, Leaf leaf, int length, int[] inner, List<Row> rows) {}
+    /** What a class is: a tensor (one length), ragged (a key's other lengths), or a record (§3.5a). */
+    public enum Kind { TENSOR, RAGGED, RECORD }
 
-    private final List<Class> classes;
-    private final List<RecordArrays.RecClass> records;
+    /**
+     * One class as it is written: its name; for a numeric class its leaf,
+     * length (tensor) and inner shape; for a record class its signature, item
+     * and columns; its rows and items (list items, or a ragged class's outer
+     * elements); whether it holds a slot (per column for a record); and each
+     * {@code lang} column's tags in code order (null elsewhere).
+     */
+    public record ClassDef(String name, Kind kind, Leaf leaf, int length, int[] inner,
+                           String signature, boolean list, RecordArrays.Sig item, List<RecordArrays.Column> columns,
+                           long rows, long items, boolean slot, boolean[] columnSlot, List<List<String>> tags) {
+    }
+
+    /** The classes in class-number order (the number is the place plus one), and each bucket's class number (0: none). */
+    public record Decision(List<ClassDef> classes, int[] classOfBucket) {
+    }
+
+    /**
+     * The one classification every engine runs: rows arrive in id order and
+     * fall into buckets - a numeric (leaf, inner shape, length), or a record
+     * signature - which count their rows, items, slots and language tags;
+     * {@link #decide} then makes the classes of §3.5 and §3.5a from the counts
+     * alone, so an engine that spills its rows gets the classes of one that
+     * holds them.
+     */
+    public static final class Classifier {
+
+        private final Options options;
+        private final Map<String, Bucket> byKey = new HashMap<>();
+        private final List<Bucket> buckets = new ArrayList<>();
+
+        /** One bucket: what its rows share, and what they hold. */
+        static final class Bucket {
+            final int id;
+            final Leaf leaf;
+            final int[] inner;
+            final int length;
+            final String signature;
+            final boolean list;
+            final RecordArrays.Sig item;
+            final List<RecordArrays.Column> columns;
+            final int width;
+            long rows;
+            long items;
+            boolean slot;
+            final boolean[] columnSlot;
+            final List<java.util.TreeSet<String>> tags;
+
+            Bucket(int id, Leaf leaf, int[] inner, int length, RecordArrays.RecRow record) {
+                this.id = id;
+                this.leaf = leaf;
+                this.inner = inner;
+                this.length = length;
+                this.signature = (record == null) ? null : record.signature();
+                this.list = record != null && record.list();
+                this.item = (record == null) ? null : record.item();
+                this.columns = (record == null) ? null : RecordArrays.columns(record.item());
+                int w = 0;
+                if (columns != null) {
+                    for (RecordArrays.Column c : columns) {
+                        w += c.width();
+                    }
+                }
+                this.width = w;
+                this.columnSlot = (columns == null) ? null : new boolean[columns.size()];
+                this.tags = new ArrayList<>();
+                if (columns != null) {
+                    for (RecordArrays.Column c : columns) {
+                        tags.add(c.leaf().kind() == RecordArrays.Kind.LANG ? new java.util.TreeSet<>() : null);
+                    }
+                }
+            }
+
+            boolean record() {
+                return signature != null;
+            }
+        }
+
+        public Classifier(Options options) {
+            this.options = options;
+        }
+
+        /** The bucket of a row {@link #probeAny} made, counted. */
+        public int add(Object row) {
+            return (row instanceof Row r) ? add(r) : add((RecordArrays.RecRow) row);
+        }
+
+        /** The bucket of a numeric row, counted. */
+        int add(Row r) {
+            Bucket b = byKey.computeIfAbsent("n:" + r.leaf().name() + Arrays.toString(r.inner()) + ":" + r.length(),
+                    k -> bucket(new Bucket(buckets.size(), r.leaf(), r.inner(), r.length(), null)));
+            b.rows++;
+            b.items += r.length();
+            b.slot |= r.hasSlot();
+            return b.id;
+        }
+
+        /** The bucket of a record row, counted, its slots and language tags noted. */
+        int add(RecordArrays.RecRow r) {
+            Bucket b = byKey.computeIfAbsent("r:" + r.signature(),
+                    k -> bucket(new Bucket(buckets.size(), null, null, -1, r)));
+            b.rows++;
+            b.items += r.items();
+            for (int ci = 0; ci < b.columns.size(); ci++) {
+                RecordArrays.Column col = b.columns.get(ci);
+                java.util.TreeSet<String> tags = b.tags.get(ci);
+                for (int j = 0; j < r.items(); j++) {
+                    for (int w = 0; w < col.width(); w++) {
+                        Object v = r.leaves()[j * b.width + col.offset() + w];
+                        if (v == null) {
+                            b.columnSlot[ci] = true;
+                        } else if (tags != null && tags.size() <= RecordArrays.MAX_LANGS) {
+                            tags.add(((String[]) v)[1]);   // one past the cap is enough to know the class will not fit
+                        }
+                    }
+                }
+            }
+            return b.id;
+        }
+
+        private Bucket bucket(Bucket b) {
+            buckets.add(b);
+            return b;
+        }
+
+        /**
+         * The classes: per numeric key, a tensor class for each length at least
+         * {@code minRows} rows share and one ragged class for its other lengths,
+         * all in name order; then a record class {@code rec_<n>} per signature
+         * at least {@code minRows} rows share, in the spellings' order (a class
+         * whose {@code lang} column would need more than 65536 codes is not made).
+         */
+        public Decision decide() {
+            TreeMap<String, List<Bucket>> numericKeys = new TreeMap<>();
+            TreeMap<String, Bucket> signatures = new TreeMap<>();
+            for (Bucket b : buckets) {
+                if (b.record()) {
+                    signatures.put(b.signature, b);
+                } else {
+                    numericKeys.computeIfAbsent(b.leaf.name() + Arrays.toString(b.inner), k -> new ArrayList<>()).add(b);
+                }
+            }
+            TreeMap<String, ClassDef> named = new TreeMap<>();
+            Map<String, List<Bucket>> bucketsOf = new HashMap<>();
+            for (List<Bucket> key : numericKeys.values()) {
+                key.sort(java.util.Comparator.comparingInt(b -> b.length));
+                List<Bucket> ragged = new ArrayList<>();
+                for (Bucket b : key) {
+                    if (b.rows >= options.minRows()) {
+                        String name = b.leaf.tag + "_" + dims(b.length, b.inner);
+                        named.put(name, new ClassDef(name, Kind.TENSOR, b.leaf, b.length, b.inner, null, false, null, null,
+                                b.rows, b.items, b.slot, null, null));
+                        bucketsOf.put(name, List.of(b));
+                    } else {
+                        ragged.add(b);
+                    }
+                }
+                if (!ragged.isEmpty()) {
+                    Bucket e = ragged.get(0);
+                    String name = e.leaf.tag + "_r" + (e.inner.length == 0 ? "" : "_" + dims(-1, e.inner));
+                    long rows = 0;
+                    long items = 0;
+                    boolean slot = false;
+                    for (Bucket b : ragged) {
+                        rows += b.rows;
+                        items += b.items;
+                        slot |= b.slot;
+                    }
+                    named.put(name, new ClassDef(name, Kind.RAGGED, e.leaf, -1, e.inner, null, false, null, null,
+                            rows, items, slot, null, null));
+                    bucketsOf.put(name, ragged);
+                }
+            }
+            List<ClassDef> classes = new ArrayList<>(named.values());
+            int records = 0;
+            for (Bucket b : signatures.values()) {
+                if (b.rows < options.minRows()) {
+                    continue;
+                }
+                boolean fits = true;
+                List<List<String>> tags = new ArrayList<>();
+                for (java.util.TreeSet<String> t : b.tags) {
+                    fits &= (t == null || t.size() <= RecordArrays.MAX_LANGS);
+                    tags.add((t == null) ? null : List.copyOf(t));
+                }
+                if (!fits) {
+                    continue;   // more tags than uint16 codes: the rows stay canonical only
+                }
+                String name = "rec_" + (++records);
+                classes.add(new ClassDef(name, Kind.RECORD, null, -1, null, b.signature, b.list, b.item, b.columns,
+                        b.rows, b.items, false, b.columnSlot.clone(), tags));
+                bucketsOf.put(name, List.of(b));
+            }
+            int[] classOfBucket = new int[buckets.size()];
+            for (int c = 0; c < classes.size(); c++) {
+                for (Bucket b : bucketsOf.get(classes.get(c).name())) {
+                    classOfBucket[b.id] = c + 1;
+                }
+            }
+            return new Decision(List.copyOf(classes), classOfBucket);
+        }
+    }
+
+    private final Decision decision;
+    /** Each class's rows in id order (a numeric class's {@link Row}s, a record class's RecRows). */
+    private final List<List<Object>> rowsOfClass;
     private final long[] classOfSequence;
     private final TimeUnit timeUnit;
 
-    private SequenceArrays(List<Class> classes, List<RecordArrays.RecClass> records, long[] classOfSequence,
-                           TimeUnit timeUnit) {
-        this.classes = classes;
-        this.records = records;
+    private SequenceArrays(Decision decision, List<List<Object>> rowsOfClass, long[] classOfSequence, TimeUnit timeUnit) {
+        this.decision = decision;
+        this.rowsOfClass = rowsOfClass;
         this.classOfSequence = classOfSequence;
         this.timeUnit = timeUnit;
     }
@@ -293,60 +495,66 @@ public final class SequenceArrays {
             first--;
         }
         int numSequences = literals.size() - first;
-        // key -> length -> rows, every map in a fixed order
-        Map<String, TreeMap<Integer, List<Row>>> byKey = new TreeMap<>();
-        Map<String, Row> keyExample = new HashMap<>();
-        List<RecordArrays.RecRow> recordCandidates = new ArrayList<>();
+        Classifier classifier = new Classifier(options);
+        List<Object> rows = new ArrayList<>();
+        List<Integer> buckets = new ArrayList<>();
         for (int k = 0; k < numSequences; k++) {
             Node seq = literals.get(first + k);
             if (!topLevel.test(seq)) {
                 continue;
             }
             long objectId = maxEntityId + first + k + 1;
-            Row row = probe(objectId, seq, options.minLeaves());
-            if (row == null) {
-                RecordArrays.RecRow rec = RecordArrays.probe(objectId, seq, options.timeUnit(), options.minLeaves());
-                if (rec != null) {
-                    recordCandidates.add(rec);
-                }
-                continue;
-            }
-            String key = row.leaf().name() + Arrays.toString(row.inner());
-            byKey.computeIfAbsent(key, x -> new TreeMap<>()).computeIfAbsent(row.length(), x -> new ArrayList<>()).add(row);
-            keyExample.putIfAbsent(key, row);
-        }
-        TreeMap<String, Class> named = new TreeMap<>();
-        for (Map.Entry<String, TreeMap<Integer, List<Row>>> e : byKey.entrySet()) {
-            Row example = keyExample.get(e.getKey());
-            List<Row> ragged = new ArrayList<>();
-            for (Map.Entry<Integer, List<Row>> byLength : e.getValue().entrySet()) {
-                if (byLength.getValue().size() >= options.minRows()) {
-                    String name = example.leaf().tag + "_" + dims(byLength.getKey(), example.inner());
-                    named.put(name, new Class(name, true, example.leaf(), byLength.getKey(), example.inner(), byLength.getValue()));
-                } else {
-                    ragged.addAll(byLength.getValue());
-                }
-            }
-            if (!ragged.isEmpty()) {
-                ragged.sort(java.util.Comparator.comparingLong(Row::objectId));
-                String name = example.leaf().tag + "_r" + (example.inner().length == 0 ? "" : "_" + dims(-1, example.inner()));
-                named.put(name, new Class(name, false, example.leaf(), -1, example.inner(), ragged));
+            Object row = probeAny(objectId, seq, options);
+            if (row != null) {
+                rows.add(row);
+                buckets.add(row instanceof Row r ? classifier.add(r) : classifier.add((RecordArrays.RecRow) row));
             }
         }
-        List<Class> classes = new ArrayList<>(named.values());
-        List<RecordArrays.RecClass> records = RecordArrays.classify(recordCandidates, options.minRows());
+        Decision decision = classifier.decide();
+        List<List<Object>> rowsOfClass = new ArrayList<>();
+        for (int c = 0; c < decision.classes().size(); c++) {
+            rowsOfClass.add(new ArrayList<>());
+        }
         long[] classOf = new long[numSequences];
-        for (int c = 0; c < classes.size(); c++) {
-            for (Row r : classes.get(c).rows()) {
-                classOf[(int) (r.objectId() - maxEntityId - first - 1)] = c + 1;
+        for (int i = 0; i < rows.size(); i++) {
+            int c = decision.classOfBucket()[buckets.get(i)];
+            if (c > 0) {
+                rowsOfClass.get(c - 1).add(rows.get(i));
+                classOf[(int) (objectId(rows.get(i)) - maxEntityId - first - 1)] = c;
             }
         }
-        for (int c = 0; c < records.size(); c++) {
-            for (RecordArrays.RecRow r : records.get(c).rows()) {
-                classOf[(int) (r.objectId() - maxEntityId - first - 1)] = classes.size() + c + 1;
-            }
-        }
-        return new SequenceArrays(classes, records, classOf, options.timeUnit());
+        return new SequenceArrays(decision, rowsOfClass, classOf, options.timeUnit());
+    }
+
+    /**
+     * A top-level sequence as the row it packs as: a {@link Row} when a tensor
+     * or ragged class can take it, else a record row (§3.5a), else null.
+     */
+    public static Object probeAny(long objectId, Node seq, Options options) {
+        Row row = probe(objectId, seq, options.minLeaves());
+        return (row != null) ? row : RecordArrays.probe(objectId, seq, options.timeUnit(), options.minLeaves());
+    }
+
+    /** The object id of a {@link Row} or a record row. */
+    public static long objectId(Object row) {
+        return (row instanceof Row r) ? r.objectId() : ((RecordArrays.RecRow) row).objectId();
+    }
+
+    /** A row's leaves, item-major, null at a slot: Double, Float, Long, Boolean, String or {lexical form, tag}. */
+    public static Object[] leavesOf(Object row) {
+        return (row instanceof Row r) ? r.leaves() : ((RecordArrays.RecRow) row).leaves();
+    }
+
+    /** A row's outer length (a numeric row) or items (a record row). */
+    public static int countOf(Object row) {
+        return (row instanceof Row r) ? r.length() : ((RecordArrays.RecRow) row).items();
+    }
+
+    /** The row of class {@code c} with these parts, as {@link #probeAny} made it: for an engine that spilled it. */
+    public static Object rowOf(ClassDef c, long objectId, int count, Object[] leaves) {
+        return (c.kind() == Kind.RECORD)
+                ? new RecordArrays.RecRow(objectId, c.signature(), c.list(), c.item(), count, leaves)
+                : new Row(objectId, c.leaf(), count, c.inner(), leaves);
     }
 
     private static final Pattern RECORD_NAME = Pattern.compile("rec_([1-9][0-9]{0,9})");
@@ -391,7 +599,7 @@ public final class SequenceArrays {
     }
 
     /** "768", "2x3": a row's dimensions; {@code length < 0} leaves the outer one out. */
-    private static String dims(int length, int[] inner) {
+    static String dims(int length, int[] inner) {
         StringBuilder sb = new StringBuilder();
         if (length >= 0) {
             sb.append(length);
@@ -405,7 +613,7 @@ public final class SequenceArrays {
 
     /** Whether any sequence packed: without one, a store has no {@code /.BG/arrays} and no {@code sequenceArrays}. */
     public boolean isEmpty() {
-        return classes.isEmpty() && records.isEmpty();
+        return decision.classes().isEmpty();
     }
 
     /** Each sequence row's class number (1-based, in name order), 0 when it is not packed. */
@@ -413,84 +621,210 @@ public final class SequenceArrays {
         return classOfSequence.clone();
     }
 
-    /** Writes {@code arrays/} under {@code bg} (the {@code .BG} group): a group per class, in name order. */
+    /** Writes {@code arrays/} under {@code bg} (the {@code .BG} group): a group per class, in class-number order. */
     public void write(WritableGroup bg, boolean compress) {
         if (isEmpty()) {
             return;
         }
         WritableGroup arrays = bg.putGroup(Params.ARRAYS);
-        for (Class c : classes) {
-            WritableGroup g = arrays.putGroup(c.name());
-            g.putAttribute("kind", c.tensor() ? "tensor" : "ragged");
-            g.putAttribute("datatype", c.leaf().datatype);
-            g.putAttribute("shape", c.tensor() ? dims(c.length(), c.inner()) : dims(-1, c.inner()));
-            int per = 1;
-            for (int d : c.inner()) {
-                per *= d;
-            }
-            int rows = c.rows().size();
-            long items = 0;
-            for (Row r : c.rows()) {
-                items += r.length();
-            }
-            long[] valueShape;
-            List<String> dimNames = new ArrayList<>();
-            if (c.tensor()) {
-                valueShape = new long[2 + c.inner().length];
-                valueShape[0] = rows;
-                valueShape[1] = c.length();
-                dimNames.add("seq");
-                dimNames.add("d1");
-                for (int i = 0; i < c.inner().length; i++) {
-                    valueShape[2 + i] = c.inner()[i];
-                    dimNames.add("d" + (2 + i));
+        for (int c = 0; c < decision.classes().size(); c++) {
+            List<Object> rows = rowsOfClass.get(c);
+            writeClass(decision.classes().get(c), () -> RowSource.of(rows.iterator()), arrays, compress, timeUnit);
+        }
+    }
+
+    /**
+     * A class's rows in id order, as often as a writer asks: one pass per
+     * array, so a class need not fit in memory.
+     */
+    @FunctionalInterface
+    public interface RowSource {
+
+        /** A pass over the rows; close it when done. */
+        Rows open();
+
+        /** One pass. */
+        interface Rows extends java.util.Iterator<Object>, AutoCloseable {
+            @Override
+            void close();
+        }
+
+        /** A pass over rows held in memory. */
+        static Rows of(java.util.Iterator<Object> it) {
+            return new Rows() {
+                @Override
+                public boolean hasNext() {
+                    return it.hasNext();
                 }
-            } else {
-                valueShape = new long[1 + c.inner().length];
-                valueShape[0] = items;
-                dimNames.add("item");
-                for (int i = 0; i < c.inner().length; i++) {
-                    valueShape[1 + i] = c.inner()[i];
-                    dimNames.add("d" + (1 + i));
+
+                @Override
+                public Object next() {
+                    return it.next();
                 }
+
+                @Override
+                public void close() {
+                }
+            };
+        }
+    }
+
+    /** How a pass fills one array from a row: how many elements the row gives, and putting them at {@code at}. */
+    interface Filler {
+        int elements(Object row);
+
+        void fill(Object row, Object piece, int at);
+    }
+
+    /** The elements one append hands an array, at most (a piece holds at least one row). */
+    static int pieceElements = 1 << 20;
+
+    /**
+     * Writes one array of a class in one pass over its rows, a piece of
+     * elements at a time. Each piece is a fresh array, so an element no row
+     * fills (a slot) is 0, false or {@code ""}.
+     */
+    static void pass(WritableGroup g, String name, TypedArray.Type type, long[] shape, List<String> dims,
+                     Map<String, Object> attributes, boolean compress, RowSource source, Filler filler) {
+        int capacity = (int) Math.min(pieceElements, Math.max(1, TypedArray.elementCount(shape)));
+        try (com.ebremer.beakgraph.store.TypedArrayWriter w = g.createTypedArray(name, type, shape, dims, attributes, compress);
+             RowSource.Rows rows = source.open()) {
+            Object piece = null;
+            int size = 0;
+            int used = 0;
+            while (rows.hasNext()) {
+                Object row = rows.next();
+                int n = filler.elements(row);
+                if (piece != null && used + n > size) {
+                    w.append(used == size ? piece : TypedArray.slice(type, piece, 0, used));
+                    piece = null;
+                }
+                if (piece == null) {
+                    size = Math.max(capacity, n);
+                    piece = TypedArray.newValues(type, size);
+                    used = 0;
+                }
+                filler.fill(row, piece, used);
+                used += n;
             }
-            int total = Math.toIntExact(c.tensor() ? (long) rows * c.length() * per : items * per);
-            Object values = newValues(c.leaf().type, total);
-            boolean[] mask = new boolean[total];
-            boolean anySlot = false;
-            int at = 0;
-            for (Row r : c.rows()) {
-                for (Object leaf : r.leaves()) {
-                    if (leaf == null) {
-                        mask[at] = true;
-                        anySlot = true;
-                    } else {
-                        set(values, c.leaf().type, at, leaf);
+            if (piece != null) {
+                w.append(used == size ? piece : TypedArray.slice(type, piece, 0, used));
+            }
+        }
+    }
+
+    /** {@code starts}, int64 [rows + 1]: 0, then where each row's items end. */
+    static void starts(WritableGroup g, long rows, boolean compress, RowSource source,
+                       java.util.function.ToIntFunction<Object> items) {
+        long[] end = {0};
+        boolean[] first = {true};
+        // The leading 0 rides on the first row: two elements for it, one for each after.
+        pass(g, "starts", TypedArray.Type.I64, new long[]{rows + 1}, List.of("bound"), null, compress, source, new Filler() {
+            @Override
+            public int elements(Object row) {
+                return first[0] ? 2 : 1;
+            }
+
+            @Override
+            public void fill(Object row, Object piece, int at) {
+                long[] p = (long[]) piece;
+                if (first[0]) {
+                    p[at++] = 0;
+                    first[0] = false;
+                }
+                end[0] += items.applyAsInt(row);
+                p[at] = end[0];
+            }
+        });
+    }
+
+    /** {@code seq}, int64 [rows]: each row's sequence object id. */
+    static void seq(WritableGroup g, long rows, boolean compress, RowSource source) {
+        pass(g, "seq", TypedArray.Type.I64, new long[]{rows}, List.of("seq"), null, compress, source, new Filler() {
+            @Override
+            public int elements(Object row) {
+                return 1;
+            }
+
+            @Override
+            public void fill(Object row, Object piece, int at) {
+                ((long[]) piece)[at] = objectId(row);
+            }
+        });
+    }
+
+    /**
+     * Writes the class {@code c} under {@code arrays} from its rows, an array
+     * at a time: a tensor's or ragged class's values, starts, mask and seq, or
+     * a record class's columns ({@link RecordArrays#writeClass}).
+     */
+    public static void writeClass(ClassDef c, RowSource rows, WritableGroup arrays, boolean compress, TimeUnit unit) {
+        if (c.kind() == Kind.RECORD) {
+            RecordArrays.writeClass(c, rows, arrays, compress, unit);
+            return;
+        }
+        boolean tensor = c.kind() == Kind.TENSOR;
+        WritableGroup g = arrays.putGroup(c.name());
+        g.putAttribute("kind", tensor ? "tensor" : "ragged");
+        g.putAttribute("datatype", c.leaf().datatype);
+        g.putAttribute("shape", tensor ? dims(c.length(), c.inner()) : dims(-1, c.inner()));
+        long[] valueShape;
+        List<String> dimNames = new ArrayList<>();
+        if (tensor) {
+            valueShape = new long[2 + c.inner().length];
+            valueShape[0] = c.rows();
+            valueShape[1] = c.length();
+            dimNames.add("seq");
+            dimNames.add("d1");
+            for (int i = 0; i < c.inner().length; i++) {
+                valueShape[2 + i] = c.inner()[i];
+                dimNames.add("d" + (2 + i));
+            }
+        } else {
+            valueShape = new long[1 + c.inner().length];
+            valueShape[0] = c.items();
+            dimNames.add("item");
+            for (int i = 0; i < c.inner().length; i++) {
+                valueShape[1 + i] = c.inner()[i];
+                dimNames.add("d" + (1 + i));
+            }
+        }
+        TypedArray.Type type = c.leaf().type;
+        pass(g, "values", type, valueShape, dimNames, null, compress, rows, new Filler() {
+            @Override
+            public int elements(Object row) {
+                return ((Row) row).leaves().length;
+            }
+
+            @Override
+            public void fill(Object row, Object piece, int at) {
+                for (Object leaf : ((Row) row).leaves()) {
+                    if (leaf != null) {
+                        set(piece, type, at, leaf);
                     }
                     at++;
                 }
             }
-            g.putTypedArray("values", new TypedArray(c.leaf().type, valueShape, values, dimNames, null), compress);
-            if (!c.tensor()) {
-                long[] starts = new long[rows + 1];
-                for (int i = 0; i < rows; i++) {
-                    starts[i + 1] = starts[i] + c.rows().get(i).length();
+        });
+        if (!tensor) {
+            starts(g, c.rows(), compress, rows, row -> ((Row) row).length());
+        }
+        if (c.slot()) {
+            pass(g, "mask", TypedArray.Type.BOOL, valueShape, dimNames, null, compress, rows, new Filler() {
+                @Override
+                public int elements(Object row) {
+                    return ((Row) row).leaves().length;
                 }
-                g.putTypedArray("starts", new TypedArray(TypedArray.Type.I64, new long[]{rows + 1L}, starts,
-                        List.of("bound"), null), compress);
-            }
-            if (anySlot) {
-                g.putTypedArray("mask", new TypedArray(TypedArray.Type.BOOL, valueShape, mask, dimNames, null), compress);
-            }
-            long[] seq = new long[rows];
-            for (int i = 0; i < rows; i++) {
-                seq[i] = c.rows().get(i).objectId();
-            }
-            g.putTypedArray("seq", new TypedArray(TypedArray.Type.I64, new long[]{rows}, seq, List.of("seq"), null), compress);
+
+                @Override
+                public void fill(Object row, Object piece, int at) {
+                    for (Object leaf : ((Row) row).leaves()) {
+                        ((boolean[]) piece)[at++] = (leaf == null);
+                    }
+                }
+            });
         }
-        for (RecordArrays.RecClass r : records) {
-            RecordArrays.write(r, arrays, compress, timeUnit);
-        }
+        seq(g, c.rows(), compress, rows);
     }
 
     /**
@@ -564,17 +898,6 @@ public final class SequenceArrays {
             case I32 -> ((int[]) values.values())[at] == (int) (long) (Long) expected;
             case BOOL -> ((boolean[]) values.values())[at] == (Boolean) expected;
             case U16, STR -> false;   // no numeric leaf packs to these
-        };
-    }
-
-    static Object newValues(TypedArray.Type type, int n) {
-        return switch (type) {
-            case F64 -> new double[n];
-            case F32 -> new float[n];
-            case I64 -> new long[n];
-            case I32, U16 -> new int[n];
-            case BOOL -> new boolean[n];
-            case STR -> new String[n];
         };
     }
 

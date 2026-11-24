@@ -88,6 +88,7 @@ public class HugeUltraHDF5Writer implements BeakGraphWriter {
                         inputs, builder.getSpatial(), builder.getFeatures(), builder.getVoidMode(),
                         workspace, provider, pool)) {
                     pipeline.setSourceRoot(builder.getSourceRoot());
+                    pipeline.setArrays(builder.getArrays());
                     pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
                     if (builder.rangeRows > 0) {
                         pipeline.setMinRangeRows(builder.rangeRows);

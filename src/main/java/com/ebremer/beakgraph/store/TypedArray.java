@@ -43,6 +43,18 @@ public record TypedArray(Type type, long[] shape, Object values, List<String> di
     public TypedArray {
         Objects.requireNonNull(type, "type");
         shape = shape.clone();
+        long n = elementCount(shape);
+        int length = checkedLength(type, values);
+        if (length != n) {
+            throw new IllegalArgumentException(type + " values hold " + length + " elements; the shape "
+                    + java.util.Arrays.toString(shape) + " needs " + n);
+        }
+        dimensionNames = checkedDimensionNames(dimensionNames, shape.length);
+        attributes = checkedAttributes(attributes);
+    }
+
+    /** The product of {@code shape}; IllegalArgumentException for a negative dimension. */
+    public static long elementCount(long[] shape) {
         long n = 1;
         for (long d : shape) {
             if (d < 0) {
@@ -50,6 +62,20 @@ public record TypedArray(Type type, long[] shape, Object values, List<String> di
             }
             n = Math.multiplyExact(n, d);
         }
+        return n;
+    }
+
+    /** The elements below the first dimension: one row's. */
+    public static long rowElements(long[] shape) {
+        long n = 1;
+        for (int i = 1; i < shape.length; i++) {
+            n = Math.multiplyExact(n, shape[i]);
+        }
+        return n;
+    }
+
+    /** How many elements {@code values} holds, checked against {@code type}'s Java array and range. */
+    public static int checkedLength(Type type, Object values) {
         int length = switch (type) {
             case F64 -> ((double[]) values).length;
             case F32 -> ((float[]) values).length;
@@ -69,14 +95,50 @@ public record TypedArray(Type type, long[] shape, Object values, List<String> di
                 Objects.requireNonNull(v, "a string element");
             }
         }
-        if (length != n) {
-            throw new IllegalArgumentException(type + " values hold " + length + " elements; the shape "
-                    + java.util.Arrays.toString(shape) + " needs " + n);
+        return length;
+    }
+
+    /** A new Java array of {@code type} for {@code n} elements ({@code ""} for strings). */
+    public static Object newValues(Type type, int n) {
+        return switch (type) {
+            case F64 -> new double[n];
+            case F32 -> new float[n];
+            case I64 -> new long[n];
+            case I32, U16 -> new int[n];
+            case BOOL -> new boolean[n];
+            case STR -> {
+                String[] s = new String[n];
+                java.util.Arrays.fill(s, "");
+                yield s;
+            }
+        };
+    }
+
+    /** Elements {@code [from, to)} of {@code values}, a copy. */
+    public static Object slice(Type type, Object values, int from, int to) {
+        return switch (type) {
+            case F64 -> java.util.Arrays.copyOfRange((double[]) values, from, to);
+            case F32 -> java.util.Arrays.copyOfRange((float[]) values, from, to);
+            case I64 -> java.util.Arrays.copyOfRange((long[]) values, from, to);
+            case I32, U16 -> java.util.Arrays.copyOfRange((int[]) values, from, to);
+            case BOOL -> java.util.Arrays.copyOfRange((boolean[]) values, from, to);
+            case STR -> java.util.Arrays.copyOfRange((String[]) values, from, to);
+        };
+    }
+
+    /** {@code names} as an immutable list, null kept, checked against the rank. */
+    public static List<String> checkedDimensionNames(List<String> names, int rank) {
+        if (names == null) {
+            return null;
         }
-        dimensionNames = (dimensionNames == null) ? null : List.copyOf(dimensionNames);
-        if (dimensionNames != null && dimensionNames.size() != shape.length) {
-            throw new IllegalArgumentException(dimensionNames.size() + " dimension names for rank " + shape.length);
+        if (names.size() != rank) {
+            throw new IllegalArgumentException(names.size() + " dimension names for rank " + rank);
         }
+        return List.copyOf(names);
+    }
+
+    /** {@code attributes} in name order, integers as longs; IllegalArgumentException for any other value. */
+    public static Map<String, Object> checkedAttributes(Map<String, Object> attributes) {
         Map<String, Object> sorted = new TreeMap<>();
         if (attributes != null) {
             for (Map.Entry<String, Object> e : attributes.entrySet()) {
@@ -90,7 +152,7 @@ public record TypedArray(Type type, long[] shape, Object values, List<String> di
                 sorted.put(e.getKey(), v);
             }
         }
-        attributes = java.util.Collections.unmodifiableMap(sorted);
+        return java.util.Collections.unmodifiableMap(sorted);
     }
 
     @Override
