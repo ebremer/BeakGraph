@@ -225,11 +225,32 @@ final class PackedSequences {
             return Math.toIntExact(s[1] - s[0]);
         }
 
-        /** The row of the sequence with object id {@code id}: a binary search of the sample, then of one stretch of seq. */
+        /**
+         * The row of the sequence with object id {@code id}. When the class's ids run without a gap (seq
+         * ascends, so its last minus its first is the row count less one), the row is {@code id - first};
+         * else a binary search of the sample, then of one stretch of seq, which is kept: a scan reads the
+         * sequences in id order, so it reads each stretch once.
+         */
         long rowOf(long id) {
             long[] s = samples;
             if (s == null) {
                 s = sample();
+            }
+            long from = contiguousFrom;
+            if (from >= 0) {
+                long row = id - from;
+                if (row >= 0 && row < rows) {
+                    return row;
+                }
+                throw notHeld(id);
+            }
+            Stretch t = stretch;
+            if (t != null && id >= t.ids[0] && id <= t.ids[t.ids.length - 1]) {
+                int j = java.util.Arrays.binarySearch(t.ids, id);
+                if (j >= 0) {
+                    return t.first + j;
+                }
+                throw notHeld(id);
             }
             int i = java.util.Arrays.binarySearch(s, id);
             if (i >= 0) {
@@ -238,25 +259,43 @@ final class PackedSequences {
             int block = -i - 2;   // the last sample below id
             if (block >= 0) {
                 long first = (long) block * SAMPLE;
-                long[] stretch = (long[]) seq.readRows(first, Math.min(SAMPLE, rows - first));
-                int j = java.util.Arrays.binarySearch(stretch, id);
+                long[] ids = (long[]) seq.readRows(first, Math.min(SAMPLE, rows - first));
+                stretch = new Stretch(first, ids);
+                int j = java.util.Arrays.binarySearch(ids, id);
                 if (j >= 0) {
                     return first + j;
                 }
             }
-            throw new IllegalStateException("Corrupt store: sequenceArrays puts sequence " + id + " in /.BG/arrays/"
+            throw notHeld(id);
+        }
+
+        private IllegalStateException notHeld(long id) {
+            return new IllegalStateException("Corrupt store: sequenceArrays puts sequence " + id + " in /.BG/arrays/"
                     + name + ", whose seq does not hold it");
         }
+
+        /** The stretch of seq read last, from row {@code first}; a racy cache of an immutable value. */
+        private record Stretch(long first, long[] ids) {}
+
+        private volatile Stretch stretch;
+        /** The first id when the class's ids run without a gap, else -1; set with the sample. */
+        private volatile long contiguousFrom = -1;
 
         private synchronized long[] sample() {
             if (samples == null) {
                 long[] s = new long[Math.toIntExact((rows + SAMPLE - 1) / SAMPLE)];
                 long step = (long) SAMPLE * 4096;   // read seq a stretch at a time
+                long lastId = -1;
                 for (long from = 0; from < rows; from += step) {
                     long[] part = (long[]) seq.readRows(from, Math.min(step, rows - from));
                     for (int k = 0; k < part.length; k += SAMPLE) {
                         s[Math.toIntExact((from + k) / SAMPLE)] = part[k];
                     }
+                    lastId = part[part.length - 1];
+                }
+                // seq ascends strictly (one row a sequence, in id order): so a span of rows - 1 has no gap.
+                if (rows > 0 && lastId - s[0] == rows - 1) {
+                    contiguousFrom = s[0];
                 }
                 samples = s;
             }

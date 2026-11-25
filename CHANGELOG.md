@@ -87,8 +87,9 @@ brought and what a reader must rebuild.
     - Candidate scans of the element index add the predicate's packed sequences.
     - With `-void`, the join reorder costs them, the held rows at a guessed share.
   - **Verify and export** read the packed sequences from their arrays, and export them as a v7 store's.
-    - Measured: 1.5-10× the cost of matching on ids, still 3-40× ahead of jena-array on long sequences
-      (the 1.5 million values of 2,000 embeddings: 342 ms, against 221 ms on ids and 14 s).
+    - Measured: up to 4× the cost of matching on ids, as fast on short rows (points, polygons), and
+      still 3-40× ahead of jena-array on long sequences (the 1.5 million values of 2,000 embeddings:
+      315 ms, against 137 ms on ids and 11 s).
   - **Size depends on the data.** Repeating values (a few decimals) are smaller in the dictionary than as
     float64. String record classes are a second copy in v8 too, and costly in HDF5.
 * **`-seqindex`: the element index of the sequences** (RDFARRY.md step 8, SPECIFICATIONS.md §7.6d). An

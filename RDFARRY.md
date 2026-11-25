@@ -1579,6 +1579,29 @@ writes it, and the six write the same bytes.
   The v8 builds are now 6-9× faster than the `-arrays` ones (12.9 s, 17.9 s). Those spend 13 s encoding the
   sequences' 1.5 million elements, each located by the same kind of binary search over the 1.5 million
   terms of the section: a v7 cost, left for the performance list.
+- **Finding a packed row** (`PackedClass.rowOf`) read a 256-entry stretch of its class's `seq` for every
+  row. Timed alone over 2,000 embeddings: 1.8 ms of the 10 ms a first element costs, beside 5 ms reading
+  the row's 768 values. Now:
+  - a class whose ids run without a gap (`seq` ascends, so its last minus its first is the row count less
+    one, which the sample already reads) finds a row by one subtraction;
+  - any other keeps the stretch it read last, so a scan in id order reads each stretch once.
+
+  `SequenceMatchingBenchmarkTest`, the v8 column (one run each):
+
+  | Query | v8 before | v8 now | on ids |
+  |---|---|---|---|
+  | points, `( ?x ?y )`, 50,000 rows | 180 ms | 82.5 ms | 80 ms |
+  | matrices, nested | 74 ms | 36 ms | 12.5 ms |
+  | polygons, first point | 22 ms | 9.5 ms | 11.4 ms |
+  | embeddings, first value | 13 ms | 8.7 ms | 2.2 ms |
+  | embeddings, last value | 12.7 ms | 8.7 ms | 2.2 ms |
+  | embeddings, every value, 1.5 M rows | 342 ms | 315 ms | 137 ms |
+  | build with `-arrays-only` | 11.3 s | 7.4 s | |
+
+  Small rows gained most: each read a stretch. A first or last value still reads its whole row. Reading
+  one value would need a sub-row read in the store views, for a few milliseconds on long rows, so it is
+  not done. What every value costs beyond ids is the 1.5 million terms a v8 match makes, where ids make
+  none.
 
 ### Step 10: later and optional
 
