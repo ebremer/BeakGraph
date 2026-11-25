@@ -140,12 +140,17 @@ class ArraysOnlyTest {
             assertTrue(d7.getObjects().locate(only) >= 1);
             // Also the object of :x :val: a row in both.
             assertTrue(d8.getObjects().locate(literal("1.5", "double")) >= 1, "1.5 is :x's value too");
-            // A leaf of ( 101 102 ), which ( "label" ( 101 102 ) ) holds, does not pack, and refers to by id.
+            // ( 101 102 ) is :u's object and packs, but ( "label" ( 101 102 ) ), stored with its elements,
+            // holds it: so it keeps its elements, and its leaves their rows, as in v7.
             Node pair = NodeFactory.createSeqNode(List.of(literal("101", "integer"), literal("102", "integer")));
             long pairId = d8.getObjects().locate(pair);
-            assertTrue(pairId >= 1, "the packed ( 101 102 ) keeps its row");
-            assertTrue(d8.heldOnlyInArrays(pairId));
-            assertTrue(d8.getObjects().locate(literal("101", "integer")) < 1, "its leaves do not");
+            assertTrue(pairId >= 1);
+            assertFalse(d8.heldOnlyInArrays(pairId), "a sequence a canonical one holds keeps its elements");
+            assertTrue(d8.getObjects().locate(literal("101", "integer")) >= 1, "and its leaves their rows");
+            // ( 2.5 ... ) is a quad's object alone: held only in the arrays.
+            Node emb = NodeFactory.createSeqNode(List.of(literal("1.5", "double"), literal("2.5", "double")));
+            assertTrue(d8.heldOnlyInArrays(d8.getObjects().locate(emb)));
+            assertTrue(d8.getObjects().locate(literal("2.5", "double")) < 1, "its leaves have no rows");
             // A record row keeps its canonical elements, and its leaves their rows.
             Node reading = NodeFactory.createSeqNode(List.of(NodeFactory.createLiteralString("8480-6"),
                     literal("120", "integer"), NodeFactory.createLiteralString("mm[Hg]")));
@@ -199,6 +204,9 @@ class ArraysOnlyTest {
             "SELECT ?s ?v { ?s :reading ( \"8480-6\" ?v ?u ) }",
             "SELECT ?s ?t { :x :val ?v . ?s :emb ( ... ?v ... ) . ?s ?p ?t }",
             "SELECT ?s ?r { ?s :emb ( \"1.5\"^^xsd:double ...?r ) }",
+            // ( 101 102 ) packs but ( "label" ( 101 102 ) ) holds it: a join through its leaf, by id.
+            "SELECT ?s ?t ?a { ?s :pair ( ?a ?b ) . ?t :mixed ( ?l ( ?a ... ) ) }",
+            "SELECT ?s ?v { ?s :pair ( ?v ... ) . :w :mixed ( ?l ( ... ?v ... ) ) }",
             "SELECT ?q (SEQLEN(?q) AS ?n) { ?s :emb ?q }",
             "SELECT ?s ?v { ?s :emb ?q UNNEST(?q AS ?v) }",
         };

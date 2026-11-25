@@ -166,7 +166,8 @@ public final class SequenceArrays {
 
     /**
      * Whether {@code seq}, an object of some quad, packs into a tensor or ragged class at {@code minLeaves}:
-     * then {@code -arrays-only} stores it only there. Every such sequence has a class ({@link Classifier}
+     * then {@code -arrays-only} stores it only there, unless a sequence stored with its elements also holds
+     * it ({@link PositionalDictionaryWriterBuilder#getHeldBack}). Every such sequence has a class ({@link Classifier}
      * gives a key's rows too few for a tensor of their length its ragged class), so this per-sequence test
      * is the classification's own.
      */
@@ -657,11 +658,11 @@ public final class SequenceArrays {
      * for the in-memory engines, which all hold the sorted section.
      */
     public static SequenceArrays of(Options options, com.ebremer.beakgraph.core.DictionaryWriter literals,
-                                    long maxEntityId, java.util.Set<Node> topLevel) {
+                                    long maxEntityId, java.util.function.Predicate<Node> topLevel) {
         if (options == null || !(literals instanceof MultiTypeDictionaryWriter section)) {
             return null;
         }
-        SequenceArrays arrays = classify(section.getNodes(), maxEntityId, topLevel::contains, options);
+        SequenceArrays arrays = classify(section.getNodes(), maxEntityId, topLevel, options);
         if (arrays.isEmpty()) {
             return null;
         }
@@ -683,14 +684,20 @@ public final class SequenceArrays {
     }
 
     /**
-     * {@link #of}, then for {@code -arrays-only} (format v8) the checks and marks the in-memory engines
-     * (methods 0, 2) share: every sequence in {@code packedOnly} must be a row of a tensor or ragged class,
-     * and a class is {@code shared} when one of its rows is in {@code sharing}.
+     * {@link #of} over the objects {@code ingest} collected, the in-memory engines' one call (methods 0, 2,
+     * 3). With {@code -arrays-only} (format v8) no class takes a sequence that packs but keeps its elements
+     * ({@link PositionalDictionaryWriterBuilder#getHeldBack}), so that every row of a tensor or ragged class
+     * is held only there; every sequence in {@code packedOnly} must be such a row, and a class is
+     * {@code shared} when one of its rows is in {@code sharing}.
      */
     public static SequenceArrays of(Options options, com.ebremer.beakgraph.core.DictionaryWriter literals,
-                                    long maxEntityId, java.util.Set<Node> topLevel,
-                                    java.util.Set<Node> packedOnly, java.util.Set<Node> sharing) {
-        SequenceArrays arrays = of(options, literals, maxEntityId, topLevel);
+                                    long maxEntityId, PositionalDictionaryWriterBuilder ingest) {
+        java.util.Set<Node> objects = ingest.getUniqueObjects();
+        java.util.Set<Node> heldBack = ingest.getHeldBack();
+        java.util.Set<Node> packedOnly = ingest.getPackedOnly();
+        java.util.Set<Node> sharing = ingest.getSharingPacked();
+        SequenceArrays arrays = of(options, literals, maxEntityId,
+                heldBack.isEmpty() ? objects::contains : o -> objects.contains(o) && !heldBack.contains(o));
         requireHolds(arrays, literals, packedOnly);
         if (!packedOnly.isEmpty()) {
             List<Node> section = ((MultiTypeDictionaryWriter) literals).getNodes();

@@ -116,7 +116,7 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
         // -arrays-only (v8) the same rows left without elements (the shared parse decided which).
         this.arraysOptions = builder.getArrays();
         this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(arraysOptions, literalsdict,
-                maxEntityId, builder.getUniqueObjects(), builder.getPackedOnly(), builder.getSharingPacked());
+                maxEntityId, builder);
         this.formatVersion = builder.getPackedOnly().isEmpty()
                 ? com.ebremer.beakgraph.Params.FORMAT_VERSION : com.ebremer.beakgraph.Params.ARRAYS_ONLY_FORMAT_VERSION;
         // -seqindex: the element index after the sequences, as method 0 writes it.

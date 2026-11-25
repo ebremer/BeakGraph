@@ -1489,6 +1489,22 @@ v8 shows what it costs the reader, which steps 7 and 8 built on element ids:
     suite and the fork's three engine tests pass over v8 stores built by methods 0, 2 and 3, with
     `-seqindex` read on every scan. CI runs them on method 3.
 
+**Part 4 (2026-11-25): in progress.** The disk engines.
+
+- **First, one rule every engine can apply.** Part 1 held a quad's object that packs only in the arrays
+  unless a sequence stored with its elements held it, and then did not walk it there either. Whether a
+  nested sequence is also a packed object is known only once every quad has been read, which a disk engine,
+  meeting the quads one at a time, cannot wait for. So the rule now decides each part where it is met:
+  - a quad's object that packs is not walked: its row is kept, its inside closed;
+  - every other sequence is walked, at every depth, and every sequence met inside it keeps its elements,
+    even one that packs as a quad's object elsewhere;
+  - a sequence is held only in the arrays when it is a quad's object, packs, and nothing walked holds it.
+  
+  A sequence held back so (`getHeldBack`) is stored as without `-arrays`, and no class takes it, so that
+  every row of a tensor or ragged class in a v8 store is held only there, as the reader takes it to be.
+  `ArraysOnlyTest`'s `( 101 102 )`, which `( "label" ( 101 102 ) )` holds, is such a sequence: its leaves
+  now keep their rows, and two queries join through them.
+
 ### Step 10: later and optional
 
 Each of these waits on the spec or on a need:

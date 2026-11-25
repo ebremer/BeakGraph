@@ -893,6 +893,12 @@ order of the spellings (UTF-16). Its group has string attributes `kind` (`record
 A writer MAY store the sequences of the tensor and ragged classes (§7.6c) only there (the reference writers
 do with `-arrays-only`). Record classes keep their canonical rows.
 
+* **Which sequences.** In such a store every row of a tensor or ragged class is held only there. The
+  reference writers hold a sequence so when it is the object of a quad, packs as numbers, and no sequence
+  stored with its elements holds it, at any depth. A sequence that one does hold keeps its elements, and no
+  class takes it. Each of the three is decided where the sequence is met, so a writer that sees the quads
+  one at a time decides it as one that holds them all does.
+
 * **The flag.** `sequenceArrays` carries the int64 attribute `arraysOnly = 1`, and the store is stamped
   `formatVersion = 8`. A store with no such sequence is v7, whatever the writer was asked for.
 * **The rows.** Such a sequence keeps its row in the literals section: its `datatypes` entry, its `offsets`

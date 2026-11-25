@@ -293,7 +293,7 @@ final class UltraDictionary {
         awaitStorage();
         this.arraysOptions = options;
         this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(options, literalsdict, maxEntityId,
-                ingest.getUniqueObjects(), ingest.getPackedOnly(), ingest.getSharingPacked());
+                ingest);
     }
 
     /** {@code -seqindex}: the literals section writes the element index after its sequences, as method 0's does. */

@@ -124,8 +124,8 @@ public class PositionalDictionaryWriterBuilder {
 
     /**
      * The top-level sequences {@code -arrays-only} stores only in {@code /.BG/arrays} (RDFARRY.md step 9):
-     * those a tensor or ragged class takes. Empty without {@code -arrays-only}, or when none packs; then the
-     * store is v7.
+     * those a tensor or ragged class takes and no sequence stored with its elements holds. Empty without
+     * {@code -arrays-only}, or when none packs; then the store is v7.
      */
     public Set<Node> getPackedOnly() { return packedOnly; }
 
@@ -137,6 +137,16 @@ public class PositionalDictionaryWriterBuilder {
      * dictionary row because something else uses it: a reader must look such a leaf up to join on it.
      */
     public Set<Node> getSharingPacked() { return sharingPacked; }
+
+    /** {@code -arrays-only}: the quads' objects that pack but keep their elements. */
+    private Set<Node> heldBack = Set.of();
+
+    /**
+     * The objects of quads that pack as numbers but that a sequence stored with its elements also holds: they
+     * keep their elements, and no class takes them, so that in a v8 store every row of a tensor or ragged
+     * class is held only there. Empty without {@code -arrays-only}.
+     */
+    public Set<Node> getHeldBack() { return heldBack; }
 
     private boolean sequenceIndex;
 
@@ -759,23 +769,37 @@ public class PositionalDictionaryWriterBuilder {
      * {@code -arrays-only}: works out, from the objects and the quads, which top-level sequences are stored
      * only as arrays and which literals-section terms something else still needs; records the first (and
      * those of them {@linkplain #getSharingPacked sharing} a kept term) for the getters. Returns the terms
-     * to keep, or null when no sequence packs. Every in-memory ingest (methods 0, 2, 3) leaves out what this
-     * says, so their sections are the same.
+     * to keep, or null when no sequence is stored only as an array. Every ingest leaves out what this says
+     * (the disk engines by the same rule, in their merge), so their sections are the same.
+     *
+     * <p>A sequence is stored only as an array when it is the object of a quad, packs as numbers, and no
+     * sequence stored with its elements holds it. Each of the three is decided where the sequence is met,
+     * one occurrence at a time: a quad's object that packs is not walked, any other sequence is, at every
+     * depth, and a sequence met inside one walked keeps its elements, whether or not it packs elsewhere.
      */
     protected final Set<Node> splitPacked(Iterable<Node> objects, Quad[] allQuads) {
-        Set<Node> packed = new HashSet<>();
+        Set<Node> candidates = new HashSet<>();
         for (Node o : objects) {
             if (o.isNodeSeq() && SequenceArrays.packsAsNumbers(o, arrays.minLeaves())) {
-                packed.add(o);
+                candidates.add(o);
             }
         }
-        if (packed.isEmpty()) {
+        if (candidates.isEmpty()) {
             return null;
         }
         Set<Node> kept = new HashSet<>();
+        Set<Node> walked = new HashSet<>();
+        Set<Node> nested = new HashSet<>();
         for (Quad q : allQuads) {
-            keep(q.getObject(), packed, kept);
+            keep(q.getObject(), candidates, kept, walked, nested);
         }
+        Set<Node> packed = new HashSet<>(candidates);
+        packed.removeAll(nested);
+        if (packed.isEmpty()) {
+            return null;
+        }
+        candidates.retainAll(nested);
+        this.heldBack = Collections.unmodifiableSet(candidates);
         Set<Node> sharing = new HashSet<>();
         for (Node seq : packed) {
             if (holdsKept(seq, kept)) {
@@ -800,28 +824,45 @@ public class PositionalDictionaryWriterBuilder {
         return false;
     }
 
-    /** Marks what an object needs in the literals section, the packed sequences' insides left closed. */
-    private static void keep(Node o, Set<Node> packed, Set<Node> kept) {
+    /**
+     * Marks what an object needs in the literals section: a quad's object that packs keeps its row with its
+     * inside closed; any other sequence's elements are marked at every depth ({@link #keepElements}).
+     */
+    private static void keep(Node o, Set<Node> candidates, Set<Node> kept, Set<Node> walked, Set<Node> nested) {
         if (o.isLiteral()) {
             kept.add(o);
         } else if (o.isTripleTerm()) {
-            keepTripleTerm(o, packed, kept);
+            keepTripleTerm(o, kept);
         } else if (o.isNodeSeq()) {
-            if (kept.add(o) && !packed.contains(o)) {
-                SeqTerms.walk(o, new SeqTerms.ElementVisitor() {
-                    @Override public void literal(Node n) { kept.add(n); }
-                    @Override public void entity(Node n) { }
-                    @Override public void tripleTerm(Node n) { keepTripleTerm(n, packed, kept); }
-                    @Override public boolean nestedSequence(Node n) {
-                        // A nested sequence is a row; its own elements are needed unless it is packed.
-                        return kept.add(n) && !packed.contains(n);
-                    }
-                });
+            kept.add(o);
+            if (!candidates.contains(o)) {
+                keepElements(o, kept, walked, nested);
             }
         }
     }
 
-    private static void keepTripleTerm(Node tt, Set<Node> packed, Set<Node> kept) {
+    /**
+     * Marks the elements of a sequence stored with its elements, once per sequence ({@code walked}): its
+     * leaves, triple terms and nested sequences, which are {@code nested} and stored with their elements
+     * too, so walked in turn, even one that packs as a quad's object elsewhere.
+     */
+    private static void keepElements(Node seq, Set<Node> kept, Set<Node> walked, Set<Node> nested) {
+        if (!walked.add(seq)) {
+            return;
+        }
+        SeqTerms.walk(seq, new SeqTerms.ElementVisitor() {
+            @Override public void literal(Node n) { kept.add(n); }
+            @Override public void entity(Node n) { }
+            @Override public void tripleTerm(Node n) { keepTripleTerm(n, kept); }
+            @Override public boolean nestedSequence(Node n) {
+                kept.add(n);
+                nested.add(n);
+                return walked.add(n);
+            }
+        });
+    }
+
+    private static void keepTripleTerm(Node tt, Set<Node> kept) {
         if (!kept.add(tt)) {
             return;
         }

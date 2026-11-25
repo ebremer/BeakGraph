@@ -75,7 +75,8 @@ brought and what a reader must rebuild.
   `/.BG/arrays` holds are stored only there.
   - **What changes.** Their rows keep their place, but they have no element ids. Their numbers have no
     dictionary entries unless something else uses them. Such a store is stamped 8, which a v7 build refuses;
-    one with nothing to pack stays v7, byte for byte.
+    one with nothing to pack stays v7, byte for byte. A numeric sequence that a sequence stored with its
+    elements also holds keeps its elements, and no class takes it.
   - **Measured.** On 2,000 embeddings of 768 doubles, synthetic: 12.4 MB where `-arrays` wrote 20.9-34.5 MB,
     and built 3-4× faster.
   - **Reading.** Packed rows are read from their arrays, and sequences are found by term.
