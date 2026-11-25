@@ -160,6 +160,64 @@ public class BindingNodeId implements Iterable<Var> {
         return na != null && na.equals(nb);
     }
 
+    /**
+     * A layer over this one that binds {@code v} to {@code term}, a term this
+     * store does not hold - a named gap's run that is no stored sequence
+     * (RDFARRY.md §3.7, "values without ids"). The id is
+     * {@link NodeId#DOES_NOT_EXIST}, so every index probe for it answers
+     * nothing, as it must; the term itself rides in the layer's Jena parent
+     * binding, where {@link BindingBG} reads every absent term from. The
+     * caller guarantees {@code v} is bound nowhere in the chain.
+     */
+    BindingNodeId withAbsentTerm(Var v, Node term) {
+        Binding extended = (parentBinding == null)
+                ? org.apache.jena.sparql.engine.binding.BindingFactory.binding(v, term)
+                : org.apache.jena.sparql.engine.binding.BindingFactory.binding(parentBinding, v, term);
+        BindingNodeId layer = new BindingNodeId(this, extended);
+        layer.append(v, NodeId.DOES_NOT_EXIST);
+        return layer;
+    }
+
+    /**
+     * The term {@code v} is bound to when it is bound to
+     * {@link NodeId#DOES_NOT_EXIST}: a term this store does not hold, which the
+     * parent binding carries. Null when it carries none.
+     */
+    Node absentTerm(Var v) {
+        return (parentBinding == null) ? null : parentBinding.get(v);
+    }
+
+    /**
+     * A copy of this layer without its binding of {@code v}, over the same
+     * chain: what a union read that matched a private object variable hands
+     * on (RDFARRY.md §3.7). {@code v} must be bound in this layer itself.
+     */
+    BindingNodeId copyWithout(Var v) {
+        BindingNodeId out = new BindingNodeId(parent, parentBinding);
+        boolean found = false;
+        for (int i = 0; i < n; i++) {
+            Var x = slot(i);
+            if (x.equals(v)) {
+                found = true;
+            } else {
+                out.append(x, id(i));
+            }
+        }
+        if (!found) {
+            throw new IllegalStateException(v + " is not bound in this layer");
+        }
+        return out;
+    }
+
+    private long id(int i) {
+        return switch (i) {
+            case 0 -> i0;
+            case 1 -> i1;
+            case 2 -> i2;
+            default -> i3;
+        };
+    }
+
     private Var slot(int i) {
         return switch (i) {
             case 0 -> v0;

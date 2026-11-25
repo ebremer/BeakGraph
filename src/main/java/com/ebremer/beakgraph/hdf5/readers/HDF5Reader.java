@@ -537,6 +537,15 @@ public class HDF5Reader implements BGReader {
      * positions are identical across graphs by construction).
      */
     private Iterator<BindingNodeId> readUnion(java.util.PrimitiveIterator.OfLong graphIds, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        Node object = triple.getObject();
+        if (object.isNodeSeq() && com.ebremer.beakgraph.core.lib.SeqTerms.isPattern(object)) {
+            // A sequence pattern (RDFARRY.md §3.7): the union's triples first, each once, then the match. A
+            // dedup on the pattern's variables would merge a gap's placements, and the distinct triples that
+            // match alike when a variable bound already passes a slot.
+            Triple scan = Triple.create(triple.getSubject(), triple.getPredicate(), UNION_SEQUENCE_OBJECT);
+            return com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.matchEach(
+                    readUnion(graphIds, bnid, scan, filter, nodeTable), UNION_SEQUENCE_OBJECT, object, dict, nodeTable);
+        }
         List<Var> varList = new ArrayList<>(3);
         for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
             if (n.isVariable()) {
@@ -592,6 +601,9 @@ public class HDF5Reader implements BGReader {
             return seen.add(probe);
         });
     }
+
+    /** The object a union read of a sequence pattern scans for, then drops ({@link #readUnion}); no query can name it. */
+    private static final Var UNION_SEQUENCE_OBJECT = Var.alloc(" sequence object");
 
     /** Adds every variable inside a triple-term pattern (all depths) to {@code out}, without duplicates. */
     private static void collectTripleTermVars(Node tripleTerm, List<Var> out) {

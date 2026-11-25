@@ -56,7 +56,9 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
     // formerly dropped the constraint entirely (a var-containing triple term is
     // not isConcrete()) and returned every row - the one-classifier rule, CHANGELOG.md "Format v5 design notes". Candidates
     // now unify per row in computeNext; null for every other shape.
-    private TripleTermMatcher ttMatcher;
+    private ObjectPattern ttMatcher;
+    // A sequence pattern's further matches of one row (its gaps), handed out before the scan moves on.
+    private java.util.ArrayDeque<BindingNodeId> more;
 
     public BGIteratorSPO_All(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, -1);
@@ -162,16 +164,20 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
             if (oid < 1) return; // DOES_NOT_EXIST: nothing can match
             minObjId = Math.max(minObjId, oid);
             maxObjId = Math.min(maxObjId, oid);
-        } else if (TripleTermMatcher.isPattern(quad.getObject())) {
-            // Var-containing triple term: not concrete, but very much a
-            // constraint. Clamp to the triple-term suffix of the object space
-            // and unify each surviving row in computeNext.
-            ttMatcher = TripleTermMatcher.compile(quad.getObject(), dict);
+        } else if (ObjectPattern.isPattern(quad.getObject())) {
+            // A compound term with variables inside: not concrete, but very
+            // much a constraint. Clamp to the band of the object space it can
+            // match (the triple terms, or the sequences holding its constant
+            // prefix) and match each surviving row in computeNext.
+            ttMatcher = ObjectPattern.compile(quad.getObject(), dict);
             if (ttMatcher == null) {
                 return; // pattern cannot match anything in this store
             }
-            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
-            maxObjId = Math.min(maxObjId, dict.lastTripleTermObjectId());   // the sequences follow the band
+            minObjId = Math.max(minObjId, ttMatcher.firstObjectId());
+            maxObjId = Math.min(maxObjId, ttMatcher.lastObjectId());
+            if (ttMatcher.multiple()) {
+                more = new java.util.ArrayDeque<>();
+            }
         }
 
         // -----------------------------------------------------------------
@@ -387,6 +393,9 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
      * span two id-spaces - putCompatible resolves those through the node table.)
      */
     private BindingNodeId computeNext() {
+        if (more != null && !more.isEmpty()) {
+            return more.poll();
+        }
         while (hasNext) {
             BindingNodeId result = new BindingNodeId(parentBinding);
             boolean ok = true;
@@ -411,7 +420,7 @@ public class BGIteratorSPO_All implements Iterator<BindingNodeId> {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, resO), nodeTable);
             }
             if (ok && ttMatcher != null) {
-                BindingNodeId unified = ttMatcher.matchAndBind(resO, result, nodeTable);
+                BindingNodeId unified = ttMatcher.match(resO, result, nodeTable, more);
                 if (unified == null) {
                     ok = false;
                 } else {

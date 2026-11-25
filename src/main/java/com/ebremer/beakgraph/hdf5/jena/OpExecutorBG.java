@@ -178,13 +178,10 @@ public class OpExecutorBG extends OpExecutor {
         if (!input.hasNext()) {
             return input;
         }
-        if (com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(pattern)) {
-            // A sequence pattern (RDFARRY.md §3.7, layer A): the whole BGP to
-            // jena-array's solver, in written order, the filters after it. Not
-            // reordered and no filter placed inside: a variable at an empty slot
-            // stays unbound, which neither the statistics nor Jena's placement
-            // knows, and the redline's "a bound variable is compatible with a
-            // slot" is what makes the written order's answers the right ones.
+        boolean sequences = com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(pattern);
+        if (sequences && PatternMatchBG.delegateSequences()) {
+            // A sequence pattern by layer A (RDFARRY.md §3.7): the whole BGP to
+            // jena-array's solver, in written order, the filters after it.
             return PatternMatchBG.delegate(graph, pattern, input, exprs, execCxt);
         }
         if ( pattern.size() >= 2 ) {
@@ -197,6 +194,19 @@ public class OpExecutorBG extends OpExecutor {
         }
         if ( exprs == null ) {
             return PatternMatchBG.execute(graph, pattern, input, exprs, execCxt);
+        }
+        if (sequences && PatternMatchBG.mayLeaveUnbound(graph)) {
+            // A sequence pattern over a store with empty slots (RDFARRY.md §3.7):
+            // the order is free - a bound variable is compatible with a slot, so
+            // the patterns join alike in any order - but a variable a slot left
+            // unbound may be bound by a later pattern, and a filter placed
+            // between them would see it unbound. The filters run after the whole
+            // BGP, and are its range hints inside it.
+            QueryIterator it = PatternMatchBG.execute(graph, pattern, input, exprs, execCxt);
+            for (Expr e : exprs) {
+                it = new QueryIterFilterExpr(it, e, execCxt);
+            }
+            return it;
         }
         Op op = TransformFilterPlacement.transform(exprs, pattern);
         return plainExecute(op, input, execCxt) ;

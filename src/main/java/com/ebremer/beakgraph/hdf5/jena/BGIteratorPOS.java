@@ -41,10 +41,13 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     // two values for it is no row.
     private boolean oFresh, sFresh;
 
-    // Triple-term pattern in the object position: rows whose object id fails
-    // unification are dropped in computeNext (the same skip path repeated-var
-    // conflicts already use). Null for every other pattern shape.
-    private TripleTermMatcher ttMatcher;
+    // Compound-term pattern in the object position (a triple term or a
+    // sequence with variables inside, ObjectPattern): rows whose object id
+    // fails to match are dropped in computeNext (the same skip path
+    // repeated-var conflicts already use). Null for every other pattern shape.
+    private ObjectPattern matcher;
+    // A pattern's further matches of one row (a sequence pattern's gaps), handed out before the scan moves on.
+    private java.util.ArrayDeque<BindingNodeId> more;
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
         this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, -1);
@@ -102,16 +105,20 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
         minObjId = bounds.minO;
         maxObjId = bounds.maxO;
 
-        // Triple-term pattern in the object position: clamp the object range to
-        // the triple-term suffix of the object space (empties instantly on a
-        // triple-term-free store) and unify per candidate in computeNext.
-        if (TripleTermMatcher.isPattern(quad.getObject())) {
-            ttMatcher = TripleTermMatcher.compile(quad.getObject(), dict);
-            if (ttMatcher == null) {
+        // Compound-term pattern in the object position: clamp the object range
+        // to the ids it can match - the triple-term band, or the sequences
+        // holding its constant prefix - (empty at once on a store without
+        // such terms) and match per candidate in computeNext.
+        if (ObjectPattern.isPattern(quad.getObject())) {
+            matcher = ObjectPattern.compile(quad.getObject(), dict);
+            if (matcher == null) {
                 return; // pattern cannot match anything in this store
             }
-            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
-            maxObjId = Math.min(maxObjId, dict.lastTripleTermObjectId());   // the sequences follow the band
+            minObjId = Math.max(minObjId, matcher.firstObjectId());
+            maxObjId = Math.min(maxObjId, matcher.lastObjectId());
+            if (matcher.multiple()) {
+                more = new java.util.ArrayDeque<>();
+            }
         }
 
         // 1. Resolve Graph
@@ -172,8 +179,8 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             if (quad.getObject().isVariable()) oVar = Var.alloc(quad.getObject());
             if (quad.getSubject().isVariable()) sVar = Var.alloc(quad.getSubject());
             oFresh = RowVars.fresh(parentBinding, oVar);
-            // A triple-term pattern binds the variables inside it before the subject binds: one of them may be the subject's.
-            sFresh = ttMatcher == null && RowVars.fresh(parentBinding, sVar, oVar);
+            // A compound-term pattern may hold the subject's variable, which it then checks against the subject's id.
+            sFresh = matcher == null && RowVars.fresh(parentBinding, sVar, oVar);
         }
     }
 
@@ -232,6 +239,9 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      * rather than emitted with the first value.
      */
     private BindingNodeId computeNext() {
+        if (more != null && !more.isEmpty()) {
+            return more.poll();
+        }
         while (hasNext) {
             BindingNodeId result = new BindingNodeId(this.parentBinding);
             boolean ok = true;
@@ -240,22 +250,22 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             } else if (oVar != null) {
                 ok = result.putCompatible(oVar, NodeId.pack(NodeType.OBJECT, So.get(curOIndex)), nodeTable);
             }
-            if (ok && ttMatcher != null) {
-                // Unify the candidate object id against the triple-term pattern
-                // BEFORE the subject binds, so a repeated variable spanning the
-                // two (?x inside the term and as pattern subject) is checked by
-                // putCompatible against the embedded binding.
-                BindingNodeId unified = ttMatcher.matchAndBind(So.get(curOIndex), result, nodeTable);
-                if (unified == null) {
-                    ok = false;
-                } else {
-                    result = unified;
-                }
-            }
             if (ok && sFresh) {
                 result.bind(sVar, NodeId.pack(NodeType.SUBJECT, Ss.get(curSIndex)));
             } else if (ok && sVar != null) {
                 ok = result.putCompatible(sVar, NodeId.pack(NodeType.SUBJECT, Ss.get(curSIndex)), nodeTable);
+            }
+            if (ok && matcher != null) {
+                // Match the candidate object id against the pattern AFTER the
+                // subject binds, so that every match carries it; a variable
+                // spanning the two (?x inside the term and as the pattern's
+                // subject) is checked by putCompatible against the subject.
+                BindingNodeId matched = matcher.match(So.get(curOIndex), result, nodeTable, more);
+                if (matched == null) {
+                    ok = false;
+                } else {
+                    result = matched;
+                }
             }
             curSIndex++;
             advanceToNextValid();

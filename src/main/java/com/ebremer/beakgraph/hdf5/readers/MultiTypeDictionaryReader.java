@@ -710,6 +710,17 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             }
             probe[i] = id;
         }
+        return searchSequenceIds(probe);
+    }
+
+    /**
+     * The section id of the stored sequence whose elements are exactly
+     * {@code probe} (object-space ids, 0 for a slot), or a negative insertion
+     * point: a binary search of the suffix on id arrays (SPECIFICATIONS.md
+     * §7.6b), materializing nothing.
+     */
+    public long searchSequenceIds(long[] probe) {
+        long rows = sequenceRowCount();
         long low = numEntries - rows + 1;
         long high = numEntries;
         while (low <= high) {
@@ -720,6 +731,54 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             else high = mid - 1;
         }
         return -low - 1;
+    }
+
+    /**
+     * The section ids {@code [first, last]} of the stored sequences that begin
+     * with the elements {@code prefix} (object-space ids, 0 for a slot), or
+     * null when none does. They are contiguous: the suffix is sorted on id
+     * arrays, and a sequence shorter than the prefix sorts before every one
+     * that holds it (RDFARRY.md §3.3, "a constant prefix is a range").
+     */
+    public long[] sequencePrefixRange(long[] prefix) {
+        long rows = sequenceRowCount();
+        if (rows == 0) {
+            return null;
+        }
+        long base = numEntries - rows + 1;
+        long low = base;
+        long high = numEntries;
+        while (low < high) {        // the first row not below the prefix
+            long mid = low + (high - low) / 2;
+            if (comparePrefix(mid, prefix) < 0) low = mid + 1;
+            else high = mid;
+        }
+        if (comparePrefix(low, prefix) != 0) {
+            return null;
+        }
+        long first = low;
+        high = numEntries;
+        while (low < high) {        // the last row holding the prefix
+            long mid = low + (high - low + 1) / 2;
+            if (comparePrefix(mid, prefix) > 0) high = mid - 1;
+            else low = mid;
+        }
+        return new long[]{first, low};
+    }
+
+    /** The stored sequence at section id {@code id} against {@code prefix}: 0 when it begins with it, else their order. */
+    private int comparePrefix(long id, long[] prefix) {
+        long k = offsets.get(id - 1);
+        long start = sequenceStarts.get(k);
+        long length = sequenceStarts.get(k + 1) - start;
+        long n = Math.min(length, prefix.length);
+        for (long i = 0; i < n; i++) {
+            long e = sequenceElements.get(start + i);
+            if (e != prefix[(int) i]) {
+                return Long.compare(e, prefix[(int) i]);
+            }
+        }
+        return (length < prefix.length) ? -1 : 0;
     }
 
     /** The stored sequence at section id {@code id} against element ids {@code probe}: lexicographic, a prefix first. */

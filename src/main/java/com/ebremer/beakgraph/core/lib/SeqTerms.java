@@ -41,6 +41,16 @@ public final class SeqTerms {
         return n != null && n.isNodeUndef();
     }
 
+    /** Whether {@code n} is a gap of a sequence pattern: {@code ...} or the named gap {@code ...?rest}. */
+    public static boolean isGap(Node n) {
+        return n instanceof org.apache.jena.sparql.core.Node_SeqGap;
+    }
+
+    /** The variable of the named gap {@code ...?rest}; null for the anonymous gap {@code ...}. */
+    public static org.apache.jena.sparql.core.Var gapVar(Node gap) {
+        return ((org.apache.jena.sparql.core.Node_SeqGap) gap).getVar();
+    }
+
     /** The elements of sequence {@code seq}, in order; a slot is {@link #UNDEF}. Unmodifiable. */
     public static List<Node> elements(Node seq) {
         return seq.getSeq();

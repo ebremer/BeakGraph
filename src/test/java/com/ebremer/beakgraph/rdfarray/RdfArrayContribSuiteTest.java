@@ -10,6 +10,7 @@ import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.WriterEngines;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.core.lib.SeqTerms;
+import com.ebremer.beakgraph.hdf5.jena.PatternMatchBG;
 import com.ebremer.beakgraph.w3c.ManifestLists;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -72,7 +73,10 @@ import org.junit.jupiter.api.io.TempDir;
  *   <li><b>SPARQL.</b> Every query-evaluation test runs over a store built
  *       from its data, in an HDF5 file and in a Zarr store, and its results
  *       must equal the expected ones. Data BeakGraph refuses (a sequence
- *       subject) aborts the test with that reason, never silently.</li>
+ *       subject) aborts the test with that reason, never silently. In the
+ *       HDF5 store it runs twice: matching sequence patterns on ids (step 7)
+ *       and handing them to jena-array's solver (step 4), so the two routes
+ *       agree on every query of the suite.</li>
  * </ul>
  */
 class RdfArrayContribSuiteTest {
@@ -173,8 +177,10 @@ class RdfArrayContribSuiteTest {
                 Resource result = entry.getPropertyResourceValue(m.createProperty(MF, "result"));
                 String name = entry.getLocalName() + " (" + type + ")";
                 if (type.equals("QueryEvaluationTest") || type.equals("CSVResultFormatTest")) {
-                    tests.add(DynamicContainer.dynamicContainer(name, Stream.of("h5", "zarr").map(container ->
-                            DynamicTest.dynamicTest(container, () -> evaluate(type, m, action, result, container)))));
+                    tests.add(DynamicContainer.dynamicContainer(name, Stream.of(
+                            DynamicTest.dynamicTest("h5", () -> evaluate(type, m, action, result, "h5", false)),
+                            DynamicTest.dynamicTest("zarr", () -> evaluate(type, m, action, result, "zarr", false)),
+                            DynamicTest.dynamicTest("h5, delegated", () -> evaluate(type, m, action, result, "h5", true)))));
                 } else {
                     tests.add(DynamicTest.dynamicTest(name, () -> runSyntax(type, m, action)));
                 }
@@ -209,7 +215,15 @@ class RdfArrayContribSuiteTest {
         }
     }
 
-    private void evaluate(String type, Model m, Resource action, Resource result, String container) throws Exception {
+    /**
+     * @param delegated whether a BGP holding a sequence pattern goes to
+     *                  jena-array's solver (RDFARRY.md §3.7, layer A) rather
+     *                  than matching on ids (layer B, the default): both must
+     *                  give the expected results, and so each other's. Matching
+     *                  on ids must then hand jena-array no BGP at all.
+     */
+    private void evaluate(String type, Model m, Resource action, Resource result, String container, boolean delegated)
+            throws Exception {
         Path queryFile = toPath(action.getPropertyResourceValue(m.createProperty(QT, "query")).getURI());
         List<Path> data = new ArrayList<>();
         action.listProperties(m.createProperty(QT, "data")).forEachRemaining(st ->
@@ -226,6 +240,9 @@ class RdfArrayContribSuiteTest {
         if (store instanceof String refusal) {
             Assumptions.abort("the data holds a term BeakGraph refuses (SPECIFICATIONS.md §9.5): " + refusal);
         }
+        String before = System.getProperty(PatternMatchBG.DELEGATE_PROPERTY);
+        System.setProperty(PatternMatchBG.DELEGATE_PROPERTY, Boolean.toString(delegated));
+        long handedOver = PatternMatchBG.DELEGATED.get();
         try (BeakGraph bg = BG.getBeakGraph((File) store);
              QueryExecution qe = QueryExecution.dataset(bg.getDataset()).query(query).build()) {
             if (type.equals("CSVResultFormatTest")) {
@@ -243,6 +260,15 @@ class RdfArrayContribSuiteTest {
             } else {
                 fail("unhandled query type: " + queryFile.getFileName());
             }
+        } finally {
+            if (before == null) {
+                System.clearProperty(PatternMatchBG.DELEGATE_PROPERTY);
+            } else {
+                System.setProperty(PatternMatchBG.DELEGATE_PROPERTY, before);
+            }
+        }
+        if (!delegated) {
+            assertEquals(handedOver, PatternMatchBG.DELEGATED.get(), "a BGP went to jena-array's solver, not the id-level matcher");
         }
     }
 

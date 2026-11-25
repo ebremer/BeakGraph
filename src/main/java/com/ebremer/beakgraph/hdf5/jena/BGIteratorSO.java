@@ -30,12 +30,14 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
     private long minObjId = 0;
     private long maxObjId = Long.MAX_VALUE;
 
-    // Triple-term pattern in the object position (<<( ?a :b ?c )>>): candidates
-    // in the (already triple-term-suffix-clamped) range unify per row; failures
-    // are skipped through the ttPending look-ahead. Null for every other shape,
-    // keeping the ordinary emit path branch-identical.
-    private TripleTermMatcher ttMatcher;
+    // Compound-term pattern in the object position (<<( ?a :b ?c )>>,
+    // ( 1 ?x ... ), ObjectPattern): candidates in the clamped range match per
+    // row; failures are skipped through the ttPending look-ahead, and a
+    // sequence pattern's further matches of one row wait in `more`. Null for
+    // every other shape, keeping the ordinary emit path branch-identical.
+    private ObjectPattern ttMatcher;
     private BindingNodeId ttPending;
+    private java.util.ArrayDeque<BindingNodeId> more;
 
     // Row-emission plan, computed once: which variables each row binds, with the
     // constant G/S/P packed NodeIds pre-built (only the object id varies per row).
@@ -113,17 +115,21 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
         // yield no match - not a full range scan (which fabricated phantom rows,
         // e.g. ASK with a non-existent object answered true).
         Node oNode = quad.getObject();
-        boolean oTTPattern = TripleTermMatcher.isPattern(oNode);
+        boolean oTTPattern = ObjectPattern.isPattern(oNode);
         if (oTTPattern) {
-            ttMatcher = TripleTermMatcher.compile(oNode, dict);
+            ttMatcher = ObjectPattern.compile(oNode, dict);
             if (ttMatcher == null) {
                 return; // pattern cannot match anything in this store
             }
-            // Stored triple terms are the object space's contiguous suffix -
-            // clamp the scan to it (a triple-term-free store empties the range
-            // immediately via the lowerBound below).
-            minObjId = Math.max(minObjId, dict.firstTripleTermObjectId());
-            maxObjId = Math.min(maxObjId, dict.lastTripleTermObjectId());   // the sequences follow the band
+            // The ids the pattern can match are a contiguous band of the
+            // object space (the triple terms, or the sequences holding its
+            // constant prefix) - clamp the scan to it (a store without such
+            // terms empties the range immediately via the lowerBound below).
+            minObjId = Math.max(minObjId, ttMatcher.firstObjectId());
+            maxObjId = Math.min(maxObjId, ttMatcher.lastObjectId());
+            if (ttMatcher.multiple()) {
+                more = new java.util.ArrayDeque<>();
+            }
         }
         boolean oUnbound = oTTPattern
                 || (oNode.isVariable() && (bnid == null || !bnid.containsKey(Var.alloc(oNode))));
@@ -245,7 +251,14 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
      * answers true when next() really has a row.
      */
     private void primeTT() {
-        while (ttPending == null && hasNext) {
+        while (ttPending == null) {
+            if (more != null && !more.isEmpty()) {
+                ttPending = more.poll();
+                return;
+            }
+            if (!hasNext) {
+                return;
+            }
             long oid = So.get(i);
             i++;
             hasNext = (i <= j);
@@ -253,7 +266,7 @@ public class BGIteratorSO implements Iterator<BindingNodeId> {
             if (gVar != null) row.put(gVar, gId);
             if (sVar != null) row.put(sVar, sId);
             if (pVar != null) row.put(pVar, pId);
-            ttPending = ttMatcher.matchAndBind(oid, row, nodeTable);
+            ttPending = ttMatcher.match(oid, row, nodeTable, more);
         }
     }
 }

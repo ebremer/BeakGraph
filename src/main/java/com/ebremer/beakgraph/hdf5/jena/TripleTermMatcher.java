@@ -23,7 +23,7 @@ import org.apache.jena.sparql.core.Var;
  * through {@code putCompatible}, including the cross-space predicate/entity
  * case.
  */
-final class TripleTermMatcher {
+final class TripleTermMatcher implements ObjectPattern {
 
     private final PositionalDictionaryReader dict;
     // Exactly one of {var, nested matcher, concrete id} describes each
@@ -109,6 +109,26 @@ final class TripleTermMatcher {
             if (oId < 1) return null;
         }
         return new TripleTermMatcher(dict, sVar, sId, pVar, pId, oVar, oNested, oId);
+    }
+
+    @Override
+    public long firstObjectId() {
+        return dict.firstTripleTermObjectId();
+    }
+
+    @Override
+    public long lastObjectId() {
+        return dict.lastTripleTermObjectId();   // the sequences follow the band
+    }
+
+    @Override
+    public boolean multiple() {
+        return false;   // the matched term determines every variable inside it
+    }
+
+    @Override
+    public BindingNodeId match(long objectId, BindingNodeId row, NodeTable nodeTable, java.util.ArrayDeque<BindingNodeId> more) {
+        return matchAndBind(objectId, row, nodeTable);
     }
 
     /**

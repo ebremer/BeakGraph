@@ -40,16 +40,19 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
         //   (RDF 1.2 permits triple terms in object position only), and probing
         //   a dictionary comparator with embedded variables is undefined -
         //   answer empty here rather than let an iterator improvise.
-        if (TripleTermMatcher.isPattern(quad.getGraph())
-                || TripleTermMatcher.isPattern(quad.getSubject())
-                || TripleTermMatcher.isPattern(quad.getPredicate())) {
+        // The same holds for a SEQUENCE pattern (RDFARRY.md §3.7, layer B): in
+        // the object position the chosen iterator compiles a SequenceMatcher;
+        // anywhere else no stored term is a sequence (SPECIFICATIONS.md §9.5).
+        if (ObjectPattern.isPattern(quad.getGraph())
+                || ObjectPattern.isPattern(quad.getSubject())
+                || ObjectPattern.isPattern(quad.getPredicate())) {
             chain = Collections.emptyIterator();
             return;
         }
         boolean gBound = graphId >= 1 || !quad.getGraph().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getGraph())));
         boolean sBound = !quad.getSubject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getSubject())));
         boolean pBound = !quad.getPredicate().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getPredicate())));
-        boolean oBound = !TripleTermMatcher.isPattern(quad.getObject())
+        boolean oBound = !ObjectPattern.isPattern(quad.getObject())
                 && (!quad.getObject().isVariable() || (bnid!=null && bnid.containsKey(Var.alloc(quad.getObject()))));
 
         if (gBound) {

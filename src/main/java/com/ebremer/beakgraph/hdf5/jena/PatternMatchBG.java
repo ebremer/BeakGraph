@@ -36,12 +36,36 @@ public class PatternMatchBG {
     public static final java.util.concurrent.atomic.AtomicLong DELEGATED = new java.util.concurrent.atomic.AtomicLong();
 
     /**
+     * With {@code -Dbeakgraph.sequences.delegate=true}, a BGP holding a
+     * sequence pattern goes whole to jena-array's solver (RDFARRY.md §3.7,
+     * layer A) instead of matching on ids (layer B): the reference that
+     * the id-level matcher is checked against, read per query.
+     */
+    public static final String DELEGATE_PROPERTY = "beakgraph.sequences.delegate";
+
+    /** Whether BGPs holding a sequence pattern go to jena-array's solver ({@link #DELEGATE_PROPERTY}). */
+    static boolean delegateSequences() {
+        return Boolean.getBoolean(DELEGATE_PROPERTY);
+    }
+
+    /**
+     * Whether a variable inside a sequence pattern may stay unbound in a row
+     * of {@code graph}: at an empty slot (rdf-undef §3). Then no filter may
+     * run between the patterns of a BGP, since a later pattern may still
+     * bind the variable; a store without slots keeps every placement.
+     */
+    static boolean mayLeaveUnbound(BeakGraph graph) {
+        return !(graph.getReader() instanceof com.ebremer.beakgraph.hdf5.readers.HDF5Reader reader
+                && reader.getDictionary() instanceof com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader dict
+                && dict.numSlots() == 0);
+    }
+
+    /**
      * {@code bgp}, which holds a sequence pattern ({@code SeqTerms.isPattern}),
      * solved by Jena's generic matcher - jena-array's {@code SolverRX3}, over
      * this graph's {@code find} - in the order written, then {@code filter}
-     * applied to every row. The matcher binds a variable at an empty slot to
-     * nothing and lets a bound one through a slot (rdf-undef §3), which the
-     * id-level solver does not know yet (RDFARRY.md step 7).
+     * applied to every row: the route of {@link #DELEGATE_PROPERTY}, and the
+     * reference the id-level {@link SequenceMatcher} answers as.
      */
     static QueryIterator delegate(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter,
                                   ExecutionContext execCxt) {
@@ -58,7 +82,7 @@ public class PatternMatchBG {
     }
 
     public static QueryIterator execute(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
-        if (com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(bgp)) {
+        if (delegateSequences() && com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(bgp)) {
             // Every caller hands filter exprs here as hints only and applies
             // them itself: the pattern alone goes to Jena's solver.
             return delegate(bGraph, bgp, input, null, execCxt);

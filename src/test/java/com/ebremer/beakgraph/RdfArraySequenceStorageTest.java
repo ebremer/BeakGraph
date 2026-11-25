@@ -207,25 +207,38 @@ public class RdfArraySequenceStorageTest {
     }
 
     @Test
-    void aSequencePatternGoesToJenaArraysSolverAndAConstantStaysOnIds() {
-        // RDFARRY.md §3.7, layer A: a BGP holding a sequence pattern is handed
-        // whole to jena-array's solver; a concrete sequence is located on ids.
-        long delegated = com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get();
+    void aSequencePatternMatchesOnIdsAndGoesToJenaArraysSolverOnRequest() {
+        // RDFARRY.md §3.7: a BGP holding a sequence pattern matches on ids
+        // (layer B); with -Dbeakgraph.sequences.delegate=true it is handed
+        // whole to jena-array's solver (layer A). A concrete sequence is
+        // located on ids either way.
+        java.util.concurrent.atomic.AtomicLong delegatedBgps = com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED;
         String q = "SELECT ?x WHERE { ?s <http://ex.org/list> ( ?x 2 3 ) }";
-        try (org.apache.jena.query.QueryExecution qe =
-                     org.apache.jena.query.QueryExecutionFactory.create(q, bg.getDataset())) {
-            org.apache.jena.query.ResultSet rs = qe.execSelect();
-            assertEquals(integer(1), rs.next().get("x").asNode(), "the default graph's ( 1 2 3 )");
-            assertFalse(rs.hasNext());
+        for (boolean delegate : new boolean[]{false, true}) {
+            long delegated = delegatedBgps.get();
+            String before = System.getProperty(com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATE_PROPERTY);
+            System.setProperty(com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATE_PROPERTY, Boolean.toString(delegate));
+            try (org.apache.jena.query.QueryExecution qe =
+                         org.apache.jena.query.QueryExecutionFactory.create(q, bg.getDataset())) {
+                org.apache.jena.query.ResultSet rs = qe.execSelect();
+                assertEquals(integer(1), rs.next().get("x").asNode(), "the default graph's ( 1 2 3 )");
+                assertFalse(rs.hasNext());
+            } finally {
+                if (before == null) {
+                    System.clearProperty(com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATE_PROPERTY);
+                } else {
+                    System.setProperty(com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATE_PROPERTY, before);
+                }
+            }
+            assertEquals(delegate, delegatedBgps.get() > delegated, delegate ? "delegated" : "matched on ids");
         }
-        assertTrue(com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get() > delegated, "delegated");
-        long before = com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get();
+        long before = delegatedBgps.get();
         String c = "SELECT ?s WHERE { ?s <http://ex.org/list> ( 1 2 3 ) }";
         try (org.apache.jena.query.QueryExecution qe =
                      org.apache.jena.query.QueryExecutionFactory.create(c, bg.getDataset())) {
             assertEquals(1, org.apache.jena.query.ResultSetFormatter.consume(qe.execSelect()));
         }
-        assertEquals(before, com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get(), "a constant is not delegated");
+        assertEquals(before, delegatedBgps.get(), "a constant is not delegated");
         // A pattern is no term: the dictionary answers it with a miss, never by ranking a variable.
         assertEquals(-1, dictionary(bg).getObjects().locate(SeqTerms.create(List.of(
                 org.apache.jena.sparql.core.Var.alloc("x"), integer(2)))));

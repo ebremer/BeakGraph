@@ -192,6 +192,40 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return ids;
     }
 
+    /** Element {@code index} of the element store ({@link #sequenceBounds}): an object-space id, 0 for an empty slot. */
+    public long sequenceElementAt(long index) {
+        return literals.sequenceElementId(index);
+    }
+
+    /**
+     * The object id of the stored sequence whose elements are exactly
+     * {@code elementIds} (object-space ids, 0 for a slot), or -1 when the
+     * store holds no such sequence. On ids: nothing is materialized.
+     */
+    public long locateSequence(long[] elementIds) {
+        if (firstSequenceObjectId == Long.MAX_VALUE) {
+            return -1;
+        }
+        long id = literals.searchSequenceIds(elementIds);
+        return (id >= 1) ? id + maxEntityId : -1;
+    }
+
+    /**
+     * The object ids {@code [first, last]} of the stored sequences that begin
+     * with {@code prefix} (object-space ids, 0 for a slot), or null when none
+     * does: a constant prefix is an id range (RDFARRY.md §3.3).
+     */
+    public long[] sequencePrefixRange(long[] prefix) {
+        if (firstSequenceObjectId == Long.MAX_VALUE) {
+            return null;
+        }
+        if (prefix.length == 0) {
+            return new long[]{firstSequenceObjectId, lastSequenceObjectId};
+        }
+        long[] range = literals.sequencePrefixRange(prefix);
+        return (range == null) ? null : new long[]{range[0] + maxEntityId, range[1] + maxEntityId};
+    }
+
     /** Whether the literals section holds any cdt:List / cdt:Map literal (see {@code Params.CDT_LEXICAL_ORDER_MIN_VERSION}). */
     public boolean literalsContainCompositeDatatype() {
         return literals != null && literals.hasCompositeDatatype();
