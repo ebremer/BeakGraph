@@ -1346,6 +1346,36 @@ control holds the same triples with a one-element sequence each. The second buil
 - **So step 9 goes ahead**, for packed numeric sequences: build time dominates in both cases, and size at
   full precision.
 
+**The design (2026-11-25), and what the gate did not weigh.** The gate measured size and build time. Designing
+v8 shows what it costs the reader, which steps 7 and 8 built on element ids:
+
+- **Opt-in, `-arrays-only`.** It implies `-arrays`. A store is stamped 8 only when some sequence is stored
+  only as an array; `-arrays` stays v7, a second copy that any v7 reader may ignore.
+- **What is left out.** The top-level sequences of tensor and ragged classes keep their dictionary row and
+  their place in the order. Their `sequenceStarts` range is empty, their length comes from their class, and
+  `sequenceArrays` marks them. Their leaves and inner sequences get dictionary rows only if a quad, a
+  triple term or an unpacked sequence also uses them. Record classes keep their canonical elements.
+- **The writers.** Every engine must know which leaves occur only in packed sequences before the dictionary
+  is ranked. In memory that is a second walk over the quads, with packed sequences skipped. The disk engines
+  need a flag on each spilled term, kept when duplicates merge. Engines without it refuse `-arrays-only`, as
+  methods 1, 3, 4 and 5 refused sequences in step 3 until step 5.
+- **Constants.** A constant the dictionary lacks may still be a leaf of a packed sequence. A pattern over a
+  store with packed sequences then matches their rows by value: each leaf rebuilt as its canonical term and
+  compared by term. The prefix range is found by comparing terms instead of ids.
+- **Variables.** A leaf with no dictionary row binds as a term (`DOES_NOT_EXIST` plus the term, step 7's
+  values without ids). That is right only when the value occurs nowhere else. So each class records whether
+  any of its leaves has a dictionary row (`shared`), and in a class that does, a bound leaf is looked up in
+  the dictionary for its id: one binary search per leaf.
+- **The element index.** Packed sequences have no elements, so no entries. A candidate scan adds the run's
+  packed sequences, as it adds its slot-holders (step 8).
+- **The cost to queries.** Matching a packed row reads float64 values and builds terms. That is the bound
+  step 6 measured, 45 ms for 1.5 million values, where step 7's id path took about 100 ms for the same
+  patterns. So a scan costs little more. What is lost is the id path for joins through shared leaves, and
+  the index for constants that occur in packed sequences.
+- **Parts.** (1) The v8 format, `-arrays-only` on method 0, and reading packed rows by length and value.
+  (2) Matching on values: constants, prefixes, `shared`, candidates. (3) Methods 2 and 3. (4) The disk
+  engines. (5) Verify, export and the benchmarks.
+
 ### Step 10: later and optional
 
 Each of these waits on the spec or on a need:
