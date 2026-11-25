@@ -206,6 +206,11 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             long[] slots = dict.slotSequencesAmong(gi, pi, () -> slotSequences(dict, rawOStart, rawOEnd));
             c = (slots == null) ? null : c.withSlots(slots);
         }
+        if (c != null && c.holdsHeld()) {
+            // Format v8: the run's sequences held only in the arrays, which the index cannot name.
+            long[] held = dict.heldSequencesAmong(gi, pi, () -> heldSequences(dict, rawOStart, rawOEnd));
+            c = (held == null) ? null : c.withHeld(held);
+        }
         if (c != null && c.size() * candidateRatio() < oEnd - oStart + 1) {
             candidates = c;
             CANDIDATE_SCANS.increment();
@@ -309,7 +314,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      * {@value #SLOT_LIST_LIMIT}), too many to name few candidates.
      */
     private long[] slotSequences(PositionalDictionaryReader dict, long lo, long hi) {
-        SequenceCandidates slots = SequenceCandidates.holding(dict, 0);
+        SequenceCandidates slots = SequenceCandidates.indexed(dict, 0);
         long limit = Math.min(SLOT_LIST_LIMIT, Math.max(1024, (hi - lo + 1) / 2));
         long[] out = new long[16];
         int n = 0;
@@ -337,6 +342,31 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             } else {
                 slots.seek(o);
                 pos = p;
+            }
+        }
+        return java.util.Arrays.copyOf(out, n);
+    }
+
+    /**
+     * The sequences held only in {@code /.BG/arrays} among the objects at run positions {@code [lo, hi]},
+     * ascending (format v8): the run's sequence suffix, read once. Null when they are more than half the run
+     * (or {@value #SLOT_LIST_LIMIT}): then no candidate list can be short.
+     */
+    private long[] heldSequences(PositionalDictionaryReader dict, long lo, long hi) {
+        long limit = Math.min(SLOT_LIST_LIMIT, Math.max(1024, (hi - lo + 1) / 2));
+        long[] out = new long[16];
+        int n = 0;
+        long from = So.lowerBound(lo, hi, dict.firstSequenceObjectId());
+        for (long p = (from < 0) ? hi + 1 : from; p <= hi; p++) {
+            long o = So.get(p);
+            if (dict.heldOnlyInArrays(o)) {
+                if (n == limit) {
+                    return null;
+                }
+                if (n == out.length) {
+                    out = java.util.Arrays.copyOf(out, n * 2);
+                }
+                out[n++] = o;
             }
         }
         return java.util.Arrays.copyOf(out, n);

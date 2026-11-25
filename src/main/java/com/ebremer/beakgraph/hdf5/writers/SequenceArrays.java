@@ -700,9 +700,38 @@ public final class SequenceArrays {
         WritableGroup arrays = bg.putGroup(Params.ARRAYS);
         for (int c = 0; c < decision.classes().size(); c++) {
             List<Object> rows = rowsOfClass.get(c);
-            writeClass(decision.classes().get(c), () -> RowSource.of(rows.iterator()), arrays, compress, timeUnit);
+            writeClass(decision.classes().get(c), () -> RowSource.of(rows.iterator()), arrays, compress, timeUnit,
+                    (shared == null) ? null : shared[c]);
         }
     }
+
+    /** {@code -arrays-only}: per class, whether a leaf or inner sequence of one of its rows has a dictionary row; else null. */
+    private boolean[] shared;
+
+    /**
+     * {@code -arrays-only} (format v8): marks each tensor and ragged class whose rows hold a leaf or an inner
+     * sequence that also has a dictionary row ({@code shares} answers for a row's object id), written as the
+     * class's {@code shared} attribute. A reader binds a leaf of an unshared class as a term without
+     * looking it up: nothing else in the store can be equal to it.
+     */
+    public void markShared(java.util.function.LongPredicate shares) {
+        boolean[] s = new boolean[decision.classes().size()];
+        for (int c = 0; c < s.length; c++) {
+            if (decision.classes().get(c).kind() == Kind.RECORD) {
+                continue;
+            }
+            for (Object row : rowsOfClass.get(c)) {
+                if (shares.test(objectId(row))) {
+                    s[c] = true;
+                    break;
+                }
+            }
+        }
+        this.shared = s;
+    }
+
+    /** On a class group (format v8): 1 when a row's leaf or inner sequence has a dictionary row, else 0. */
+    public static final String SHARED = "shared";
 
     /**
      * A class's rows in id order, as often as a writer asks: one pass per
@@ -830,6 +859,15 @@ public final class SequenceArrays {
      * a record class's columns ({@link RecordArrays#writeClass}).
      */
     public static void writeClass(ClassDef c, RowSource rows, WritableGroup arrays, boolean compress, TimeUnit unit) {
+        writeClass(c, rows, arrays, compress, unit, null);
+    }
+
+    /**
+     * As above; with {@code -arrays-only} ({@code shared} not null) a tensor or ragged class also says
+     * whether it shares values with the dictionary ({@link #SHARED}).
+     */
+    public static void writeClass(ClassDef c, RowSource rows, WritableGroup arrays, boolean compress, TimeUnit unit,
+                                  Boolean shared) {
         if (c.kind() == Kind.RECORD) {
             RecordArrays.writeClass(c, rows, arrays, compress, unit);
             return;
@@ -839,6 +877,9 @@ public final class SequenceArrays {
         g.putAttribute("kind", tensor ? "tensor" : "ragged");
         g.putAttribute("datatype", c.leaf().datatype);
         g.putAttribute("shape", tensor ? dims(c.length(), c.inner()) : dims(-1, c.inner()));
+        if (shared != null) {
+            g.putAttribute(SHARED, shared ? 1L : 0L);
+        }
         long[] valueShape;
         List<String> dimNames = new ArrayList<>();
         if (tensor) {

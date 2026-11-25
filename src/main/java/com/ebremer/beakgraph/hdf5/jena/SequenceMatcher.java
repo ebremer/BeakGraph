@@ -43,6 +43,12 @@ import org.apache.jena.sparql.core.Var;
  * ({@code -seqindex}), an element after the prefix that every match holds -
  * a constant, {@code undef}, or a variable the row binds already - names the
  * only sequences that can match ({@link #candidates}).
+ *
+ * <p>Over a store that holds sequences only in {@code /.BG/arrays}
+ * ({@code -arrays-only}, format v8), those are matched by term: their
+ * elements are read from their class, a constant compares as the term it is,
+ * whether or not the dictionary holds it, and a leaf binds by its id only
+ * when its class shares values with the dictionary, else as the term itself.
  */
 public final class SequenceMatcher implements ObjectPattern {
 
@@ -51,7 +57,9 @@ public final class SequenceMatcher implements ObjectPattern {
     private final PositionalDictionaryReader dict;
     private final int n;
     private final byte[] kind;
-    private final long[] constant;          // CONSTANT: the element's object id; 0 is undef
+    private final long[] constant;          // CONSTANT: the element's object id; 0 is undef; -1 none (format v8)
+    private final Node[] term;              // CONSTANT: the element as a term, for sequences held only in the arrays
+    private final boolean arraysOnly;       // the store may hold sequences only in /.BG/arrays (format v8)
     private final Var[] var;                // VARIABLE; GAP: the named gap's variable, or null
     private final ObjectPattern[] nested;   // NESTED: a sequence or triple-term pattern
     private final int[] fixedFrom;          // the non-gap elements at index i and after
@@ -60,9 +68,11 @@ public final class SequenceMatcher implements ObjectPattern {
     private final int prefix;               // the leading constants, which first..last already stands for
     private final boolean multiple;
 
-    private SequenceMatcher(PositionalDictionaryReader dict, byte[] kind, long[] constant, Var[] var,
+    private SequenceMatcher(PositionalDictionaryReader dict, byte[] kind, long[] constant, Node[] term, Var[] var,
                             ObjectPattern[] nested, long first, long last, int prefix) {
         this.dict = dict;
+        this.term = term;
+        this.arraysOnly = dict.arraysOnly();
         this.prefix = prefix;
         this.n = kind.length;
         this.kind = kind;
@@ -95,17 +105,14 @@ public final class SequenceMatcher implements ObjectPattern {
         if (dict.firstSequenceObjectId() == Long.MAX_VALUE || !pattern.isNodeSeq()) {
             return null;
         }
-        if (dict.arraysOnly()) {
-            // Sequences held only in the arrays have no element ids, and a constant the dictionary lacks may be
-            // one of their leaves: such a store's patterns go to jena-array's solver (PatternMatchBG), and an
-            // answer on ids here would be wrong, not slow (RDFARRY.md step 9, part 2).
-            throw new IllegalStateException("sequence patterns over a store with sequences held only in /.BG/arrays"
-                    + " are matched by jena-array's solver, not on ids");
-        }
+        // Format v8: a constant the dictionary lacks may still be a leaf of a sequence held only in the arrays,
+        // and those have no element ids, so the prefix is found by terms.
+        boolean v8 = dict.arraysOnly();
         List<Node> elements = pattern.getSeq();
         int n = elements.size();
         byte[] kind = new byte[n];
         long[] constant = new long[n];
+        Node[] term = new Node[n];
         Var[] var = new Var[n];
         ObjectPattern[] nested = new ObjectPattern[n];
         for (int i = 0; i < n; i++) {
@@ -115,6 +122,7 @@ public final class SequenceMatcher implements ObjectPattern {
                 var[i] = SeqTerms.gapVar(e);
             } else if (SeqTerms.isUndef(e)) {
                 kind[i] = CONSTANT;     // 0: only a slot
+                term[i] = SeqTerms.UNDEF;
             } else if (e.isVariable()) {
                 kind[i] = VARIABLE;
                 var[i] = Var.alloc(e);
@@ -127,22 +135,24 @@ public final class SequenceMatcher implements ObjectPattern {
                 nested[i] = inner;
             } else {
                 long id = dict.getObjects().locate(e);
-                if (id < 1) {
+                if (id < 1 && !v8) {
                     return null;        // no stored sequence holds it
                 }
                 kind[i] = CONSTANT;
-                constant[i] = id;
+                constant[i] = (id < 1) ? -1 : id;
+                term[i] = e;
             }
         }
         int prefix = 0;
         while (prefix < n && kind[prefix] == CONSTANT) {
             prefix++;
         }
-        long[] range = dict.sequencePrefixRange(java.util.Arrays.copyOf(constant, prefix));
+        long[] range = v8 ? dict.sequencePrefixRangeByTerms(java.util.Arrays.asList(term).subList(0, prefix))
+                : dict.sequencePrefixRange(java.util.Arrays.copyOf(constant, prefix));
         if (range == null) {
             return null;
         }
-        return new SequenceMatcher(dict, kind, constant, var, nested, range[0], range[1], prefix);
+        return new SequenceMatcher(dict, kind, constant, term, var, nested, range[0], range[1], prefix);
     }
 
     /**
@@ -314,6 +324,12 @@ public final class SequenceMatcher implements ObjectPattern {
         if (objectId < first || objectId > last) {
             return null;        // no stored sequence with the prefix (a nested element, or no sequence at all)
         }
+        if (arraysOnly) {
+            List<Node> held = dict.heldSequence(objectId);
+            if (held != null) {
+                return matchHeld(held, dict.heldSharesDictionary(objectId), row, nodeTable, more);
+            }
+        }
         long[] bounds = dict.sequenceBounds(objectId);
         long length = bounds[1] - bounds[0];
         if ((gapsFrom[0] == 0) ? length != n : length < fixedFrom[0]) {
@@ -322,6 +338,141 @@ public final class SequenceMatcher implements ObjectPattern {
         Sink sink = new Sink(more);
         solve(0, bounds[0], bounds[1], row, nodeTable, sink);
         return sink.first;
+    }
+
+    /**
+     * Matches a sequence held only in the arrays (format v8), or a level of one, whose elements are
+     * {@code elements}: by term, as {@link #solve} matches by id. {@code shared} says whether its class shares
+     * values with the dictionary, so whether a leaf must be looked up to bind.
+     */
+    BindingNodeId matchHeld(List<Node> elements, boolean shared, BindingNodeId row, NodeTable nodeTable,
+                            ArrayDeque<BindingNodeId> more) {
+        int length = elements.size();
+        if ((gapsFrom[0] == 0) ? length != n : length < fixedFrom[0]) {
+            return null;
+        }
+        Sink sink = new Sink(more);
+        solveHeld(0, elements, 0, length, shared, row, nodeTable, sink);
+        return sink.first;
+    }
+
+    /** {@link #solve} over the terms {@code elements} of a sequence held only in the arrays. */
+    private void solveHeld(int i, List<Node> elements, int pos, int end, boolean shared, BindingNodeId row,
+                           NodeTable nodeTable, Sink sink) {
+        while (i < n) {
+            int left = end - pos;
+            if (left < fixedFrom[i]) {
+                return;
+            }
+            switch (kind[i]) {
+                case GAP -> {
+                    int longest = left - fixedFrom[i + 1];
+                    if (gapsFrom[i + 1] == 0) {
+                        row = bindHeldRun(var[i], elements.subList(pos, pos + longest), row, nodeTable);
+                        if (row == null) {
+                            return;
+                        }
+                        pos += longest;
+                        i++;
+                        continue;
+                    }
+                    for (int run = 0; run <= longest; run++) {
+                        BindingNodeId placed = bindHeldRun(var[i], elements.subList(pos, pos + run), new BindingNodeId(row), nodeTable);
+                        if (placed != null) {
+                            solveHeld(i + 1, elements, pos + run, end, shared, placed, nodeTable, sink);
+                        }
+                    }
+                    return;
+                }
+                case CONSTANT -> {
+                    Node e = elements.get(pos);
+                    if (e.isNodeUndef() ? constant[i] != 0 : (constant[i] == 0 || !e.equals(term[i]))) {
+                        return;
+                    }
+                }
+                case VARIABLE -> {
+                    Node e = elements.get(pos);
+                    if (!e.isNodeUndef()) {     // at a slot the variable stays as it is
+                        row = bindHeld(var[i], e, shared, row, nodeTable);
+                        if (row == null) {
+                            return;
+                        }
+                    }
+                }
+                default -> {    // NESTED: a level of the row, a sequence of its own
+                    Node e = elements.get(pos);
+                    if (!e.isNodeSeq() || !(nested[i] instanceof SequenceMatcher inner)) {
+                        return;     // a slot, a leaf, or a triple-term pattern, which no array holds
+                    }
+                    if (inner.multiple()) {
+                        ArrayDeque<BindingNodeId> rest = new ArrayDeque<>();
+                        BindingNodeId one = inner.matchHeld(e.getSeq(), shared, new BindingNodeId(row), nodeTable, rest);
+                        if (one == null) {
+                            return;
+                        }
+                        solveHeld(i + 1, elements, pos + 1, end, shared, one, nodeTable, sink);
+                        for (BindingNodeId r : rest) {
+                            solveHeld(i + 1, elements, pos + 1, end, shared, r, nodeTable, sink);
+                        }
+                        return;
+                    }
+                    row = inner.matchHeld(e.getSeq(), shared, row, nodeTable, null);
+                    if (row == null) {
+                        return;
+                    }
+                }
+            }
+            pos++;
+            i++;
+        }
+        if (pos == end) {
+            sink.add(row);
+        }
+    }
+
+    /**
+     * Binds {@code v} to {@code e}, an element of a sequence held only in the arrays: by its id when it has
+     * one, which only a class that shares values with the dictionary can give it, else as the term itself
+     * ({@link BindingNodeId#withAbsentTerm}). Null when {@code v} is bound already to a different term.
+     */
+    private BindingNodeId bindHeld(Var v, Node e, boolean shared, BindingNodeId row, NodeTable nodeTable) {
+        long id = shared ? dict.getObjects().locate(e) : -1;
+        if (id >= 1) {
+            if (row.isFull()) {
+                row = new BindingNodeId(row);
+            }
+            return row.putCompatible(v, NodeId.pack(NodeType.OBJECT, id), nodeTable) ? row : null;
+        }
+        return bindAbsent(v, e, row);
+    }
+
+    /** {@code v} bound to {@code term}, which the store holds no row for: compatible only with that term itself. */
+    private static BindingNodeId bindAbsent(Var v, Node term, BindingNodeId row) {
+        long existing = row.get(v);
+        if (existing == NodeId.NONE) {
+            return row.withAbsentTerm(v, term);
+        }
+        if (NodeId.isDoesNotExist(existing)) {
+            Node bound = row.absentTerm(v);
+            return (bound != null && bound.equals(term)) ? row : null;
+        }
+        return null;    // a term with a row is never one without
+    }
+
+    /** {@link #bindRun} for a run of a sequence held only in the arrays: the stored sequence equal to it, found by term. */
+    private BindingNodeId bindHeldRun(Var v, List<Node> run, BindingNodeId row, NodeTable nodeTable) {
+        if (v == null) {
+            return row;
+        }
+        Node seq = SeqTerms.create(new ArrayList<>(run));
+        long stored = dict.getObjects().locate(seq);
+        if (stored >= 1) {
+            if (row.isFull()) {
+                row = new BindingNodeId(row);
+            }
+            return row.putCompatible(v, NodeId.pack(NodeType.OBJECT, stored), nodeTable) ? row : null;
+        }
+        return bindAbsent(v, seq, row);
     }
 
     /** The matches: the first, and the rest in the caller's queue. */
@@ -438,7 +589,9 @@ public final class SequenceMatcher implements ObjectPattern {
         for (int k = 0; k < ids.length; k++) {
             ids[k] = dict.sequenceElementAt(from + k);
         }
-        long stored = dict.locateSequence(ids);
+        // Format v8: sequences held only in the arrays have no element ids to search by, so by term.
+        long stored = arraysOnly ? Math.max(-1, dict.getObjects().locate(term(ids, nodeTable)))
+                : dict.locateSequence(ids);
         long existing = row.get(v);
         if (existing == NodeId.NONE) {
             if (stored >= 1) {

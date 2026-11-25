@@ -86,6 +86,17 @@ final class PackedSequences {
         return new PackedRow(pc, id, pc.length(id));
     }
 
+    /**
+     * Whether the class holding sequence {@code k} shares values with the dictionary ({@code shared}, format
+     * v8): a leaf or inner sequence of one of its rows has a dictionary row. A class that does not say is
+     * taken to share.
+     */
+    boolean sharesDictionary(long k) {
+        long c = classOf.get(k);
+        PackedClass pc = (c == 0) ? null : classNumber((int) c);
+        return pc == null || pc.shared;
+    }
+
     private PackedClass classNumber(int c) {
         Object[] table = classes;
         if (table == null) {
@@ -134,11 +145,14 @@ final class PackedSequences {
         final TypedArrayView starts;
         final TypedArrayView seq;
         final long rows;
+        /** Whether a leaf or inner sequence of a row has a dictionary row (format v8; true when unsaid). */
+        final boolean shared;
         private volatile long[] samples;
 
         private PackedClass(String name, boolean tensor, String datatype, int[] inner, TypedArrayView values,
-                            TypedArrayView mask, TypedArrayView starts, TypedArrayView seq) {
+                            TypedArrayView mask, TypedArrayView starts, TypedArrayView seq, boolean shared) {
             this.name = name;
+            this.shared = shared;
             this.tensor = tensor;
             this.datatype = datatype;
             this.inner = inner;
@@ -176,8 +190,9 @@ final class PackedSequences {
             for (int i = 0; i < inner.length; i++) {
                 inner[i] = Math.toIntExact(shape[skip + i]);
             }
+            boolean shared = !g.hasAttribute(SequenceArrays.SHARED) || g.attribute(SequenceArrays.SHARED) != 0;
             return new PackedClass(name, tensor, g.stringAttribute("datatype"), inner, values, g.typedArrayView("mask"),
-                    starts, seq);
+                    starts, seq, shared);
         }
 
         /** The outer length of the sequence with object id {@code id}: the class's for a tensor, its starts' for a ragged one. */

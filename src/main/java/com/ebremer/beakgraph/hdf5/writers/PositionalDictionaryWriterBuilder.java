@@ -129,6 +129,15 @@ public class PositionalDictionaryWriterBuilder {
      */
     public Set<Node> getPackedOnly() { return packedOnly; }
 
+    /** {@code -arrays-only}: the packed sequences that hold a leaf or inner sequence that keeps its row. */
+    private Set<Node> sharingPacked = Set.of();
+
+    /**
+     * The sequences of {@link #getPackedOnly} with a leaf or an inner sequence, at any depth, that also has a
+     * dictionary row because something else uses it: a reader must look such a leaf up to join on it.
+     */
+    public Set<Node> getSharingPacked() { return sharingPacked; }
+
     private boolean sequenceIndex;
 
     /** {@code -seqindex} (format v7, RDFARRY.md step 8): the element index of the sequences. */
@@ -752,8 +761,28 @@ public class PositionalDictionaryWriterBuilder {
             }
         }
         this.packedOnly = Collections.unmodifiableSet(packed);
+        Set<Node> sharing = new HashSet<>();
+        for (Node seq : packed) {
+            if (holdsKept(seq, kept)) {
+                sharing.add(seq);
+            }
+        }
+        this.sharingPacked = Collections.unmodifiableSet(sharing);
         logger.info("-arrays-only: {} sequences stored only as arrays; {} of the literals section's {} terms left out",
                 packed.size(), before - literals.size(), before);
+    }
+
+    /** Whether a leaf or inner sequence of {@code seq}, at any depth, is in {@code kept}. */
+    private static boolean holdsKept(Node seq, Set<Node> kept) {
+        for (Node e : seq.getSeq()) {
+            if (e.isNodeUndef()) {
+                continue;
+            }
+            if (kept.contains(e) || (e.isNodeSeq() && holdsKept(e, kept))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Marks what an object needs in the literals section, the packed sequences' insides left closed. */

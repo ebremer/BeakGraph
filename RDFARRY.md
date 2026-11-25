@@ -1423,6 +1423,55 @@ v8 shows what it costs the reader, which steps 7 and 8 built on element ids:
   - The 4 s left beyond the parse is mostly the ingest registering every leaf before they are dropped
     (part 5).
 
+**Part 2 (2026-11-25): done.** Sequence patterns over a v8 store are matched by term, on BeakGraph's own engine.
+
+- **The matcher** (`SequenceMatcher`).
+  - A constant the dictionary lacks no longer means no match on a v8 store. It keeps its term, and the
+    prefix range is found by terms (`sequencePrefixRangeByTerms`).
+  - A sequence held only in the arrays is matched by term (`matchHeld`). Its elements come from its class,
+    and a constant must be the same term. A canonical row still matches by id, where a constant the
+    dictionary lacks matches nothing.
+  - A leaf binds by its id only when its class is `shared`, after one dictionary lookup. Otherwise it binds
+    as the term itself, which no term with an id can equal.
+  - Named gaps over packed rows, and over canonical rows on a v8 store, are located by term.
+  - Nested patterns inside packed rows match their levels by term.
+- **`shared`** (SPECIFICATIONS.md §7.6e). The writer marks each tensor and ragged class whose rows hold a
+  leaf or inner sequence that keeps a dictionary row. For embeddings that is none, so their leaves bind
+  without a lookup.
+- **The element index** has no entries for packed rows. So a candidate scan on a v8 store also reads the
+  run's packed rows: a list worked out once per graph and predicate and kept (`heldSequencesAmong`), as the
+  slot-holders are.
+- **No delegation.** Part 1's route to jena-array's solver is gone.
+- **Tests.**
+  - `SequenceMatcherParityTest` runs its 94 queries a fourth way, over the same data built with
+    `-arrays-only` and `-seqindex`, where every numeric sequence of two leaves or more is packed and the
+    candidates are always read. All four routes agree.
+  - `ArraysOnlyTest` checks that no v8 query is delegated.
+- **Measured** (`SequenceMatchingBenchmarkTest`, its data built with `-arrays-only`; one run):
+
+  | Query | On ids (v7) | On values (v8) | jena-array |
+  |---|---|---|---|
+  | points, `( ?x ?y )` | 73 ms | 180 ms | 107 ms |
+  | matrices, nested | 21 ms | 74 ms | 40 ms |
+  | polygons, first point | 14 ms | 22 ms | 16 ms |
+  | embeddings, `( ?f ... )` | 2.2 ms | 13 ms | 41 ms |
+  | embeddings, `( ... ?l )` | 1.2 ms | 13 ms | 130 ms |
+  | embeddings, `( ... ?v ... )`, 1.5 M rows | 221 ms | 342 ms | 14.3 s |
+
+  - On packed rows, matching by value costs 1.5-10× matching on ids. On short tuples it is slower than
+    jena-array too, by up to 1.8× (points, matrices), but it stays 3-40× ahead on the long sequences. Rows
+    that stay canonical (records, IRIs) cost the same.
+  - A packed row is found by a search of its class's `seq` and read whole: what a first or last element
+    costs. The matrices' integers are also shared with the FHIR values, so each is looked up.
+  - **Sizes.** This mixed data is 15.7 MB in v7, 53.4 MB with `-arrays` and 42.2 MB with `-arrays-only`.
+    v8 drops the 11 MB numeric copy, as designed. Two things keep it above plain v7:
+    - The values have five or six decimals and repeat, so the dictionary holds them more compactly than
+      float64 arrays do. The gate's measurement showed the same.
+    - The rosters' and squads' 400,000 IRIs form a record class. A record class is a second copy in v8 as
+      in v7, and in HDF5 its variable-length strings take 6.4 MB of references plus about 14.5 MB of
+      string heap, outside the dataset sizes. That is step 6's cost, and step 10's categorical string
+      columns are what would shrink it.
+
 ### Step 10: later and optional
 
 Each of these waits on the spec or on a need:

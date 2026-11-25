@@ -186,7 +186,7 @@ class ArraysOnlyTest {
         }
     }
 
-    /** The same patterns, over the v7 store on ids and over the v8 store through jena-array's solver. */
+    /** The same patterns, over the v7 store on ids and over the v8 store by term, neither through jena-array's solver. */
     @Test
     void patternsAnswerAsOverTheV7Store() throws Exception {
         String[] queries = {
@@ -205,7 +205,9 @@ class ArraysOnlyTest {
         try (BeakGraph v8 = BG.getBeakGraph(build("only.h5", DATA, ONLY));
              BeakGraph v7 = BG.getBeakGraph(build("copy.h5", DATA, COPY))) {
             for (String q : queries) {
+                long delegated = com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get();
                 assertEquals(rows(v7, q), rows(v8, q), q);
+                assertEquals(delegated, com.ebremer.beakgraph.hdf5.jena.PatternMatchBG.DELEGATED.get(), "delegated: " + q);
                 assertFalse(rows(v7, q).isEmpty(), "no rows: " + q);
             }
         }

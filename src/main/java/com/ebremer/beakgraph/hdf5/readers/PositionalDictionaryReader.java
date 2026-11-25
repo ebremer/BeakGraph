@@ -162,6 +162,62 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return literals != null && literals.heldOnlyInArrays(objectId - maxEntityId);
     }
 
+    /**
+     * The elements of the sequence with object id {@code objectId} when it is held only in {@code /.BG/arrays}
+     * (format v8), read from its class: leaves as their terms, inner levels as sequences of them, slots as
+     * {@code undef}. Null for any other.
+     */
+    public java.util.List<Node> heldSequence(long objectId) {
+        return (literals == null) ? null : literals.heldSequence(objectId - maxEntityId);
+    }
+
+    /**
+     * Whether a leaf or inner sequence of the class holding sequence {@code objectId} may have a dictionary
+     * row (format v8): when not, no leaf of it is equal to any term with an id.
+     */
+    public boolean heldSharesDictionary(long objectId) {
+        return literals == null || literals.heldSharesDictionary(objectId - maxEntityId);
+    }
+
+    /**
+     * The object ids {@code [first, last]} of the stored sequences beginning with the terms {@code prefix},
+     * found by terms (format v8); null when none does. An empty prefix is the whole suffix.
+     */
+    public long[] sequencePrefixRangeByTerms(java.util.List<Node> prefix) {
+        if (firstSequenceObjectId == Long.MAX_VALUE) {
+            return null;
+        }
+        if (prefix.isEmpty()) {
+            return new long[] {firstSequenceObjectId, lastSequenceObjectId};
+        }
+        long[] r = literals.sequencePrefixRangeByTerms(prefix);
+        return (r == null) ? null : new long[] {r[0] + maxEntityId, r[1] + maxEntityId};
+    }
+
+    private record Run(String kind, long gi, long pi) {}
+
+    private final java.util.concurrent.ConcurrentHashMap<Run, long[]> heldSequences =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The sequences held only in {@code /.BG/arrays} among the objects of graph {@code gi}'s predicate
+     * {@code pi}, ascending (format v8): what {@code compute} works out, once for this reader's life. Null
+     * when it found too many to keep. The element index has no entries for them, so every candidate scan of
+     * that predicate reads them too.
+     */
+    public long[] heldSequencesAmong(long gi, long pi, java.util.function.Supplier<long[]> compute) {
+        Run key = new Run("held", gi, pi);
+        long[] s = heldSequences.get(key);
+        if (s == null) {
+            long[] r = compute.get();
+            s = (r == null) ? MANY_SLOTS : r;
+            if (heldSequences.size() < MAX_SLOT_RUNS) {
+                heldSequences.putIfAbsent(key, s);
+            }
+        }
+        return (s == MANY_SLOTS) ? null : s;
+    }
+
     /** How many sequence elements of the store are empty slots: 0 keeps every slot-free fast path (RDFARRY.md §3.7). */
     public long numSlots() {
         return (literals == null) ? 0 : literals.numSlots();

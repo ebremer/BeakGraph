@@ -79,7 +79,15 @@ brought and what a reader must rebuild.
   - **Measured.** On 2,000 embeddings of 768 doubles, synthetic: 12.4 MB where `-arrays` wrote 20.9-34.5 MB,
     and built 3-4× faster.
   - **Reading.** Packed rows are read from their arrays, and sequences are found by term.
-  - **Queries.** Sequence patterns over a v8 store go to jena-array's solver for now.
+  - **Queries.** Sequence patterns over a v8 store are matched on BeakGraph's own engine, by term for
+    the packed sequences.
+    - A leaf binds as its term, and is looked up in the dictionary only when its class shares values with
+      it (`shared`).
+    - Candidate scans of the element index add the predicate's packed sequences.
+    - Measured: 1.5-10× the cost of matching on ids, still 3-40× ahead of jena-array on long sequences
+      (the 1.5 million values of 2,000 embeddings: 342 ms, against 221 ms on ids and 14 s).
+  - **Size depends on the data.** Repeating values (a few decimals) are smaller in the dictionary than as
+    float64. String record classes are a second copy in v8 too, and costly in HDF5.
 * **`-seqindex`: the element index of the sequences** (RDFARRY.md step 8, SPECIFICATIONS.md §7.6d). An
   optional transpose of the sequence section: for each element id, the sequences that hold it, in three
   block-structured columns of the literals section.

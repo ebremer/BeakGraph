@@ -143,15 +143,25 @@ class SequenceMatchingBenchmarkTest {
         long t0 = System.nanoTime();
         HDF5Writer.Builder().setSource(src.toFile()).setDestination(store).build().write();
         System.out.printf(Locale.ROOT, "BENCH build %.1f s, %.1f MB%n", (System.nanoTime() - t0) / 1e9, store.length() / 1e6);
-        try (BeakGraph bg = BG.getBeakGraph(store)) {
-            System.out.printf(Locale.ROOT, "BENCH %-40s %10s %12s %12s %8s%n", "query", "rows", "ids ms", "jena ms", "x");
+        // The same data with the numeric sequences held only in their arrays (format v8, RDFARRY.md step 9):
+        // matched by term, their leaves read from the arrays.
+        File packedStore = dir.resolve("bench-arrays-only.h5").toFile();
+        t0 = System.nanoTime();
+        HDF5Writer.Builder().setSource(src.toFile()).setDestination(packedStore)
+                .setArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options.DEFAULT.withOnly(true)).build().write();
+        System.out.printf(Locale.ROOT, "BENCH build with -arrays-only %.1f s, %.1f MB%n", (System.nanoTime() - t0) / 1e9,
+                packedStore.length() / 1e6);
+        try (BeakGraph bg = BG.getBeakGraph(store); BeakGraph v8 = BG.getBeakGraph(packedStore)) {
+            System.out.printf(Locale.ROOT, "BENCH %-40s %10s %12s %12s %8s %12s%n", "query", "rows", "ids ms", "jena ms", "x", "v8 ms");
             for (String[] q : QUERIES) {
                 Query query = QueryFactory.create("PREFIX : <http://ex.org/>\n" + q[1], Syntax.syntaxARQ);
                 long[] ids = time(bg, query, false);
                 long[] jena = time(bg, query, true);
+                long[] values = time(v8, query, false);
                 assertEquals(jena[0], ids[0], q[0]);
-                System.out.printf(Locale.ROOT, "BENCH %-40s %10d %12.1f %12.1f %8.1f%n", q[0], ids[0], ids[1] / 1e6,
-                        jena[1] / 1e6, (double) jena[1] / ids[1]);
+                assertEquals(jena[0], values[0], q[0] + ", v8");
+                System.out.printf(Locale.ROOT, "BENCH %-40s %10d %12.1f %12.1f %8.1f %12.1f%n", q[0], ids[0], ids[1] / 1e6,
+                        jena[1] / 1e6, (double) jena[1] / ids[1], values[1] / 1e6);
             }
             for (String[] q : FUNCTIONS) {
                 Query query = QueryFactory.create("PREFIX : <http://ex.org/>\n" + q[1], Syntax.syntaxARQ);

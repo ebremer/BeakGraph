@@ -905,6 +905,10 @@ do with `-arrays-only`). Record classes keep their canonical rows.
   triple term or a sequence stored canonically also uses it. So a constant the dictionary lacks may still
   be a leaf here, and a reader MUST find a concrete sequence by comparing terms (§6.1) rather than element
   ids.
+* **`shared`.** Each tensor and ragged class carries the int64 attribute `shared`: 1 when a leaf or inner
+  sequence of one of its rows, at any depth, has a dictionary row, else 0. A reader MAY bind a leaf of an
+  unshared class as a term with no id without looking it up, since no term with an id is equal to it. A
+  class without the attribute is taken to share.
 * **The element index** (§7.6d) has no entries for these sequences, since they have no elements.
 
 ### 7.6d The element index (*v7*, optional)

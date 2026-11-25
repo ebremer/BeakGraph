@@ -532,6 +532,67 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         return arraysOnly;
     }
 
+    /**
+     * The sequence row at section id {@code id} when it is held only in {@code /.BG/arrays} (format v8): its
+     * elements, read from its class; else null.
+     */
+    public List<Node> heldSequence(long id) {
+        if (!arraysOnly) {
+            return null;
+        }
+        PackedSequences p = packedSequences;
+        return (p == null) ? null : p.heldOnly(offsets.get(id - 1));
+    }
+
+    /** Whether the class holding the sequence row at section id {@code id} shares values with the dictionary (format v8). */
+    public boolean heldSharesDictionary(long id) {
+        PackedSequences p = packedSequences;
+        return p == null || p.sharesDictionary(offsets.get(id - 1));
+    }
+
+    /**
+     * The section ids {@code [first, last]} of the stored sequences that begin with the terms {@code prefix}
+     * ({@link com.ebremer.beakgraph.core.lib.SeqTerms#UNDEF} for a slot), or null when none does: the suffix
+     * searched by terms, in the order it was sorted by, as a store whose sequences may be held only in its
+     * arrays must be (format v8). They are contiguous for the reason {@link #sequencePrefixRange} gives.
+     */
+    public long[] sequencePrefixRangeByTerms(List<Node> prefix) {
+        long rows = sequenceRowCount();
+        if (rows == 0) {
+            return null;
+        }
+        long low = numEntries - rows + 1;
+        long high = numEntries;
+        while (low < high) {
+            long mid = low + (high - low) / 2;
+            if (comparePrefixByTerms(mid, prefix) < 0) low = mid + 1;
+            else high = mid;
+        }
+        if (comparePrefixByTerms(low, prefix) != 0) {
+            return null;
+        }
+        long first = low;
+        high = numEntries;
+        while (low < high) {
+            long mid = low + (high - low + 1) / 2;
+            if (comparePrefixByTerms(mid, prefix) > 0) high = mid - 1;
+            else low = mid;
+        }
+        return new long[]{first, low};
+    }
+
+    /** The stored sequence at section id {@code id} against {@code prefix}: 0 when it begins with it, else their order. */
+    private int comparePrefixByTerms(long id, List<Node> prefix) {
+        List<Node> row = extract(id).getSeq();
+        int m = Math.min(row.size(), prefix.size());
+        int c = NodeComparator.INSTANCE.compare(com.ebremer.beakgraph.core.lib.SeqTerms.view(row.subList(0, m)),
+                com.ebremer.beakgraph.core.lib.SeqTerms.view(prefix.subList(0, m)));
+        if (c != 0) {
+            return c;
+        }
+        return (row.size() < prefix.size()) ? -1 : 0;
+    }
+
     /** True when the sequence row at section id {@code id} is held only in {@code /.BG/arrays} (format v8). */
     public boolean heldOnlyInArrays(long id) {
         if (!arraysOnly) {

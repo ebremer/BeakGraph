@@ -37,6 +37,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * ({@code -seqindex}, RDFARRY.md step 8), read for every scan it has
  * candidates for ({@code beakgraph.seqindex.ratio=0}): a scan of the
  * sequences an element names answers as a scan of them all.
+ *
+ * <p>And over the same data built with {@code -arrays-only} (format v8, RDFARRY.md step 9), where every
+ * numeric sequence of two leaves or more is held only in {@code /.BG/arrays} and matched by term.
  */
 class SequenceMatcherParityTest {
 
@@ -45,6 +48,7 @@ class SequenceMatcherParityTest {
 
     private static BeakGraph store;
     private static BeakGraph indexed;
+    private static BeakGraph packed;
 
     private static final String DATA = """
         PREFIX : <http://ex.org/>
@@ -192,6 +196,19 @@ class SequenceMatcherParityTest {
         File withIndex = dir.resolve("parity-seqindex.h5").toFile();
         HDF5Writer.Builder().setSource(src.toFile()).setDestination(withIndex).setSequenceIndex(true).build().write();
         indexed = BG.getBeakGraph(withIndex);
+        File arraysOnly = dir.resolve("parity-arrays-only.h5").toFile();
+        HDF5Writer.Builder().setSource(src.toFile()).setDestination(arraysOnly).setSequenceIndex(true)
+                .setArrays(new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(1, 2, false,
+                        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.TimeUnit.US, true))
+                .build().write();
+        packed = BG.getBeakGraph(arraysOnly);
+        var dict = (com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader)
+                ((com.ebremer.beakgraph.hdf5.readers.HDF5Reader) packed.getReader()).getDictionary();
+        long held = 0;
+        for (long id = dict.firstSequenceObjectId(); id <= dict.lastSequenceObjectId(); id++) {
+            held += dict.heldOnlyInArrays(id) ? 1 : 0;
+        }
+        assertTrue(dict.arraysOnly() && held >= 6, held + " sequences held only in the arrays");
     }
 
     /** The queries with rows: two routes that agree on empty answers have shown nothing. */
@@ -209,6 +226,9 @@ class SequenceMatcherParityTest {
         if (indexed != null) {
             indexed.close();
         }
+        if (packed != null) {
+            packed.close();
+        }
         long queries = queries().count();
         if (RAN.get() == queries) {   // the whole matrix ran, not one query picked out
             assertTrue(ANSWERED.get() >= queries - 7, ANSWERED.get() + " of " + queries + " queries have rows");
@@ -224,6 +244,7 @@ class SequenceMatcherParityTest {
         Object onIds = run(store, query, false);
         long scans = com.ebremer.beakgraph.hdf5.jena.BGIteratorPOS.CANDIDATE_SCANS.sum();
         Object onIndex = run(indexed, query, false);
+        Object onValues = run(packed, query, false);
         if (com.ebremer.beakgraph.hdf5.jena.BGIteratorPOS.CANDIDATE_SCANS.sum() > scans) {
             INDEXED.incrementAndGet();
         }
@@ -238,6 +259,7 @@ class SequenceMatcherParityTest {
         }
         same(reference, onIds, "on ids");
         same(reference, onIndex, "on ids, through the element index");
+        same(reference, onValues, "over sequences held only in the arrays");
     }
 
     private static void same(Object reference, Object answer, String route) {

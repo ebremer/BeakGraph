@@ -48,22 +48,7 @@ public class PatternMatchBG {
         return Boolean.getBoolean(DELEGATE_PROPERTY);
     }
 
-    /**
-     * Whether {@code graph}'s BGPs holding a sequence pattern go to jena-array's solver: on request
-     * ({@link #DELEGATE_PROPERTY}), and over a store whose sequences may be held only in its arrays
-     * ({@code -arrays-only}, format v8), which the id-level matcher cannot read yet (RDFARRY.md step 9,
-     * part 2). jena-array matches the terms the store's {@code find} returns, read from the arrays.
-     */
-    static boolean delegateSequences(BeakGraph graph) {
-        return delegateSequences() || arraysOnly(graph);
-    }
 
-    /** Whether {@code graph}'s store holds sequences only in its arrays (format v8). */
-    static boolean arraysOnly(BeakGraph graph) {
-        return graph.getReader() instanceof com.ebremer.beakgraph.hdf5.readers.HDF5Reader reader
-                && reader.getDictionary() instanceof com.ebremer.beakgraph.hdf5.readers.PositionalDictionaryReader dict
-                && dict.arraysOnly();
-    }
 
     /**
      * Whether a variable inside a sequence pattern may stay unbound in a row
@@ -99,7 +84,7 @@ public class PatternMatchBG {
     }
 
     public static QueryIterator execute(BeakGraph bGraph, BasicPattern bgp, QueryIterator input, ExprList filter, ExecutionContext execCxt) {
-        if (com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(bgp) && delegateSequences(bGraph)) {
+        if (delegateSequences() && com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(bgp)) {
             // Every caller hands filter exprs here as hints only and applies
             // them itself: the pattern alone goes to Jena's solver.
             return delegate(bGraph, bgp, input, null, execCxt);

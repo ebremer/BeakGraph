@@ -38,9 +38,14 @@ public final class SequenceCandidates {
         long n = 0;
         for (int i = 0; i < from.length; i++) {
             n += to[i] - from[i];
-            head[i] = read(i);
+            head[i] = unnamed(i) ? Long.MAX_VALUE : read(i);
         }
         this.size = n;
+    }
+
+    /** Whether source {@code i} stands for the sequences held only in the arrays, not yet named for a scan. */
+    private boolean unnamed(int i) {
+        return element[i] == HELD && list[i] == null;
     }
 
     /**
@@ -48,19 +53,58 @@ public final class SequenceCandidates {
      * sequence holds any of them. The caller guarantees the store has the element index.
      */
     static SequenceCandidates holding(PositionalDictionaryReader dict, long... elementIds) {
-        int k = elementIds.length;
+        return of(dict, dict.arraysOnly(), elementIds);
+    }
+
+    /** The sequences the element index names as holding any of {@code elementIds}: its own entries, nothing more. */
+    static SequenceCandidates indexed(PositionalDictionaryReader dict, long... elementIds) {
+        return of(dict, false, elementIds);
+    }
+
+    private static SequenceCandidates of(PositionalDictionaryReader dict, boolean held, long... elementIds) {
+        int k = elementIds.length + 1;
         long[] e = new long[k], f = new long[k], t = new long[k];
         int n = 0;
         for (long id : elementIds) {
-            long[] r = dict.sequencesHolding(id);
+            long[] r = (id < 0) ? null : dict.sequencesHolding(id);     // -1: a term the dictionary lacks
             if (r != null && r[1] > r[0]) {
                 e[n] = id;
                 f[n] = r[0];
                 t[n++] = r[1];
             }
         }
+        if (held) {
+            e[n++] = HELD;      // the sequences held only in the arrays, which the index has no entries for
+        }
         return new SequenceCandidates(dict, java.util.Arrays.copyOf(e, n), new long[n][],
                 java.util.Arrays.copyOf(f, n), java.util.Arrays.copyOf(t, n));
+    }
+
+    /** The source standing for the sequences held only in the arrays (format v8), until a scan names them ({@link #withHeld}). */
+    static final long HELD = -2;
+
+    /** Whether these candidates still stand for the sequences held only in the arrays: a scan must name its own. */
+    boolean holdsHeld() {
+        for (int i = 0; i < element.length; i++) {
+            if (element[i] == HELD && list[i] == null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** These candidates, from the first, with the sequences held only in the arrays narrowed to {@code objectIds} (ascending). */
+    SequenceCandidates withHeld(long[] objectIds) {
+        long[][] l = list.clone();
+        long[] f = from.clone(), t = to.clone();
+        for (int i = 0; i < element.length; i++) {
+            if (element[i] == HELD) {
+                l[i] = objectIds;
+                f[i] = 0;
+                t[i] = objectIds.length;
+            }
+        }
+        return new SequenceCandidates(dict, element, l, f, t);
     }
 
     /** The same sequences, from the first, for another scan. */
@@ -102,6 +146,9 @@ public final class SequenceCandidates {
 
     /** The smallest candidate object id at or after the cursor; {@link Long#MAX_VALUE} when there is none. */
     public long current() {
+        if (holdsHeld()) {
+            throw new IllegalStateException("the sequences held only in the arrays were never named for this scan");
+        }
         long c = Long.MAX_VALUE;
         for (long h : head) {
             c = Math.min(c, h);
