@@ -69,7 +69,6 @@ final class GraphCounts implements BGReorderTransform.Counts {
             }
         }
         return sequences.computeIfAbsent(java.util.List.of(predicate, pattern, boundHere), k -> {
-            if (dict.arraysOnly()) return null;     // no element ids to count by (format v8)
             long pi = dict.getPredicates().locate(predicate);
             if (pi < 1) return new double[] {0, 0};
             var est = com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.estimate(pattern, dict,

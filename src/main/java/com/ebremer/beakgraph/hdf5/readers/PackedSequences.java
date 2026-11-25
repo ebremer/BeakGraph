@@ -97,7 +97,23 @@ final class PackedSequences {
         return pc == null || pc.shared;
     }
 
-    private PackedClass classNumber(int c) {
+    /**
+     * How many sequences the tensor and ragged classes hold: in a v8 store, those held only there, since no
+     * class takes a sequence that keeps its elements. Opens every class.
+     */
+    long numericRows() {
+        long n = 0;
+        for (int c = 1; c < table().length; c++) {
+            PackedClass pc = classNumber(c);
+            if (pc != null) {
+                n += pc.rows;
+            }
+        }
+        return n;
+    }
+
+    /** The classes by number, each a name until opened; read from {@code /.BG/arrays} on the first call. */
+    private Object[] table() {
         Object[] table = classes;
         if (table == null) {
             synchronized (this) {
@@ -116,6 +132,11 @@ final class PackedSequences {
                 }
             }
         }
+        return table;
+    }
+
+    private PackedClass classNumber(int c) {
+        Object[] table = table();
         if (c >= table.length) {
             throw new IllegalStateException("Corrupt store: sequenceArrays names class " + c + " of " + (table.length - 1));
         }

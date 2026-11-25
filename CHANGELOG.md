@@ -85,6 +85,8 @@ brought and what a reader must rebuild.
     - A leaf binds as its term, and is looked up in the dictionary only when its class shares values with
       it (`shared`).
     - Candidate scans of the element index add the predicate's packed sequences.
+    - With `-void`, the join reorder costs them, the held rows at a guessed share.
+  - **Verify and export** read the packed sequences from their arrays, and export them as a v7 store's.
     - Measured: 1.5-10× the cost of matching on ids, still 3-40× ahead of jena-array on long sequences
       (the 1.5 million values of 2,000 embeddings: 342 ms, against 221 ms on ids and 14 s).
   - **Size depends on the data.** Repeating values (a few decimals) are smaller in the dictionary than as

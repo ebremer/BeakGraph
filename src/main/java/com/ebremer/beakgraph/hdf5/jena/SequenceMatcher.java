@@ -229,6 +229,9 @@ public final class SequenceMatcher implements ObjectPattern {
         }
         boolean index = dict.hasSequenceIndex();
         double sequences = Math.max(1, dict.sequenceCount());
+        // Format v8: the sequences held only in the arrays have no element ids, so the element index does
+        // not count them; each may hold a constant or a bound value, at the guess's share.
+        double held = dict.heldSequenceCount() / sequences * GUESS;
         double perElement = 0, slotShare = 0;
         if (index) {
             long[] size = dict.sequenceIndexSize();
@@ -240,11 +243,13 @@ public final class SequenceMatcher implements ObjectPattern {
         int free = 0;
         for (int i = m.prefix; i < m.n; i++) {
             double s;
-            if (m.kind[i] == CONSTANT) {
+            if (m.kind[i] == CONSTANT && m.constant[i] < 0) {
+                s = held;       // v8: a term the dictionary lacks can only be a leaf held in the arrays
+            } else if (m.kind[i] == CONSTANT) {
                 long[] r = index ? dict.sequencesHolding(m.constant[i]) : null;
-                s = index ? ((r == null) ? 0 : (r[1] - r[0]) / sequences) : GUESS;
+                s = index ? Math.min(1, ((r == null) ? 0 : (r[1] - r[0]) / sequences) + held) : GUESS;
             } else if (m.kind[i] == VARIABLE && bound.test(m.var[i])) {
-                s = index ? Math.min(1, perElement / sequences + slotShare) : GUESS;
+                s = index ? Math.min(1, perElement / sequences + slotShare + held) : GUESS;
             } else {
                 if (m.kind[i] == VARIABLE || m.kind[i] == NESTED) {
                     free++;
@@ -258,8 +263,14 @@ public final class SequenceMatcher implements ObjectPattern {
         double placements = 1;
         int gaps = m.gapsFrom[0];
         if (gaps >= 2 && free > 0) {
-            long[] a = dict.sequenceBounds(m.first), b = dict.sequenceBounds(m.last);
-            double length = (double) (b[1] - a[0]) / (m.last - m.first + 1);
+            double length;
+            if (dict.arraysOnly()) {
+                // Held rows have no elements to count: the mean of the range's first and last, from their classes.
+                length = (dict.sequenceLength(m.first) + dict.sequenceLength(m.last)) / 2.0;
+            } else {
+                long[] a = dict.sequenceBounds(m.first), b = dict.sequenceBounds(m.last);
+                length = (double) (b[1] - a[0]) / (m.last - m.first + 1);
+            }
             placements = Math.min(1e6, Math.pow(Math.max(1, length - m.fixedFrom[0] + 1), Math.min(gaps - 1, free)));
         }
         return new Estimate(m.first, m.last, share, readShare, placements);

@@ -319,6 +319,25 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return (firstSequenceObjectId == Long.MAX_VALUE) ? 0 : lastSequenceObjectId - firstSequenceObjectId + 1;
     }
 
+    /** How many stored sequences are held only in {@code /.BG/arrays} (format v8); 0 in any other store. */
+    public long heldSequenceCount() {
+        return (literals == null) ? 0 : literals.heldSequenceCount();
+    }
+
+    /**
+     * The length of the stored sequence with object id {@code objectId}: from its class when it is held only
+     * in {@code /.BG/arrays} (format v8), else from its elements' bounds. The caller guarantees
+     * {@link #isSequenceObjectId}.
+     */
+    public long sequenceLength(long objectId) {
+        java.util.List<Node> held = heldSequence(objectId);
+        if (held != null) {
+            return held.size();
+        }
+        long[] b = sequenceBounds(objectId);
+        return b[1] - b[0];
+    }
+
     /**
      * Where the elements of the stored sequence with object id
      * {@code objectId} begin and end (exclusive) in the element store; the
@@ -336,12 +355,6 @@ public class PositionalDictionaryReader implements GSPODictionary {
     /** Number of sequence elements of the store, slots included. */
     public long sequenceElementCount() {
         return (literals == null) ? 0 : literals.sequenceElementCount();
-    }
-
-    /** The length of the stored sequence with object id {@code objectId}; the caller guarantees {@link #isSequenceObjectId}. */
-    public long sequenceLength(long objectId) {
-        long[] bounds = literals.sequenceBounds(objectId - maxEntityId);
-        return bounds[1] - bounds[0];
     }
 
     /**

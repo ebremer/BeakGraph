@@ -219,6 +219,58 @@ class ArraysOnlyTest {
         }
     }
 
+    /**
+     * The reorder's figures (RDFARRY.md step 8) over a v8 store: a constant only held rows hold may match, at
+     * the guess's share of the held rows' share, and lengths come from the classes.
+     */
+    @Test
+    void theReorderCostsSequencePatternsOverAV8Store() throws Exception {
+        try (BeakGraph v8 = BG.getBeakGraph(build("cost.h5", DATA, ONLY))) {
+            PositionalDictionaryReader d = dictionary(v8);
+            assertTrue(d.heldSequenceCount() >= 9, d.heldSequenceCount() + " held");
+            Node gap = org.apache.jena.sparql.core.Node_SeqGap.create();
+            Node heldOnly = NodeFactory.createSeqNode(List.of(gap, literal("2.5", "double"), gap));
+            var e = com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.estimate(heldOnly, d, v -> false);
+            assertTrue(e != null && e.share() > 0, "a leaf with no row may still be held: " + e);
+            double held = (double) d.heldSequenceCount() / d.sequenceCount();
+            assertEquals(held * com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.GUESS, e.share(), 1e-9);
+            Node free = NodeFactory.createSeqNode(List.of(gap, NodeFactory.createVariable("v"), gap));
+            var f = com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.estimate(free, d, v -> false);
+            assertTrue(f != null && f.placements() >= 1, "placements from the classes' lengths: " + f);
+        }
+    }
+
+    /**
+     * With {@code -void} the join reorder costs a sequence pattern over a v8 store too: a value one held row
+     * holds goes before a check that keeps half the teams. It used to have no figure there, and came after.
+     */
+    @Test
+    void theReorderPutsARareHeldValueFirst() throws Exception {
+        StringBuilder data = new StringBuilder("PREFIX : <http://ex.org/>\n");
+        for (int t = 0; t < 2000; t++) {
+            data.append(":team").append(t).append(" :league ").append((t % 2 == 0) ? ":east" : ":west")
+                .append(" ; :emb ( ").append(t).append(".25E0 ").append(t % 7).append(".5E0 ) .\n");
+        }
+        Path src = dir.resolve("leagues.ttl");
+        Files.writeString(src, data.toString());
+        File out = dir.resolve("leagues.h5").toFile();
+        HDF5Writer.Builder().setSource(src.toFile()).setDestination(out).setArrays(ONLY)
+                .setVoidMode(com.ebremer.beakgraph.core.VoidMode.EXACT).build().write();
+        try (BeakGraph g = BG.getBeakGraph(out)) {
+            assertTrue(dictionary(g).arraysOnly());
+            String q = "SELECT * { ?t :league :east . ?t :emb ( ... \"42.25\"^^xsd:double ... ) }";
+            org.apache.jena.sparql.algebra.Op op = org.apache.jena.sparql.algebra.Algebra.compile(
+                    QueryFactory.create(PREFIXES + q, Syntax.syntaxARQ));
+            while (!(op instanceof org.apache.jena.sparql.algebra.op.OpBGP)) {
+                op = ((org.apache.jena.sparql.algebra.op.Op1) op).getSubOp();
+            }
+            org.apache.jena.sparql.core.BasicPattern bgp = ((org.apache.jena.sparql.algebra.op.OpBGP) op).getPattern();
+            org.apache.jena.sparql.core.BasicPattern planned = g.getReorderTransform().reorder(bgp);
+            assertEquals(bgp.get(1), planned.get(0), "planned: " + planned);
+            assertEquals(List.of("team42"), subjects(g, "SELECT ?s { ?s :league :east . ?s :emb ( ... \"42.25\"^^xsd:double ... ) }"));
+        }
+    }
+
     @Test
     void withoutAPackedSequenceTheStoreIsV7AndUnchanged() throws Exception {
         String text = "PREFIX : <http://ex.org/>\n:a :p ( \"x\" 1 ) .\n:b :q 2 .\n";

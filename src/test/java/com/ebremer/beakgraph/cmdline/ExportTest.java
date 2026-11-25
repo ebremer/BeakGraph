@@ -326,6 +326,49 @@ class ExportTest {
                 "exported sequences must round-trip term-exactly:\n" + text);
     }
 
+    /**
+     * A v8 store (-arrays-only, RDFARRY.md step 9): its packed sequences, read from their arrays, export as
+     * the v7 copy's do, on both paths, byte for byte.
+     */
+    @Test
+    void ntExportOfAV8StoreIsTheV7StoresOnBothPaths() throws Exception {
+        String seqTriples =
+                "<http://ex.org/e1> <http://ex.org/emb> ( \"0.25\"^^<http://www.w3.org/2001/XMLSchema#double> \"-1.5\"^^<http://www.w3.org/2001/XMLSchema#double> ) .\n"
+              + "<http://ex.org/e2> <http://ex.org/emb> ( \"2.5\"^^<http://www.w3.org/2001/XMLSchema#double> undef ) .\n"
+              + "<http://ex.org/m> <http://ex.org/mat> ( ( \"1\"^^<http://www.w3.org/2001/XMLSchema#integer> \"2\"^^<http://www.w3.org/2001/XMLSchema#integer> ) ( \"3\"^^<http://www.w3.org/2001/XMLSchema#integer> \"4\"^^<http://www.w3.org/2001/XMLSchema#integer> ) ) .\n"
+              + "<http://ex.org/x> <http://ex.org/val> \"-1.5\"^^<http://www.w3.org/2001/XMLSchema#double> .\n"
+              + "<http://ex.org/r> <http://ex.org/rec> ( \"code\" \"7\"^^<http://www.w3.org/2001/XMLSchema#integer> ) .\n";
+        File src = dir.resolve("v8.nq").toFile();
+        Files.write(src.toPath(), seqTriples.getBytes(StandardCharsets.UTF_8));
+        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options only = new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(
+                1, 2, false, com.ebremer.beakgraph.hdf5.writers.SequenceArrays.TimeUnit.US, true);
+        File v8 = dir.resolve("v8.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(v8).setArrays(only).build().write();
+        File v7 = dir.resolve("v7.h5").toFile();
+        HDF5Writer.Builder().setSource(src).setDestination(v7).setArrays(only.withOnly(false)).build().write();
+
+        byte[][] exports = new byte[4][];
+        int k = 0;
+        for (File store : new File[] {v7, v8}) {
+            Path out = dir.resolve(store.getName().replace(".h5", ".nt"));
+            runExport(store, "NT", false);
+            exports[k++] = Files.readAllBytes(out);
+            Files.delete(out);
+            withoutFastPath(() -> runExport(store, "NT", false));
+            exports[k++] = Files.readAllBytes(out);
+        }
+        String text = new String(exports[2], StandardCharsets.UTF_8);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(exports[0], exports[2], "v8 fast path:\n" + text);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(exports[1], exports[3], "v8 generic writer:\n" + text);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(exports[2], exports[3], "v8 fast path = generic writer");
+        Model expected = ModelFactory.createDefaultModel();
+        RDFDataMgr.read(expected, new java.io.ByteArrayInputStream(
+                seqTriples.getBytes(StandardCharsets.UTF_8)), Lang.NTRIPLES);
+        Dataset ds = parse(dir.resolve("v8.nt"), Lang.NTRIPLES, false);
+        assertTrue(org.apache.jena.sparql.util.IsoMatcher.isomorphic(expected.getGraph(), ds.getDefaultModel().getGraph()),
+                "the v8 export round-trips term-exactly:\n" + text);
+    }
+
     @Test
     void jsonLdExportRefusesSequences() throws Exception {
         File h5 = buildStore("seqjsonld", "<http://ex.org/r> <http://ex.org/list> ( <http://ex.org/x> \"y\" ) .\n");

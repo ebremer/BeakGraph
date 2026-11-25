@@ -544,6 +544,12 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         return (p == null) ? null : p.heldOnly(offsets.get(id - 1));
     }
 
+    /** How many sequence rows are held only in {@code /.BG/arrays} (format v8); 0 in any other store. */
+    public long heldSequenceCount() {
+        PackedSequences p = packedSequences;
+        return (!arraysOnly || p == null) ? 0 : p.numericRows();
+    }
+
     /** Whether the class holding the sequence row at section id {@code id} shares values with the dictionary (format v8). */
     public boolean heldSharesDictionary(long id) {
         PackedSequences p = packedSequences;

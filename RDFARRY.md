@@ -1542,6 +1542,24 @@ writes it, and the six write the same bytes.
   The packed column (1.5 million parts, sorted and merged to find that none is shared) leaves the disk
   build of v8 1.7× faster than its `-arrays` build, and as fast as method 0's.
 
+**Part 5 (2026-11-25): in progress.** Verify, export, the reorder, and the costs.
+
+- **Verify** reads every held row back from its arrays (part 1), and every engine's v8 stores pass
+  `-verify -deep` (`ArraysOnlyTest`).
+- **Export** needed nothing: a held row is read from its class like any other term. `ExportTest` exports a
+  v8 store on both paths, the fast one and Jena's writer, and gets the v7 copy's bytes, which parse back
+  term for term.
+- **The reorder** (`-void`) now costs sequence patterns over a v8 store as over v7 (step 8), with two
+  changes in `SequenceMatcher.estimate`:
+  - The element index does not count the held rows. So a constant or bound value adds, for them, the
+    guess's share (0.1) of the held rows' share of the sequences (`heldSequenceCount`). A constant the
+    dictionary lacks can only be a held leaf, and has that share alone.
+  - A gap's placements take the length of the range's first and last sequences, from their classes when
+    held (`sequenceLength`), since held rows have no element bounds to average.
+  
+  `ArraysOnlyTest.theReorderPutsARareHeldValueFirst`: of 2,000 teams, one embedding holding 42.25 is
+  planned before a league check that keeps half of them. Without the figure it came after.
+
 ### Step 10: later and optional
 
 Each of these waits on the spec or on a need:
