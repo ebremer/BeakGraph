@@ -12,7 +12,7 @@
   is done on every engine, packed reads included; only its opt-in Python smoke tests have yet to run
   where h5py and zarr are installed. Step 7, matching sequence patterns on ids, is done too (2026-11-24),
   with jena-array's solver kept as the reference route. Step 8, the element index (`-seqindex`) and the
-  reorder's costs for sequence patterns, is done (2026-11-25). Step 9 waits on its gate
+  reorder's costs for sequence patterns, is done (2026-11-25). Step 9's gate is measured and passes (2026-11-25)
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -1319,6 +1319,32 @@ the value in 8 bytes.
 
 **The gate:** go only if step 7's benchmarks show the dictionary and elements dominate the store size or
 build time for array-heavy data, and keep v7 with `-arrays` otherwise.
+
+**The gate, measured (2026-11-25): it passes.** `StoreCompositionBenchmarkTest` (opt-in,
+`-Dbeakgraph.bench=true`; synthetic, in process) builds 2,000 embeddings of 768 doubles, each with a type
+and a label, by `-method 0`. It builds them with their values at five decimals, which repeat (about 420,000
+distinct among 1.5 million), and at full precision, which almost never do, as a model's are not. The
+control holds the same triples with a one-element sequence each. The second build of each is timed.
+
+| Store | Size | Build | Leaves' dictionary rows and elements | `/.BG/arrays` |
+|---|---|---|---|---|
+| control, `( i )` each | 0.1 MB | 0.1 s | n/a | n/a |
+| five decimals, v7 | 8.6 MB | 12.3 s | 8.5 MB, 99% | n/a |
+| five decimals, v7 with `-arrays` | 20.9 MB | 12.9 s | 8.5 MB, 41% | 12.3 MB, 59% |
+| full precision, v7 | 22.2 MB | 17.2 s | 22.1 MB, 99.6% | n/a |
+| full precision, v7 with `-arrays` | 34.5 MB | 16.9 s | 22.1 MB, 64% | 12.3 MB, 36% |
+
+- **Size.** At full precision the leaves' rows (the `doubles` store, `offsets`, `datatypes`,
+  `typedLiterals`) and `sequenceElements` are two thirds of the `-arrays` store. v8 would leave the arrays
+  and the 2,000 sequence rows, about 12.5 MB, below even the canonical v7 store. At five decimals the
+  dictionary holds each repeated value once, so v7 is smaller than the arrays alone; there v8 would save
+  only the duplicate copy.
+- **Build time.** Parsing takes 0.4-1.1 s and the control 0.1 s. So about 93-97% of each build is
+  BeakGraph ranking, sorting and encoding 1.5 million leaves and resolving their element ids. This is
+  inferred from the differences, not profiled. v8 skips that work for packed sequences, at either
+  precision.
+- **So step 9 goes ahead**, for packed numeric sequences: build time dominates in both cases, and size at
+  full precision.
 
 ### Step 10: later and optional
 
