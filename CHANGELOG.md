@@ -71,7 +71,7 @@ brought and what a reader must rebuild.
     matcher is tested against. The contrib suite runs both routes, and `SequenceMatcherParityTest` holds
     them alike on 73 more queries.
 * **Format v8 and `-arrays-only`: numeric sequences stored only as arrays** (RDFARRY.md step 9,
-  SPECIFICATIONS.md §7.6e). With `-arrays-only` (the in-memory engines, methods 0, 2 and 3, for now; they write the same bytes), the sequences a tensor or ragged class of
+  SPECIFICATIONS.md §7.6e). With `-arrays-only` (every engine; the six write the same bytes), the sequences a tensor or ragged class of
   `/.BG/arrays` holds are stored only there.
   - **What changes.** Their rows keep their place, but they have no element ids. Their numbers have no
     dictionary entries unless something else uses them. Such a store is stamped 8, which a v7 build refuses;

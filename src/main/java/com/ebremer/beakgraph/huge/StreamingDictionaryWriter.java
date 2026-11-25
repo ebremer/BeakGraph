@@ -309,7 +309,9 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             seqSupport.starts().transferBlockedTo(subGroup, Params.SEQUENCE_STARTS);
             sequenceElements.transferBlockedTo(subGroup, Params.SEQUENCE_ELEMENTS, Params.NUM_SLOTS, seqSupport.slots());
             if (sequenceArrays != null) {
-                sequenceArrays.transferBlockedTo(subGroup, Params.SEQUENCE_ARRAYS);
+                // -arrays-only: arraysOnly = 1 when some sequence is held only in the arrays (§7.6e).
+                sequenceArrays.transferBlockedTo(subGroup, Params.SEQUENCE_ARRAYS,
+                        seqSupport.heldOnlyInArrays() ? Params.ARRAYS_ONLY : null, 1);
             }
             SpillBitPackedBuffer[] index = seqSupport.indexColumns();
             if (index != null) {

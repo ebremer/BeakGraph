@@ -23,6 +23,11 @@ import org.apache.jena.graph.Node;
  * each sequence's class number goes to {@code sequenceArrays}; and at assembly
  * the spilled rows are sorted by (class, id) and each class is written from a
  * file of its own rows, one pass per array, so no class need fit in memory.
+ *
+ * <p>With {@code -arrays-only} (format v8) a top-level sequence that packs as
+ * numbers is held only here: {@link #onSequence} says so, and the sequence
+ * support then gives it no elements. Each tensor and ragged class says whether
+ * one of its rows shares a term with the dictionary ({@link #setSharing}).
  */
 final class HugeArrays implements AutoCloseable {
 
@@ -141,6 +146,10 @@ final class HugeArrays implements AutoCloseable {
     /** Each sequence's bucket + 1, 0 when it does not pack, in sequence order. */
     private final RecordFile<Long> bucketOfSequence;
     private SequenceArrays.Decision decision;
+    /** {@code -arrays-only}: the sequences held only here, by their place in the section. */
+    private final BitSet held = new BitSet();
+    /** {@code -arrays-only}: the sequences, by their place, that hold a term with a dictionary entry. */
+    private BitSet sharing = new BitSet();
 
     /**
      * @param topLevel      which sequences (by their place in the section) are the object of a quad
@@ -157,9 +166,13 @@ final class HugeArrays implements AutoCloseable {
         this.bucketOfSequence = new RecordFile<>(workDir.resolve("arrays.buckets"), HugeRecords.VAR_LONG_CODEC);
     }
 
-    /** The encode's callback for sequence {@code k} of the section, in order. */
-    void onSequence(long k, Node seq) throws IOException {
+    /**
+     * The encode's callback for sequence {@code k} of the section, in order: whether it is held only here
+     * ({@code -arrays-only}, a top-level sequence that packs as numbers), and so has no elements.
+     */
+    boolean onSequence(long k, Node seq) throws IOException {
         long code = 0;
+        boolean only = false;
         if (topLevel.get(Math.toIntExact(k))) {
             long id = firstObjectId + k;
             Object row = SequenceArrays.probeAny(id, seq, options);
@@ -167,9 +180,24 @@ final class HugeArrays implements AutoCloseable {
                 int bucket = classifier.add(row);
                 rows.append(new Spilled(bucket, id, SequenceArrays.countOf(row), SequenceArrays.leavesOf(row)));
                 code = bucket + 1L;
+                only = options.only() && SequenceArrays.isNumericRow(row);
+                if (only) {
+                    held.set(Math.toIntExact(k));
+                }
             }
         }
         bucketOfSequence.append(code);
+        return only;
+    }
+
+    /** How many sequences are held only here: the store is v8 when any is. */
+    long heldCount() {
+        return held.cardinality();
+    }
+
+    /** {@code -arrays-only}: the sequences (by their place) that share a term with the dictionary; before {@link #write}. */
+    void setSharing(BitSet sequences) {
+        this.sharing = sequences;
     }
 
     /**
@@ -187,9 +215,15 @@ final class HugeArrays implements AutoCloseable {
         int[] classOf = decision.classOfBucket();
         SpillBitPackedBuffer out = new SpillBitPackedBuffer(workDir.resolve("sequenceArrays.store"), 64);
         try (var it = bucketOfSequence.read()) {
-            while (it.hasNext()) {
+            for (int k = 0; it.hasNext(); k++) {
                 long code = it.next();
-                out.writeLong((code == 0) ? 0 : classOf[(int) (code - 1)]);
+                int c = (code == 0) ? 0 : classOf[(int) (code - 1)];
+                // A sequence held only here with no tensor or ragged class would be in the store nowhere.
+                if (held.get(k) && (c == 0 || decision.classes().get(c - 1).kind() == SequenceArrays.Kind.RECORD)) {
+                    throw new IllegalStateException("-arrays-only left sequence " + k + " without elements, but "
+                            + ((c == 0) ? "no class" : "a record class") + " holds it");
+                }
+                out.writeLong(c);
             }
         }
         out.complete();
@@ -222,12 +256,16 @@ final class HugeArrays implements AutoCloseable {
                     SequenceArrays.ClassDef def = decision.classes().get(c - 1);
                     RecordFile<Spilled> file = new RecordFile<>(workDir.resolve("arrays.class." + c), CODEC);
                     try {
+                        boolean shares = false;
                         while (next != null && next.key() == c) {
                             file.append(next);
+                            shares |= sharing.get(Math.toIntExact(next.objectId() - firstObjectId));
                             next = sorted.hasNext() ? sorted.next() : null;
                         }
                         file.finish();
-                        SequenceArrays.writeClass(def, () -> rowsOf(file, def), arrays, options.compress(), options.timeUnit());
+                        // -arrays-only: each tensor and ragged class says whether it shares (SPECIFICATIONS.md 7.6e).
+                        SequenceArrays.writeClass(def, () -> rowsOf(file, def), arrays, options.compress(), options.timeUnit(),
+                                held.isEmpty() ? null : shares);
                     } finally {
                         file.close();
                     }

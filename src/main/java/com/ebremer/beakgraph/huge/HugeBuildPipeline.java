@@ -152,6 +152,10 @@ public final class HugeBuildPipeline implements AutoCloseable {
     // their exact temp-file footprint.
     private RecordSorter<TermRow> iEntSorter;
     private RecordSorter<TermRow> iLitSorter;
+    // -arrays-only (format v8): the leaves and inner sequences of the quads' objects held only in the
+    // arrays, each with its quad's row. They take no place in the dictionaries: the merge reads them only
+    // to find which also have one, which makes the sequence's class shared (SPECIFICATIONS.md 7.6e).
+    private RecordSorter<TermRow> packedSorter;
     /** The graph and the subject keys of the last row, for the rows that repeat them (see {@link #sharedKey}). */
     private TermKey graphKey;
     private TermKey subjectKey;
@@ -203,7 +207,6 @@ public final class HugeBuildPipeline implements AutoCloseable {
 
     /** {@code -arrays} (format v7, RDFARRY.md §3.5): the native arrays, as the in-memory engines write them; null for none. */
     public HugeBuildPipeline setArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options) {
-        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.refuseOnly(options, "the disk engines (-method 1, 4, 5)");
         this.arrays = options;
         return this;
     }
@@ -403,6 +406,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
             iEntSorter = null;
             iLitSorter = null;
         }
+        // -arrays-only: the parts of the sequences held only in the arrays (absent without one).
+        if (packedSorter != null) {
+            columns[PACKED] = track(new Column(packedSorter));
+            packedSorter = null;
+        }
         List<Stage> sorts = new ArrayList<>();
         for (Column c : columns) {
             if (c != null) {
@@ -599,7 +607,15 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 numEntities, numPredicates, numObjects));
         RecordSorter<IdQuad> gposSorter = track(provider.quadSorter(workDir, "gpos", Index.GPOS,
                 numEntities, numPredicates, numObjects));
-        try (var gs = gIds.sorted(); var ss = sIds.sorted(); var os = oIds.sorted(); var ps = pFinal.read()) {
+        // -arrays-only: the rows of the quads whose objects, held only in the
+        // arrays, share a term with the dictionary, in row order; this pass
+        // reads each row's object id, which names the sequence.
+        RecordSorter<RowId> sharingByRow = sharingRows(merged, numObjects);
+        final java.util.BitSet sharingSequences = new java.util.BitSet();
+        final long firstSequenceId = numEntities + numLiterals - numSequences + 1;
+        try (var gs = gIds.sorted(); var ss = sIds.sorted(); var os = oIds.sorted(); var ps = pFinal.read();
+             var sh = (sharingByRow == null) ? null : sharingByRow.sorted()) {
+            RowId sharing = (sh != null && sh.hasNext()) ? sh.next() : null;
             for (long row = 0; row < rows; row++) {
                 RowId g = gs.next();
                 RowId s = ss.next();
@@ -610,9 +626,22 @@ public final class HugeBuildPipeline implements AutoCloseable {
                             + " s=" + s.row() + " o=" + o.row());
                 }
                 gspoSorter.add(new IdQuad(g.id(), s.id(), p, o.id()));
+                if (sharing != null && sharing.row() == row) {
+                    if (o.id() < firstSequenceId) {
+                        throw new IllegalStateException("Row " + row + " shares a packed sequence's term, but its object "
+                                + o.id() + " is not a sequence");
+                    }
+                    sharingSequences.set(Math.toIntExact(o.id() - firstSequenceId));
+                    while (sharing != null && sharing.row() == row) {
+                        sharing = sh.hasNext() ? sh.next() : null;
+                    }
+                }
             }
         }
         pFinal.delete();
+        if (arraysSupport != null) {
+            arraysSupport.setSharing(sharingSequences);
+        }
 
         // ---- Indexes ----
         HugeIndexWriter gspo = track(new HugeIndexWriter(workDir, Index.GSPO,
@@ -631,7 +660,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
         try (StreamingHdf5File hdf = StreamingHdf5.create(tmpH5, container)) {
             StreamingHdf5Group hdt = hdf.rootGroup().putGroup(Params.BG);
             hdt.putAttribute(Params.NUM_QUADS, parsedQuads);
-            hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
+            // 8 when -arrays-only holds some sequence only in the arrays, else 7.
+            hdt.putAttribute(Params.FORMAT_VERSION_ATTR, (arraysSupport != null && arraysSupport.heldCount() > 0)
+                    ? Params.ARRAYS_ONLY_FORMAT_VERSION : Params.FORMAT_VERSION);
             StreamingHdf5Group dictionary = hdt.putGroup(Params.DICTIONARY);
             if (entitiesDict != null) entitiesDict.transferTo(dictionary);
             if (predicatesDict != null) predicatesDict.transferTo(dictionary);
@@ -810,7 +841,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
         } else if (o.isTripleTerm()) {
             collectTripleTerm(o);
         } else if (o.isNodeSeq()) {
-            collectSequence(o);
+            collectSequence(o, rows);   // the row this quad is about to take
         } else {
             countEntityKind(o, "object");
         }
@@ -929,8 +960,20 @@ public final class HugeBuildPipeline implements AutoCloseable {
      * nested-sequence elements spill to the interior literal sorter, entity
      * elements to the interior entity sorter, so dictionary derivation sees
      * every one. The sequence itself is the row's object.
+     *
+     * <p>With {@code -arrays-only} a sequence that packs as numbers is not
+     * walked so: its leaves and inner sequences go to the packed column, with
+     * the quad's {@code row}, and take a dictionary entry only when another
+     * column has them too (the rule of
+     * {@link com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder#splitPacked}).
      */
-    private void collectSequence(Node seq) throws IOException {
+    private void collectSequence(Node seq, long row) throws IOException {
+        if (arrays != null && arrays.only()
+                && com.ebremer.beakgraph.hdf5.writers.SequenceArrays.packsAsNumbers(seq, arrays.minLeaves())) {
+            stats.numSequences++;   // its row; what is inside counts only where something else holds it
+            collectPacked(seq, row);
+            return;
+        }
         if (iEntSorter == null) {
             iEntSorter = track(provider.termSorter(workDir, "icol-ent"));
             iLitSorter = track(provider.termSorter(workDir, "icol-lit"));
@@ -969,6 +1012,47 @@ public final class HugeBuildPipeline implements AutoCloseable {
             });
         } catch (UncheckedIOException ex) {
             throw ex.getCause();
+        }
+    }
+
+    /** The parts of a quad's object that packs, at every depth, to the packed column with the quad's row. */
+    private void collectPacked(Node seq, long row) throws IOException {
+        if (packedSorter == null) {
+            packedSorter = track(provider.termSorter(workDir, "pcol-packed"));
+        }
+        try {
+            com.ebremer.beakgraph.core.lib.SeqTerms.walk(seq, new com.ebremer.beakgraph.core.lib.SeqTerms.ElementVisitor() {
+                @Override
+                public void literal(Node n) {
+                    spill(packedSorter, n, row);
+                }
+
+                @Override
+                public void entity(Node n) {
+                    throw new IllegalStateException("A sequence that packs as numbers holds an entity: " + n);
+                }
+
+                @Override
+                public void tripleTerm(Node n) {
+                    throw new IllegalStateException("A sequence that packs as numbers holds a triple term: " + n);
+                }
+
+                @Override
+                public boolean nestedSequence(Node n) {
+                    spill(packedSorter, n, row);
+                    return true;
+                }
+            });
+        } catch (UncheckedIOException ex) {
+            throw ex.getCause();
+        }
+    }
+
+    private static void spill(RecordSorter<TermRow> sorter, Node n, long row) {
+        try {
+            sorter.add(new TermRow(n, row));
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
         }
     }
 
@@ -1073,8 +1157,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
     // ------------------------------------------------------------------
 
     /** The columns a range is merged from: the three of a quad's terms, and the interior terms of triple terms. */
-    private static final int G = 0, S = 1, O = 2, INTERIOR_ENTITIES = 3, INTERIOR_LITERALS = 4, COLUMNS = 5;
-    private static final String[] ROLES = {"graph", "subject", "object", "triple-term component", "triple-term object"};
+    private static final int G = 0, S = 1, O = 2, INTERIOR_ENTITIES = 3, INTERIOR_LITERALS = 4, PACKED = 5, COLUMNS = 6;
+    private static final String[] ROLES = {"graph", "subject", "object", "triple-term component", "triple-term object",
+            "packed-sequence part"};
 
     /** Ranges cut for each worker thread: more than one, so that an uneven range does not hold a thread's share. */
     private static final int RANGES_PER_THREAD = 4;
@@ -1246,10 +1331,12 @@ public final class HugeBuildPipeline implements AutoCloseable {
      * What the merge of one range leaves: its distinct terms, each column's
      * rows with their terms' codes, its distinct sequences, and which of them
      * are the object of a quad (by their place among the range's sequences):
-     * the top-level ones {@code -arrays} classifies.
+     * the top-level ones {@code -arrays} classifies. With {@code -arrays-only}
+     * also the rows of the quads whose objects, held only in the arrays, hold
+     * a leaf or inner sequence that has an entry (null without a packed column).
      */
     private record RangeOutput(RecordFile<Node> entities, RecordFile<Node> literals, RangeIds[] ids,
-                               long sequences, java.util.BitSet topSequences) {}
+                               long sequences, java.util.BitSet topSequences, RecordFile<Long> sharingRows) {}
 
     /** The head of one column's cursor in a range's merge. */
     private static final class Head {
@@ -1290,6 +1377,14 @@ public final class HugeBuildPipeline implements AutoCloseable {
      *     afterwards.</li>
      * </ul>
      * Interior terms take their place in the dictionaries and give no row.
+     *
+     * <p>With {@code -arrays-only}, the packed column's terms (what the
+     * sequences held only in the arrays hold) take no place: a term there
+     * with an entry from another column names, by its rows, the quads whose
+     * objects share it ({@code sharingRows}). And a quad's object that packs
+     * but that a walked sequence also holds (an interior literal too) is no
+     * longer top-level for the classes: it keeps its elements, and no class
+     * takes it ({@link com.ebremer.beakgraph.hdf5.writers.PositionalDictionaryWriterBuilder#getHeldBack}).
      */
     private RangeOutput mergeRange(int range, TermRow from, TermRow to, Column[] columns) throws IOException {
         RecordFile<Node> entities = track(new RecordFile<>(workDir.resolve("entities.sorted." + range), NodeCodec.INSTANCE));
@@ -1301,8 +1396,17 @@ public final class HugeBuildPipeline implements AutoCloseable {
         List<Head> heads = new ArrayList<>(COLUMNS);
         long sequences = 0;
         java.util.BitSet topSequences = new java.util.BitSet();
+        RecordFile<Long> sharingRows = (columns[PACKED] == null) ? null
+                : track(new RecordFile<>(workDir.resolve("packed.sharing." + range), HugeRecords.VAR_LONG_CODEC));
+        final boolean arraysOnly = arrays != null && arrays.only();
         try {
-            PriorityQueue<Head> heap = new PriorityQueue<>(COLUMNS, (a, b) -> TermKey.compare(a.row.key(), b.row.key()));
+            // Equal terms in column order: the packed column's rows of a term
+            // come after every other column's, so whether it has an entry is
+            // known by then, and an object's before its interior rows.
+            PriorityQueue<Head> heap = new PriorityQueue<>(COLUMNS, (a, b) -> {
+                int c = TermKey.compare(a.row.key(), b.row.key());
+                return (c != 0) ? c : Integer.compare(a.column, b.column);
+            });
             for (int c = 0; c < COLUMNS; c++) {
                 if (columns[c] != null) {
                     Head head = new Head(c, columns[c].open(from, to));
@@ -1317,13 +1421,29 @@ public final class HugeBuildPipeline implements AutoCloseable {
             boolean literalSpace = false;
             long n = 0;
             boolean sequence = false;
+            boolean object = false;   // the current term is the object of a quad
             while (!heap.isEmpty()) {
                 Head head = heap.poll();
                 TermKey key = head.row.key();
                 // equals() is the cheap equivalent of compare()==0 here: the
                 // comparator tie-breaks on the exact RDF term, so it returns 0
                 // only for term-equal nodes.
-                if (last == null || !(last == key || last.node().equals(key.node()))) {
+                boolean same = last != null && (last == key || last.node().equals(key.node()));
+                if (head.column == PACKED) {
+                    do {
+                        if (same) {
+                            sharingRows.append(head.row.row());
+                        }
+                        if ((++n & 0xFFFF) == 0) {
+                            checkCancelled("merging the sorted columns");
+                        }
+                    } while (head.advance() && (head.row.key() == key || head.row.key().node().equals(key.node())));
+                    if (head.row != null) {
+                        heap.add(head);
+                    }
+                    continue;
+                }
+                if (!same) {
                     Node term = key.node();
                     sequence = term.isNodeSeq();
                     if (sequence) {
@@ -1338,6 +1458,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
                         code = entities.count() << 1;
                     }
                     last = key;
+                    object = false;
                 }
                 // A graph or a subject is an entity, and so is an interior
                 // entity (the ingest refuses any other): one in the literals'
@@ -1348,6 +1469,11 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 }
                 if (sequence && head.column == O) {
                     topSequences.set(Math.toIntExact(sequences - 1));   // an object of a quad, not only an element
+                    object = true;
+                }
+                if (sequence && object && arraysOnly && head.column == INTERIOR_LITERALS
+                        && com.ebremer.beakgraph.hdf5.writers.SequenceArrays.packsAsNumbers(key.node(), arrays.minLeaves())) {
+                    topSequences.clear(Math.toIntExact(sequences - 1));   // held back: it keeps its elements
                 }
                 // Every row this column has of the term: they follow one
                 // another, and the term is still the smallest there is.
@@ -1376,7 +1502,36 @@ public final class HugeBuildPipeline implements AutoCloseable {
         for (RangeIds column : ids) {
             column.finish();
         }
-        return new RangeOutput(entities, literals, ids, sequences, topSequences);
+        if (sharingRows != null) {
+            sharingRows.finish();
+        }
+        return new RangeOutput(entities, literals, ids, sequences, topSequences, sharingRows);
+    }
+
+    /**
+     * {@code -arrays-only}: the ranges' sharing rows, sorted by row (a quad's
+     * row once for each term it shares), or null when the build had no
+     * packed column or nothing shared. The ranges' files go.
+     */
+    private RecordSorter<RowId> sharingRows(RangeOutput[] merged, long numObjects) throws IOException {
+        RecordSorter<RowId> sorter = null;
+        for (RangeOutput r : merged) {
+            if (r.sharingRows() == null) {
+                continue;
+            }
+            if (r.sharingRows().count() > 0) {
+                if (sorter == null) {
+                    sorter = track(provider.rowIdSorter(workDir, "packed-sharing", rows, numObjects));
+                }
+                try (var it = r.sharingRows().read()) {
+                    while (it.hasNext()) {
+                        sorter.add(new RowId(it.next(), 0));
+                    }
+                }
+            }
+            r.sharingRows().delete();
+        }
+        return sorter;
     }
 
     /**

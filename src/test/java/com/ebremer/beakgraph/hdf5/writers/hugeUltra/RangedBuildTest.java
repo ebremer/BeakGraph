@@ -80,10 +80,18 @@ class RangedBuildTest {
     /** Builds {@code src} with the pipeline; returns the store, and how many ranges it was merged in through {@code ranges}. */
     private Path build(String tag, File src, boolean spatial, SorterProvider provider, ForkJoinPool stagePool,
                        long rangeRows, AtomicInteger ranges) throws IOException {
+        return build(tag, src, spatial, provider, stagePool, rangeRows, ranges, null);
+    }
+
+    private Path build(String tag, File src, boolean spatial, SorterProvider provider, ForkJoinPool stagePool,
+                       long rangeRows, AtomicInteger ranges,
+                       com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arrays) throws IOException {
         Path work = Files.createDirectories(dir.resolve("work-" + tag));
         Path out = dir.resolve(tag + ".h5");
         try (HugeBuildPipeline pipeline = new HugeBuildPipeline(List.of(src), spatial, spatial, VoidMode.NONE, work, provider, stagePool)) {
             pipeline.setMinRangeRows(rangeRows);
+            pipeline.setArrays(arrays);
+            pipeline.setSequenceIndex(arrays != null);
             pipeline.run(out);
             ranges.set(pipeline.ranges());
         }
@@ -144,6 +152,54 @@ class RangedBuildTest {
     @Test
     void spatialAndFeaturesInManyRanges() throws Exception {
         everyWayOfRangesWritesTheSameBytes("spatial.trig", StoreParity.SPATIAL_TRIG, true, 2);
+    }
+
+    /**
+     * {@code -arrays-only} (format v8, RDFARRY.md step 9) in many ranges: which parts of the sequences held
+     * only in the arrays also have an entry is found range by range, and which quads' objects share them is
+     * joined back by row, yet the store is method 0's bytes. Packed rows of three shapes with repeating
+     * values, some of them a plain triple's object too, matrices whose inner rows are also objects, a
+     * packed object a record holds (so it keeps its elements), records, slots.
+     */
+    @Test
+    void arraysOnlyInManyRanges() throws Exception {
+        StringBuilder ttl = new StringBuilder("PREFIX : <http://ex.org/>\n");
+        for (int i = 0; i < 1_500; i++) {
+            ttl.append(":e").append(i).append(" :emb ( ").append(i % 97).append(".25E0 ").append(i % 31).append(".5E0 ")
+               .append(i).append(".75E0 ) .\n");
+            if (i % 5 == 0) {
+                ttl.append(":v").append(i).append(" :val ").append(i % 40).append(".25E0 .\n");
+            }
+            if (i % 7 == 0) {
+                ttl.append(":m").append(i).append(" :mat ( ( 1 2 ) ( 3 ").append(i % 9).append(" ) ) .\n");
+                ttl.append(":p").append(i).append(" :pair ( 3 ").append(i % 9).append(" ) .\n");
+            }
+            if (i % 11 == 0) {
+                ttl.append(":w").append(i).append(" :mixed ( \"label\" ( ").append(i % 13).append(" ").append(i % 17)
+                   .append(" ) ) .\n");
+                ttl.append(":u").append(i).append(" :pair ( ").append(i % 13).append(" ").append(i % 17).append(" ) .\n");
+            }
+            if (i % 13 == 0) {
+                ttl.append(":r").append(i).append(" :rec ( \"code").append(i % 5).append("\" ").append(i % 23).append(" ) .\n");
+                ttl.append(":g").append(i).append(" :gap ( undef ").append(i % 3).append(".5E0 undef ) .\n");
+            }
+        }
+        File src = dir.resolve("arrays.ttl").toFile();
+        Files.writeString(src.toPath(), ttl.toString(), StandardCharsets.UTF_8);
+        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options only = new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(
+                1, 2, false, com.ebremer.beakgraph.hdf5.writers.SequenceArrays.TimeUnit.US, true);
+        Path reference = dir.resolve("arrays-method0.h5");
+        com.ebremer.beakgraph.hdf5.writers.HDF5Writer.Builder().setSource(src).setDestination(reference.toFile())
+                .setArrays(only).setSequenceIndex(true).build().write();
+        AtomicInteger ranges = new AtomicInteger();
+        Path sequential = build("arrays-sequential", src, false, SorterProvider.sequential(512, 4096, 16), null, 64, ranges, only);
+        assertEquals(-1, Files.mismatch(reference, sequential), "the sequential disk engine writes method 0's bytes");
+        Path runs = build("arrays-runs", src, false, new UltraSorterProvider(256, 512, 4, pool), pool, 64, ranges, only);
+        assertTrue(ranges.get() > 3, "merged in several ranges of runs: " + ranges.get());
+        assertEquals(-1, Files.mismatch(reference, runs), ranges.get() + " ranges of merged runs");
+        Path memory = build("arrays-memory", src, false, new UltraSorterProvider(1 << 19, 1 << 20, 16, pool), pool, 64, ranges, only);
+        assertTrue(ranges.get() > 3, "merged in several ranges of arrays: " + ranges.get());
+        assertEquals(-1, Files.mismatch(reference, memory), ranges.get() + " ranges in memory");
     }
 
     @Test

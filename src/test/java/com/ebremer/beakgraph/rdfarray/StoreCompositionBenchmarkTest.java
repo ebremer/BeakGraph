@@ -86,13 +86,33 @@ class StoreCompositionBenchmarkTest {
         }
     }
 
+    /** The engine {@code -Dbeakgraph.bench.engine} names: method 0 (the default), or the disk engines 1 and 4. */
+    private static com.ebremer.beakgraph.core.BeakGraphWriter writer(File src, File out, SequenceArrays.Options arrays) {
+        String engine = System.getProperty("beakgraph.bench.engine", "method0");
+        return switch (engine) {
+            case "method0" -> HDF5Writer.Builder().setSource(src).setDestination(out).setArrays(arrays).build();
+            case "method1" -> {
+                var b = com.ebremer.beakgraph.huge.HugeHDF5Writer.Builder().setDestination(out).setArrays(arrays);
+                b.setSource(src);
+                yield b.build();
+            }
+            case "method4" -> {
+                var b = com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer.Builder().setDestination(out)
+                        .setCores(4).setArrays(arrays);
+                b.setSource(src);
+                yield b.build();
+            }
+            default -> throw new IllegalArgumentException("beakgraph.bench.engine: " + engine);
+        };
+    }
+
     private void build(String name, Path src, SequenceArrays.Options arrays) throws Exception {
         File out = dir.resolve(name.replaceAll("[^a-z0-9]+", "_") + ".h5").toFile();
         // Twice: the first run warms the JVM, the second is timed.
         for (int run = 0; run < 2; run++) {
             Files.deleteIfExists(out.toPath());
             long t0 = System.nanoTime();
-            HDF5Writer.Builder().setSource(src.toFile()).setDestination(out).setArrays(arrays).build().write();
+            writer(src.toFile(), out, arrays).write();
             if (run == 1) {
                 System.out.printf(Locale.ROOT, "GATE %-40s %8.1f MB %6.1f s%n", name, out.length() / 1e6,
                         (System.nanoTime() - t0) / 1e9);

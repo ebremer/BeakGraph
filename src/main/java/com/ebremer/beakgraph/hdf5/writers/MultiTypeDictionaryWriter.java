@@ -381,7 +381,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 com.ebremer.beakgraph.hdf5.WritableDataset ds = com.ebremer.beakgraph.hdf5.BlockedEncoder.add(
                         subGroup, Params.SEQUENCE_ARRAYS, classes.length, i -> classes[(int) i]);
                 if (!packedOnly.isEmpty()) {
-                    ds.putAttribute(Params.ARRAYS_ONLY, 1);
+                    ds.putAttribute(Params.ARRAYS_ONLY, 1L);   // int64, as SPECIFICATIONS.md 7.6e says
                 }
             }
             if (sequenceIndex) {

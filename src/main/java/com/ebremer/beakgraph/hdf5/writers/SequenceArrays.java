@@ -119,17 +119,6 @@ public final class SequenceArrays {
     }
 
     /**
-     * Refuses {@code -arrays-only} on an engine that cannot write it yet (RDFARRY.md step 9): its leaves
-     * would be ranked into the dictionary before anything knew they belong only to arrays.
-     */
-    public static void refuseOnly(Options options, String engine) {
-        if (options != null && options.only()) {
-            throw new IllegalArgumentException("-arrays-only (format v8) is written by the in-memory engines"
-                    + " (-method 0, 2, 3) only for now, not by " + engine + " (RDFARRY.md step 9)");
-        }
-    }
-
-    /**
      * Checks that every sequence {@code -arrays-only} left without canonical elements has a tensor or ragged
      * class in {@code arrays}: else it would be in the store nowhere. The ingest's per-sequence test and the
      * classification must agree, and this is where a drift between them would show.
@@ -605,6 +594,11 @@ public final class SequenceArrays {
     public static Object probeAny(long objectId, Node seq, Options options) {
         Row row = probe(objectId, seq, options.minLeaves());
         return (row != null) ? row : RecordArrays.probe(objectId, seq, options.timeUnit(), options.minLeaves());
+    }
+
+    /** Whether a row {@link #probeAny} gave is numeric, a tensor's or ragged class's, not a record's. */
+    public static boolean isNumericRow(Object row) {
+        return row instanceof Row;
     }
 
     /** The object id of a {@link Row} or a record row. */

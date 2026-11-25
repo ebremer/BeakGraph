@@ -4,12 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ebremer.beakgraph.BG;
 import com.ebremer.beakgraph.Params;
-import com.ebremer.beakgraph.WriterEngines;
 import com.ebremer.beakgraph.cmdline.VerifyCommand;
 import com.ebremer.beakgraph.core.BeakGraph;
 import com.ebremer.beakgraph.hdf5.readers.HDF5Reader;
@@ -232,42 +230,66 @@ class ArraysOnlyTest {
         }
     }
 
-    /** Methods 2 and 3 leave out what method 0 leaves out: the same bytes, the element index too, in both containers. */
+    /**
+     * Sequences held only in the arrays and nothing else: no element at all, every number left out of the
+     * dictionary but the one a plain triple also has.
+     */
+    static final String ONLY_PACKED = """
+        PREFIX : <http://ex.org/>
+        :a :emb ( 0.5E0 1.5E0 2.5E0 ) .
+        :b :emb ( 3.5E0 4.5E0 5.5E0 ) .
+        :c :emb ( 6.5E0 undef 8.5E0 ) .
+        :d :val 4.5E0 .
+        """;
+
+    /**
+     * Every engine leaves out what method 0 leaves out, the disk engines by the same rule in their merge: the
+     * same bytes, the element index too, in both containers.
+     */
     @Test
-    void theInMemoryEnginesWriteTheSameV8Store() throws Exception {
-        Path src = dir.resolve("same.ttl");
-        Files.writeString(src, DATA);
-        for (boolean seqindex : new boolean[] {false, true}) {
-            for (String ext : new String[] {".h5", ".zarr.zip"}) {
-                File reference = dir.resolve("same-method0-" + seqindex + ext).toFile();
-                HDF5Writer.Builder().setSource(src.toFile()).setDestination(reference).setArrays(ONLY)
-                        .setSequenceIndex(seqindex).build().write();
-                for (String engine : List.of("method2", "method3")) {
-                    File out = dir.resolve("same-" + engine + "-" + seqindex + ext).toFile();
-                    engineWith(engine, src.toFile(), out, seqindex).write();
-                    String what = engine + ext + (seqindex ? " -seqindex" : "");
-                    assertArrayEquals(Files.readAllBytes(reference.toPath()), Files.readAllBytes(out.toPath()), what);
-                }
-                try (BeakGraph g = BG.getBeakGraph(reference)) {
-                    assertEquals(Params.ARRAYS_ONLY_FORMAT_VERSION, ((HDF5Reader) g.getReader()).getFormatVersion());
+    void everyEngineWritesTheSameV8Store() throws Exception {
+        String[] engines = {"method1", "method2", "method3", "method4", "method5"};
+        int fixture = 0;
+        for (String text : new String[] {DATA, ONLY_PACKED}) {
+            Path src = dir.resolve("same" + fixture + ".ttl");
+            Files.writeString(src, text);
+            for (boolean seqindex : new boolean[] {false, true}) {
+                for (String ext : new String[] {".h5", ".zarr.zip"}) {
+                    String base = "same" + fixture + "-" + seqindex;
+                    File reference = dir.resolve(base + "-method0" + ext).toFile();
+                    HDF5Writer.Builder().setSource(src.toFile()).setDestination(reference).setArrays(ONLY)
+                            .setSequenceIndex(seqindex).build().write();
+                    for (String engine : engines) {
+                        File out = dir.resolve(base + "-" + engine + ext).toFile();
+                        engineWith(engine, src.toFile(), out, seqindex).write();
+                        String what = "fixture " + fixture + ", " + engine + ext + (seqindex ? " -seqindex" : "");
+                        assertArrayEquals(Files.readAllBytes(reference.toPath()), Files.readAllBytes(out.toPath()), what);
+                    }
+                    try (BeakGraph g = BG.getBeakGraph(reference)) {
+                        assertEquals(Params.ARRAYS_ONLY_FORMAT_VERSION, ((HDF5Reader) g.getReader()).getFormatVersion());
+                        assertEquals(parsed(text).getDefaultGraph().size(), stored(g).getDefaultGraph().size());
+                    }
+                    assertNull(verify(reference), base + ext);
                 }
             }
+            fixture++;
         }
     }
 
+    /** A store of packed sequences alone: their leaves have no rows, but for the one a triple also has. */
     @Test
-    void theDiskEnginesRefuseItForNow() throws Exception {
-        Path src = dir.resolve("refuse.ttl");
-        Files.writeString(src, DATA);
-        for (WriterEngines.Engine e : WriterEngines.all().filter(e -> e.diskBased()).toList()) {
-            File out = dir.resolve("refuse-" + e.name() + ".h5").toFile();
-            Exception ex = assertThrows(Exception.class, () -> engineWith(e.name(), src.toFile(), out, false).write(), e.name());
-            boolean named = false;
-            for (Throwable c = ex; c != null; c = c.getCause()) {
-                named |= String.valueOf(c.getMessage()).contains("-arrays-only");
-            }
-            assertTrue(named, e.name() + ": " + ex);
-            assertFalse(out.exists(), e.name() + " left a store");
+    void aStoreOfPackedSequencesAloneHasNoElements() throws Exception {
+        try (BeakGraph g = BG.getBeakGraph(build("alone.h5", ONLY_PACKED, ONLY));
+             BeakGraph c = BG.getBeakGraph(build("alone-copy.h5", ONLY_PACKED, COPY))) {
+            PositionalDictionaryReader d = dictionary(g);
+            assertEquals(0, d.sequenceElementCount());
+            assertTrue(d.getObjects().locate(literal("2.5", "double")) < 1);
+            assertTrue(d.getObjects().locate(literal("4.5", "double")) >= 1, ":d's value");
+            // :b holds :d's value; :c's empty slot takes any value, so it matches too.
+            String join = "SELECT ?s { :d :val ?v . ?s :emb ( ... ?v ... ) }";
+            assertEquals(List.of("b", "c"), subjects(g, join));
+            assertEquals(subjects(c, join), subjects(g, join));
+            assertEquals(List.of("c"), subjects(g, "SELECT ?s { ?s :emb ( ?a undef ?b ) }"));
         }
     }
 

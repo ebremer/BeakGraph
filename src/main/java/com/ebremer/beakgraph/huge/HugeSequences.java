@@ -64,8 +64,9 @@ final class HugeSequences implements AutoCloseable {
      */
     long onSequence(Node seq) throws IOException {
         long k = count++;
-        if (arrays != null) {
-            arrays.onSequence(k, seq);
+        if (arrays != null && arrays.onSequence(k, seq)) {
+            starts.writeLong(elements);   // -arrays-only: held only in the arrays, an empty range
+            return k;
         }
         List<Node> el = seq.getSeq();
         for (int i = 0; i < el.size(); i++) {
@@ -83,6 +84,11 @@ final class HugeSequences implements AutoCloseable {
 
     long count() {
         return count;
+    }
+
+    /** {@code -arrays-only}: whether some sequence is held only in the arrays, without elements. */
+    boolean heldOnlyInArrays() {
+        return arrays != null && arrays.heldCount() > 0;
     }
 
     /** {@code -arrays}: hands every sequence of the encode to {@code a} as well, in order. */

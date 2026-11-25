@@ -1489,7 +1489,8 @@ v8 shows what it costs the reader, which steps 7 and 8 built on element ids:
     suite and the fork's three engine tests pass over v8 stores built by methods 0, 2 and 3, with
     `-seqindex` read on every scan. CI runs them on method 3.
 
-**Part 4 (2026-11-25): in progress.** The disk engines.
+**Part 4 (2026-11-25): done.** `-arrays-only` on the disk engines, methods 1, 4 and 5: every engine now
+writes it, and the six write the same bytes.
 
 - **First, one rule every engine can apply.** Part 1 held a quad's object that packs only in the arrays
   unless a sequence stored with its elements held it, and then did not walk it there either. Whether a
@@ -1504,6 +1505,42 @@ v8 shows what it costs the reader, which steps 7 and 8 built on element ids:
   every row of a tensor or ragged class in a v8 store is held only there, as the reader takes it to be.
   `ArraysOnlyTest`'s `( 101 102 )`, which `( "label" ( 101 102 ) )` holds, is such a sequence: its leaves
   now keep their rows, and two queries join through them.
+- **The ingest** (`HugeBuildPipeline.collectSequence`). A quad's object that packs is not walked into the
+  interior column. Its leaves and inner sequences, at every depth, go to a sixth column, the packed column,
+  each with its quad's row.
+- **The merge** (`mergeRange`). Equal terms now come off the heap in column order, so a term's packed rows
+  come after every other column's rows of it.
+  - A term only the packed column has takes no entry: that is what is left out.
+  - A term with an entry from another column is shared, and its packed rows name the quads whose objects
+    share it. Those rows are sorted by row, and the pass that encodes the quads turns each into its
+    object's sequence ordinal. That is the class's `shared`.
+  - A quad's object that is also an interior literal, and packs, is held back: the merge clears its
+    top-level mark, so no class takes it.
+- **The encode.** `HugeArrays.onSequence` says whether a sequence is held only in the arrays (a top-level
+  row that packs as numbers), and `HugeSequences` then gives it an empty range and no element references.
+  The classes check that each held row has a tensor or ragged class, `sequenceArrays` gets `arraysOnly`
+  (int64, as the spec says; the in-memory writer wrote an int32 and now writes an int64 too), and the store
+  is stamped 8.
+- **Tests.**
+  - `ArraysOnlyTest`: all six engines write method 0's bytes for two fixtures, the mixed one and one of
+    packed sequences alone (no elements at all), with and without `-seqindex`, in HDF5 and Zarr.
+  - `RangedBuildTest.arraysOnlyInManyRanges`: a generated fixture with packed rows of three shapes,
+    values a plain triple shares, matrices whose inner rows are also objects, held-back pairs, records and
+    slots, merged in more than three ranges from runs and from memory: method 0's bytes.
+  - The rdf-array contrib suite and the fork's three engine tests pass over v8 stores from methods 1, 4
+    and 5, with `-seqindex` read on every scan.
+- **Measured** (`StoreCompositionBenchmarkTest`, which now takes `-Dbeakgraph.bench.engine`; 2,000
+  embeddings of 768 doubles, synthetic, one timed run after a warm one):
+
+  | Build | method 0 | method 4 |
+  |---|---|---|
+  | 5 decimals, `-arrays` (v7) | 20.9 MB, 18.2 s | 20.9 MB, 5.4 s |
+  | 5 decimals, `-arrays-only` (v8) | 12.4 MB, 3.4 s | 12.4 MB, 3.2 s |
+  | full precision, `-arrays` (v7) | 34.5 MB, 25.6 s | 34.5 MB, 10.5 s |
+  | full precision, `-arrays-only` (v8) | 12.4 MB, 6.1 s | 12.4 MB, 6.1 s |
+
+  The packed column (1.5 million parts, sorted and merged to find that none is shared) leaves the disk
+  build of v8 1.7× faster than its `-arrays` build, and as fast as method 0's.
 
 ### Step 10: later and optional
 
