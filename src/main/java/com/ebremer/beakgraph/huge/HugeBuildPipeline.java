@@ -164,6 +164,8 @@ public final class HugeBuildPipeline implements AutoCloseable {
     private File sourceRoot;
     /** {@code -arrays}: on with these settings, or off (null). */
     private com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arrays;
+    /** {@code -seqindex}: write the element index (RDFARRY.md step 8). */
+    private boolean sequenceIndex;
     /** Rows a range of the term order holds at least: fewer rows than two of them are merged as one range. */
     private long minRangeRows = Long.getLong("beakgraph.build.rangeRows", 1L << 18);
 
@@ -202,6 +204,12 @@ public final class HugeBuildPipeline implements AutoCloseable {
     /** {@code -arrays} (format v7, RDFARRY.md §3.5): the native arrays, as the in-memory engines write them; null for none. */
     public HugeBuildPipeline setArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options) {
         this.arrays = options;
+        return this;
+    }
+
+    /** {@code -seqindex} (format v7, RDFARRY.md step 8): the element index, as the in-memory engines write it. */
+    public HugeBuildPipeline setSequenceIndex(boolean on) {
+        this.sequenceIndex = on;
         return this;
     }
 
@@ -489,6 +497,9 @@ public final class HugeBuildPipeline implements AutoCloseable {
                 : null;
         if (arraysSupport != null) {
             seqSupport.setArrays(arraysSupport);
+        }
+        if (seqSupport != null) {
+            seqSupport.setIndex(sequenceIndex);
         }
         final StreamingDictionaryWriter[] dicts = new StreamingDictionaryWriter[3];
         // With a pool, a section's terms are decoded and its strings compressed

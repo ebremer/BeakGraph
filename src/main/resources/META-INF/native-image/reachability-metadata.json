@@ -166,6 +166,9 @@
           "name": "arraysTimeUnit"
         },
         {
+          "name": "seqindex"
+        },
+        {
           "name": "features"
         },
         {

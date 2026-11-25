@@ -136,6 +136,12 @@ public class Parameters {
             description = "With -arrays: compress the arrays (HDF5: chunked, shuffle + deflate; Zarr: sharded, zstd)")
     public boolean arraysCompress = false;
 
+    @Parameter(names = {"-seqindex"}, converter = BooleanConverter.class,
+            description = "Also write the element index of the RDF-array sequences (format v7): for each element, "
+                        + "the sequences that hold it, so that patterns such as ( ... :x ... ), or ( ... ?m ... ) "
+                        + "with ?m bound by a join, read only those sequences instead of scanning them all")
+    public boolean seqindex = false;
+
     @Parameter(names = {"-features"}, converter = BooleanConverter.class,
             description = "With -spatial: also derive 2-D shape features (area, axes, ...) per geometry")
     public boolean features = false;

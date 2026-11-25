@@ -51,6 +51,39 @@ final class GraphCounts implements BGReorderTransform.Counts {
         return sum;
     }
 
+    /** Sequence patterns' estimates, by predicate, pattern and the pattern's bound variables. */
+    private final ConcurrentHashMap<java.util.List<Object>, double[]> sequences = new ConcurrentHashMap<>();
+
+    /**
+     * {@code {rows read, rows out}} of a scan of {@code ?s <predicate> <pattern>} over the graphs: the rows
+     * whose object is one of the prefix's sequences, counted from GPOS (two binary searches a graph), times
+     * the shares {@link com.ebremer.beakgraph.hdf5.jena.SequenceMatcher#estimate} works out from the
+     * element index, or guesses without one.
+     */
+    @Override
+    public double[] sequence(Node predicate, Node pattern, java.util.Set<Node> bound) {
+        java.util.TreeSet<String> boundHere = new java.util.TreeSet<>();
+        for (Node v : bound) {
+            if (v.isVariable()) {
+                boundHere.add(v.getName());
+            }
+        }
+        return sequences.computeIfAbsent(java.util.List.of(predicate, pattern, boundHere), k -> {
+            long pi = dict.getPredicates().locate(predicate);
+            if (pi < 1) return new double[] {0, 0};
+            var est = com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.estimate(pattern, dict,
+                    v -> boundHere.contains(v.getName()));
+            if (est == null) return new double[] {0, 0};
+            long rows = 0;
+            for (long gi : graphIds) {
+                long n = IndexCounts.quadsWithPredicateInObjects(reader, gi, pi, est.firstObjectId(), est.lastObjectId());
+                if (n < 0) return null;
+                rows += n;
+            }
+            return new double[] {rows * est.readShare(), rows * est.share() * est.placements()};
+        });
+    }
+
     @Override
     public long objects(Node predicate) {
         return predicate(predicate)[1];

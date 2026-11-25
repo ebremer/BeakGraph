@@ -616,6 +616,7 @@ Type-specific value stores (present only when non-empty; `offsets` points into t
 | `strings` | FCD | Lexical forms of every string-routed literal (§7.3). |
 | `tripleTerms` | bit-packed | RDF 1.2 triple-term component ids, fixed stride 3 (§7.6a). Width: `1 + MinBits(numEntities + numLiteralsSection)`, rounded to 64 if > 57. |
 | `sequenceStarts`, `sequenceElements` | block-structured (§5.1a), each with its `_blocks` directory | *v7:* where each sequence's elements start, and the elements as object-space ids, 0 for an empty slot (§7.6b). |
+| `sequenceIndexElements`, `sequenceIndexStarts`, `sequenceIndexSequences` | block-structured (§5.1a), each with its `_blocks` directory | *v7, optional:* the element index, which sequences hold each element (§7.6d). |
 | `typedLiteralsDictionary` | FCD | The distinct literal datatype IRIs (§7.5.1). |
 | `langs` | FCD | The distinct language tags (§7.5.2). |
 | `integers` | bit-packed | `xsd:int` values. Width: **32** if any value is negative (two's complement), else `1 + MinBits(maxValue)`. |
@@ -885,6 +886,26 @@ order of the spellings (UTF-16). Its group has string attributes `kind` (`record
 - Strings: HDF5 variable-length UTF-8 strings, chunked and deflated under compression; Zarr `data_type`
   `string` with the `vlen-utf8` codec (zstd after it, under sharding, when compressed). uint16 is
   `H5T_STD_U16LE` / `uint16`. Dimension names as above, `item` or `seq` first, then `d1`, ….
+
+### 7.6d The element index (*v7*, optional)
+
+A writer MAY also write which sequences hold each element (the reference writers do with `-seqindex`).
+It is the transpose of §7.6b's two datasets, in the same form, as three block-structured sequences
+(§5.1a) in the literals section, after `sequenceArrays`:
+
+| Dataset | Entries | Meaning |
+|---|---|---|
+| `sequenceIndexElements` | the distinct element ids that some sequence holds | ascending object-space ids; 0, an empty slot, first when any sequence has one |
+| `sequenceIndexStarts` | one more than `sequenceIndexElements` | the first 0, the last the length of `sequenceIndexSequences`: element *k*'s sequences are `sequenceIndexSequences[starts[k], starts[k+1])` |
+| `sequenceIndexSequences` | the distinct (element, sequence) pairs | sequence ordinals *k* (§7.6b), ascending within each element; a sequence that holds an element twice is named once |
+
+* Only the sequences' own elements are indexed, not those of the sequences nested in them: a nested
+  sequence is an element, and its own row has its own entries.
+* A store whose sequences are all `()`, or that has none, has none of the three.
+* The index is a function of §7.6b's datasets alone, so every writer writes the same bytes.
+* A reader MAY ignore the index. With it, the sequences that can match a pattern holding a constant
+  (or `undef`) after a gap are the ones that hold it, and those that can match a variable bound before
+  are the ones that hold its value or an empty slot, since a slot passes a bound variable.
 
 ### 7.6 Blank nodes
 

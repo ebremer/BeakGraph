@@ -148,6 +148,7 @@ public final class VerifyCommand {
             if (deep && problems.isEmpty()) {
                 checkCompoundBands(reader, problems);
                 checkSequences(reader, problems);
+                checkSequenceIndex(reader, problems);
                 checkArrays(reader, problems);
             }
             if (deep && problems.isEmpty()) {
@@ -388,6 +389,58 @@ public final class VerifyCommand {
             }
         } catch (Exception e) {
             problems.add("sequences: " + rootMessage(e));
+        }
+    }
+
+    /**
+     * Deep, {@code -seqindex} (format v7, RDFARRY.md step 8): the element
+     * index is the transpose of the sequences. Its elements ascend, each
+     * element's sequences ascend, every sequence it names holds the element,
+     * and it has as many (element, sequence) pairs as the sequences hold
+     * distinct ones: so it names every sequence of every element, once.
+     */
+    private static void checkSequenceIndex(HDF5Reader reader, List<String> problems) {
+        PositionalDictionaryReader dict = (PositionalDictionaryReader) reader.getDictionary();
+        if (!dict.storesSequenceIndex()) {
+            return;
+        }
+        try {
+            long pairs = 0;
+            for (long id = dict.firstSequenceObjectId(); id <= dict.lastSequenceObjectId(); id++) {
+                pairs += java.util.Arrays.stream(dict.sequenceElementIds(id)).distinct().count();
+            }
+            long[] size = dict.sequenceIndexSize();
+            if (size[1] != pairs) {
+                problems.add("element index: " + size[1] + " (element, sequence) pairs where the sequences hold " + pairs);
+                return;
+            }
+            long previous = -1;
+            for (long k = 0; k < size[0]; k++) {
+                long e = dict.sequenceIndexElement(k);
+                if (e <= previous) {
+                    problems.add("element index: element " + e + " after " + previous + " (the elements must ascend)");
+                    return;
+                }
+                previous = e;
+                long[] range = dict.sequencesHolding(e);
+                long before = -1;
+                for (long q = range[0]; q < range[1]; q++) {
+                    long seq = dict.sequenceIndexObjectId(q);
+                    if (seq <= before || !dict.isSequenceObjectId(seq)) {
+                        problems.add("element index: element " + e + " names sequence " + seq + " after " + before
+                                + " (each element's sequences must ascend, and be sequences)");
+                        return;
+                    }
+                    before = seq;
+                    final long element = e;
+                    if (java.util.Arrays.stream(dict.sequenceElementIds(seq)).noneMatch(x -> x == element)) {
+                        problems.add("element index: element " + e + " names sequence " + seq + ", which does not hold it");
+                        return;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            problems.add("element index: " + rootMessage(e));
         }
     }
 

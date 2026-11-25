@@ -86,6 +86,8 @@ public class PositionalDictionaryWriter implements AutoCloseable {
         // 3b. -arrays: classify the top-level sequences (RDFARRY.md §3.5).
         this.arraysOptions = builder.getArrays();
         this.sequenceArrays = SequenceArrays.of(arraysOptions, literalsdict, maxEntityId, builder.getUniqueObjects());
+        // 3c. -seqindex: the element index after the sequences (RDFARRY.md step 8).
+        SequenceIndex.enable(builder.getSequenceIndex(), literalsdict);
 
         // 4. Initialize Bit-Packed Buffers for columnar ID lists
         // Determine required bit-widths based on the dictionary sizes

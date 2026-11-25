@@ -6,6 +6,7 @@ import java.util.Set;
 import org.apache.jena.graph.Node;
 import org.apache.jena.graph.Triple;
 import org.apache.jena.sparql.core.BasicPattern;
+import org.apache.jena.sparql.core.Var;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderProc;
 import org.apache.jena.sparql.engine.optimizer.reorder.ReorderTransformation;
 import org.slf4j.Logger;
@@ -111,6 +112,15 @@ final class BGReorderTransform implements ReorderTransformation {
         /** Distinct predicates. */
         default long predicates() {
             return -1;
+        }
+
+        /**
+         * A sequence pattern's scan, {@code ?s <predicate> <pattern>} (RDFARRY.md step 8): {@code {rows read,
+         * rows out}}, given which of its variables {@code bound} holds (values unknown); null when it cannot
+         * be counted.
+         */
+        default double[] sequence(Node predicate, Node pattern, Set<Node> bound) {
+            return null;
         }
     }
 
@@ -284,6 +294,10 @@ final class BGReorderTransform implements ReorderTransformation {
     }
 
     private Step step(Triple t, Shape shape, Set<Node> bound, Totals totals) {
+        Step seq = sequenceStep(t, shape, bound);
+        if (seq != null) {
+            return seq;
+        }
         boolean s = isBound(t.getSubject(), bound);
         boolean p = isBound(t.getPredicate(), bound);
         boolean o = isBound(t.getObject(), bound);
@@ -332,6 +346,30 @@ final class BGReorderTransform implements ReorderTransformation {
             access = totals.quads();    // no index prefix: a scan of the graphs
         }
         return new Step(access, fanout);
+    }
+
+    /**
+     * A triple whose object is a sequence pattern (RDFARRY.md step 8), with its predicate a term and the
+     * graphs countable: a scan of the predicate's sequences in the pattern's prefix range, or of the ones
+     * the element index names, matched one by one. Subject free: a lookup that reads those rows, and the
+     * rows that match. Subject bound: the subject's rows of the predicate, read and matched, the share of
+     * them that match. Null for any other triple, or when the counts cannot say.
+     */
+    private Step sequenceStep(Triple t, Shape shape, Set<Node> bound) {
+        if (shape == null || counts == null || !com.ebremer.beakgraph.core.lib.SeqTerms.isPattern(t.getObject())) {
+            return null;
+        }
+        double[] est = counts.sequence(t.getPredicate(), t.getObject(), bound);
+        if (est == null) {
+            return null;
+        }
+        double read = est[0], out = est[1];
+        if (!isBound(t.getSubject(), bound)) {
+            return new Step(Math.max(1, read), out);
+        }
+        double perSubject = Math.max(1, shape.rows() / shape.subjects());
+        double matched = (shape.rows() <= 0) ? 0 : out / shape.rows();
+        return new Step(1 + perSubject, perSubject * matched);
     }
 
     /** {@code t}'s bound-independent figures, or null when its predicate is not a term. */
@@ -415,6 +453,20 @@ final class BGReorderTransform implements ReorderTransformation {
             addObjectVars(bound, t.getSubject());
             addObjectVars(bound, t.getPredicate());
             addObjectVars(bound, t.getObject());
+        }
+        // A sequence pattern binds its elements' variables and its named gaps (RDFARRY.md step 8), unless a
+        // slot leaves one unbound; a later triple joining on one costs as a join.
+        if (o.isNodeSeq() && !o.isConcrete()) {
+            for (Node e : o.getSeq()) {
+                if (com.ebremer.beakgraph.core.lib.SeqTerms.isGap(e)) {
+                    Var g = com.ebremer.beakgraph.core.lib.SeqTerms.gapVar(e);
+                    if (g != null) {
+                        bound.add(g);
+                    }
+                } else {
+                    addObjectVars(bound, e);
+                }
+            }
         }
     }
 }

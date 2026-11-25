@@ -199,8 +199,17 @@ final class SpillBitPackedBuffer implements AutoCloseable, DictionarySinks.LongS
         Files.deleteIfExists(file);
     }
 
+    /**
+     * The values, in order, from the completed temp file, which stays until a transfer deletes it: the
+     * disk engines' element index walks {@code sequenceStarts} beside the elements this way.
+     */
+    Unpacker values() throws IOException {
+        complete();
+        return new Unpacker();
+    }
+
     /** The values of the completed temp file, in order: the inverse of {@link #putValue}. */
-    private final class Unpacker implements BlockedEncoder.Values, AutoCloseable {
+    final class Unpacker implements BlockedEncoder.Values, AutoCloseable {
         private final java.io.InputStream in;
         private long acc;
         private int accCount;

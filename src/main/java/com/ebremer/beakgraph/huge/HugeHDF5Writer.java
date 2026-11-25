@@ -83,6 +83,7 @@ public class HugeHDF5Writer implements BeakGraphWriter {
                         builder.getTermSpillBytes())) {
                     pipeline.setSourceRoot(builder.getSourceRoot());
                     pipeline.setArrays(builder.getArrays());
+                    pipeline.setSequenceIndex(builder.getSequenceIndex());
                     pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
                     pipeline.run(tmp, container);
                 }

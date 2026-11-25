@@ -60,4 +60,15 @@ interface ObjectPattern {
      * bindings may have landed in it (every caller builds one per candidate).
      */
     BindingNodeId match(long objectId, BindingNodeId row, NodeTable nodeTable, ArrayDeque<BindingNodeId> more);
+
+    /**
+     * The stored terms that alone can match for input row {@code row} (null
+     * for none), from an index of their parts: a superset of the matches, so
+     * that a scan may read only them. Null when the pattern names no part
+     * such an index can look up, or the store has none: then every object in
+     * the clamp is a candidate.
+     */
+    default SequenceCandidates candidates(BindingNodeId row) {
+        return null;
+    }
 }

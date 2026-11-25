@@ -311,6 +311,13 @@ final class StreamingDictionaryWriter implements AutoCloseable {
             if (sequenceArrays != null) {
                 sequenceArrays.transferBlockedTo(subGroup, Params.SEQUENCE_ARRAYS);
             }
+            SpillBitPackedBuffer[] index = seqSupport.indexColumns();
+            if (index != null) {
+                // -seqindex: in the order the in-memory writer writes them (SequenceIndex).
+                index[0].transferBlockedTo(subGroup, Params.SEQUENCE_INDEX_ELEMENTS);
+                index[1].transferBlockedTo(subGroup, Params.SEQUENCE_INDEX_STARTS);
+                index[2].transferBlockedTo(subGroup, Params.SEQUENCE_INDEX_SEQUENCES);
+            }
         }
         if (floats != null) floats.transferTo(subGroup, "floats");
         if (doubles != null) doubles.transferTo(subGroup, "doubles");

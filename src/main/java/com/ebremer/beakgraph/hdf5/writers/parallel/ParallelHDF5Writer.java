@@ -62,6 +62,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
                 ParallelPositionalDictionaryWriterBuilder db = new ParallelPositionalDictionaryWriterBuilder();
                 db.setVoidMode(builder.getVoidMode());
                 db.setArrays(builder.getArrays());
+                db.setSequenceIndex(builder.getSequenceIndex());
                 db.setVoidDatasetIri(builder.getVoidDatasetIri());
                 db.setSourceRoot(builder.getSourceRoot());
                 try (ParallelPositionalDictionaryWriter w = db

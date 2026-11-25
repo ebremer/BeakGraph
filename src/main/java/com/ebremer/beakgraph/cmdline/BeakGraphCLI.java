@@ -713,7 +713,8 @@ public class BeakGraphCLI {
                         .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
-                        .setArrays(arraysOptions());
+                        .setArrays(arraysOptions())
+                        .setSequenceIndex(params.seqindex);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 if (params.workdir != null) {
@@ -736,6 +737,7 @@ public class BeakGraphCLI {
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setArrays(arraysOptions())
+                        .setSequenceIndex(params.seqindex)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
@@ -751,6 +753,7 @@ public class BeakGraphCLI {
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setArrays(arraysOptions())
+                        .setSequenceIndex(params.seqindex)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
@@ -767,6 +770,7 @@ public class BeakGraphCLI {
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setArrays(arraysOptions())
+                        .setSequenceIndex(params.seqindex)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
@@ -792,6 +796,7 @@ public class BeakGraphCLI {
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
                         .setArrays(arraysOptions())
+                        .setSequenceIndex(params.seqindex)
                         .setCores(params.cores);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
@@ -813,7 +818,8 @@ public class BeakGraphCLI {
                         .setVoidDatasetIri(voidDatasetIri())
                         .setSpatial(params.spatial)
                         .setFeatures(params.features)
-                        .setArrays(arraysOptions());
+                        .setArrays(arraysOptions())
+                        .setSequenceIndex(params.seqindex);
                 if (source != null) builder.setSource(source);
                 if (sources != null) builder.setSources(sources).setSourceRoot(params.src);
                 return builder.build();

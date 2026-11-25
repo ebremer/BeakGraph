@@ -93,6 +93,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 UltraBGIndex[] indexes = UltraBGIndex.buildBoth(dict, ingest, pool);
                 dict.awaitStorage();
                 dict.classifyArrays(builder.getArrays(), ingest.getUniqueObjects());
+                dict.enableSequenceIndex(builder.getSequenceIndex());
                 // The rank maps and the ingest's node sets served the packing pass
                 // and the column fills, which awaitStorage() has just joined; drop
                 // them before the HDF5 emission allocates its buffers (BG-115).

@@ -32,6 +32,11 @@ import org.junit.jupiter.params.provider.MethodSource;
  * whose run the store holds and does not, slots under every kind of pattern
  * element, bound variables and joins through slots, filters, nested patterns,
  * prefixes, and union reads where one triple stands in several graphs.
+ *
+ * <p>And so do they over the same data built with the element index
+ * ({@code -seqindex}, RDFARRY.md step 8), read for every scan it has
+ * candidates for ({@code beakgraph.seqindex.ratio=0}): a scan of the
+ * sequences an element names answers as a scan of them all.
  */
 class SequenceMatcherParityTest {
 
@@ -39,6 +44,7 @@ class SequenceMatcherParityTest {
     static Path dir;
 
     private static BeakGraph store;
+    private static BeakGraph indexed;
 
     private static final String DATA = """
         PREFIX : <http://ex.org/>
@@ -151,7 +157,29 @@ class SequenceMatcherParityTest {
             "SELECT * { GRAPH <urn:x-arq:UnionGraph> { ?s :p ( ... ?x ... ) } }",
             "SELECT * { GRAPH <urn:x-arq:UnionGraph> { VALUES ?x { 5 } ?s :p ( ?x ) } }",
             "SELECT * { ?s :p ( ?x ) GRAPH ?g { ?t :p ( ?x ) } }",
-            "SELECT * { GRAPH :g2 { ?s :p ( ?x ?x ?x ) } }");
+            "SELECT * { GRAPH :g2 { ?s :p ( ?x ?x ?x ) } }",
+            // containment, which the element index answers: constants, undef and bound variables after a gap
+            "SELECT * { ?s :p ( ... 7 ... ) }",
+            "SELECT * { ?s :p ( ... 2 ... ) }",
+            "SELECT * { ?s :p ( ... undef ... ) }",
+            "SELECT * { ?s :p ( ?x ... 3 ... ) }",
+            "SELECT * { ?s :p ( ... :b ... ) }",
+            "SELECT * { ?s :p ( ... ( 1 2 ) ... ) }",
+            "SELECT * { ?s :p ( ... 42 ... ) }",
+            "SELECT * { ?y :q ?m . ?s :p ( ... ?m ... ) }",
+            "SELECT * { ?y :q ?m . ?s :p ( ?m ... ) }",
+            "SELECT * { ?y :q ?m . ?s :p ( ... ?m ) }",
+            "SELECT * { ?y :q ?m . ?s :p ( ... ?m undef ... ) }",
+            "SELECT * { ?s :p ( ... ?m ... ) . ?y :q ?m }",
+            "SELECT * { :b :q ?m . ?s :p ( ... ?m ... ) }",
+            "SELECT * { :i :q ?m . ?s :p ( ... ?m ... ) }",
+            "SELECT * { ?y :q ?m . ?s :p ( ...?r ?m ) }",
+            "SELECT * { GRAPH ?g { ?s :p ( ... 7 ... ) } }",
+            "SELECT * FROM :g1 FROM :g2 { ?s :p ( ... 5 ... ) }",
+            "SELECT * FROM :g1 FROM :g2 { ?s :p ( ... undef ... ) }",
+            "SELECT * { GRAPH <urn:x-arq:UnionGraph> { ?s :p ( ... 7 ... ) } }",
+            "SELECT * { :e :q ?m GRAPH <urn:x-arq:UnionGraph> { ?s :p ( ... ?m ... ) } }",
+            "SELECT * { :e :q ?m . GRAPH ?g { ?s :p ( ... ?m ... ) } }");
     }
 
     @BeforeAll
@@ -161,20 +189,30 @@ class SequenceMatcherParityTest {
         File out = dir.resolve("parity.h5").toFile();
         HDF5Writer.Builder().setSource(src.toFile()).setDestination(out).build().write();
         store = BG.getBeakGraph(out);
+        File withIndex = dir.resolve("parity-seqindex.h5").toFile();
+        HDF5Writer.Builder().setSource(src.toFile()).setDestination(withIndex).setSequenceIndex(true).build().write();
+        indexed = BG.getBeakGraph(withIndex);
     }
 
     /** The queries with rows: two routes that agree on empty answers have shown nothing. */
     private static final java.util.concurrent.atomic.AtomicInteger ANSWERED = new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger RAN = new java.util.concurrent.atomic.AtomicInteger();
 
+    /** The queries whose index run read the element index's candidates. */
+    private static final java.util.concurrent.atomic.AtomicInteger INDEXED = new java.util.concurrent.atomic.AtomicInteger();
+
     @AfterAll
     static void close() throws Exception {
         if (store != null) {
             store.close();
         }
+        if (indexed != null) {
+            indexed.close();
+        }
         long queries = queries().count();
         if (RAN.get() == queries) {   // the whole matrix ran, not one query picked out
-            assertTrue(ANSWERED.get() >= queries - 5, ANSWERED.get() + " of " + queries + " queries have rows");
+            assertTrue(ANSWERED.get() >= queries - 7, ANSWERED.get() + " of " + queries + " queries have rows");
+            assertTrue(INDEXED.get() >= 25, "only " + INDEXED.get() + " of " + queries + " queries read the element index");
         }
     }
 
@@ -183,40 +221,64 @@ class SequenceMatcherParityTest {
     void matchingOnIdsAnswersAsJenaArray(String body) {
         Query query = QueryFactory.create("PREFIX : <http://ex.org/>\n" + body, Syntax.syntaxARQ);
         long delegated = PatternMatchBG.DELEGATED.get();
-        Object onIds = run(query, false);
+        Object onIds = run(store, query, false);
+        long scans = com.ebremer.beakgraph.hdf5.jena.BGIteratorPOS.CANDIDATE_SCANS.sum();
+        Object onIndex = run(indexed, query, false);
+        if (com.ebremer.beakgraph.hdf5.jena.BGIteratorPOS.CANDIDATE_SCANS.sum() > scans) {
+            INDEXED.incrementAndGet();
+        }
         assertEquals(delegated, PatternMatchBG.DELEGATED.get(), "matching on ids handed a BGP to jena-array's solver");
-        Object reference = run(query, true);
+        Object reference = run(store, query, true);
         RAN.incrementAndGet();
         assertTrue(PatternMatchBG.DELEGATED.get() > delegated, "the reference run did not go to jena-array's solver");
-        if (onIds instanceof ResultSetRewindable a && reference instanceof ResultSetRewindable r) {
+        if (reference instanceof ResultSetRewindable r) {
             if (r.size() > 0) {
                 ANSWERED.incrementAndGet();
             }
+        }
+        same(reference, onIds, "on ids");
+        same(reference, onIndex, "on ids, through the element index");
+    }
+
+    private static void same(Object reference, Object answer, String route) {
+        if (answer instanceof ResultSetRewindable a && reference instanceof ResultSetRewindable r) {
             boolean same = ResultsCompare.equalsByTerm(r, a);
             r.reset();
             a.reset();
             assertTrue(same, "rows differ\n--- jena-array:\n" + ResultSetFormatter.asText(r)
-                    + "--- on ids:\n" + ResultSetFormatter.asText(a));
+                    + "--- " + route + ":\n" + ResultSetFormatter.asText(a));
+            r.reset();
+            a.reset();
         } else {
-            assertEquals(reference, onIds);
+            assertEquals(reference, answer, route);
         }
     }
 
-    /** The answer, read whole: a rewindable result set, or ASK's boolean. */
-    private static Object run(Query query, boolean delegate) {
+    /**
+     * The answer, read whole: a rewindable result set, or ASK's boolean. The element index, where the store
+     * has one, is read for every scan it has candidates for.
+     */
+    private static Object run(BeakGraph g, Query query, boolean delegate) {
         String before = System.getProperty(PatternMatchBG.DELEGATE_PROPERTY);
+        String ratio = System.getProperty("beakgraph.seqindex.ratio");
         System.setProperty(PatternMatchBG.DELEGATE_PROPERTY, Boolean.toString(delegate));
-        try (QueryExecution qe = QueryExecution.dataset(store.getDataset()).query(query).build()) {
+        System.setProperty("beakgraph.seqindex.ratio", "0");
+        try (QueryExecution qe = QueryExecution.dataset(g.getDataset()).query(query).build()) {
             if (query.isAskType()) {
                 return qe.execAsk();
             }
             return ResultSetFactory.makeRewindable(qe.execSelect());
         } finally {
-            if (before == null) {
-                System.clearProperty(PatternMatchBG.DELEGATE_PROPERTY);
-            } else {
-                System.setProperty(PatternMatchBG.DELEGATE_PROPERTY, before);
-            }
+            restore(PatternMatchBG.DELEGATE_PROPERTY, before);
+            restore("beakgraph.seqindex.ratio", ratio);
+        }
+    }
+
+    private static void restore(String key, String value) {
+        if (value == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, value);
         }
     }
 }

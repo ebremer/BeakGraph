@@ -74,6 +74,13 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final long numSlots;
     // -arrays: each sequence row's array class (null without one).
     private final BitPackedUnSignedLongBuffer sequenceArrays;
+    // -seqindex (RDFARRY.md step 8): the element index, the transpose of the
+    // two above: element k of indexElements (ascending, 0 a slot) is held by
+    // the sequences indexSequences[indexStarts[k], indexStarts[k+1]). All
+    // three null without one.
+    private final BitPackedUnSignedLongBuffer indexElements;
+    private final BitPackedUnSignedLongBuffer indexStarts;
+    private final BitPackedUnSignedLongBuffer indexSequences;
     // Injected by PositionalDictionaryReader, as the triple-term resolver is:
     // an element lives anywhere in the object space.
     private volatile SequenceSupport sequenceSupport;
@@ -151,6 +158,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.sequenceStarts = StoreProfile.packed(d, Params.SEQUENCE_STARTS);
         this.sequenceElements = StoreProfile.packed(d, Params.SEQUENCE_ELEMENTS);
         this.sequenceArrays = StoreProfile.packed(d, Params.SEQUENCE_ARRAYS);
+        this.indexElements = StoreProfile.packed(d, Params.SEQUENCE_INDEX_ELEMENTS);
+        this.indexStarts = StoreProfile.packed(d, Params.SEQUENCE_INDEX_STARTS);
+        this.indexSequences = StoreProfile.packed(d, Params.SEQUENCE_INDEX_SEQUENCES);
         StoreArray elementsDS = StoreProfile.array(d, Params.SEQUENCE_ELEMENTS);
         this.numSlots = (elementsDS != null && elementsDS.hasAttribute(Params.NUM_SLOTS))
                 ? StoreProfile.longAttr(elementsDS, Params.NUM_SLOTS) : 0;
@@ -174,7 +184,33 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         if (langTags != null) requireRows("langTags", langTags.getNumEntries());
         if (langDirs != null) requireRows("langDirs", langDirs.getNumEntries());
         checkSequenceSuffix();
+        checkSequenceIndex();
         checkTripleTermBand();
+    }
+
+    /**
+     * The element index, when there is one, must have all three columns and
+     * agree with the sequences in its counts: one more start than elements,
+     * the first 0 and the last the sequence column's length, and no more
+     * (element, sequence) pairs than the store has elements. What each
+     * column holds, {@code -verify -deep} checks against the elements.
+     */
+    private void checkSequenceIndex() {
+        if (indexElements == null && indexStarts == null && indexSequences == null) {
+            return;
+        }
+        long elements = (sequenceElements == null) ? 0 : sequenceElements.getNumEntries();
+        boolean consistent = indexElements != null && indexStarts != null && indexSequences != null
+                && sequenceStarts != null
+                && indexStarts.getNumEntries() == indexElements.getNumEntries() + 1
+                && indexStarts.get(0) == 0
+                && indexStarts.get(indexElements.getNumEntries()) == indexSequences.getNumEntries()
+                && indexSequences.getNumEntries() <= elements;
+        if (!consistent) {
+            throw new IllegalStateException("Corrupt HDF5: dictionary '" + getName() + "': the element index ("
+                    + Params.SEQUENCE_INDEX_ELEMENTS + ", " + Params.SEQUENCE_INDEX_STARTS + ", "
+                    + Params.SEQUENCE_INDEX_SEQUENCES + ") does not match the sequence stores");
+        }
     }
 
     private void requireRows(String column, long rows) {
@@ -498,6 +534,52 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     /** How many sequence elements are empty slots (the {@code numSlots} attribute; 0 without sequences). */
     public long numSlots() {
         return numSlots;
+    }
+
+    /** True when the section has the element index ({@code -seqindex}). */
+    public boolean hasSequenceIndex() {
+        return indexElements != null;
+    }
+
+    /**
+     * Where the sequences holding element {@code elementId} (object space, 0
+     * for a slot) lie in the element index's sequence column:
+     * {@code {from, to}}, {@code to} exclusive, or null when none holds it.
+     * The caller guarantees {@link #hasSequenceIndex}.
+     */
+    public long[] sequenceIndexRange(long elementId) {
+        long n = indexElements.getNumEntries();
+        long k = (n == 0) ? -1 : indexElements.binarySearch(0, n - 1, elementId);
+        return (k < 0) ? null : new long[] {indexStarts.get(k), indexStarts.get(k + 1)};
+    }
+
+    /** The sequence ordinal at position {@code q} of the element index's sequence column. */
+    public long sequenceIndexOrdinal(long q) {
+        return indexSequences.get(q);
+    }
+
+    /**
+     * The first position in {@code [from, to)} of the element index's
+     * sequence column whose ordinal is at least {@code ordinal}, or
+     * {@code to} when there is none: the positions of one element hold its
+     * sequences in ascending order.
+     */
+    public long sequenceIndexSeek(long from, long to, long ordinal) {
+        if (from >= to) {
+            return to;
+        }
+        long q = indexSequences.lowerBound(from, to - 1, ordinal);
+        return (q < 0) ? to : q;
+    }
+
+    /** {@code {distinct elements, (element, sequence) pairs}} of the element index; the caller guarantees one. */
+    public long[] sequenceIndexSize() {
+        return new long[] {indexElements.getNumEntries(), indexSequences.getNumEntries()};
+    }
+
+    /** Element {@code k} of the element index's element column, ascending. */
+    public long sequenceIndexElement(long k) {
+        return indexElements.get(k);
     }
 
     /** Number of sequence elements, slots included, over every sequence of the section. */

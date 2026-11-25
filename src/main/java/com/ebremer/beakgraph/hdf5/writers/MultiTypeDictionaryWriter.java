@@ -55,6 +55,8 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private long numSlots = 0;
     // -arrays: each sequence row's array class (RDFARRY.md §3.5), set before add().
     private long[] sequenceArrays;
+    // -seqindex: write the element index after the sequences (RDFARRY.md step 8).
+    private boolean sequenceIndex;
     private final BitPackedUnSignedLongBuffer nativedatatypes;
     private DataOutputBuffer floats;
     private DataOutputBuffer doubles;
@@ -372,6 +374,10 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                 long[] classes = sequenceArrays;
                 com.ebremer.beakgraph.hdf5.BlockedEncoder.add(subGroup, Params.SEQUENCE_ARRAYS, classes.length, i -> classes[(int) i]);
             }
+            if (sequenceIndex) {
+                SequenceIndex.add(subGroup, sequenceStarts::get, sequenceStarts.getNumEntries() - 1,
+                        sequenceElements::get, sequenceElements.getNumEntries());
+            }
         }
         if (floats != null) floats.add(subGroup);
         if (doubles != null) doubles.add(subGroup);
@@ -392,6 +398,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             throw new IllegalStateException(classes.length + " sequence classes for " + rows + " sequences");
         }
         this.sequenceArrays = classes.clone();
+    }
+
+    /** {@code -seqindex}: writes the element index ({@link SequenceIndex}) after the sequences, if there are any. */
+    public void setSequenceIndex(boolean on) {
+        this.sequenceIndex = on;
     }
 
     // --- UNSUPPORTED METHODS IN WRITER CONTEXT ---

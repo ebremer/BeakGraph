@@ -411,6 +411,63 @@ class ReorderTransformTest {
         assertEquals(2, order[1], "the county's label before the wells' cells: " + java.util.Arrays.toString(order));
     }
 
+    /**
+     * A sequence pattern binds the variables inside it (RDFARRY.md step 8): a triple after it that joins on
+     * one costs as a join on a bound subject, not as a cross product with every row of its predicate.
+     */
+    @Test
+    void aSequencePatternBindsItsVariables() {
+        Var s = Var.alloc("s"), a = Var.alloc("a"), z = Var.alloc("z"), r = Var.alloc("r");
+        Node pattern = NodeFactory.createSeqNode(List.of(a, org.apache.jena.sparql.core.Node_SeqGap.create(r)));
+        List<Triple> triples = List.of(Triple.create(s, RARE, pattern), Triple.create(a, COMMON, z));
+        // RARE's 5 rows, then for each, COMMON's rows of one subject (995 / 100): about 60. A cross
+        // product with all of COMMON's 995 rows would be about 5,000.
+        double cost = skewed().cost(triples, new int[] {0, 1});
+        assertTrue(cost < 100, "the join on ?a costs " + cost);
+        triples = List.of(Triple.create(s, RARE, pattern), Triple.create(r, COMMON, z));
+        assertTrue(skewed().cost(triples, new int[] {0, 1}) < 100, "a named gap binds its variable too");
+    }
+
+    /**
+     * With the graphs' counts, a sequence pattern costs what its scan reads and matches
+     * ({@link BGReorderTransform.Counts#sequence}): one whose constant is rare goes first, before a check
+     * that keeps half the rows, where as every row of its predicate it came after.
+     */
+    @Test
+    void aSequencePatternCostsWhatItsScanReadsAndMatches() {
+        Var t = Var.alloc("t");
+        Node roster = NodeFactory.createURI("http://ex/roster"), league = NodeFactory.createURI("http://ex/league");
+        Node east = NodeFactory.createURI("http://ex/east"), player = NodeFactory.createURI("http://ex/player42");
+        Node gap = org.apache.jena.sparql.core.Node_SeqGap.create();
+        Node pattern = NodeFactory.createSeqNode(List.of(gap, player, gap));
+        BGReorderTransform.Counts counts = new BGReorderTransform.Counts() {
+            @Override public long matches(Node p, Node o) {
+                if (p.equals(league)) return (o == null) ? 2000 : 1000;
+                return p.equals(roster) && o == null ? 2000 : -1;
+            }
+            @Override public long objects(Node p) { return p.equals(league) ? 2 : 2000; }
+            @Override public long subjects(Node p) { return 2000; }
+            @Override public double[] sequence(Node p, Node o, Set<Node> bound) {
+                return p.equals(roster) ? new double[] {28, 28} : null;
+            }
+        };
+        Map<Node, Long> cP = new HashMap<>();
+        cP.put(roster, 2000L);
+        cP.put(league, 2000L);
+        BGReorderTransform reorder = new BGReorderTransform(VoidStats.of(4000, 2000, 2002, 2, cP), counts);
+        BasicPattern bp = new BasicPattern();
+        bp.add(Triple.create(t, league, east));
+        bp.add(Triple.create(t, roster, pattern));
+        assertEquals(roster, reorder.reorder(bp).get(0).getPredicate());
+        // Without the sequence figures, the pattern is every roster, and the league check goes first.
+        BGReorderTransform blind = new BGReorderTransform(VoidStats.of(4000, 2000, 2002, 2, cP), new BGReorderTransform.Counts() {
+            @Override public long matches(Node p, Node o) { return counts.matches(p, o); }
+            @Override public long objects(Node p) { return counts.objects(p); }
+            @Override public long subjects(Node p) { return counts.subjects(p); }
+        });
+        assertEquals(league, blind.reorder(bp).get(0).getPredicate());
+    }
+
     @Test
     void objectOnlyPatternDeferredUntilJoinable() {
         Var a = Var.alloc("a"), b = Var.alloc("b");

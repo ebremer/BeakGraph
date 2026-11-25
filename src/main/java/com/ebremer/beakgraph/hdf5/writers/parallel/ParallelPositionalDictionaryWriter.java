@@ -115,6 +115,8 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
         this.arraysOptions = builder.getArrays();
         this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(arraysOptions, literalsdict,
                 maxEntityId, builder.getUniqueObjects());
+        // -seqindex: the element index after the sequences, as method 0 writes it.
+        com.ebremer.beakgraph.hdf5.writers.SequenceIndex.enable(builder.getSequenceIndex(), literalsdict);
 
         // 4. Initialize Bit-Packed Buffers for columnar ID lists
         // Determine required bit-widths based on the dictionary sizes

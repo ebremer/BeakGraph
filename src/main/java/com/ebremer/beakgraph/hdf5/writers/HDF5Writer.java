@@ -34,6 +34,7 @@ public class HDF5Writer implements BeakGraphWriter {
     private final File dest;
     private final VoidMode voidMode;
     private final SequenceArrays.Options arrays;
+    private final boolean sequenceIndex;
     private final String voidDatasetIri;
     private final boolean spatial;
     private final boolean features;
@@ -46,6 +47,7 @@ public class HDF5Writer implements BeakGraphWriter {
         this.dest = builder.getDestination();
         this.voidMode = builder.getVoidMode();
         this.arrays = builder.getArrays();
+        this.sequenceIndex = builder.getSequenceIndex();
         this.voidDatasetIri = builder.getVoidDatasetIri();
         this.spatial = builder.getSpatial();
         this.features = builder.getFeatures();
@@ -67,6 +69,7 @@ public class HDF5Writer implements BeakGraphWriter {
                     .setSources(sources)
                     .setVoidMode(voidMode)
                     .setArrays(arrays)
+                    .setSequenceIndex(sequenceIndex)
                     .setVoidDatasetIri(voidDatasetIri)
                     .setDestination(dest)
                     .setName(Params.DICTIONARY)

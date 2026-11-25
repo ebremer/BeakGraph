@@ -429,9 +429,14 @@ public class HDF5Reader implements BGReader {
      * placeholder it never looks up.
      */
     private Iterator<BindingNodeId> readGraph(long gid, BindingNodeId binding, Triple pattern, ExprList filter, NodeTable nodeTable) {
+        return readGraph(gid, binding, pattern, filter, nodeTable, null);
+    }
+
+    private Iterator<BindingNodeId> readGraph(long gid, BindingNodeId binding, Triple pattern, ExprList filter, NodeTable nodeTable,
+            com.ebremer.beakgraph.hdf5.jena.SequenceCandidates restriction) {
         GRAPH_READS.increment();
         Quad quadPattern = new Quad(Quad.unionGraph, pattern.getSubject(), pattern.getPredicate(), pattern.getObject());
-        return new BGIteratorMaster(this, dict, binding, quadPattern, filter, nodeTable, gid);
+        return new BGIteratorMaster(this, dict, binding, quadPattern, filter, nodeTable, gid, restriction);
     }
 
     /**
@@ -537,14 +542,23 @@ public class HDF5Reader implements BGReader {
      * positions are identical across graphs by construction).
      */
     private Iterator<BindingNodeId> readUnion(java.util.PrimitiveIterator.OfLong graphIds, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable) {
+        return readUnion(graphIds, bnid, triple, filter, nodeTable, null);
+    }
+
+    /** As above, each graph's scan of a predicate restricted to {@code restriction}'s objects when it is not null. */
+    private Iterator<BindingNodeId> readUnion(java.util.PrimitiveIterator.OfLong graphIds, BindingNodeId bnid, Triple triple, ExprList filter, NodeTable nodeTable,
+            com.ebremer.beakgraph.hdf5.jena.SequenceCandidates restriction) {
         Node object = triple.getObject();
         if (object.isNodeSeq() && com.ebremer.beakgraph.core.lib.SeqTerms.isPattern(object)) {
             // A sequence pattern (RDFARRY.md §3.7): the union's triples first, each once, then the match. A
             // dedup on the pattern's variables would merge a gap's placements, and the distinct triples that
-            // match alike when a variable bound already passes a slot.
+            // match alike when a variable bound already passes a slot. The scan of each graph reads only the
+            // sequences the element index names, when it names few (RDFARRY.md step 8).
             Triple scan = Triple.create(triple.getSubject(), triple.getPredicate(), UNION_SEQUENCE_OBJECT);
             return com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.matchEach(
-                    readUnion(graphIds, bnid, scan, filter, nodeTable), UNION_SEQUENCE_OBJECT, object, dict, nodeTable);
+                    readUnion(graphIds, bnid, scan, filter, nodeTable,
+                            com.ebremer.beakgraph.hdf5.jena.SequenceMatcher.candidatesFor(object, dict, bnid)),
+                    UNION_SEQUENCE_OBJECT, object, dict, nodeTable);
         }
         List<Var> varList = new ArrayList<>(3);
         for (Node n : new Node[]{triple.getSubject(), triple.getPredicate(), triple.getObject()}) {
@@ -570,7 +584,7 @@ public class HDF5Reader implements BGReader {
         if (holders != null) {
             graphs = Iter.filter(graphs, gid -> java.util.Arrays.binarySearch(holders, gid) >= 0);
         }
-        Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gid -> readGraph(gid, bnid, triple, filter, nodeTable));
+        Iterator<BindingNodeId> chain = Iter.flatMap(graphs, gid -> readGraph(gid, bnid, triple, filter, nodeTable, restriction));
         // The dedup set is inherent to union set-semantics (rows arrive per
         // graph, not globally sorted). Up to three variables - every pattern
         // shape before triple-term patterns existed - keeps the historical

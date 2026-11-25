@@ -30,6 +30,16 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
      *                graph from the pattern and binding as usual
      */
     public BGIteratorMaster(HDF5Reader reader, PositionalDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long graphId) {
+        this(reader, dict, bnid, quad, filter, nodeTable, graphId, null);
+    }
+
+    /**
+     * @param restriction the only objects that can match, from the element index (RDFARRY.md step 8), when a
+     *                    union read scans a variable object for a sequence pattern it matches afterwards; null
+     *                    for every object. Only the scan of a graph's predicate (GPOS) reads it.
+     */
+    public BGIteratorMaster(HDF5Reader reader, PositionalDictionaryReader dict, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long graphId,
+            SequenceCandidates restriction) {
         // THE term classifier (the one-classifier rule's (CHANGELOG.md "Format v5 design notes") fix - one classification, here):
         // - A CONCRETE triple term is a bound term like any other; locate()
         //   answers it (a miss is correctly empty), so no special routing.
@@ -78,7 +88,7 @@ public class BGIteratorMaster implements Iterator<BindingNodeId> {
                         // G, P bound -> Find S, O (Index: GPOS)
                         IndexReader gpos = reader.getIndexReader(Index.GPOS);
                         if (gpos != null) {
-                            chain = new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable, graphId);
+                            chain = new BGIteratorPOS(dict, gpos, bnid, quad, filter, nodeTable, graphId, restriction);
                         } else {
                             throw new IllegalStateException("Required GPOS index is missing from this BeakGraph file");
                         }

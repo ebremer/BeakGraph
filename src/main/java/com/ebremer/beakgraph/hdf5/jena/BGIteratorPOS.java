@@ -48,9 +48,26 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
     private ObjectPattern matcher;
     // A pattern's further matches of one row (a sequence pattern's gaps), handed out before the scan moves on.
     private java.util.ArrayDeque<BindingNodeId> more;
+    // The element index's candidates (RDFARRY.md step 8): when a sequence pattern names few sequences, the
+    // walk goes from one to the next of them that the run holds, instead of object by object. Null: every
+    // object of the run.
+    private SequenceCandidates candidates;
+
+    /**
+     * The candidates are read instead of the run when there are fewer than one in this many of the run's
+     * objects ({@code beakgraph.seqindex.ratio}, default 8; 0 reads them always, as the tests do). Each
+     * costs two binary searches, one in the run and one in the index, where the scan reads an object's
+     * starts and elements; the merge takes the fewer of the two lists' entries, so it seldom loses.
+     */
+    static final int CANDIDATE_RATIO = 8;
+
+    /** The ratio in force: the property, read when a scan has candidates to weigh. */
+    private static long candidateRatio() {
+        return Long.getLong("beakgraph.seqindex.ratio", CANDIDATE_RATIO);
+    }
 
     public BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, -1);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, -1, null);
     }
 
     /**
@@ -59,7 +76,18 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      *                 resolve the graph from the pattern and binding
      */
     BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi) {
-        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, presetGi);
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, presetGi, null);
+    }
+
+    /**
+     * As {@link #BGIteratorPOS(PositionalDictionaryReader, IndexReader, BindingNodeId, Quad, ExprList, NodeTable, long)},
+     * the objects further restricted to {@code restriction}'s, when it is not null and names few enough of
+     * the run's: a union read of a sequence pattern scans a variable object, and matches the rows after
+     * removing duplicate triples, so the candidates come from the caller (HDF5Reader.readUnion).
+     */
+    BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long presetGi,
+            SequenceCandidates restriction) {
+        this(dict, reader, bnid, quad, filter, nodeTable, -1, Long.MAX_VALUE, 0, Long.MAX_VALUE, presetGi, restriction);
     }
 
     /**
@@ -69,7 +97,7 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      * subject block belongs to the chunk owning its position.
      */
     BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable, long oPosLo, long oPosHi) {
-        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, 0, Long.MAX_VALUE, -1);
+        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, 0, Long.MAX_VALUE, -1, null);
     }
 
     /**
@@ -81,11 +109,11 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
      */
     BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable,
             long oPosLo, long oPosHi, long sPosLo, long sPosHi) {
-        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, sPosLo, sPosHi, -1);
+        this(dict, reader, bnid, quad, filter, nodeTable, oPosLo, oPosHi, sPosLo, sPosHi, -1, null);
     }
 
     private BGIteratorPOS(PositionalDictionaryReader dict, IndexReader reader, BindingNodeId bnid, Quad quad, ExprList filter, NodeTable nodeTable,
-            long oPosLo, long oPosHi, long sPosLo, long sPosHi, long presetGi) {
+            long oPosLo, long oPosHi, long sPosLo, long sPosHi, long presetGi, SequenceCandidates restriction) {
         this.parentBinding = bnid;
         this.nodeTable = nodeTable;
         this.sPosLo = sPosLo;
@@ -170,8 +198,21 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
 
         if (oStart > oEnd || oStart < 0) return;
 
-        // D. Initialize Nested Iteration
-        this.curOIndex = oStart;
+        // D. The element index: a sequence pattern that names few of the run's objects reads only them.
+        SequenceCandidates c = (restriction != null) ? restriction.fresh()
+                : (matcher != null) ? matcher.candidates(bnid) : null;
+        if (c != null && c.holdsSlots()) {
+            // The sequences with a slot, candidates for any bound variable: those of this run alone.
+            long[] slots = dict.slotSequencesAmong(gi, pi, () -> slotSequences(dict, rawOStart, rawOEnd));
+            c = (slots == null) ? null : c.withSlots(slots);
+        }
+        if (c != null && c.size() * candidateRatio() < oEnd - oStart + 1) {
+            candidates = c;
+            CANDIDATE_SCANS.increment();
+        }
+
+        // E. Initialize Nested Iteration
+        this.curOIndex = (candidates != null) ? nextCandidate(oStart) : oStart;
         setupSubjectRange(true);
         advanceToNextValid();
 
@@ -216,6 +257,14 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
                 hasNext = true;
                 return;
             }
+            if (candidates != null) {
+                // The next candidate the run holds: a jump, so its block is placed by select.
+                curOIndex = nextCandidate(curOIndex + 1);
+                if (curOIndex <= oEnd) {
+                    setupSubjectRange(true);
+                }
+                continue;
+            }
             curOIndex++;
             if (curOIndex <= oEnd) {
                 // Re-anchor with a full select if the previous placement failed
@@ -225,6 +274,76 @@ public class BGIteratorPOS implements Iterator<BindingNodeId> {
             }
         }
     }
+
+    /**
+     * The first object position at or after {@code from} whose object is a candidate, or {@code oEnd + 1}:
+     * a merge of the run with the candidates, each side binary-searched for the other's next id.
+     */
+    private long nextCandidate(long from) {
+        while (from <= oEnd) {
+            long c = candidates.current();
+            if (c == Long.MAX_VALUE) {
+                break;
+            }
+            long pos = So.lowerBound(from, oEnd, c);
+            if (pos < 0) {
+                break;
+            }
+            long o = So.get(pos);
+            if (o == c) {
+                candidates.advance();
+                return pos;
+            }
+            candidates.seek(o);
+            from = pos;
+        }
+        return oEnd + 1;
+    }
+
+    /** The most sequences with a slot a run's list keeps ({@link #slotSequences}): 8 MiB. */
+    private static final int SLOT_LIST_LIMIT = 1 << 20;
+
+    /**
+     * The sequences with a slot among the objects at run positions {@code [lo, hi]}, ascending, by a merge
+     * of the run with the element index's slot entries; null when they are more than half the run (or
+     * {@value #SLOT_LIST_LIMIT}), too many to name few candidates.
+     */
+    private long[] slotSequences(PositionalDictionaryReader dict, long lo, long hi) {
+        SequenceCandidates slots = SequenceCandidates.holding(dict, 0);
+        long limit = Math.min(SLOT_LIST_LIMIT, Math.max(1024, (hi - lo + 1) / 2));
+        long[] out = new long[16];
+        int n = 0;
+        long pos = lo;
+        while (pos <= hi) {
+            long c = slots.current();
+            if (c == Long.MAX_VALUE) {
+                break;
+            }
+            long p = So.lowerBound(pos, hi, c);
+            if (p < 0) {
+                break;
+            }
+            long o = So.get(p);
+            if (o == c) {
+                if (n == limit) {
+                    return null;
+                }
+                if (n == out.length) {
+                    out = java.util.Arrays.copyOf(out, n * 2);
+                }
+                out[n++] = c;
+                slots.advance();
+                pos = p + 1;
+            } else {
+                slots.seek(o);
+                pos = p;
+            }
+        }
+        return java.util.Arrays.copyOf(out, n);
+    }
+
+    /** Scans that read the element index's candidates instead of their whole run (tests). */
+    public static final java.util.concurrent.atomic.LongAdder CANDIDATE_SCANS = new java.util.concurrent.atomic.LongAdder();
 
     // Look-ahead: the next deliverable row, or null. Rows whose repeated-variable
     // bindings conflict are skipped here, so hasNext() only answers true when

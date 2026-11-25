@@ -293,6 +293,12 @@ final class UltraDictionary {
         this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(options, literalsdict, maxEntityId, topLevel);
     }
 
+    /** {@code -seqindex}: the literals section writes the element index after its sequences, as method 0's does. */
+    void enableSequenceIndex(boolean on) throws IOException {
+        awaitStorage();
+        com.ebremer.beakgraph.hdf5.writers.SequenceIndex.enable(on, literalsdict);
+    }
+
     /** Writes {@code /.BG/arrays} under {@code group} when {@code -arrays} packed any sequence. */
     void addArrays(WritableGroup group) {
         if (sequenceArrays != null) {

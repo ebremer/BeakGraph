@@ -166,6 +166,34 @@ public final class IndexCounts {
     }
 
     /**
+     * The quads of graph {@code gi} with predicate id {@code pi} whose object
+     * id lies in {@code [lo, hi]}, from GPOS alone: the predicate's objects by
+     * two binary searches in its O-level block, then the rows under them. The
+     * rows a sequence pattern's scan reads, clamped to its prefix's sequences
+     * (RDFARRY.md step 8).
+     *
+     * @return the count (0 for an absent graph or predicate), or -1 without a
+     *         GPOS index
+     */
+    public static long quadsWithPredicateInObjects(HDF5Reader reader, long gi, long pi, long lo, long hi) {
+        IndexReader gpos = reader.getIndexReader(Index.GPOS);
+        if (gpos == null) return -1;
+        if (pi < 1 || lo > hi) return 0;
+        long[] predicates = RangeSelect.firstLevelRange(gpos, 'P', gi);
+        if (predicates == null) return 0;
+        long p = gpos.getIDBuffer('P').binarySearch(predicates[0], predicates[1], pi);
+        if (p < 0) return 0;
+        long[] objects = RangeSelect.childRange(gpos, 'O', p, p);
+        if (objects == null) return 0;
+        BitPackedUnSignedLongBuffer o = gpos.getIDBuffer('O');
+        long a = o.lowerBound(objects[0], objects[1], lo);
+        long b = o.upperBound(objects[0], objects[1], hi);
+        if (a < 0 || b < 0 || a > b) return 0;
+        long[] rows = RangeSelect.childRange(gpos, 'S', a, b);
+        return (rows == null) ? 0 : rows[1] - rows[0] + 1;
+    }
+
+    /**
      * The quads of graph {@code gi} with predicate id {@code pi}, and their
      * distinct objects - {@code {rows, objects}} - from GPOS alone: the
      * predicate's position by binary search in the graph's P-level block, its

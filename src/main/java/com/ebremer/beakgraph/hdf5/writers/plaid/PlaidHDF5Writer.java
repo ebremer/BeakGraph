@@ -74,6 +74,7 @@ public class PlaidHDF5Writer implements BeakGraphWriter {
                         provider, pool, new PlaidIngest(builder.cores))) {
                     pipeline.setSourceRoot(builder.getSourceRoot());
                     pipeline.setArrays(builder.getArrays());
+                    pipeline.setSequenceIndex(builder.getSequenceIndex());
                     pipeline.setVoidDatasetIri(builder.getVoidDatasetIri());
                     if (builder.rangeRows > 0) {
                         pipeline.setMinRangeRows(builder.rangeRows);

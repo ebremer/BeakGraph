@@ -408,6 +408,27 @@ public class RdfArraySequenceStorageTest {
         }
     }
 
+    /**
+     * Ten elements, eight of them slots: an element's index reaches 9, where only two elements resolve. The
+     * disk engines' element sort was bounded by the two, and hugeUltra's packed sorter, which holds each
+     * row in as many bits as the bound needs, refused index 9.
+     */
+    @Test
+    void theDiskEnginesStoreSequencesThatAreMostlySlots() throws Exception {
+        String text = "PREFIX : <http://ex.org/>\n:a :p ( 1 undef undef undef undef undef undef undef undef 2 ) .\n";
+        Path src = dir.resolve("slots.ttl");
+        Files.writeString(src, text);
+        DatasetGraph expected = parsed(text);
+        for (WriterEngines.Engine e : WriterEngines.all().filter(WriterEngines.Engine::diskBased).toList()) {
+            File out = dir.resolve("slots-" + e.name() + ".h5").toFile();
+            e.buildStore(src.toFile(), out);
+            try (BeakGraph b = BG.getBeakGraph(out)) {
+                assertTrue(IsoMatcher.isomorphic(expected, stored(b)), e.name() + " round trip");
+                assertEquals(8L, dictionary(b).numSlots(), e.name() + " numSlots");
+            }
+        }
+    }
+
     @Test
     void theDiskEnginesRefuseWhatMethodZeroRefuses() throws Exception {
         // The guards are one walk (SeqTerms.walk) for every engine.

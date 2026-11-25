@@ -119,6 +119,16 @@ public class PositionalDictionaryWriterBuilder {
 
     public SequenceArrays.Options getArrays() { return arrays; }
 
+    private boolean sequenceIndex;
+
+    /** {@code -seqindex} (format v7, RDFARRY.md step 8): the element index of the sequences. */
+    public PositionalDictionaryWriterBuilder setSequenceIndex(boolean on) {
+        this.sequenceIndex = on;
+        return this;
+    }
+
+    public boolean getSequenceIndex() { return sequenceIndex; }
+
     /** VoID statistics mode (NONE default, EXACT = -void, SKETCH = -voidsketch). */
     public PositionalDictionaryWriterBuilder setVoidMode(com.ebremer.beakgraph.core.VoidMode mode) {
         this.voidMode = mode;

@@ -39,7 +39,10 @@ import org.apache.jena.sparql.core.Var;
  * <p>Compiled once per iterator. The leading constant elements are a prefix,
  * and the sequences holding a prefix are an id range ({@link #firstObjectId},
  * {@link #lastObjectId}) that the scan is clamped to; the length is checked
- * from the starts before an element is read.
+ * from the starts before an element is read. With the element index
+ * ({@code -seqindex}), an element after the prefix that every match holds -
+ * a constant, {@code undef}, or a variable the row binds already - names the
+ * only sequences that can match ({@link #candidates}).
  */
 public final class SequenceMatcher implements ObjectPattern {
 
@@ -54,11 +57,13 @@ public final class SequenceMatcher implements ObjectPattern {
     private final int[] fixedFrom;          // the non-gap elements at index i and after
     private final int[] gapsFrom;           // the gaps at index i and after
     private final long first, last;
+    private final int prefix;               // the leading constants, which first..last already stands for
     private final boolean multiple;
 
     private SequenceMatcher(PositionalDictionaryReader dict, byte[] kind, long[] constant, Var[] var,
-                            ObjectPattern[] nested, long first, long last) {
+                            ObjectPattern[] nested, long first, long last, int prefix) {
         this.dict = dict;
+        this.prefix = prefix;
         this.n = kind.length;
         this.kind = kind;
         this.constant = constant;
@@ -130,7 +135,7 @@ public final class SequenceMatcher implements ObjectPattern {
         if (range == null) {
             return null;
         }
-        return new SequenceMatcher(dict, kind, constant, var, nested, range[0], range[1]);
+        return new SequenceMatcher(dict, kind, constant, var, nested, range[0], range[1], prefix);
     }
 
     /**
@@ -162,6 +167,87 @@ public final class SequenceMatcher implements ObjectPattern {
         });
     }
 
+    /**
+     * The element index's candidates for {@code pattern} and input row {@code row} ({@link #candidates}), or
+     * null when it names none or the store has no index; none at all when the pattern can match nothing.
+     */
+    public static SequenceCandidates candidatesFor(Node pattern, PositionalDictionaryReader dict, BindingNodeId row) {
+        if (!dict.hasSequenceIndex()) {
+            return null;
+        }
+        SequenceMatcher m = compile(pattern, dict);
+        return (m == null) ? SequenceCandidates.holding(dict) : m.candidates(row);
+    }
+
+    /**
+     * What the join reorder weighs a sequence pattern by (RDFARRY.md step 8), apart from the rows its
+     * predicate has in the prefix's sequences, {@code firstObjectId..lastObjectId}, which only the indexes
+     * count: the share of those rows that match, the share the scan reads, and the rows a match gives.
+     *
+     * @param share the matching share: for each element after the prefix that every match holds - a
+     *              constant, {@code undef}, or a variable bound before - the share of the sequences
+     *              holding it (the element index's count; {@link #GUESS} without one), multiplied
+     * @param readShare the share the scan reads: the rarest such element's, when the element index lets the
+     *                  scan read only its sequences; else 1
+     * @param placements the rows one matching sequence gives: with two gaps or more around a variable left
+     *                   free, about as many as the free run's places, {@code length - fixed + 1}, per gap
+     *                   past the first; else 1
+     */
+    public record Estimate(long firstObjectId, long lastObjectId, double share, double readShare, double placements) {}
+
+    /**
+     * The share of sequences guessed to hold an element when the store has no element index to count them:
+     * Jena's guess for a constant.
+     */
+    public static final double GUESS = 0.1;
+
+    /**
+     * The estimate for {@code pattern} given which variables are bound before it (their values unknown);
+     * null when it matches nothing in the store.
+     */
+    public static Estimate estimate(Node pattern, PositionalDictionaryReader dict, java.util.function.Predicate<Var> bound) {
+        SequenceMatcher m = compile(pattern, dict);
+        if (m == null) {
+            return null;
+        }
+        boolean index = dict.hasSequenceIndex();
+        double sequences = Math.max(1, dict.sequenceCount());
+        double perElement = 0, slotShare = 0;
+        if (index) {
+            long[] size = dict.sequenceIndexSize();
+            perElement = (size[0] == 0) ? 0 : (double) size[1] / size[0];
+            long[] slots = (dict.numSlots() > 0) ? dict.sequencesHolding(0) : null;
+            slotShare = (slots == null) ? 0 : (slots[1] - slots[0]) / sequences;
+        }
+        double share = 1, rarest = 1;
+        int free = 0;
+        for (int i = m.prefix; i < m.n; i++) {
+            double s;
+            if (m.kind[i] == CONSTANT) {
+                long[] r = index ? dict.sequencesHolding(m.constant[i]) : null;
+                s = index ? ((r == null) ? 0 : (r[1] - r[0]) / sequences) : GUESS;
+            } else if (m.kind[i] == VARIABLE && bound.test(m.var[i])) {
+                s = index ? Math.min(1, perElement / sequences + slotShare) : GUESS;
+            } else {
+                if (m.kind[i] == VARIABLE || m.kind[i] == NESTED) {
+                    free++;
+                }
+                continue;
+            }
+            share *= s;
+            rarest = Math.min(rarest, s);
+        }
+        double readShare = (index && rarest * BGIteratorPOS.CANDIDATE_RATIO < 1) ? rarest : 1;
+        double placements = 1;
+        int gaps = m.gapsFrom[0];
+        if (gaps >= 2 && free > 0) {
+            long[] a = dict.sequenceBounds(m.first), b = dict.sequenceBounds(m.last);
+            double length = (double) (b[1] - a[0]) / (m.last - m.first + 1);
+            placements = Math.min(1e6, Math.pow(Math.max(1, length - m.fixedFrom[0] + 1), Math.min(gaps - 1, free)));
+        }
+        return new Estimate(m.first, m.last, share, readShare, placements);
+    }
+
     @Override
     public long firstObjectId() {
         return first;
@@ -175,6 +261,45 @@ public final class SequenceMatcher implements ObjectPattern {
     @Override
     public boolean multiple() {
         return multiple;
+    }
+
+    /**
+     * The sequences that can match for input row {@code row}, from the
+     * element index: those holding the rarest element after the prefix that
+     * every match must hold. That is a constant or {@code undef} (a slot),
+     * which matches only itself, or a variable {@code row} binds already,
+     * which matches its value or passes a slot: the sequences holding either.
+     * A variable bound to a term the store does not hold passes only a slot.
+     * Null without the index, or when no element names sequences: a gap, a
+     * nested pattern, an unbound variable, or one bound to a predicate id.
+     */
+    @Override
+    public SequenceCandidates candidates(BindingNodeId row) {
+        if (!dict.hasSequenceIndex()) {
+            return null;
+        }
+        boolean slots = dict.numSlots() > 0;
+        SequenceCandidates best = null;
+        for (int i = prefix; i < n; i++) {
+            SequenceCandidates c = null;
+            if (kind[i] == CONSTANT) {
+                c = SequenceCandidates.holding(dict, constant[i]);
+            } else if (kind[i] == VARIABLE && row != null) {
+                long b = row.get(var[i]);
+                if (b == NodeId.NONE || NodeId.isPredicateSpace(b)) {
+                    continue;
+                }
+                if (NodeId.isSpecial(b)) {
+                    c = slots ? SequenceCandidates.holding(dict, 0) : SequenceCandidates.holding(dict);
+                } else {
+                    c = slots ? SequenceCandidates.holding(dict, NodeId.id(b), 0) : SequenceCandidates.holding(dict, NodeId.id(b));
+                }
+            }
+            if (c != null && (best == null || c.size() < best.size())) {
+                best = c;
+            }
+        }
+        return best;
     }
 
     @Override

@@ -154,6 +154,102 @@ public class PositionalDictionaryReader implements GSPODictionary {
     }
 
     /**
+     * Whether readers opened from now on use the element index of a store that has one
+     * ({@code beakgraph.seqindex.read}, default true): false answers every sequence pattern by the scan, to
+     * compare the two or to step around the index.
+     */
+    public static boolean sequenceIndexReadsEnabled() {
+        return !"false".equalsIgnoreCase(System.getProperty("beakgraph.seqindex.read"));
+    }
+
+    private final boolean sequenceIndexReads = sequenceIndexReadsEnabled();
+
+    /**
+     * True when the store has the element index of its sequences ({@code -seqindex}, RDFARRY.md step 8) and
+     * this reader uses it ({@link #sequenceIndexReadsEnabled}).
+     */
+    public boolean hasSequenceIndex() {
+        return sequenceIndexReads && storesSequenceIndex();
+    }
+
+    /** True when the store has the element index, whether or not this reader uses it ({@code -verify}). */
+    public boolean storesSequenceIndex() {
+        return literals != null && firstSequenceObjectId != Long.MAX_VALUE && literals.hasSequenceIndex();
+    }
+
+    /**
+     * Where the stored sequences holding element {@code elementId} (an
+     * object-space id, 0 for a slot) lie in the element index:
+     * {@code {from, to}}, {@code to} exclusive, for {@link #sequenceIndexObjectId}
+     * and {@link #sequenceIndexSeek}; null when no sequence holds it. The
+     * caller guarantees {@link #hasSequenceIndex}.
+     */
+    public long[] sequencesHolding(long elementId) {
+        return literals.sequenceIndexRange(elementId);
+    }
+
+    /** The object id of the sequence at position {@code q} of the element index. */
+    public long sequenceIndexObjectId(long q) {
+        return firstSequenceObjectId + literals.sequenceIndexOrdinal(q);
+    }
+
+    /**
+     * The first position in {@code [from, to)} of the element index whose
+     * sequence has object id {@code objectId} or a later one; {@code to} when
+     * none has.
+     */
+    public long sequenceIndexSeek(long from, long to, long objectId) {
+        long ordinal = objectId - firstSequenceObjectId;
+        return (ordinal <= 0) ? from : literals.sequenceIndexSeek(from, to, ordinal);
+    }
+
+    /** {@code {distinct elements, (element, sequence) pairs}} of the element index; the caller guarantees one. */
+    public long[] sequenceIndexSize() {
+        return literals.sequenceIndexSize();
+    }
+
+    /** Element {@code k} of the element index, in ascending order of id (the first is 0 when there are slots). */
+    public long sequenceIndexElement(long k) {
+        return literals.sequenceIndexElement(k);
+    }
+
+    private record GraphPredicate(long gi, long pi) {}
+
+    /** What {@link #slotSequencesAmong} keeps for a run that holds too many to be worth it. */
+    private static final long[] MANY_SLOTS = new long[0];
+
+    /** Past this many runs, {@link #slotSequencesAmong} works them out each time instead of keeping them. */
+    private static final int MAX_SLOT_RUNS = 1 << 16;
+
+    private final java.util.concurrent.ConcurrentHashMap<GraphPredicate, long[]> slotSequences =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * The sequences with a slot among the objects of graph {@code gi}'s predicate {@code pi}, ascending
+     * (RDFARRY.md step 8): what {@code compute} works out, once for this reader's life, since the store does
+     * not change. Null when {@code compute} found too many to keep (it returns null then). The element
+     * index's slot entries span the store, where a predicate's objects may hold few slots or none, and
+     * they are candidates for every bound variable.
+     */
+    public long[] slotSequencesAmong(long gi, long pi, java.util.function.Supplier<long[]> compute) {
+        GraphPredicate key = new GraphPredicate(gi, pi);
+        long[] s = slotSequences.get(key);
+        if (s == null) {
+            long[] r = compute.get();
+            s = (r == null) ? MANY_SLOTS : r;
+            if (slotSequences.size() < MAX_SLOT_RUNS) {
+                slotSequences.putIfAbsent(key, s);
+            }
+        }
+        return (s == MANY_SLOTS) ? null : s;
+    }
+
+    /** The number of stored sequences: the length of the sequence suffix. */
+    public long sequenceCount() {
+        return (firstSequenceObjectId == Long.MAX_VALUE) ? 0 : lastSequenceObjectId - firstSequenceObjectId + 1;
+    }
+
+    /**
      * Where the elements of the stored sequence with object id
      * {@code objectId} begin and end (exclusive) in the element store; the
      * caller guarantees {@link #isSequenceObjectId}.

@@ -57,6 +57,18 @@ public final class WriterEngines {
                 Integer.parseInt(parts[1].trim()), false);
     }
 
+    /**
+     * {@code -Dbeakgraph.test.seqindex=true}: every engine builds with {@code -seqindex}, so the suites that
+     * build through here also answer their sequence patterns through the element index (RDFARRY.md step 8);
+     * run them with {@code -Dbeakgraph.seqindex.ratio=0} too, or the index is read only where it names few
+     * of a scan's objects, which a small fixture seldom does.
+     */
+    public static final String SEQINDEX_PROPERTY = "beakgraph.test.seqindex";
+
+    static boolean testSequenceIndex() {
+        return Boolean.getBoolean(SEQINDEX_PROPERTY);
+    }
+
     /** Names the engine the W3C suites and the triple-term tests build with. */
     public static final String ENGINE_PROPERTY = "beakgraph.test.engine";
 
@@ -78,33 +90,33 @@ public final class WriterEngines {
     public static Stream<Engine> all() {
         return Stream.of(
             new Engine("method0-HDF5Writer", false, (src, dest) ->
-                HDF5Writer.Builder().setSource(src).setDestination(dest).setArrays(testArrays()).build()),
+                HDF5Writer.Builder().setSource(src).setDestination(dest).setArrays(testArrays()).setSequenceIndex(testSequenceIndex()).build()),
             new Engine("method1-Huge", true, (src, dest) -> {
-                HugeHDF5Writer.Builder b = HugeHDF5Writer.Builder().setDestination(dest).setArrays(testArrays());
+                HugeHDF5Writer.Builder b = HugeHDF5Writer.Builder().setDestination(dest).setArrays(testArrays()).setSequenceIndex(testSequenceIndex());
                 b.setSource(src);
                 return b.build();
             }),
             new Engine("method2-Parallel", false, (src, dest) -> {
                 ParallelHDF5Writer.Builder b = ParallelHDF5Writer.Builder()
-                        .setDestination(dest).setCores(2).setArrays(testArrays());
+                        .setDestination(dest).setCores(2).setArrays(testArrays()).setSequenceIndex(testSequenceIndex());
                 b.setSource(src);
                 return b.build();
             }),
             new Engine("method3-Ultra", false, (src, dest) -> {
                 UltraHDF5Writer.Builder b = UltraHDF5Writer.Builder()
-                        .setDestination(dest).setCores(2).setArrays(testArrays());
+                        .setDestination(dest).setCores(2).setArrays(testArrays()).setSequenceIndex(testSequenceIndex());
                 b.setSource(src);
                 return b.build();
             }),
             new Engine("method4-HugeUltra", true, (src, dest) -> {
                 HugeUltraHDF5Writer.Builder b = HugeUltraHDF5Writer.Builder()
-                        .setDestination(dest).setCores(2).setArrays(testArrays());
+                        .setDestination(dest).setCores(2).setArrays(testArrays()).setSequenceIndex(testSequenceIndex());
                 b.setSource(src);
                 return b.build();
             }),
             new Engine("method5-Plaid", true, (src, dest) -> {
                 PlaidHDF5Writer.Builder b = PlaidHDF5Writer.Builder()
-                        .setDestination(dest).setCores(2).setArrays(testArrays());
+                        .setDestination(dest).setCores(2).setArrays(testArrays()).setSequenceIndex(testSequenceIndex());
                 b.setSource(src);
                 return b.build();
             })

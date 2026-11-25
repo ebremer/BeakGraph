@@ -101,6 +101,18 @@ public abstract class AbstractGraphBuilder<T extends AbstractGraphBuilder<T>> {
         return arrays;
     }
 
+    protected boolean sequenceIndex;
+
+    /** {@code -seqindex}: the element index of the sequences (format v7, RDFARRY.md step 8); off by default. */
+    public T setSequenceIndex(boolean on) {
+        this.sequenceIndex = on;
+        return self();
+    }
+
+    public boolean getSequenceIndex() {
+        return sequenceIndex;
+    }
+
     public T setSpatial(boolean flag) {
         this.spatial = flag;
         return self();

@@ -33,6 +33,15 @@ public class Params {
     public static final String NUM_SLOTS = "numSlots";
     /** With -arrays (format v7, RDFARRY.md §3.5): each sequence row's array class, 0 when unpacked. */
     public static final String SEQUENCE_ARRAYS = "sequenceArrays";
+    /**
+     * With -seqindex (format v7, RDFARRY.md step 8): the element index, the sequence section's transpose.
+     * Element k of {@link #SEQUENCE_INDEX_ELEMENTS} (the distinct element ids, ascending, 0 for a slot) is
+     * held by the sequences {@link #SEQUENCE_INDEX_SEQUENCES}{@code [starts[k], starts[k+1])} (ordinals,
+     * ascending), where {@code starts} is {@link #SEQUENCE_INDEX_STARTS}.
+     */
+    public static final String SEQUENCE_INDEX_ELEMENTS = "sequenceIndexElements";
+    public static final String SEQUENCE_INDEX_STARTS = "sequenceIndexStarts";
+    public static final String SEQUENCE_INDEX_SEQUENCES = "sequenceIndexSequences";
     /** The native arrays' group under {@code .BG}. */
     public static final String ARRAYS = "arrays";
     public static final String ENTITIES = "entities";
