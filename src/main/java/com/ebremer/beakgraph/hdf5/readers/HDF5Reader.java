@@ -129,10 +129,10 @@ public class HDF5Reader implements BGReader {
             this.formatVersion = readFormatVersion(bg);
             this.hasFormatVersionAttribute = bg.hasAttribute(Params.FORMAT_VERSION_ATTR);
             this.numQuads = readNumQuads(bg);
-            if (formatVersion > Params.FORMAT_VERSION) {
+            if (formatVersion > Params.MAX_FORMAT_VERSION) {
                 throw new IllegalStateException(
                         "BeakGraph HDF5 format version " + formatVersion + " in " + uri
-                      + " is newer than this build supports (max " + Params.FORMAT_VERSION
+                      + " is newer than this build supports (max " + Params.MAX_FORMAT_VERSION
                       + "). Upgrade BeakGraph.");
             }
             if (formatVersion < Params.RANK_DIRECTORY_MIN_VERSION) {
@@ -152,7 +152,9 @@ public class HDF5Reader implements BGReader {
                         "Not a BeakGraph file (no '" + Params.BG + "/" + Params.DICTIONARY + "' group): " + uri);
             }
             this.dict = new PositionalDictionaryReader(dictionary);
-            if (PackedSequences.enabled() && isLocal(uri)) {
+            // A store with sequences held only in its arrays (format v8) reads them there whatever is set: it
+            // has no other copy.
+            if (dict.arraysOnly() || (PackedSequences.enabled() && isLocal(uri))) {
                 // Packed sequences read their values from /.BG/arrays (RDFARRY.md §3.6); the group
                 // opens on the first such read, so a store opens without touching it. Local stores
                 // only, for now: over HTTP the canonical path's reads go through BeakGraph's block

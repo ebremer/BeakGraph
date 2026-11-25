@@ -88,6 +88,20 @@ public class Params {
     // and the triple terms the band just before it. Absence means "no
     // sequences", so a store without them has v6's shape, stamped 7.
     public static final int FORMAT_VERSION = 7;
+    //
+    // v8 (RDFARRY.md step 9, -arrays-only): the sequences a tensor or ragged
+    // class of /.BG/arrays holds may have no canonical elements (an empty
+    // sequenceStarts range), their leaves no dictionary rows; sequenceArrays
+    // then carries ARRAYS_ONLY. Only such a store is stamped 8, so a store
+    // without them stays readable by a v7 build.
+    public static final int ARRAYS_ONLY_FORMAT_VERSION = 8;
+    /** The newest format this build reads. */
+    public static final int MAX_FORMAT_VERSION = ARRAYS_ONLY_FORMAT_VERSION;
+    /**
+     * On {@link #SEQUENCE_ARRAYS} (format v8): 1 when the sequences of its tensor and ragged classes are stored
+     * only in {@code /.BG/arrays}.
+     */
+    public static final String ARRAYS_ONLY = "arraysOnly";
     // First format version whose dictionary orders composite (cdt) literals the
     // way the current NodeComparator does. Older files containing them are
     // refused at open (see the v4 note above).

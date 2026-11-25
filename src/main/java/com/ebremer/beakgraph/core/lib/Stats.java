@@ -44,6 +44,32 @@ public class Stats {
     public long numSequences = 0;
 
     /**
+     * Forgets the literal counts - the values' ranges and counts by storage, the strings, the triple terms
+     * and the sequences - so that they can be counted again over a changed set of literals
+     * ({@code -arrays-only}, which leaves the leaves of packed sequences out). The entity, predicate and
+     * graph counts stay.
+     */
+    public void resetLiterals() {
+        maxLong = Long.MIN_VALUE;
+        minLong = Long.MAX_VALUE;
+        numLong = 0;
+        maxInteger = Integer.MIN_VALUE;
+        minInteger = Integer.MAX_VALUE;
+        numInteger = 0;
+        maxFloat = -Float.MAX_VALUE;
+        minFloat = Float.MAX_VALUE;
+        numFloat = 0;
+        maxDouble = -Double.MAX_VALUE;
+        minDouble = Double.MAX_VALUE;
+        numDouble = 0;
+        numStrings = 0;
+        longestStringLength = Integer.MIN_VALUE;
+        shortestStringLength = Integer.MAX_VALUE;
+        numTripleTerms = 0;
+        numSequences = 0;
+    }
+
+    /**
      * The bit width the dictionary writer allocates for the integers section:
      * 0 when there are none, 32 when a negative value forces the full
      * two's-complement pattern, otherwise a sign bit plus the bits of the

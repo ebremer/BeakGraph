@@ -81,6 +81,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
     private final BitPackedUnSignedLongBuffer indexElements;
     private final BitPackedUnSignedLongBuffer indexStarts;
     private final BitPackedUnSignedLongBuffer indexSequences;
+    // -arrays-only (format v8, RDFARRY.md step 9): the sequences of the tensor and ragged classes have no
+    // canonical elements, only their rows in /.BG/arrays.
+    private final boolean arraysOnly;
     // Injected by PositionalDictionaryReader, as the triple-term resolver is:
     // an element lives anywhere in the object space.
     private volatile SequenceSupport sequenceSupport;
@@ -158,6 +161,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         this.sequenceStarts = StoreProfile.packed(d, Params.SEQUENCE_STARTS);
         this.sequenceElements = StoreProfile.packed(d, Params.SEQUENCE_ELEMENTS);
         this.sequenceArrays = StoreProfile.packed(d, Params.SEQUENCE_ARRAYS);
+        StoreArray classesDS = StoreProfile.array(d, Params.SEQUENCE_ARRAYS);
+        this.arraysOnly = classesDS != null && classesDS.hasAttribute(Params.ARRAYS_ONLY)
+                && StoreProfile.longAttr(classesDS, Params.ARRAYS_ONLY) == 1;
         this.indexElements = StoreProfile.packed(d, Params.SEQUENCE_INDEX_ELEMENTS);
         this.indexStarts = StoreProfile.packed(d, Params.SEQUENCE_INDEX_STARTS);
         this.indexSequences = StoreProfile.packed(d, Params.SEQUENCE_INDEX_SEQUENCES);
@@ -467,13 +473,23 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             throw new IllegalStateException("Sequence row at ID " + id + " in dictionary '"
                     + getName() + "' but no sequence store/resolver is wired");
         }
+        PackedSequences p = packedSequences;
+        if (arraysOnly) {
+            if (p == null) {
+                throw new IllegalStateException("Dictionary '" + getName() + "' stores sequences only in /.BG/arrays"
+                        + " (format v8), but they are not wired to be read");
+            }
+            List<Node> held = p.heldOnly(k);
+            if (held != null) {
+                return com.ebremer.beakgraph.core.lib.SeqTerms.view(held);
+            }
+        }
         long start = sequenceStarts.get(k);
         long length = sequenceStarts.get(k + 1) - start;
         if (length < 0 || length > Integer.MAX_VALUE) {
             throw new IllegalStateException("Corrupt HDF5: sequence at ID " + id + " in dictionary '"
                     + getName() + "' has length " + length);
         }
-        PackedSequences p = packedSequences;
         List<Node> elements = (packed && p != null) ? p.row(k, (int) length) : null;
         return com.ebremer.beakgraph.core.lib.SeqTerms.view(
                 (elements != null) ? elements : new SequenceRow(start, (int) length, support));
@@ -493,14 +509,36 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
         if (typeOrdinal < 0 || typeOrdinal >= DT_VALUES.length || DT_VALUES[typeOrdinal] != DataType.SEQUENCE) {
             throw new IllegalArgumentException("id [" + id + "] is no sequence row");
         }
+        if (heldOnlyInArrays(id)) {
+            throw new IllegalArgumentException("sequence [" + id + "] is stored only in /.BG/arrays (format v8)");
+        }
         return sequence(id, offsets.get(idx), false);
     }
 
     private volatile PackedSequences packedSequences;
 
-    /** Reads every sequence from its canonical elements from now on. */
+    /**
+     * Reads every sequence from its canonical elements from now on: those that have them. In an
+     * {@code -arrays-only} store the arrays are the only copy of their sequences, so nothing changes.
+     */
     void disablePackedReads() {
-        packedSequences = null;
+        if (!arraysOnly) {
+            packedSequences = null;
+        }
+    }
+
+    /** True when this section stores the sequences of its tensor and ragged classes only in {@code /.BG/arrays} (format v8). */
+    public boolean arraysOnly() {
+        return arraysOnly;
+    }
+
+    /** True when the sequence row at section id {@code id} is held only in {@code /.BG/arrays} (format v8). */
+    public boolean heldOnlyInArrays(long id) {
+        if (!arraysOnly) {
+            return false;
+        }
+        PackedSequences p = packedSequences;
+        return p != null && p.heldOnly(offsets.get(id - 1)) != null;
     }
 
     /**
@@ -776,7 +814,9 @@ public class MultiTypeDictionaryReader extends AbstractDictionary {
             return -(numEntries + 1) - 1;
         }
         SequenceSupport support = sequenceSupport;
-        if (support == null) {
+        if (support == null || arraysOnly) {
+            // -arrays-only: a sequence held only in /.BG/arrays has no element ids, and its leaves may have no
+            // ids at all, so the suffix is searched on terms, in the order the writer sorted it by.
             return SEARCH_BY_TERMS;
         }
         List<Node> elements = seq.getSeq();

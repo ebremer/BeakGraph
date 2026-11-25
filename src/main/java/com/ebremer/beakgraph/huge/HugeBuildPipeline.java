@@ -203,6 +203,7 @@ public final class HugeBuildPipeline implements AutoCloseable {
 
     /** {@code -arrays} (format v7, RDFARRY.md §3.5): the native arrays, as the in-memory engines write them; null for none. */
     public HugeBuildPipeline setArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options) {
+        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.refuseOnly(options, "the disk engines (-method 1, 4, 5)");
         this.arrays = options;
         return this;
     }

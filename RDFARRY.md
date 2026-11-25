@@ -1376,6 +1376,53 @@ v8 shows what it costs the reader, which steps 7 and 8 built on element ids:
   (2) Matching on values: constants, prefixes, `shared`, candidates. (3) Methods 2 and 3. (4) The disk
   engines. (5) Verify, export and the benchmarks.
 
+**Part 1 (2026-11-25): done.** The v8 format, `-arrays-only` on `-method 0`, and reading.
+
+- **The format** (SPECIFICATIONS.md §7.6e). `sequenceArrays` carries `arraysOnly = 1`, and the store is stamped
+  8 only when some sequence is held only in its arrays. Otherwise `-arrays-only` writes the bytes `-arrays`
+  writes. A packed row keeps its rank and id, and its `sequenceStarts` range is empty.
+- **The writer.**
+  - After the parse, the method-0 ingest finds the objects that pack into a tensor or ragged class.
+    `SequenceArrays.packsAsNumbers` is the classifier's own per-sequence test, since every such sequence
+    gets a class.
+  - It registers the literals section again from the quads, with those sequences closed. Only what a quad,
+    a triple term or a canonical sequence uses stays, and the literal counts and datatypes are counted again
+    over it, so what is left out sizes no buffer.
+  - The dictionary writer gives packed rows no elements, and `requireHolds` checks that a numeric class took
+    each one.
+  - Methods 1 to 5 refuse `-arrays-only` until parts 3 and 4.
+- **The reader.**
+  - A packed row's length and elements come from its class (`PackedSequences.heldOnly`). That is so even
+    remotely, and with `-Dbeakgraph.arrays.read=false` or the verifier's canonical reads, since there is no
+    other copy.
+  - A concrete sequence is found by comparing terms, the sort the writer used, instead of element ids.
+- **Queries.** Over a v8 store, BGPs holding a sequence pattern go to jena-array's solver, as with
+  `-Dbeakgraph.sequences.delegate`. The id-level matcher refuses such a store outright rather than answer
+  wrong (part 2). The reorder does not cost its sequence patterns.
+- **Verify.** The dictionary order check reads every packed row back from its arrays and compares it with
+  its neighbours, which also shows that each rebuilt leaf is the term the writer ranked. The class check
+  skips the comparison with canonical elements those rows do not have.
+- **Tests** (`ArraysOnlyTest`):
+  - the v8 store holds what the v7 one holds, in HDF5 and Zarr, and passes `-verify -deep`;
+  - leaves only packed sequences use have no rows, and shared ones, nested packed rows and record rows keep
+    theirs;
+  - every sequence is found by its term;
+  - eleven patterns answer as over the v7 store;
+  - with nothing to pack, the store is v7 and byte-identical to `-arrays`;
+  - the other engines refuse the flag.
+- **Measured** (`StoreCompositionBenchmarkTest`, the gate's embeddings):
+
+  | Values | v7 with `-arrays` | v8, `-arrays-only` |
+  |---|---|---|
+  | five decimals | 20.9 MB, 20.2 s | 12.4 MB, 5.2 s |
+  | full precision | 34.5 MB, 17.8 s | 12.4 MB, 5.7 s |
+
+  - The arrays are 99% of a v8 store, and it is a third the size of v7's at full precision.
+  - The builds are 3-4× faster. The v7 builds ran 3-5 s slower than in the gate's run, so the ratio is
+    rough.
+  - The 4 s left beyond the parse is mostly the ingest registering every leaf before they are dropped
+    (part 5).
+
 ### Step 10: later and optional
 
 Each of these waits on the spec or on a need:

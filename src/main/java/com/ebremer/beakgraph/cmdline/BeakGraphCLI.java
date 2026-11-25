@@ -643,12 +643,13 @@ public class BeakGraphCLI {
         }
     }
 
-    /** {@code -arrays} and its settings, or null without it. */
+    /** {@code -arrays} (or {@code -arrays-only}, which implies it) and its settings, or null without either. */
     private com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arraysOptions() {
-        return params.arrays
+        return (params.arrays || params.arraysOnly)
                 ? new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(params.arraysMinRows,
                         params.arraysMinLeaves, params.arraysCompress,
-                        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.TimeUnit.of(params.arraysTimeUnit))
+                        com.ebremer.beakgraph.hdf5.writers.SequenceArrays.TimeUnit.of(params.arraysTimeUnit),
+                        params.arraysOnly)
                 : null;
     }
 

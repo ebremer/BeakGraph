@@ -86,8 +86,13 @@ public final class SequenceArrays {
         }
     }
 
-    /** {@code -arrays}: on with these settings, or off (null). */
-    public record Options(int minRows, int minLeaves, boolean compress, TimeUnit timeUnit) {
+    /**
+     * {@code -arrays}: on with these settings, or off (null). With {@code only} ({@code -arrays-only},
+     * format v8, RDFARRY.md step 9), the sequences a tensor or ragged class takes are stored only there:
+     * their rows keep their place in the dictionary, but they have no canonical elements, and their leaves
+     * and inner sequences have dictionary rows only when something else uses them.
+     */
+    public record Options(int minRows, int minLeaves, boolean compress, TimeUnit timeUnit, boolean only) {
         public static final Options DEFAULT = new Options(16, 2, false, TimeUnit.US);
 
         public Options {
@@ -97,10 +102,76 @@ public final class SequenceArrays {
             java.util.Objects.requireNonNull(timeUnit, "timeUnit");
         }
 
+        /** A second copy, the canonical rows kept (format v7). */
+        public Options(int minRows, int minLeaves, boolean compress, TimeUnit timeUnit) {
+            this(minRows, minLeaves, compress, timeUnit, false);
+        }
+
         /** Microseconds, the default time unit. */
         public Options(int minRows, int minLeaves, boolean compress) {
             this(minRows, minLeaves, compress, TimeUnit.US);
         }
+
+        /** These settings, the packed sequences stored only as arrays ({@code -arrays-only}) or not. */
+        public Options withOnly(boolean on) {
+            return new Options(minRows, minLeaves, compress, timeUnit, on);
+        }
+    }
+
+    /**
+     * Refuses {@code -arrays-only} on an engine that cannot write it yet (RDFARRY.md step 9): its leaves
+     * would be ranked into the dictionary before anything knew they belong only to arrays.
+     */
+    public static void refuseOnly(Options options, String engine) {
+        if (options != null && options.only()) {
+            throw new IllegalArgumentException("-arrays-only (format v8) is written by -method 0 only for now, not by "
+                    + engine + " (RDFARRY.md step 9)");
+        }
+    }
+
+    /**
+     * Checks that every sequence {@code -arrays-only} left without canonical elements has a tensor or ragged
+     * class in {@code arrays}: else it would be in the store nowhere. The ingest's per-sequence test and the
+     * classification must agree, and this is where a drift between them would show.
+     */
+    static void requireHolds(SequenceArrays arrays, com.ebremer.beakgraph.core.DictionaryWriter literals,
+                             java.util.Set<Node> packedOnly) {
+        if (packedOnly.isEmpty()) {
+            return;
+        }
+        if (arrays == null || !(literals instanceof MultiTypeDictionaryWriter section)) {
+            throw new IllegalStateException("-arrays-only left " + packedOnly.size()
+                    + " sequences without canonical elements, but no array class holds them");
+        }
+        List<Node> nodes = section.getNodes();
+        int first = nodes.size() - arrays.classOfSequence.length;
+        int held = 0;
+        for (int k = 0; k < arrays.classOfSequence.length; k++) {
+            Node seq = nodes.get(first + k);
+            if (!packedOnly.contains(seq)) {
+                continue;
+            }
+            long c = arrays.classOfSequence[k];
+            if (c == 0 || arrays.decision.classes().get((int) c - 1).kind() == Kind.RECORD) {
+                throw new IllegalStateException("-arrays-only left " + seq + " without canonical elements, but "
+                        + (c == 0 ? "no class" : "a record class") + " holds it");
+            }
+            held++;
+        }
+        if (held != packedOnly.size()) {
+            throw new IllegalStateException("-arrays-only left " + packedOnly.size() + " sequences without canonical"
+                    + " elements, but " + held + " of them are rows of the literals section");
+        }
+    }
+
+    /**
+     * Whether {@code seq}, an object of some quad, packs into a tensor or ragged class at {@code minLeaves}:
+     * then {@code -arrays-only} stores it only there. Every such sequence has a class ({@link Classifier}
+     * gives a key's rows too few for a tensor of their length its ragged class), so this per-sequence test
+     * is the classification's own.
+     */
+    public static boolean packsAsNumbers(Node seq, int minLeaves) {
+        return seq.isNodeSeq() && probe(0, seq, minLeaves) != null;
     }
 
     /** A packable leaf datatype: its array type, its name in class names, and the XSD datatype it rebuilds. */
@@ -870,6 +941,12 @@ public final class SequenceArrays {
             }
             if (!dict.isSequenceObjectId(seq[r])) {
                 return "row " + r + " names object " + seq[r] + ", which is no sequence";
+            }
+            if (dict.heldOnlyInArrays(seq[r])) {
+                // -arrays-only (format v8): the row is the sequence's only copy, so there is nothing to compare
+                // it with; the dictionary order check reads it back and sorts it against its neighbours.
+                at += (tensor ? shape[1] : starts[r + 1] - starts[r]) * per;
+                continue;
             }
             Row row = probe(seq[r], dict.extractCanonicalSequence(seq[r]), 1);
             if (row == null || row.leaf() != leaf) {

@@ -68,6 +68,24 @@ final class PackedSequences {
         return (pc == null) ? null : new PackedRow(pc, firstSequenceObjectId + k, length);
     }
 
+    /**
+     * Sequence {@code k} when a tensor or ragged class holds it, its length from the class: in an
+     * {@code -arrays-only} store (format v8) its canonical range is empty, and this is the sequence. Null for
+     * one no such class holds.
+     */
+    List<Node> heldOnly(long k) {
+        long c = classOf.get(k);
+        if (c == 0) {
+            return null;
+        }
+        PackedClass pc = classNumber((int) c);
+        if (pc == null) {
+            return null;
+        }
+        long id = firstSequenceObjectId + k;
+        return new PackedRow(pc, id, pc.length(id));
+    }
+
     private PackedClass classNumber(int c) {
         Object[] table = classes;
         if (table == null) {
@@ -160,6 +178,15 @@ final class PackedSequences {
             }
             return new PackedClass(name, tensor, g.stringAttribute("datatype"), inner, values, g.typedArrayView("mask"),
                     starts, seq);
+        }
+
+        /** The outer length of the sequence with object id {@code id}: the class's for a tensor, its starts' for a ragged one. */
+        int length(long id) {
+            if (tensor) {
+                return Math.toIntExact(values.shape()[1]);
+            }
+            long[] s = (long[]) starts.readRows(rowOf(id), 2);
+            return Math.toIntExact(s[1] - s[0]);
         }
 
         /** The row of the sequence with object id {@code id}: a binary search of the sample, then of one stretch of seq. */

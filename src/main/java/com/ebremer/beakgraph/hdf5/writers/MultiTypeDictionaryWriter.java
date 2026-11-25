@@ -57,6 +57,9 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
     private long[] sequenceArrays;
     // -seqindex: write the element index after the sequences (RDFARRY.md step 8).
     private boolean sequenceIndex;
+    // -arrays-only (format v8, RDFARRY.md step 9): the sequences stored only in /.BG/arrays, which get no
+    // canonical elements (an empty range of the starts). Empty otherwise.
+    private final Set<Node> packedOnly;
     private final BitPackedUnSignedLongBuffer nativedatatypes;
     private DataOutputBuffer floats;
     private DataOutputBuffer doubles;
@@ -140,10 +143,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                     "Dictionary '" + name + "' has " + stats.numSequences
                   + " sequences but no SequenceEncoder was supplied");
         }
+        this.packedOnly = builder.getPackedOnly();
         if (wantSequences) {
             long elementTotal = 0;
             for (Node n : sorted) {
-                if (n.isNodeSeq()) {
+                if (n.isNodeSeq() && !packedOnly.contains(n)) {
                     elementTotal += n.getSeq().size();
                 }
             }
@@ -278,10 +282,12 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
                         // As for triple terms: element ids resolve now, nested
                         // sequences through this section's own ranks.
                         long ordinal = sequenceStarts.getNumEntries() - 1;
-                        for (long id : sequenceEncoder.encode(seq, this)) {
-                            sequenceElements.writeLong(id);
-                            if (id == 0) {
-                                numSlots++;
+                        if (!packedOnly.contains(seq)) {     // -arrays-only: an empty range
+                            for (long id : sequenceEncoder.encode(seq, this)) {
+                                sequenceElements.writeLong(id);
+                                if (id == 0) {
+                                    numSlots++;
+                                }
                             }
                         }
                         sequenceStarts.writeLong(sequenceElements.getNumEntries());
@@ -372,7 +378,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             }
             if (sequenceArrays != null) {
                 long[] classes = sequenceArrays;
-                com.ebremer.beakgraph.hdf5.BlockedEncoder.add(subGroup, Params.SEQUENCE_ARRAYS, classes.length, i -> classes[(int) i]);
+                com.ebremer.beakgraph.hdf5.WritableDataset ds = com.ebremer.beakgraph.hdf5.BlockedEncoder.add(
+                        subGroup, Params.SEQUENCE_ARRAYS, classes.length, i -> classes[(int) i]);
+                if (!packedOnly.isEmpty()) {
+                    ds.putAttribute(Params.ARRAYS_ONLY, 1);
+                }
             }
             if (sequenceIndex) {
                 SequenceIndex.add(subGroup, sequenceStarts::get, sequenceStarts.getNumEntries() - 1,
@@ -398,6 +408,11 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             throw new IllegalStateException(classes.length + " sequence classes for " + rows + " sequences");
         }
         this.sequenceArrays = classes.clone();
+    }
+
+    /** The sequences this section stores only in {@code /.BG/arrays} ({@code -arrays-only}); empty otherwise. */
+    public Set<Node> getPackedOnly() {
+        return packedOnly;
     }
 
     /** {@code -seqindex}: writes the element index ({@link SequenceIndex}) after the sequences, if there are any. */
@@ -442,6 +457,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         private TripleTermEncoder tripleTermEncoder;
         private long tripleTermComponentIdBound = 0;
         private SequenceEncoder sequenceEncoder;
+        private Set<Node> packedOnly = Set.of();
         /**
          * The dictionary section this writer builds: fixes the term kinds it
          * routes (SPECIFICATIONS.md §7.2) and, unless set, its group name. The
@@ -461,6 +477,12 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
         /** Element-id resolution for sequences; their ids share the component-id bound (the object space). */
         public Builder setSequenceEncoder(SequenceEncoder e) { this.sequenceEncoder = e; return this; }
         public SequenceEncoder getSequenceEncoder() { return sequenceEncoder; }
+        /**
+         * {@code -arrays-only} (format v8): the sequences of this section stored only in {@code /.BG/arrays},
+         * which get no canonical elements; their leaves are the caller's to have left out of the nodes.
+         */
+        public Builder setPackedOnly(Set<Node> packed) { this.packedOnly = packed; return this; }
+        public Set<Node> getPackedOnly() { return packedOnly; }
         public long getTripleTermComponentIdBound() { return tripleTermComponentIdBound; }
         public Builder setStats(Stats stats) { this.stats = stats; return this; }
         public Builder setNodes(Set<Node> nodes) { this.nodes = nodes; return this; }

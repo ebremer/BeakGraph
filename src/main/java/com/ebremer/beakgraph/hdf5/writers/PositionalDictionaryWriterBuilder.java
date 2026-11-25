@@ -119,6 +119,16 @@ public class PositionalDictionaryWriterBuilder {
 
     public SequenceArrays.Options getArrays() { return arrays; }
 
+    /** {@code -arrays-only}: the sequences stored only as arrays (empty without it, or when none packs). */
+    private Set<Node> packedOnly = Set.of();
+
+    /**
+     * The top-level sequences {@code -arrays-only} stores only in {@code /.BG/arrays} (RDFARRY.md step 9):
+     * those a tensor or ragged class takes. Empty without {@code -arrays-only}, or when none packs; then the
+     * store is v7.
+     */
+    public Set<Node> getPackedOnly() { return packedOnly; }
+
     private boolean sequenceIndex;
 
     /** {@code -seqindex} (format v7, RDFARRY.md step 8): the element index of the sequences. */
@@ -699,7 +709,91 @@ public class PositionalDictionaryWriterBuilder {
         this.numQuads = quadcount.get();
         this.quads = quadslist.toArray(Quad[]::new);
         quadslist.clear();
+        if (arrays != null && arrays.only()) {
+            leaveOutPackedLeaves();
+            stats.numObjects = entities.size() + literals.size();
+        }
         logger.info("Dictionary created. Total quads: {}", this.numQuads);
+    }
+
+    /**
+     * {@code -arrays-only} (format v8, RDFARRY.md step 9): the top-level sequences a tensor or ragged class
+     * takes keep their rows, but their leaves and inner sequences stay in the literals section only when a
+     * quad, a triple term or a sequence stored canonically uses them too. So the section is registered
+     * again from the quads with those sequences closed, and its counts and datatypes with it: what is left
+     * out sizes nothing. Entities are untouched, since only literals and slots pack.
+     */
+    private void leaveOutPackedLeaves() {
+        Set<Node> packed = new HashSet<>();
+        for (Node o : uniqueObjects) {
+            if (o.isNodeSeq() && SequenceArrays.packsAsNumbers(o, arrays.minLeaves())) {
+                packed.add(o);
+            }
+        }
+        if (packed.isEmpty()) {
+            return;
+        }
+        Set<Node> kept = new HashSet<>();
+        for (Quad q : quads) {
+            keep(q.getObject(), packed, kept);
+        }
+        int before = literals.size();
+        literals.retainAll(kept);
+        dataTypes.clear();
+        stats.resetLiterals();
+        for (Node n : literals) {
+            if (n.isLiteral()) {
+                dataTypes.add(n.getLiteralDatatypeURI());
+                countLiteralStats(n, stats);
+            } else if (n.isTripleTerm()) {
+                stats.numTripleTerms++;
+            } else if (n.isNodeSeq()) {
+                stats.numSequences++;
+            }
+        }
+        this.packedOnly = Collections.unmodifiableSet(packed);
+        logger.info("-arrays-only: {} sequences stored only as arrays; {} of the literals section's {} terms left out",
+                packed.size(), before - literals.size(), before);
+    }
+
+    /** Marks what an object needs in the literals section, the packed sequences' insides left closed. */
+    private static void keep(Node o, Set<Node> packed, Set<Node> kept) {
+        if (o.isLiteral()) {
+            kept.add(o);
+        } else if (o.isTripleTerm()) {
+            keepTripleTerm(o, packed, kept);
+        } else if (o.isNodeSeq()) {
+            if (kept.add(o) && !packed.contains(o)) {
+                SeqTerms.walk(o, new SeqTerms.ElementVisitor() {
+                    @Override public void literal(Node n) { kept.add(n); }
+                    @Override public void entity(Node n) { }
+                    @Override public void tripleTerm(Node n) { keepTripleTerm(n, packed, kept); }
+                    @Override public boolean nestedSequence(Node n) {
+                        // A nested sequence is a row; its own elements are needed unless it is packed.
+                        return kept.add(n) && !packed.contains(n);
+                    }
+                });
+            }
+        }
+    }
+
+    private static void keepTripleTerm(Node tt, Set<Node> packed, Set<Node> kept) {
+        if (!kept.add(tt)) {
+            return;
+        }
+        TripleTerms.walk(tt, new TripleTerms.ComponentVisitor() {
+            @Override
+            public void component(TripleTerms.Position position, Node n) {
+                if (position == TripleTerms.Position.OBJECT && n.isLiteral()) {
+                    kept.add(n);
+                }
+            }
+
+            @Override
+            public void nestedTripleTerm(Node nested) {
+                kept.add(nested);
+            }
+        });
     }
 
     /** Parses one source document into the shared collected state. */

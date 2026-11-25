@@ -67,6 +67,7 @@ class StoreCompositionBenchmarkTest {
             parse(values + ": parse only", emb);
             build(values + ": canonical v7", emb, null);
             build(values + ": v7 with -arrays", emb, new SequenceArrays.Options(16, 2, false));
+            build(values + ": v8, -arrays-only", emb, new SequenceArrays.Options(16, 2, false, SequenceArrays.TimeUnit.US, true));
         }
     }
 

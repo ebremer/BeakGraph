@@ -136,6 +136,13 @@ public class Parameters {
             description = "With -arrays: compress the arrays (HDF5: chunked, shuffle + deflate; Zarr: sharded, zstd)")
     public boolean arraysCompress = false;
 
+    @Parameter(names = {"-arrays-only"}, converter = BooleanConverter.class,
+            description = "As -arrays, but the numeric sequences the arrays hold are stored only there (format v8): "
+                        + "their numbers get no dictionary entries of their own and no element ids, which makes "
+                        + "array-heavy stores (embeddings) far smaller and faster to build. A v7 reader cannot open "
+                        + "such a store. Record classes keep their canonical rows")
+    public boolean arraysOnly = false;
+
     @Parameter(names = {"-seqindex"}, converter = BooleanConverter.class,
             description = "Also write the element index of the RDF-array sequences (format v7): for each element, "
                         + "the sequences that hold it, so that patterns such as ( ... :x ... ), or ( ... ?m ... ) "

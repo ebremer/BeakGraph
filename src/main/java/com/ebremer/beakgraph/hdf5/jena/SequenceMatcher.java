@@ -95,6 +95,13 @@ public final class SequenceMatcher implements ObjectPattern {
         if (dict.firstSequenceObjectId() == Long.MAX_VALUE || !pattern.isNodeSeq()) {
             return null;
         }
+        if (dict.arraysOnly()) {
+            // Sequences held only in the arrays have no element ids, and a constant the dictionary lacks may be
+            // one of their leaves: such a store's patterns go to jena-array's solver (PatternMatchBG), and an
+            // answer on ids here would be wrong, not slow (RDFARRY.md step 9, part 2).
+            throw new IllegalStateException("sequence patterns over a store with sequences held only in /.BG/arrays"
+                    + " are matched by jena-array's solver, not on ids");
+        }
         List<Node> elements = pattern.getSeq();
         int n = elements.size();
         byte[] kind = new byte[n];

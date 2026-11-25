@@ -179,7 +179,7 @@ public class OpExecutorBG extends OpExecutor {
             return input;
         }
         boolean sequences = com.ebremer.beakgraph.core.lib.SeqTerms.holdsPattern(pattern);
-        if (sequences && PatternMatchBG.delegateSequences()) {
+        if (sequences && PatternMatchBG.delegateSequences(graph)) {
             // A sequence pattern by layer A (RDFARRY.md §3.7): the whole BGP to
             // jena-array's solver, in written order, the filters after it.
             return PatternMatchBG.delegate(graph, pattern, input, exprs, execCxt);

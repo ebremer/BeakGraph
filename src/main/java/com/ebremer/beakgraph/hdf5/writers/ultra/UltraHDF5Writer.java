@@ -92,6 +92,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 logger.info("Stage 3/4: GSPO/GPOS indexes (packed keys, sort, dedup, parallel emission)");
                 UltraBGIndex[] indexes = UltraBGIndex.buildBoth(dict, ingest, pool);
                 dict.awaitStorage();
+                com.ebremer.beakgraph.hdf5.writers.SequenceArrays.refuseOnly(builder.getArrays(), "-method 3");
                 dict.classifyArrays(builder.getArrays(), ingest.getUniqueObjects());
                 dict.enableSequenceIndex(builder.getSequenceIndex());
                 // The rank maps and the ingest's node sets served the packing pass

@@ -148,6 +148,20 @@ public class PositionalDictionaryReader implements GSPODictionary {
         return lastSequenceObjectId;
     }
 
+    /**
+     * True when the store keeps the sequences of its tensor and ragged classes only in {@code /.BG/arrays}
+     * ({@code -arrays-only}, format v8, RDFARRY.md step 9): they have no element ids, and their leaves may
+     * have no dictionary rows.
+     */
+    public boolean arraysOnly() {
+        return literals != null && literals.arraysOnly();
+    }
+
+    /** True when the sequence with object id {@code objectId} is held only in {@code /.BG/arrays} (format v8). */
+    public boolean heldOnlyInArrays(long objectId) {
+        return literals != null && literals.heldOnlyInArrays(objectId - maxEntityId);
+    }
+
     /** How many sequence elements of the store are empty slots: 0 keeps every slot-free fast path (RDFARRY.md §3.7). */
     public long numSlots() {
         return (literals == null) ? 0 : literals.numSlots();

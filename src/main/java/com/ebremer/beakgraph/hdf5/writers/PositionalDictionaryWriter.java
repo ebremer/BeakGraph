@@ -1,6 +1,7 @@
 package com.ebremer.beakgraph.hdf5.writers;
 
 import static com.ebremer.beakgraph.utils.UTIL.byteRoundedWidth;
+import com.ebremer.beakgraph.Params;
 import com.ebremer.beakgraph.core.DictionaryWriter;
 import com.ebremer.beakgraph.core.Dictionary;
 import com.ebremer.beakgraph.core.lib.NodeSorter;
@@ -80,12 +81,15 @@ public class PositionalDictionaryWriter implements AutoCloseable {
             .section(DictionarySection.LITERALS)
             .setTripleTermEncoder(this::encodeTripleTerm)
             .setSequenceEncoder(this::encodeSequence)
+            .setPackedOnly(builder.getPackedOnly())
             .setTripleTermComponentIdBound(maxEntityId + builder.getLiterals().size())
             .build();
 
         // 3b. -arrays: classify the top-level sequences (RDFARRY.md §3.5).
         this.arraysOptions = builder.getArrays();
         this.sequenceArrays = SequenceArrays.of(arraysOptions, literalsdict, maxEntityId, builder.getUniqueObjects());
+        SequenceArrays.requireHolds(sequenceArrays, literalsdict, builder.getPackedOnly());
+        this.formatVersion = builder.getPackedOnly().isEmpty() ? Params.FORMAT_VERSION : Params.ARRAYS_ONLY_FORMAT_VERSION;
         // 3c. -seqindex: the element index after the sequences (RDFARRY.md step 8).
         SequenceIndex.enable(builder.getSequenceIndex(), literalsdict);
 
@@ -184,6 +188,16 @@ public class PositionalDictionaryWriter implements AutoCloseable {
     }
 
    
+    private final int formatVersion;
+
+    /**
+     * The format version this store is stamped with: 8 when {@code -arrays-only} stores some sequence only as
+     * an array, else 7, so that a v7 reader still reads every other store.
+     */
+    public int formatVersion() {
+        return formatVersion;
+    }
+
     /** Writes {@code /.BG/arrays} under {@code group} (the {@code .BG} group) when {@code -arrays} packed any sequence. */
     public void addArrays(WritableGroup group) {
         if (sequenceArrays != null) {

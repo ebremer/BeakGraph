@@ -237,8 +237,9 @@ mean is the rest of this document.
   | 6 | The id sequences - `S<c>` of both indexes (§8.1) and the role lists `graphs`, `subjects`, `objects` (§7.8) - are **block-structured** (§5.1a): blocks of `blockEntries` entries, each with a base and a width of its own, and a directory dataset `<name>_blocks` beside each. A dataset says which form it is in (the `blockEntries` attribute), so a v6 reader reads v3-v5 files unchanged; a v5 reader refuses a v6 file by its version, as it must. The values and their order are those of v5: only their encoding changed. |
   | 5 | RDF 1.2 triple terms: `DataType.TRIPLE_TERM` (ordinal 13) and the optional `tripleTerms` component store in the literals section (§7.6a). Triple terms occupy that section's contiguous suffix of the object id space. Absence = "no triple terms"; v3/v4 files read unchanged, and a triple-term-free v5 store is shape-identical to v4 output. |
   | 7 | RDF-array sequences and their empty slots: `DataType.SEQUENCE` (ordinal 14), and the block-structured `sequenceStarts` / `sequenceElements` in the literals section (§7.6b). Sequences become that section's suffix, and triple terms the band just before it. Absence = "no sequences"; a sequence-free v7 store is shape-identical to v6 output. A v6 reader refuses a v7 store by its version, as it must: an unknown ordinal would fail its extract. |
+  | 8 | Sequences held only in `/.BG/arrays` (§7.6e): with `arraysOnly = 1` on `sequenceArrays`, the sequences of the tensor and ragged classes have an empty `sequenceStarts` range, and their leaves and inner sequences have dictionary rows only when something else uses them. Only such a store is stamped 8; a reader that cannot read the arrays MUST refuse it. |
 
-* **A new writer MUST stamp `formatVersion = 7`**, write the id sequences block-structured (§5.1a) and produce a correct directory (§8.4).
+* **A new writer MUST stamp `formatVersion = 7`**, or 8 when it holds sequences only in `/.BG/arrays` (§7.6e), write the id sequences block-structured (§5.1a) and produce a correct directory (§8.4).
 
 ---
 
@@ -886,6 +887,25 @@ order of the spellings (UTF-16). Its group has string attributes `kind` (`record
 - Strings: HDF5 variable-length UTF-8 strings, chunked and deflated under compression; Zarr `data_type`
   `string` with the `vlen-utf8` codec (zstd after it, under sharding, when compressed). uint16 is
   `H5T_STD_U16LE` / `uint16`. Dimension names as above, `item` or `seq` first, then `d1`, ….
+
+### 7.6e Sequences held only in the arrays (*v8*, optional)
+
+A writer MAY store the sequences of the tensor and ragged classes (§7.6c) only there (the reference writers
+do with `-arrays-only`). Record classes keep their canonical rows.
+
+* **The flag.** `sequenceArrays` carries the int64 attribute `arraysOnly = 1`, and the store is stamped
+  `formatVersion = 8`. A store with no such sequence is v7, whatever the writer was asked for.
+* **The rows.** Such a sequence keeps its row in the literals section: its `datatypes` entry, its `offsets`
+  ordinal and its rank, so its id and the order of the suffix are as in v7. Its `sequenceStarts` range is
+  empty, and it has no `sequenceElements`.
+* **Its length and elements** come from its class: a tensor's outer length is the second dimension of its
+  `values`, and a ragged row's is the difference of its `starts`. Each leaf is the term its value rebuilds
+  (§7.6c), which is the term the writer ranked, since only a leaf that rebuilds itself packs.
+* **The dictionary.** A leaf or inner sequence of such a sequence has a dictionary row only when a quad, a
+  triple term or a sequence stored canonically also uses it. So a constant the dictionary lacks may still
+  be a leaf here, and a reader MUST find a concrete sequence by comparing terms (§6.1) rather than element
+  ids.
+* **The element index** (§7.6d) has no entries for these sequences, since they have no elements.
 
 ### 7.6d The element index (*v7*, optional)
 

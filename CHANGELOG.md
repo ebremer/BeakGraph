@@ -70,6 +70,16 @@ brought and what a reader must rebuild.
   - **The step-4 route.** `-Dbeakgraph.sequences.delegate=true` restores it, as the reference the
     matcher is tested against. The contrib suite runs both routes, and `SequenceMatcherParityTest` holds
     them alike on 73 more queries.
+* **Format v8 and `-arrays-only`: numeric sequences stored only as arrays** (RDFARRY.md step 9,
+  SPECIFICATIONS.md §7.6e). With `-arrays-only` (method 0 for now), the sequences a tensor or ragged class of
+  `/.BG/arrays` holds are stored only there.
+  - **What changes.** Their rows keep their place, but they have no element ids. Their numbers have no
+    dictionary entries unless something else uses them. Such a store is stamped 8, which a v7 build refuses;
+    one with nothing to pack stays v7, byte for byte.
+  - **Measured.** On 2,000 embeddings of 768 doubles, synthetic: 12.4 MB where `-arrays` wrote 20.9-34.5 MB,
+    and built 3-4× faster.
+  - **Reading.** Packed rows are read from their arrays, and sequences are found by term.
+  - **Queries.** Sequence patterns over a v8 store go to jena-array's solver for now.
 * **`-seqindex`: the element index of the sequences** (RDFARRY.md step 8, SPECIFICATIONS.md §7.6d). An
   optional transpose of the sequence section: for each element id, the sequences that hold it, in three
   block-structured columns of the literals section.
