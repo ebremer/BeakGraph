@@ -60,9 +60,9 @@ brought and what a reader must rebuild.
     is an id range. The length is checked before any element is read. Gaps give one row per
     placement. A named gap binds its run by id when the store holds it, and as the term itself
     otherwise.
-  - **Speed.** Measured on synthetic data in process: 1.1-2.6× on short tuples and 5× with a constant
-    prefix. On 768-element embeddings it is 12-124×, since jena-array's gaps are quadratic in the
-    length.
+  - **Speed.** Measured on synthetic data in process, over four runs: on short tuples 0.9-2.8×, within
+    run-to-run noise; 5-8× with a constant prefix. On 768-element embeddings it is 12-124×, since
+    jena-array's gaps are quadratic in the length.
   - **Union reads** of such a pattern remove duplicate triples before matching, so a gap's placements
     and a slot that a bound variable passes still count once per triple.
   - **Filters.** Over a store with slots, filters run after the whole BGP, since a later pattern may
@@ -70,6 +70,30 @@ brought and what a reader must rebuild.
   - **The step-4 route.** `-Dbeakgraph.sequences.delegate=true` restores it, as the reference the
     matcher is tested against. The contrib suite runs both routes, and `SequenceMatcherParityTest` holds
     them alike on 73 more queries.
+* **`-seqindex`: the element index of the sequences** (RDFARRY.md step 8, SPECIFICATIONS.md §7.6d). An
+  optional transpose of the sequence section: for each element id, the sequences that hold it, in three
+  block-structured columns of the literals section.
+  - **Containment reads only the candidates.** A pattern with a constant or `undef` after a gap, such as
+    `( ... :player42 ... )`, or with a variable a join in the same BGP binds, such as
+    `?c :captain ?m . ?t :members ( ... ?m ... )`, reads only the sequences the index names for it. A bound
+    variable also takes the sequences with a slot, since a slot passes it, but only those among the
+    predicate's own objects. Measured on synthetic data in process: 13-27× for a constant (0.4 ms where
+    the scan took 7 ms), and 121× for 200 captains joined to 20,000 squads (12 ms against 1.5 s). Where
+    most sequences hold a slot, every one passes a bound value, and nothing is skipped.
+  - **The cost.** 6.8 MB on a 15.7 MB store whose embeddings' elements are nearly all distinct; no
+    longer a build.
+  - **Every engine writes the same bytes**, and `-verify -deep` checks the index against the sequences.
+    The disk engines sort the (element, sequence) pairs as they lay out the elements.
+  - **Reorder.** A sequence pattern now costs what its scan reads and matches: its predicate's rows in its
+    prefix's id range (exact, from GPOS), times the share of sequences its other constants and bound
+    variables name (from the index, or guessed), times its gaps' placements. Its variables count as bound
+    after it. As every reorder by cost, this needs `-void`.
+  - **Switches.** `-Dbeakgraph.seqindex.read=false` ignores the index; `-Dbeakgraph.seqindex.ratio` (8) is
+    how much smaller than a scan's run the candidates must be to be read instead.
+* **The hugeUltra and plaid engines (`-method 4`, `5`) build sequences that are mostly slots.** Their
+  element sort was bounded by the elements that resolve, where its rows are every element's index, slots
+  included. When the slots carried the last index past a power of two, the packed sorter refused it and
+  the build failed (`( 1 undef … undef 2 )` with eight slots did). Nothing wrong was ever written.
 * **`-arrays`: native typed arrays under `/.BG/arrays`** (RDFARRY.md step 6, SPECIFICATIONS.md §7.6c;
   every engine, the disk engines byte-identical to method 0). The numeric sequences - `xsd:double`, `float`, `integer` (canonical),
   `long`, `int` and `boolean` leaves, rectangular below the top - are written a second time as

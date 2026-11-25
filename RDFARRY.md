@@ -11,7 +11,8 @@
   answers over it (milestone A), and every engine writing it. Step 6, the native arrays (milestone B),
   is done on every engine, packed reads included; only its opt-in Python smoke tests have yet to run
   where h5py and zarr are installed. Step 7, matching sequence patterns on ids, is done too (2026-11-24),
-  with jena-array's solver kept as the reference route. Step 8 is next
+  with jena-array's solver kept as the reference route. Step 8, the element index (`-seqindex`) and the
+  reorder's costs for sequence patterns, is done (2026-11-25). Step 9 waits on its gate
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -1183,7 +1184,8 @@ Step 4's delegation stays, for whatever the matcher declines.
   | embeddings, `( ... ?l )` | 2,000 | 0.9 ms | 116 ms | 89-124× |
   | embeddings, `( ... ?v ... )` | 1.5 M | 126 ms | 9.8 s | 78-98× |
 
-  - **Short tuples gain 1.1-2.6×.** jena-array reads them through lazy rows too.
+  - **Short tuples gain 1.1-2.6×.** jena-array reads them through lazy rows too. Two more runs in step 8
+    gave 0.9-2.8×: on short tuples the routes are within run-to-run noise.
   - **Prefixes gain from the range.**
   - **Long sequences gain most.** jena-array tries every run length for every gap, which is quadratic in
     the length for `( ... ?v ... )`, and it materializes each candidate.
@@ -1206,6 +1208,98 @@ Step 4's delegation stays, for whatever the matcher declines.
   - It costs one more sort of `(element, sequence, position)` records at build time.
 
 **Done when:** containment queries no longer scan, and reorder picks sequence patterns by cost.
+
+**Status (2026-11-25): done.**
+
+- **The element index** (`-seqindex`, SPECIFICATIONS.md §7.6d).
+  - It is the transpose of the sequence section, in the same form: the distinct element ids (0, a slot,
+    first), their starts, and each element's sequence ordinals, ascending and each once. All three columns
+    are block-structured, in the literals section after `sequenceArrays`.
+  - The plan's bitmap levels and positions were left out. The starts are the sequence section's own form
+    and are read in O(1). The matcher reads every candidate whole anyway, to bind its variables and count
+    its gaps' placements, so nothing would read the positions.
+  - **Every engine writes the same bytes.** The in-memory writers sort (element, ordinal) pairs packed into
+    longs (`SequenceIndex`). The disk engines hand the same pairs to their quad sorter while they lay out
+    `sequenceElements` (`HugeSequences`). That holds at 20,000 pairs with runs of 1,000 merged, in HDF5 and
+    Zarr. `-verify -deep` checks the index against the sequences. A store without sequences, or whose
+    sequences are all `()`, has none, and `-seqindex` leaves its bytes unchanged.
+- **Reading it.**
+  - A sequence pattern names its candidates through the rarest element after its prefix that every match
+    holds:
+    - a constant or `undef`: the sequences holding it;
+    - a variable the row binds already: the sequences holding its value, or a slot, since a slot passes a
+      bound variable;
+    - a variable bound to a term the store lacks: the sequences with a slot.
+  - `BGIteratorPOS` then walks from one candidate to the next one its run holds, a merge with a binary
+    search on each side, instead of matching every object of the run. It does so when the candidates number
+    under an eighth of the run's objects (`-Dbeakgraph.seqindex.ratio`, 0 for always).
+  - **Slots are taken per predicate.** The sequences with a slot are candidates for every bound value, and
+    across the store they can be most of the sequences. So each graph's predicate works out once which of
+    its own objects hold a slot, and keeps that list for the reader's life (`slotSequencesAmong`). Before
+    that, the squads below, which have no empty seats, were scanned because the rosters beside them had
+    18,000 slot-holders.
+  - Union reads restrict each graph's scan the same way. `-Dbeakgraph.seqindex.read=false` ignores the index.
+- **Where it does not help.**
+  - **Slots, for a bound variable.** With one seat in five empty, nine rosters in ten hold a slot, and each
+    is a candidate for every bound value. They do match it: 8 million rows for 200 captains.
+  - **`VALUES` and `UNNEST`.** Jena plans `(join …)`, not `(sequence …)`, when the shared variable is inside
+    a sequence pattern. jena-array writes a bound value into a pattern, and the constant would then not pass
+    a slot, so it keeps the join, and the pattern runs once with the variable unbound. BeakGraph checks
+    bound values against the match without writing them in, so feeding it the rows would be sound, but its
+    join strategy is Jena's. A join inside one BGP is fed the rows.
+  - **Other cases.** Patterns with the subject bound are a lookup already. With the predicate free, or with
+    the constant only inside a nested pattern, they scan as before.
+- **Costs.**
+  - A sequence pattern costs what its scan reads and matches (`Counts.sequence`, `GraphCounts`):
+    - the rows of its predicate whose object lies in its prefix's id range, counted exactly from GPOS by
+      two binary searches a graph;
+    - times the share of sequences each later constant or bound variable names: the index's count, or a
+      guess of 0.1 without it;
+    - times its gaps' placements around a free variable: about the length less the fixed elements, plus 1.
+  - The variables inside a pattern now count as bound after it, so a triple joining on one costs as a join,
+    not a cross product.
+  - A roster holding one player of 500 now goes before a check that keeps half the teams, with the index or
+    without it. It used to cost as every roster, and came after.
+  - As before, all of this needs the store's VoID statistics (`-void`); without them Jena's fixed reorder
+    plans.
+- **Not done, and why.**
+  - **Sequence statistics in the VoID graph.** The reorder costs by the index counts of the graphs a query
+    reads, and the prefix rows and element shares come from the same indexes, exactly, for any v7 store.
+  - **A structural `DistinctNodeCounter.hash`.** Done in step 3.
+- **Tests.**
+  - `SequenceIndexTest`: byte parity across the six engines, in Zarr, and from merged runs on the disk
+    engines; the transpose; `-verify`; absence; the read switch; containment answers through the index
+    against the scan; the slots of a predicate's own objects; and the reorder on a store.
+  - `SequenceMatcherParityTest` now runs each of its 94 queries three ways: jena-array's solver, on ids, and
+    on ids through the index with candidates always read. 21 of the queries are containment queries.
+  - `ReorderTransformTest`: a pattern's variables bound after it, and a pattern costed by its scan.
+  - CI also runs the rdf-array suites over indexed stores from method 4, with the candidates always read.
+- **Measured** (`SequenceMatchingBenchmarkTest`, opt-in; 2026-11-25, in process, synthetic).
+
+  Times are the second run's medians of five; the speedup is the range over two runs. Containment is
+  answered on ids both ways, by the scan of step 7 and through the index:
+
+  | Query | Rows | Scan | Index | Speedup |
+  |---|---|---|---|---|
+  | rosters, `( ... :player42 ... )` | 28 | 7.1 ms | 0.4 ms | 19-23× |
+  | rosters, `( ... :player42 ... :player43 ... )` | 0 | 4.5 ms | 0.2 ms | 24-27× |
+  | rosters, `( ... :player42 ... undef ... )` | 21 | 7.7 ms | 0.4 ms | 21-24× |
+  | FHIR, `( ?c 120 ?u )` | 426 | 9.3 ms | 0.7 ms | 13-16× |
+  | squads, `?c :captain ?m . ?t :members ( ... ?m ... )` | 7,911 | 1,461 ms | 12 ms | 121× (one run) |
+  | rosters, the same join, nine rosters in ten with a slot | 8,000,519 | 3,106 ms | 3,109 ms | 1.0× |
+
+  - **A constant names its sequences** and the scan becomes a handful of lookups.
+  - **A join through a bound variable gains most.** 200 captains each scanned 20,000 squads, and now each
+    reads about 40. The first run read the store-wide slot entries too, and gained nothing (1.0×); that is
+    what the per-predicate slot lists fixed.
+  - **Slots pass every bound value**, so where most sequences hold one, there is nothing to skip.
+  - **The cost.** The index took 6.8 MB on the 15.7 MB store, 43% more, and the build took no longer
+    (21 s both ways). By element count, about three fifths of its pairs are the embeddings', 1.5 million
+    elements that are nearly all distinct. So `-seqindex` pays for containment over ids that repeat (players,
+    codes, units), and costs most where each element occurs once.
+  - **Step 7's table, run twice more** in this benchmark: short tuples ranged 0.9-2.8× (points 0.9-1.6×,
+    every roster member 1.0-2.0×). On them the two routes are within run-to-run noise. The prefix (4.8-8.3×)
+    and the embeddings (34-108×) stand.
 
 ### Step 9: v8, packed numeric sequences stored only as arrays (P4, XL, gated)
 

@@ -33,7 +33,10 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code -Dbeakgraph.bench.scale} (1 by default). It also times Jena's
  * {@code SEQLEN}, {@code isSEQ} and {@code UNNEST} over the stored
  * sequences, one route, which is what said they need no id path of their
- * own (RDFARRY.md step 7). Never run it on real data.
+ * own (RDFARRY.md step 7). And it times containment patterns, whose element
+ * the pattern does not place, by the scan and through the element index
+ * ({@code -seqindex}, RDFARRY.md step 8), over a second store built with it.
+ * Never run it on real data.
  */
 class SequenceMatchingBenchmarkTest {
 
@@ -73,6 +76,18 @@ class SequenceMatchingBenchmarkTest {
                 }
                 w.write(":poly" + i + " :ring ( " + b + ") .\n");
             }
+            // Squads: rosters without empty seats, so that a bound player names few of them, and the
+            // clubs' captains to join through.
+            for (int i = 0; i < 20_000 * scale; i++) {
+                StringBuilder b = new StringBuilder();
+                for (int k = 0; k < 10; k++) {
+                    b.append(":player").append(r.nextInt(5000)).append(' ');
+                }
+                w.write(":squad" + i + " :members ( " + b + ") .\n");
+            }
+            for (int i = 0; i < 200; i++) {
+                w.write(":club" + i + " :captain :player" + r.nextInt(5000) + " .\n");
+            }
             for (int i = 0; i < 2_000 * scale; i++) {
                 StringBuilder b = new StringBuilder(768 * 12);
                 for (int k = 0; k < 768; k++) {
@@ -94,6 +109,19 @@ class SequenceMatchingBenchmarkTest {
         {"embeddings, first value", "SELECT ?e ?f { ?e :emb ( ?f ... ) }"},
         {"embeddings, last value", "SELECT ?e ?l { ?e :emb ( ... ?l ) }"},
         {"embeddings, every value", "SELECT (COUNT(*) AS ?n) { ?e :emb ( ... ?v ... ) }"},
+    };
+
+    /**
+     * Containment: an element the pattern does not place, a constant or a variable bound by a join. Timed
+     * on ids by the scan, and through the element index over the store built with it.
+     */
+    private static final String[][] CONTAINMENT = {
+        {"rosters, one player", "SELECT ?t { ?t :roster ( ... :player42 ... ) }"},
+        {"rosters, two players", "SELECT ?t { ?t :roster ( ... :player42 ... :player43 ... ) }"},
+        {"rosters, a player and an empty seat", "SELECT ?t { ?t :roster ( ... :player42 ... undef ... ) }"},
+        {"FHIR, one value after the code", "SELECT ?s ?c { ?s :component ( ?c 120 ?u ) }"},
+        {"squads, a captain's (join)", "SELECT ?c ?t { ?c :captain ?m . ?t :members ( ... ?m ... ) }"},
+        {"rosters, a captain's (join; slots pass)", "SELECT ?c ?t { ?c :captain ?m . ?t :roster ( ... ?m ... ) }"},
     };
 
     /** Not sequence patterns: Jena's functions and UNNEST over stored sequences, one route, for their cost. */
@@ -129,6 +157,22 @@ class SequenceMatchingBenchmarkTest {
                 Query query = QueryFactory.create("PREFIX : <http://ex.org/>\n" + q[1], Syntax.syntaxARQ);
                 long[] t = time(bg, query, false);
                 System.out.printf(Locale.ROOT, "BENCH %-40s %10d %12.1f%n", q[0], t[0], t[1] / 1e6);
+            }
+        }
+        File indexed = dir.resolve("bench-seqindex.h5").toFile();
+        t0 = System.nanoTime();
+        HDF5Writer.Builder().setSource(src.toFile()).setDestination(indexed).setSequenceIndex(true).build().write();
+        System.out.printf(Locale.ROOT, "BENCH build with -seqindex %.1f s, %.1f MB (the index: %.1f MB)%n",
+                (System.nanoTime() - t0) / 1e9, indexed.length() / 1e6, (indexed.length() - store.length()) / 1e6);
+        try (BeakGraph bg = BG.getBeakGraph(store); BeakGraph ix = BG.getBeakGraph(indexed)) {
+            System.out.printf(Locale.ROOT, "BENCH %-40s %10s %12s %12s %8s%n", "containment", "rows", "scan ms", "index ms", "x");
+            for (String[] q : CONTAINMENT) {
+                Query query = QueryFactory.create("PREFIX : <http://ex.org/>\n" + q[1], Syntax.syntaxARQ);
+                long[] scan = time(bg, query, false);
+                long[] index = time(ix, query, false);
+                assertEquals(scan[0], index[0], q[0]);
+                System.out.printf(Locale.ROOT, "BENCH %-40s %10d %12.1f %12.1f %8.1f%n", q[0], scan[0], scan[1] / 1e6,
+                        index[1] / 1e6, (double) scan[1] / index[1]);
             }
         }
     }
