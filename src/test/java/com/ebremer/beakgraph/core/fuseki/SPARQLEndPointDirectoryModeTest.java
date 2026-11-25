@@ -193,7 +193,11 @@ class SPARQLEndPointDirectoryModeTest {
         assertEquals(200, page.statusCode());
         assertTrue(contentType(page).startsWith("text/html"));
         assertTrue(page.body().contains("yasgui.min.js"));
-        assertEquals(200, get("sparql/yasgui.min.js").statusCode(), "relative assets resolve under /sparql/");
+        HttpResponse<String> bundle = get("sparql/yasgui.min.js");
+        assertEquals(200, bundle.statusCode(), "relative assets resolve under /sparql/");
+        // Stock YASGUI shows an empty results pane for any result holding an rdf-array sequence term.
+        assertTrue(bundle.body().contains("{key:\"formatSeq\"") && bundle.body().contains("\"string\"==typeof e[t].value"),
+                "the bundled YASGUI must carry tools/patch-yasgui.js's edits");
         assertEquals(200, get("sparql/beakgraph.png").statusCode());
         assertEquals(405, http.send(HttpRequest.newBuilder(URI.create(base + "sparql/")).timeout(Duration.ofSeconds(60))
                 .header("Content-Type", "application/sparql-query")

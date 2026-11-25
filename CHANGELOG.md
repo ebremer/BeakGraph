@@ -53,6 +53,23 @@ brought and what a reader must rebuild.
     and runs over HDF5 and Zarr stores: 340 of 349 pass, 9 aborted with the reason (update tests;
     Jena's CSV writer). The fork's `TestUndefSlots`, `TestSequenceQueries` and
     `TestArraySyntaxExamples` run over stores too: 94 pass, 3 disabled with the reason.
+* **A FILTER on an `UNNEST`'s position runs right after that `UNNEST`.** This is a change in the Jena
+  fork (`rdf-array` b5122497e3): Jena's filter placement now passes filters through `(unnest …)` as it
+  does through `BIND`.
+  - **Before.** A FILTER waited for every later `UNNEST` in the group, so the rows multiplied by each
+    sequence's length first. One query picks one pixel from 50 portraits of 256 × 256 × 3 values, then
+    takes it into its channels. It made 88 million rows and took 42 s; it now takes 0.07 s.
+  - **The member variable does not count.** An empty slot leaves it unbound, and a later step can
+    still bind it.
+* **The endpoint's web page shows sequence terms** (`/sparql/`, YASGUI 2.0.12).
+  - **Before.** Any result holding a sequence left the results pane empty. YASGUI's `{{var}}`
+    substitution called `.replace` on the sequence's list of terms and threw.
+  - **Now.** The table shows a sequence as `( 60 120 200 )`, nested sequences, slots and IRI links
+    included. The table's search and the CSV download use the same spelling.
+  - **How.** `tools/patch-yasgui.js` makes four edits to the bundled `yasgui.min.js`; rerun it after
+    replacing the bundle. `SPARQLEndPointDirectoryModeTest` checks that the edits are there.
+  - **Still open.** The editor still underlines SPARQL-array syntax such as `UNNEST` as an error, but
+    runs the query.
 * **Sequence patterns matched on ids** (RDFARRY.md step 7, layer B of §3.7). A BGP holding a sequence
   pattern no longer goes to jena-array's solver: the id-level engine matches it, reordered and joined
   like any other BGP, with the same answers.

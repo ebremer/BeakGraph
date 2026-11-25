@@ -264,6 +264,12 @@ annotations and FOLD/UNFOLD; and in the solver and the RowSet writers, which 6.x
    Optional.
 3. **Nothing else.** ShEx-array and SHACL-array come along with the reactor, and BeakGraph does not use them.
 
+Added later: **filter placement through `UNNEST`**, done 2026-11-25 in fork commit b5122497e3. jena-array
+stopped placement at `(unnest …)`, so a FILTER on an `UNNEST`'s position waited for every later `UNNEST` in
+its group. A query on the demo store took 42 s that way; with placement it takes 0.07 s. The member
+variable stays out, because an empty slot leaves it unbound. Item 2 is still open: the endpoint's CSV
+results print `?` for a sequence. The `/sparql/` web page shows sequences since `tools/patch-yasgui.js`.
+
 **A facade on BeakGraph's side.** All sequence access goes through one class, `core/lib/SeqTerms`
 (`isSeq`, `elements`, `create`, `UNDEF`, `isUndef`). Upstream renames, or a later adoption in stock Jena,
 then touch one file. Storage work (step 3) can start before step 2 finishes, against a test-only `SeqTerms`
