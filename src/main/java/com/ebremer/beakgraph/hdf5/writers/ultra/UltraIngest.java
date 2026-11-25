@@ -216,6 +216,11 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
                 (System.nanoTime() - phase) / 1_000_000L,
                 entities.size(), predicates.size(), literals.size(), dataTypes.size());
 
+        // ---- -arrays-only (format v8): what only packed sequences use leaves the literals section ----
+        if (getArrays() != null && getArrays().only()) {
+            leaveOutPackedLeaves();
+        }
+
         // ---- statistics from the deduped sets ----
         logger.info("Computing statistics over {} unique literals (parallel)...", literals.size());
         phase = System.nanoTime();
@@ -423,6 +428,27 @@ final class UltraIngest extends PositionalDictionaryWriterBuilder {
             @Override public void tripleTerm(Node n) { registerTripleTermSet(n); }
             @Override public boolean nestedSequence(Node n) { return literals.add(n); }
         });
+    }
+
+    /**
+     * {@code -arrays-only}: the sequential builder's leave-out ({@link #splitPacked}) over this ingest's
+     * sets, before the statistics count them, so the literals section and its datatypes match method 0's.
+     */
+    private void leaveOutPackedLeaves() {
+        Set<Node> kept = splitPacked(uniqueObjects, quads);
+        if (kept == null) {
+            return;
+        }
+        int before = literals.size();
+        literals.retainAll(kept);
+        dataTypes.clear();
+        for (Node n : literals) {
+            if (n.isLiteral()) {
+                dataTypes.add(n.getLiteralDatatypeURI());
+            }
+        }
+        logger.info("-arrays-only: {} sequences stored only as arrays; {} of the literals section's {} terms left out",
+                getPackedOnly().size(), before - literals.size(), before);
     }
 
     /**

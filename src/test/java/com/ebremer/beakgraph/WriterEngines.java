@@ -43,7 +43,9 @@ public final class WriterEngines {
      * {@code -Dbeakgraph.test.arrays=minRows,minLeaves}: every engine builds
      * with {@code -arrays} at those settings, so the suites that build through
      * here (the rdf-array contrib suite, the W3C suites) also run their queries
-     * over packed sequences (RDFARRY.md §3.6). Unset: no {@code -arrays}.
+     * over packed sequences (RDFARRY.md §3.6). A third value {@code only}
+     * ({@code 1,2,only}) builds with {@code -arrays-only} instead (format v8,
+     * step 9), where the engine writes it. Unset: no {@code -arrays}.
      */
     public static final String ARRAYS_PROPERTY = "beakgraph.test.arrays";
 
@@ -53,8 +55,9 @@ public final class WriterEngines {
             return null;
         }
         String[] parts = v.split(",");
+        boolean only = parts.length > 2 && parts[2].trim().equals("only");
         return new com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options(Integer.parseInt(parts[0].trim()),
-                Integer.parseInt(parts[1].trim()), false);
+                Integer.parseInt(parts[1].trim()), false).withOnly(only);
     }
 
     /**

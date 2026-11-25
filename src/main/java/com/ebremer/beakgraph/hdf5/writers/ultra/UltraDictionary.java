@@ -111,6 +111,7 @@ final class UltraDictionary {
                 .setDataTypes(ingest.getDataTypes())
                 .setStats(ingest.getStats())
                 .section(DictionarySection.LITERALS)
+                .setPackedOnly(ingest.getPackedOnly())
                 // Component ids resolve against the SORTED ARRAYS, not the rank
                 // maps: this task is submitted before those maps are built and
                 // would race them. Binary search over the same arrays yields
@@ -284,13 +285,15 @@ final class UltraDictionary {
      * {@code -arrays} (format v7): classifies the top-level sequences, as the
      * other in-memory writers do, over the sorted literals section. After
      * {@link #awaitStorage()} and before the ingest's node sets are released:
-     * {@code topLevel} is the set of objects.
+     * {@code topLevel} is the set of objects. With {@code -arrays-only} the
+     * ingest's packed and sharing sets mark the rows left without elements.
      */
-    void classifyArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options, java.util.Set<Node> topLevel)
+    void classifyArrays(com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options options, UltraIngest ingest)
             throws IOException {
         awaitStorage();
         this.arraysOptions = options;
-        this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(options, literalsdict, maxEntityId, topLevel);
+        this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(options, literalsdict, maxEntityId,
+                ingest.getUniqueObjects(), ingest.getPackedOnly(), ingest.getSharingPacked());
     }
 
     /** {@code -seqindex}: the literals section writes the element index after its sequences, as method 0's does. */

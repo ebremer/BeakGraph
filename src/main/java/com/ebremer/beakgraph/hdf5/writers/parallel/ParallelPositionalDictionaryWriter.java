@@ -81,7 +81,8 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
                 .setNodes(builder.getLiterals())
                 .setDataTypes(builder.getDataTypes())
                 .setStats(stats)
-                .section(DictionarySection.LITERALS);
+                .section(DictionarySection.LITERALS)
+                .setPackedOnly(builder.getPackedOnly());
 
         if (stats.numTripleTerms > 0 || stats.numSequences > 0) {
             // Triple-term component ids and sequence element ids resolve
@@ -111,10 +112,13 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
 
         // Cache this for fast offset math in locateObject
         this.maxEntityId = entitiesdict.getNumberOfNodes();
-        // -arrays (format v7): the same classification as method 0 over the same sorted section.
+        // -arrays (format v7): the same classification as method 0 over the same sorted section, and with
+        // -arrays-only (v8) the same rows left without elements (the shared parse decided which).
         this.arraysOptions = builder.getArrays();
         this.sequenceArrays = com.ebremer.beakgraph.hdf5.writers.SequenceArrays.of(arraysOptions, literalsdict,
-                maxEntityId, builder.getUniqueObjects());
+                maxEntityId, builder.getUniqueObjects(), builder.getPackedOnly(), builder.getSharingPacked());
+        this.formatVersion = builder.getPackedOnly().isEmpty()
+                ? com.ebremer.beakgraph.Params.FORMAT_VERSION : com.ebremer.beakgraph.Params.ARRAYS_ONLY_FORMAT_VERSION;
         // -seqindex: the element index after the sequences, as method 0 writes it.
         com.ebremer.beakgraph.hdf5.writers.SequenceIndex.enable(builder.getSequenceIndex(), literalsdict);
 
@@ -231,6 +235,12 @@ public class ParallelPositionalDictionaryWriter implements AutoCloseable {
 
     private final com.ebremer.beakgraph.hdf5.writers.SequenceArrays sequenceArrays;
     private final com.ebremer.beakgraph.hdf5.writers.SequenceArrays.Options arraysOptions;
+    private final int formatVersion;
+
+    /** The format version to stamp: 8 when {@code -arrays-only} stores some sequence only as an array, else 7. */
+    public int formatVersion() {
+        return formatVersion;
+    }
 
     /** Writes {@code /.BG/arrays} under {@code group} when {@code -arrays} packed any sequence. */
     public void addArrays(WritableGroup group) {

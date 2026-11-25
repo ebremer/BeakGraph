@@ -61,7 +61,6 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
             AtomicPublish.build(dest, tmp -> {
                 ParallelPositionalDictionaryWriterBuilder db = new ParallelPositionalDictionaryWriterBuilder();
                 db.setVoidMode(builder.getVoidMode());
-                com.ebremer.beakgraph.hdf5.writers.SequenceArrays.refuseOnly(builder.getArrays(), "-method 2");
                 db.setArrays(builder.getArrays());
                 db.setSequenceIndex(builder.getSequenceIndex());
                 db.setVoidDatasetIri(builder.getVoidDatasetIri());
@@ -97,7 +96,7 @@ public class ParallelHDF5Writer implements BeakGraphWriter {
                     try (WritableStore hdfFile = WritableStore.create(tmp, container)) {
                         final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                         hdt.putAttribute(Params.NUM_QUADS, w.getNumberOfQuads());
-                        hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
+                        hdt.putAttribute(Params.FORMAT_VERSION_ATTR, w.formatVersion());
                         w.add(hdt);
                         gspo.add(hdt);
                         gpos.add(hdt);

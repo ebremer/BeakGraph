@@ -224,13 +224,36 @@ class ArraysOnlyTest {
         }
     }
 
+    /** Methods 2 and 3 leave out what method 0 leaves out: the same bytes, the element index too, in both containers. */
     @Test
-    void theOtherEnginesRefuseItForNow() throws Exception {
+    void theInMemoryEnginesWriteTheSameV8Store() throws Exception {
+        Path src = dir.resolve("same.ttl");
+        Files.writeString(src, DATA);
+        for (boolean seqindex : new boolean[] {false, true}) {
+            for (String ext : new String[] {".h5", ".zarr.zip"}) {
+                File reference = dir.resolve("same-method0-" + seqindex + ext).toFile();
+                HDF5Writer.Builder().setSource(src.toFile()).setDestination(reference).setArrays(ONLY)
+                        .setSequenceIndex(seqindex).build().write();
+                for (String engine : List.of("method2", "method3")) {
+                    File out = dir.resolve("same-" + engine + "-" + seqindex + ext).toFile();
+                    engineWith(engine, src.toFile(), out, seqindex).write();
+                    String what = engine + ext + (seqindex ? " -seqindex" : "");
+                    assertArrayEquals(Files.readAllBytes(reference.toPath()), Files.readAllBytes(out.toPath()), what);
+                }
+                try (BeakGraph g = BG.getBeakGraph(reference)) {
+                    assertEquals(Params.ARRAYS_ONLY_FORMAT_VERSION, ((HDF5Reader) g.getReader()).getFormatVersion());
+                }
+            }
+        }
+    }
+
+    @Test
+    void theDiskEnginesRefuseItForNow() throws Exception {
         Path src = dir.resolve("refuse.ttl");
         Files.writeString(src, DATA);
-        for (WriterEngines.Engine e : WriterEngines.all().filter(e -> !e.name().startsWith("method0")).toList()) {
+        for (WriterEngines.Engine e : WriterEngines.all().filter(e -> e.diskBased()).toList()) {
             File out = dir.resolve("refuse-" + e.name() + ".h5").toFile();
-            Exception ex = assertThrows(Exception.class, () -> engineWith(e.name(), src.toFile(), out).write(), e.name());
+            Exception ex = assertThrows(Exception.class, () -> engineWith(e.name(), src.toFile(), out, false).write(), e.name());
             boolean named = false;
             for (Throwable c = ex; c != null; c = c.getCause()) {
                 named |= String.valueOf(c.getMessage()).contains("-arrays-only");
@@ -240,13 +263,13 @@ class ArraysOnlyTest {
         }
     }
 
-    private static com.ebremer.beakgraph.core.BeakGraphWriter engineWith(String name, File src, File dest) {
+    private static com.ebremer.beakgraph.core.BeakGraphWriter engineWith(String name, File src, File dest, boolean seqindex) {
         return switch (name.substring(0, 7)) {
-            case "method1" -> { var b = com.ebremer.beakgraph.huge.HugeHDF5Writer.Builder().setDestination(dest).setArrays(ONLY); b.setSource(src); yield b.build(); }
-            case "method2" -> { var b = com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY); b.setSource(src); yield b.build(); }
-            case "method3" -> { var b = com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY); b.setSource(src); yield b.build(); }
-            case "method4" -> { var b = com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY); b.setSource(src); yield b.build(); }
-            case "method5" -> { var b = com.ebremer.beakgraph.hdf5.writers.plaid.PlaidHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY); b.setSource(src); yield b.build(); }
+            case "method1" -> { var b = com.ebremer.beakgraph.huge.HugeHDF5Writer.Builder().setDestination(dest).setArrays(ONLY).setSequenceIndex(seqindex); b.setSource(src); yield b.build(); }
+            case "method2" -> { var b = com.ebremer.beakgraph.hdf5.writers.parallel.ParallelHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY).setSequenceIndex(seqindex); b.setSource(src); yield b.build(); }
+            case "method3" -> { var b = com.ebremer.beakgraph.hdf5.writers.ultra.UltraHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY).setSequenceIndex(seqindex); b.setSource(src); yield b.build(); }
+            case "method4" -> { var b = com.ebremer.beakgraph.hdf5.writers.hugeUltra.HugeUltraHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY).setSequenceIndex(seqindex); b.setSource(src); yield b.build(); }
+            case "method5" -> { var b = com.ebremer.beakgraph.hdf5.writers.plaid.PlaidHDF5Writer.Builder().setDestination(dest).setCores(2).setArrays(ONLY).setSequenceIndex(seqindex); b.setSource(src); yield b.build(); }
             default -> throw new IllegalArgumentException(name);
         };
     }

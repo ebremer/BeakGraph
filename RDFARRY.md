@@ -1472,6 +1472,23 @@ v8 shows what it costs the reader, which steps 7 and 8 built on element ids:
       string heap, outside the dataset sizes. That is step 6's cost, and step 10's categorical string
       columns are what would shrink it.
 
+**Part 3 (2026-11-25): done.** `-arrays-only` on methods 2 and 3, which write method 0's bytes.
+
+- **One leave-out.** `PositionalDictionaryWriterBuilder.splitPacked` works out, from the objects and the
+  quads, which top-level sequences are stored only as arrays, which literals-section terms something else
+  still needs, and which packed sequences share a kept term. Method 0's parse and method 2, which shares it,
+  call it at the end of the parse. Method 3's parallel ingest calls it after its dedup pass and before its
+  statistics, so its counts and datatypes are those of what is kept, as method 0's are.
+- **One classification.** `SequenceArrays.of(…, packedOnly, sharing)` classifies, checks that every packed
+  sequence is a row of a tensor or ragged class, and marks `shared`. Methods 0, 2 and 3 call it. Each passes
+  the packed set to its literals section, and each stamps 8 only when something packed.
+- **Tests.**
+  - `ArraysOnlyTest`: methods 2 and 3 write method 0's bytes for the v8 fixture, with and without
+    `-seqindex`, in HDF5 and Zarr. Methods 1, 4 and 5 still refuse `-arrays-only`.
+  - `-Dbeakgraph.test.arrays=1,1,only` builds the test engines with `-arrays-only`. The rdf-array contrib
+    suite and the fork's three engine tests pass over v8 stores built by methods 0, 2 and 3, with
+    `-seqindex` read on every scan. CI runs them on method 3.
+
 ### Step 10: later and optional
 
 Each of these waits on the spec or on a need:

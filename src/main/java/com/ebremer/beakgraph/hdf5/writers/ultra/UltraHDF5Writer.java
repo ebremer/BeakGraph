@@ -82,6 +82,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 ingest.setVoidDatasetIri(builder.getVoidDatasetIri());
                 ingest.setDestination(builder.getDestination());
                 ingest.setFeatures(builder.getFeatures());
+                ingest.setArrays(builder.getArrays());   // -arrays-only leaves packed leaves out at ingest
                 ingest.setName(Params.DICTIONARY);
                 ingest.ingest(pool);
 
@@ -92,8 +93,7 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 logger.info("Stage 3/4: GSPO/GPOS indexes (packed keys, sort, dedup, parallel emission)");
                 UltraBGIndex[] indexes = UltraBGIndex.buildBoth(dict, ingest, pool);
                 dict.awaitStorage();
-                com.ebremer.beakgraph.hdf5.writers.SequenceArrays.refuseOnly(builder.getArrays(), "-method 3");
-                dict.classifyArrays(builder.getArrays(), ingest.getUniqueObjects());
+                dict.classifyArrays(builder.getArrays(), ingest);
                 dict.enableSequenceIndex(builder.getSequenceIndex());
                 // The rank maps and the ingest's node sets served the packing pass
                 // and the column fills, which awaitStorage() has just joined; drop
@@ -107,7 +107,9 @@ public class UltraHDF5Writer implements BeakGraphWriter {
                 try (WritableStore hdfFile = WritableStore.create(tmp, container)) {
                     final WritableGroup hdt = hdfFile.putGroup(builder.getName());
                     hdt.putAttribute(Params.NUM_QUADS, ingest.getNumberOfQuads());
-                    hdt.putAttribute(Params.FORMAT_VERSION_ATTR, Params.FORMAT_VERSION);
+                    // 8 when -arrays-only stores some sequence only as an array, else 7.
+                    hdt.putAttribute(Params.FORMAT_VERSION_ATTR, ingest.getPackedOnly().isEmpty()
+                            ? Params.FORMAT_VERSION : Params.ARRAYS_ONLY_FORMAT_VERSION);
                     dict.add(hdt);
                     indexes[0].add(hdt);
                     indexes[1].add(hdt);

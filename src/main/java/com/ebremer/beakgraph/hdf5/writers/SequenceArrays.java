@@ -124,8 +124,8 @@ public final class SequenceArrays {
      */
     public static void refuseOnly(Options options, String engine) {
         if (options != null && options.only()) {
-            throw new IllegalArgumentException("-arrays-only (format v8) is written by -method 0 only for now, not by "
-                    + engine + " (RDFARRY.md step 9)");
+            throw new IllegalArgumentException("-arrays-only (format v8) is written by the in-memory engines"
+                    + " (-method 0, 2, 3) only for now, not by " + engine + " (RDFARRY.md step 9)");
         }
     }
 
@@ -680,6 +680,23 @@ public final class SequenceArrays {
             sb.append(d);
         }
         return sb.toString();
+    }
+
+    /**
+     * {@link #of}, then for {@code -arrays-only} (format v8) the checks and marks the in-memory engines
+     * (methods 0, 2) share: every sequence in {@code packedOnly} must be a row of a tensor or ragged class,
+     * and a class is {@code shared} when one of its rows is in {@code sharing}.
+     */
+    public static SequenceArrays of(Options options, com.ebremer.beakgraph.core.DictionaryWriter literals,
+                                    long maxEntityId, java.util.Set<Node> topLevel,
+                                    java.util.Set<Node> packedOnly, java.util.Set<Node> sharing) {
+        SequenceArrays arrays = of(options, literals, maxEntityId, topLevel);
+        requireHolds(arrays, literals, packedOnly);
+        if (!packedOnly.isEmpty()) {
+            List<Node> section = ((MultiTypeDictionaryWriter) literals).getNodes();
+            arrays.markShared(id -> sharing.contains(section.get((int) (id - maxEntityId - 1))));
+        }
+        return arrays;
     }
 
     /** Whether any sequence packed: without one, a store has no {@code /.BG/arrays} and no {@code sequenceArrays}. */

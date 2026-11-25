@@ -733,18 +733,9 @@ public class PositionalDictionaryWriterBuilder {
      * out sizes nothing. Entities are untouched, since only literals and slots pack.
      */
     private void leaveOutPackedLeaves() {
-        Set<Node> packed = new HashSet<>();
-        for (Node o : uniqueObjects) {
-            if (o.isNodeSeq() && SequenceArrays.packsAsNumbers(o, arrays.minLeaves())) {
-                packed.add(o);
-            }
-        }
-        if (packed.isEmpty()) {
+        Set<Node> kept = splitPacked(uniqueObjects, quads);
+        if (kept == null) {
             return;
-        }
-        Set<Node> kept = new HashSet<>();
-        for (Quad q : quads) {
-            keep(q.getObject(), packed, kept);
         }
         int before = literals.size();
         literals.retainAll(kept);
@@ -760,16 +751,40 @@ public class PositionalDictionaryWriterBuilder {
                 stats.numSequences++;
             }
         }
-        this.packedOnly = Collections.unmodifiableSet(packed);
+        logger.info("-arrays-only: {} sequences stored only as arrays; {} of the literals section's {} terms left out",
+                packedOnly.size(), before - literals.size(), before);
+    }
+
+    /**
+     * {@code -arrays-only}: works out, from the objects and the quads, which top-level sequences are stored
+     * only as arrays and which literals-section terms something else still needs; records the first (and
+     * those of them {@linkplain #getSharingPacked sharing} a kept term) for the getters. Returns the terms
+     * to keep, or null when no sequence packs. Every in-memory ingest (methods 0, 2, 3) leaves out what this
+     * says, so their sections are the same.
+     */
+    protected final Set<Node> splitPacked(Iterable<Node> objects, Quad[] allQuads) {
+        Set<Node> packed = new HashSet<>();
+        for (Node o : objects) {
+            if (o.isNodeSeq() && SequenceArrays.packsAsNumbers(o, arrays.minLeaves())) {
+                packed.add(o);
+            }
+        }
+        if (packed.isEmpty()) {
+            return null;
+        }
+        Set<Node> kept = new HashSet<>();
+        for (Quad q : allQuads) {
+            keep(q.getObject(), packed, kept);
+        }
         Set<Node> sharing = new HashSet<>();
         for (Node seq : packed) {
             if (holdsKept(seq, kept)) {
                 sharing.add(seq);
             }
         }
+        this.packedOnly = Collections.unmodifiableSet(packed);
         this.sharingPacked = Collections.unmodifiableSet(sharing);
-        logger.info("-arrays-only: {} sequences stored only as arrays; {} of the literals section's {} terms left out",
-                packed.size(), before - literals.size(), before);
+        return kept;
     }
 
     /** Whether a leaf or inner sequence of {@code seq}, at any depth, is in {@code kept}. */

@@ -87,13 +87,8 @@ public class PositionalDictionaryWriter implements AutoCloseable {
 
         // 3b. -arrays: classify the top-level sequences (RDFARRY.md §3.5).
         this.arraysOptions = builder.getArrays();
-        this.sequenceArrays = SequenceArrays.of(arraysOptions, literalsdict, maxEntityId, builder.getUniqueObjects());
-        SequenceArrays.requireHolds(sequenceArrays, literalsdict, builder.getPackedOnly());
-        if (!builder.getPackedOnly().isEmpty()) {
-            java.util.List<Node> section = ((MultiTypeDictionaryWriter) literalsdict).getNodes();
-            Set<Node> sharing = builder.getSharingPacked();
-            sequenceArrays.markShared(id -> sharing.contains(section.get((int) (id - maxEntityId - 1))));
-        }
+        this.sequenceArrays = SequenceArrays.of(arraysOptions, literalsdict, maxEntityId, builder.getUniqueObjects(),
+                builder.getPackedOnly(), builder.getSharingPacked());
         this.formatVersion = builder.getPackedOnly().isEmpty() ? Params.FORMAT_VERSION : Params.ARRAYS_ONLY_FORMAT_VERSION;
         // 3c. -seqindex: the element index after the sequences (RDFARRY.md step 8).
         SequenceIndex.enable(builder.getSequenceIndex(), literalsdict);
