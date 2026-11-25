@@ -1559,6 +1559,26 @@ writes it, and the six write the same bytes.
   
   `ArraysOnlyTest.theReorderPutsARareHeldValueFirst`: of 2,000 teams, one embedding holding 42.25 is
   planned before a league check that keeps half of them. Without the figure it came after.
+- **Faster v8 builds, methods 0 and 2.** Two costs were left (the stages' log times, full precision):
+  - *Registering every leaf to drop it* (about 2 s). The ingest now applies part 4's rule as the quads
+    come (`registerObjectSequence`): a quad's object that packs is a row with its inside closed, and any
+    other sequence is walked once, every sequence met inside it too. So the literals section is what is
+    kept, counted once, and only the packed, held-back and sharing sets are left to find after the parse.
+    The second walk over the quads, the `retainAll` and the recount are gone (method 3 keeps them, after
+    its parallel dedup; the bytes are the same).
+  - *Locating a sequence by binary search* (about 2 s, in the id columns and the quads' ids). The search
+    compares sequences element by element in NodeComparator's order, numbers by value, about 0.5 ms an
+    embedding. The literals section now keeps its sequences' positions in a hash map, as distinct terms
+    compare equal only when they are equal.
+
+  | Build, 2,000 embeddings | before | after | parse alone |
+  |---|---|---|---|
+  | 5 decimals, `-arrays-only` | 3.3 s | 1.4 s | 0.4 s |
+  | full precision, `-arrays-only` | 5.7 s | 2.8 s | 1.1 s |
+
+  The v8 builds are now 6-9× faster than the `-arrays` ones (12.9 s, 17.9 s). Those spend 13 s encoding the
+  sequences' 1.5 million elements, each located by the same kind of binary search over the 1.5 million
+  terms of the section: a v7 cost, left for the performance list.
 
 ### Step 10: later and optional
 

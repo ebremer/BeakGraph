@@ -108,6 +108,7 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
             logger.info("Sorted dictionary '{}' in {} s", name, (System.nanoTime() - sortStart) / 1_000_000_000L);
         }
         requireStrictlyAscending(sorted, name);
+        this.sequencePositions = sequencePositions(sorted);
 
         // --- STEP 2: Initialize Buffers ---
         // BitPackedUnSignedLongBuffer constructors do not throw; assign finals directly.
@@ -352,8 +353,35 @@ public class MultiTypeDictionaryWriter implements DictionaryWriter, Dictionary, 
 
     @Override
     public long locate(Node element) {
+        if (element.isNodeSeq() && sequencePositions != null) {
+            Integer pos = sequencePositions.get(element);
+            return (pos == null) ? -1 : pos + 1;
+        }
         int pos = NodeSearch.findPosition(sorted, element);
         return (pos < 0) ? -1 : pos + 1; // 1-based IDs
+    }
+
+    /**
+     * The sequence suffix's positions by term, or null without sequences. A binary search compares
+     * sequences element by element in NodeComparator's order, numbers by value, so locating an embedding
+     * cost about 0.5 ms; a hash lookup compares terms, and the section's terms are distinct, so it finds
+     * the same row.
+     */
+    private final java.util.HashMap<Node, Integer> sequencePositions;
+
+    private static java.util.HashMap<Node, Integer> sequencePositions(List<Node> sorted) {
+        int first = sorted.size();
+        while (first > 0 && sorted.get(first - 1).isNodeSeq()) {
+            first--;   // sequences rank last (SPECIFICATIONS.md 6.1)
+        }
+        if (first == sorted.size()) {
+            return null;
+        }
+        java.util.HashMap<Node, Integer> positions = java.util.HashMap.newHashMap(sorted.size() - first);
+        for (int i = first; i < sorted.size(); i++) {
+            positions.put(sorted.get(i), i);
+        }
+        return positions;
     }
 
     @Override

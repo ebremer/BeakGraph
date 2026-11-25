@@ -78,7 +78,7 @@ brought and what a reader must rebuild.
     one with nothing to pack stays v7, byte for byte. A numeric sequence that a sequence stored with its
     elements also holds keeps its elements, and no class takes it.
   - **Measured.** On 2,000 embeddings of 768 doubles, synthetic: 12.4 MB where `-arrays` wrote 20.9-34.5 MB,
-    and built 3-4× faster.
+    and built 6-9× faster (1.4 s and 2.8 s, against a 0.4-1.1 s parse).
   - **Reading.** Packed rows are read from their arrays, and sequences are found by term.
   - **Queries.** Sequence patterns over a v8 store are matched on BeakGraph's own engine, by term for
     the packed sequences.

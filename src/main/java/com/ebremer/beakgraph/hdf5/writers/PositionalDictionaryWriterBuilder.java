@@ -480,7 +480,7 @@ public class PositionalDictionaryWriterBuilder {
         Node o = quad.getObject();       
         uniqueGraphs.add(g);
         uniqueSubjects.add(s);
-        uniqueObjects.add(o);
+        boolean newObject = uniqueObjects.add(o);
         if (!entities.contains(g)) {
             if (g.isBlank()) {
                 stats.numBlankNodes++;
@@ -514,7 +514,11 @@ public class PositionalDictionaryWriterBuilder {
         } else if (o.isTripleTerm()) {
             registerTripleTerm(o);
         } else if (o.isNodeSeq()) {
-            registerSequence(o);
+            if (arrays != null && arrays.only()) {
+                registerObjectSequence(o, newObject);
+            } else {
+                registerSequence(o);
+            }
         } else {
             if (!entities.contains(o)) {
                 if (o.isBlank()) {
@@ -671,6 +675,52 @@ public class PositionalDictionaryWriterBuilder {
         literals.add(seq);
     }
     
+    /** {@code -arrays-only}: the quads' objects that pack as numbers, their insides not walked. */
+    private final Set<Node> packCandidates = new HashSet<>();
+    /** {@code -arrays-only}: the sequences whose elements were registered, each once. */
+    private final Set<Node> walkedSequences = new HashSet<>();
+    /** {@code -arrays-only}: the sequences met inside a walked one, which keep their elements. */
+    private final Set<Node> nestedSequences = new HashSet<>();
+
+    /**
+     * {@code -arrays-only}: registers a quad's object that is a sequence by the rule of {@link #splitPacked},
+     * applied as the quads come: one that packs as numbers is a row with its inside closed (its leaves are
+     * registered only if something else holds them); any other has its elements registered, at every depth,
+     * and a sequence met inside it is walked too, even one that packs as a quad's object elsewhere. So the
+     * literals section holds what is kept, counted once, and nothing is registered to be dropped.
+     */
+    private void registerObjectSequence(Node seq, boolean newObject) {
+        if (literals.add(seq)) {
+            stats.numSequences++;
+        }
+        if (!newObject) {
+            return;     // decided at its first occurrence as an object
+        }
+        if (SequenceArrays.packsAsNumbers(seq, arrays.minLeaves())) {
+            packCandidates.add(seq);
+            return;
+        }
+        registerElements(seq);
+    }
+
+    private void registerElements(Node seq) {
+        if (!walkedSequences.add(seq)) {
+            return;
+        }
+        SeqTerms.walk(seq, new SeqTerms.ElementVisitor() {
+            @Override public void literal(Node n) { registerLiteral(n); }
+            @Override public void entity(Node n) { registerEntity(n); }
+            @Override public void tripleTerm(Node n) { registerTripleTerm(n); }
+            @Override public boolean nestedSequence(Node n) {
+                if (literals.add(n)) {
+                    stats.numSequences++;
+                }
+                nestedSequences.add(n);
+                return walkedSequences.add(n);
+            }
+        });
+    }
+
     private boolean parsed = false;
 
     public PositionalDictionaryWriter build() throws IOException {
@@ -729,40 +779,37 @@ public class PositionalDictionaryWriterBuilder {
         this.quads = quadslist.toArray(Quad[]::new);
         quadslist.clear();
         if (arrays != null && arrays.only()) {
-            leaveOutPackedLeaves();
-            stats.numObjects = entities.size() + literals.size();
+            splitPackedAtIngest();
         }
         logger.info("Dictionary created. Total quads: {}", this.numQuads);
     }
 
     /**
-     * {@code -arrays-only} (format v8, RDFARRY.md step 9): the top-level sequences a tensor or ragged class
-     * takes keep their rows, but their leaves and inner sequences stay in the literals section only when a
-     * quad, a triple term or a sequence stored canonically uses them too. So the section is registered
-     * again from the quads with those sequences closed, and its counts and datatypes with it: what is left
-     * out sizes nothing. Entities are untouched, since only literals and slots pack.
+     * {@code -arrays-only}: what {@link #splitPacked} works out from the quads, from what the ingest kept
+     * as it went ({@link #registerObjectSequence}): the literals section is already what is kept, so only
+     * the packed, held-back and sharing sets are left to find.
      */
-    private void leaveOutPackedLeaves() {
-        Set<Node> kept = splitPacked(uniqueObjects, quads);
-        if (kept == null) {
-            return;
-        }
-        int before = literals.size();
-        literals.retainAll(kept);
-        dataTypes.clear();
-        stats.resetLiterals();
-        for (Node n : literals) {
-            if (n.isLiteral()) {
-                dataTypes.add(n.getLiteralDatatypeURI());
-                countLiteralStats(n, stats);
-            } else if (n.isTripleTerm()) {
-                stats.numTripleTerms++;
-            } else if (n.isNodeSeq()) {
-                stats.numSequences++;
+    private void splitPackedAtIngest() {
+        Set<Node> packed = new HashSet<>(packCandidates);
+        packed.removeAll(nestedSequences);
+        if (!packed.isEmpty()) {
+            Set<Node> heldBack = new HashSet<>(packCandidates);
+            heldBack.retainAll(nestedSequences);
+            Set<Node> sharing = new HashSet<>();
+            for (Node seq : packed) {
+                if (holdsKept(seq, literals)) {
+                    sharing.add(seq);
+                }
             }
+            this.packedOnly = Collections.unmodifiableSet(packed);
+            this.sharingPacked = Collections.unmodifiableSet(sharing);
+            this.heldBack = Collections.unmodifiableSet(heldBack);
+            logger.info("-arrays-only: {} sequences stored only as arrays, {} keep their elements as a sequence"
+                    + " stored with its elements holds them", packed.size(), heldBack.size());
         }
-        logger.info("-arrays-only: {} sequences stored only as arrays; {} of the literals section's {} terms left out",
-                packedOnly.size(), before - literals.size(), before);
+        packCandidates.clear();
+        walkedSequences.clear();
+        nestedSequences.clear();
     }
 
     /**
