@@ -40,7 +40,8 @@ brought and what a reader must rebuild.
     `( … )`) goes whole to jena-array's solver over the store, in written order, its filters after
     it; no reordering and no filter placement inside, since a variable at an empty slot stays
     unbound. A concrete sequence stays on the id path. The `GRAPH ?g` walk and the group-on-ids
-    route leave such patterns to Jena.
+    route leave such patterns to Jena. Step 7 (below) replaced this route; it remains behind
+    `-Dbeakgraph.sequences.delegate=true`.
   - **A stored sequence keeps the elements it has read.** Jena's JVM-wide NodeValue cache kept lazy
     sequences past their store's closing, and a later, equal sequence compared against one read a
     closed store ("Already closed"). A cache hashes a key first, which now reads and keeps every
@@ -52,6 +53,23 @@ brought and what a reader must rebuild.
     and runs over HDF5 and Zarr stores: 340 of 349 pass, 9 aborted with the reason (update tests;
     Jena's CSV writer). The fork's `TestUndefSlots`, `TestSequenceQueries` and
     `TestArraySyntaxExamples` run over stores too: 94 pass, 3 disabled with the reason.
+* **Sequence patterns matched on ids** (RDFARRY.md step 7, layer B of §3.7). A BGP holding a sequence
+  pattern no longer goes to jena-array's solver: the id-level engine matches it, reordered and joined
+  like any other BGP, with the same answers.
+  - **Matching.** Constants are located once (one the store lacks: no rows, no scan). A constant prefix
+    is an id range. The length is checked before any element is read. Gaps give one row per
+    placement. A named gap binds its run by id when the store holds it, and as the term itself
+    otherwise.
+  - **Speed.** Measured on synthetic data in process: 1.1-2.6× on short tuples and 5× with a constant
+    prefix. On 768-element embeddings it is 12-124×, since jena-array's gaps are quadratic in the
+    length.
+  - **Union reads** of such a pattern remove duplicate triples before matching, so a gap's placements
+    and a slot that a bound variable passes still count once per triple.
+  - **Filters.** Over a store with slots, filters run after the whole BGP, since a later pattern may
+    bind a variable a slot left unbound.
+  - **The step-4 route.** `-Dbeakgraph.sequences.delegate=true` restores it, as the reference the
+    matcher is tested against. The contrib suite runs both routes, and `SequenceMatcherParityTest` holds
+    them alike on 73 more queries.
 * **`-arrays`: native typed arrays under `/.BG/arrays`** (RDFARRY.md step 6, SPECIFICATIONS.md §7.6c;
   every engine, the disk engines byte-identical to method 0). The numeric sequences - `xsd:double`, `float`, `integer` (canonical),
   `long`, `int` and `boolean` leaves, rectangular below the top - are written a second time as

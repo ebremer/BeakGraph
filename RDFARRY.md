@@ -10,7 +10,8 @@
 - Status: steps 1-5 done (2026-11-24): the v7 spec, the Jena port, v7 storage, correct SPARQL-array
   answers over it (milestone A), and every engine writing it. Step 6, the native arrays (milestone B),
   is done on every engine, packed reads included; only its opt-in Python smoke tests have yet to run
-  where h5py and zarr are installed. Step 7 is next
+  where h5py and zarr are installed. Step 7, matching sequence patterns on ids, is done too (2026-11-24),
+  with jena-array's solver kept as the reference route. Step 8 is next
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -1123,6 +1124,73 @@ Step 4's delegation stays, for whatever the matcher declines.
   rosters with slots, matrices, polygons as point rows, embeddings (N × 768 doubles). Measure **in process,
   on synthetic stores only, never real data through the endpoint**; judge remote reads by requests and
   bytes.
+
+**Status (2026-11-24): done.**
+
+- **`SequenceMatcher`.** A BGP holding a sequence pattern now runs on the id-level engine, reordered and
+  joined like any other. The matcher answers as jena-array's `SolverRX3` does:
+  - Constants match by term, so by id. They are located once, when the pattern compiles; a constant the
+    store does not hold gives no rows and no scan. The redline's `=` question is settled by jena-array's
+    choice, `sameTerm`, since that is the reference the parity tests hold the matcher to.
+  - The leading constants are a prefix, and the sequences holding it are an id range the scan is clamped
+    to. The length is checked from the starts before an element is read.
+  - Gaps backtrack, one row per placement. The last gap's run is forced, so one gap is linear.
+  - It sits beside `TripleTermMatcher` behind `ObjectPattern`, in the three iterators that scan objects
+    (`BGIteratorPOS`, `BGIteratorSO`, `BGIteratorSPO_All`). They queue a pattern's further matches of one
+    row.
+- **Values without ids.** A named gap whose run the store holds binds it by id. Any other run is bound
+  without widening `BindingNodeId`: the id is `DOES_NOT_EXIST`, so every probe for it answers nothing, as
+  it must, and the term rides in the layer's Jena parent binding. That is where `BindingBG` already reads
+  every term the store does not hold from.
+- **No substitution into sequence patterns.** Bound variables are checked by `putCompatible` after
+  matching. A slot passes a bound variable, including one bound to a term the store does not hold.
+- **Union reads** remove duplicate triples before matching, not rows after it. A dedup on the pattern's
+  variables merged a gap's placements, and two distinct triples that match alike when a bound variable
+  passes a slot.
+- **Filters.** Keyed on `numSlots`: over a store with slots, a BGP holding a sequence pattern runs its
+  filters after the whole BGP, and they stay its range hints. A variable a slot left unbound may be bound
+  by a later pattern. The order stays free, since a bound variable passes a slot, so the patterns join
+  alike in any order. A store without slots keeps the usual placement. No `SlotPolicy` class: the five open
+  decisions are jena-array's, and the parity tests would show a change there.
+- **Delegation stays** behind `-Dbeakgraph.sequences.delegate=true`, as the reference. `GraphVarBG` and
+  `GroupOnIds` still leave sequence patterns to Jena, which hands each graph's BGP back to the id-level
+  engine.
+- **Not done, measured instead.** `UNNEST`, `isSEQ` and `SEQLEN` on ids. Over the lazy rows, Jena's
+  `SEQLEN` and `isSEQ` of 2,000 embeddings take 2 ms. `UNNEST` of their 1.5 M elements takes 103 ms,
+  about what matching them on ids takes. There is nothing to gain.
+- **Tests.**
+  - `SequenceMatcherParityTest`: 73 queries, all but two with rows, answered alike both ways. They cover
+    gaps and their multiplicity, named gaps over stored and absent runs, slots under every kind of
+    element, joins through slots, filters, nested sequence and triple-term patterns, prefixes, `GRAPH ?g`,
+    `FROM` lists and the union graph with a triple in two graphs.
+  - The contrib suite runs each evaluation test on h5, on Zarr and on h5 delegated: 440 tests, 10 skipped
+    as before. Its id-native runs hand jena-array no BGP.
+  - CI also runs the ported engine tests delegated.
+  - Full suite: 3290 tests, 0 failures.
+- **Measured** (`SequenceMatchingBenchmarkTest`, opt-in with `-Dbeakgraph.bench=true`; 2026-11-24, in
+  process, synthetic). Times are the first run's medians of five; the speedup is the range over two runs.
+
+  | Query | Rows | On ids | jena-array | Speedup |
+  |---|---|---|---|---|
+  | points, `( ?x ?y )` | 50,000 | 40 ms | 56 ms | 1.4-1.6× |
+  | FHIR, one code, `( "8480-6" ?v ?u )` | 2,540 | 3.8 ms | 21 ms | 5.4-5.5× |
+  | FHIR, `( ?c ?v "mm[Hg]" )` | 50,000 | 29 ms | 33 ms | 1.2-1.8× |
+  | rosters, `( ... ?m ... )` | 200,000 | 75 ms | 108 ms | 1.4× |
+  | rosters, `( ... :player42 ... )` | 28 | 6.9 ms | 18 ms | 1.1-2.6× |
+  | matrices, `( ( ?a ?b ) ( ?c ?d ) )` | 20,000 | 11 ms | 22 ms | 1.5-2.0× |
+  | polygons, `( ( ?x ?y ) ... )` | 10,000 | 12 ms | 17 ms | 1.4-2.0× |
+  | embeddings, `( ?f ... )` | 2,000 | 1.1 ms | 27 ms | 12-26× |
+  | embeddings, `( ... ?l )` | 2,000 | 0.9 ms | 116 ms | 89-124× |
+  | embeddings, `( ... ?v ... )` | 1.5 M | 126 ms | 9.8 s | 78-98× |
+
+  - **Short tuples gain 1.1-2.6×.** jena-array reads them through lazy rows too.
+  - **Prefixes gain from the range.**
+  - **Long sequences gain most.** jena-array tries every run length for every gap, which is quadratic in
+    the length for `( ... ?v ... )`, and it materializes each candidate.
+  - **Store size.** The store (14.7 MB, 21 s to build) was not broken down into dictionary and elements,
+    so step 9's gate is still open.
+- **Left for step 8.** Containment with the sequence free, such as `UNNEST(?q AS ?m) ?u :roster ( ?m ... )`,
+  scans every roster for each row on either route. The element index is what answers it.
 
 ### Step 8: statistics and the element index (P3, M)
 
