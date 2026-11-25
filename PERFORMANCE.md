@@ -154,6 +154,14 @@ Builds are items 1 to 3 and 16 to 24; reads and queries are items 4 to 15.
     thread would do.
 24. **`-method 1` reads its dictionary through a stream that asks the file's length for every buffer**:
     its dictionaries' stage takes 1 to 6 s longer than before item 3 with the same processor samples.
+25. **The in-memory engines find a sequence's elements by binary search of the literals section**
+    (added 2026-11-25, on the `rdfarray` branch): 13 s of the 17 s a `-method 0` build of 2,000
+    embeddings of 768 doubles takes in v7 (`StoreCompositionBenchmarkTest`), each of 1.5 million leaves
+    searched among 1.5 million terms that the comparator orders by value. Item 16's cost, for elements.
+    The section's sequences are found by a hash map since RDFARRY.md step 9, part 5; a map of the leaves
+    would cost about 50 bytes a term, and a merge of the sorted elements with the section would not.
+    `-method 3` searches its sorted arrays (`rankOf`) the same way. v8 (`-arrays-only`) skips it for
+    packed sequences.
 
 Where to go next, as it looked when item 3 was done: 16 and then 2 for builds (16 is the largest figure
 here, and in the engine a build gets by default); 21 and then 22 for the disk engines (13 s of the 39 a

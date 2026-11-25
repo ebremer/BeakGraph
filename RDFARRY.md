@@ -12,7 +12,8 @@
   is done on every engine, packed reads included; only its opt-in Python smoke tests have yet to run
   where h5py and zarr are installed. Step 7, matching sequence patterns on ids, is done too (2026-11-24),
   with jena-array's solver kept as the reference route. Step 8, the element index (`-seqindex`) and the
-  reorder's costs for sequence patterns, is done (2026-11-25). Step 9's gate is measured and passes (2026-11-25)
+  reorder's costs for sequence patterns, is done (2026-11-25). Step 9, format v8 (`-arrays-only`: numeric
+  sequences stored only as arrays), is done on every engine (2026-11-25).
 
 rdf-array adds one kind of RDF term, the **sequence**. `( 1 2 3 )` is one term holding three terms in order,
 and `()` is the empty sequence. Sequences nest, and they stand where an object stands. rdf-undef adds the
@@ -1303,6 +1304,12 @@ Step 4's delegation stays, for whatever the matcher declines.
 
 ### Step 9: v8, packed numeric sequences stored only as arrays (P4, XL, gated)
 
+**Status (2026-11-25): done.** The gate passed. `-arrays-only` writes format v8 on all six engines, which
+write the same bytes, and a v8 store answers sequence patterns on BeakGraph's own engine, by term for the
+packed rows. Verify, export and the reorder cover it. On 2,000 embeddings of 768 doubles it is 12.4 MB
+against 20.9-34.5 MB with `-arrays`, and builds in 1.4-2.8 s against 12.9-17.9 s. Matching on its packed
+rows costs up to 4× matching on ids. The parts, below, say what each did and measured.
+
 **Why:** with millions of distinct doubles (embeddings, for example), the dictionary route stores each
 double as a literal row plus an element id, and sorts them all at build time. A native float64 array holds
 the value in 8 bytes.
@@ -1542,7 +1549,7 @@ writes it, and the six write the same bytes.
   The packed column (1.5 million parts, sorted and merged to find that none is shared) leaves the disk
   build of v8 1.7× faster than its `-arrays` build, and as fast as method 0's.
 
-**Part 5 (2026-11-25): in progress.** Verify, export, the reorder, and the costs.
+**Part 5 (2026-11-25): done.** Verify, export, the reorder, and the costs.
 
 - **Verify** reads every held row back from its arrays (part 1), and every engine's v8 stores pass
   `-verify -deep` (`ArraysOnlyTest`).
