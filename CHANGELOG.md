@@ -131,6 +131,9 @@ brought and what a reader must rebuild.
   reads as a table. Every packed date rebuilds its exact lexical form, or the sequence does not pack.
   BeakGraph reads the sequences of tensor and ragged classes from their arrays, about twice as fast as
   from their canonical elements, with the same terms; `-Dbeakgraph.arrays.read=false` turns that off.
+  Checked by opt-in Python smoke tests (`-Dbeakgraph.python=<python>`), which pass with numpy 2.5,
+  h5py 3.16, zarr 3.4, pandas 3.1 and xarray 2026.9: masked tensors in both containers, numpy `bool`,
+  a record class as a pandas table, `datetime64` from xarray, and the v8 stores' arrays.
 * **A relative IRI inside a triple term now stops an N-Triples export without `-base`**, as a
   top-level one does; it used to be written relative (`relativeReference` did not look inside).
 * **Triple-term pattern scans clamp to the band's end too**, not only its start, so they no longer

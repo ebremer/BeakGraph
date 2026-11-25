@@ -9,8 +9,8 @@
   (`TestUndefSlots`, `RDF-ARRAY-HANDOFF.md`)
 - Status: steps 1-5 done (2026-11-24): the v7 spec, the Jena port, v7 storage, correct SPARQL-array
   answers over it (milestone A), and every engine writing it. Step 6, the native arrays (milestone B),
-  is done on every engine, packed reads included; only its opt-in Python smoke tests have yet to run
-  where h5py and zarr are installed. Step 7, matching sequence patterns on ids, is done too (2026-11-24),
+  is done on every engine, packed reads included, and its opt-in Python smoke tests pass (2026-11-25):
+  h5py, zarr-python, pandas and xarray read the arrays, v8's too. Step 7, matching sequence patterns on ids, is done too (2026-11-24),
   with jena-array's solver kept as the reference route. Step 8, the element index (`-seqindex`) and the
   reorder's costs for sequence patterns, is done (2026-11-25). Step 9, format v8 (`-arrays-only`: numeric
   sequences stored only as arrays), is done on every engine (2026-11-25).
@@ -1031,7 +1031,7 @@ which is the rule triple terms set in v5.
 - the engines agree on `/.BG/arrays` (byte-identical for 0, 2 and 3 in one container);
 - `-arrays` off leaves stores byte-identical to step 5's.
 
-**Status (2026-11-24): done, but for the Python smoke tests, which have not run here.**
+**Status (2026-11-24): done. The Python smoke tests ran on 2026-11-25 and pass.**
 
 - **Done.**
   - The store abstraction, both containers (`TypedArray`; `WritableGroup.putTypedArray` and string
@@ -1102,10 +1102,18 @@ which is the rule triple terms set in v5.
       elements, a fresh reader per round): canonical 120-200 ms, packed 55-130 ms, about twice as fast,
       in both containers raw and compressed. The bound was 45 ms, making a Node from each value of a
       `double[]`.
-- **Left.** The Python smoke tests are written and opt-in (`SequenceArraysTest.pythonReadsTheArrays`,
-  `RecordClassesTest.pythonReadsTheRecords`), but this machine has no h5py, zarr, pandas or xarray, so
-  they have not run: whether h5py reads Falcon's `Datatype.bool()` as numpy `bool`, and xarray decodes
-  the `dt` columns, is still to be seen.
+- **The Python smoke tests (2026-11-25): pass.** They are opt-in (`-Dbeakgraph.python=<python>`, or a
+  `python` on the PATH with the packages): `SequenceArraysTest.pythonReadsTheArrays` and
+  `RecordClassesTest.pythonReadsTheRecords`. They ran in a virtual environment with numpy 2.5.5,
+  h5py 3.16.0, zarr 3.4.2, pandas 3.1.1 and xarray 2026.9.0:
+  - h5py and zarr-python read a tensor class and its slot mask as a numpy masked array, equal in both
+    containers (the Zarr store compressed: sharded, zstd);
+  - h5py reads Falcon's `Datatype.bool()` as numpy `bool`;
+  - pandas assembles the FHIR record class as a table, its rows' sequences from `seq` and `starts`;
+  - h5py reads a record class's strings, and its `int` column as `int32`;
+  - xarray opens a record class's group and decodes its `dt` column to `datetime64`;
+  - since step 9, the same tensor read from `-arrays-only` stores (format v8, where the arrays are the
+    only copy), in both containers, with `formatVersion` 8 and the class's `shared` attribute.
 
 ### Step 7: id-native matching (P3, L)
 

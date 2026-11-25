@@ -178,6 +178,9 @@ class SequenceArraysTest {
                 "no Python with numpy, h5py and zarr (set -Dbeakgraph.python)");
         File h5 = build("py.h5", new SequenceArrays.Options(3, 2, false));
         File zarr = build("py.zarr", new SequenceArrays.Options(3, 2, true));
+        // Format v8 (-arrays-only, RDFARRY.md step 9): the arrays are the packed sequences' only copy.
+        File h5v8 = build("py8.h5", new SequenceArrays.Options(3, 2, false).withOnly(true));
+        File zarrv8 = build("py8.zarr", new SequenceArrays.Options(3, 2, true).withOnly(true));
         Path script = dir.resolve("read.py");
         Files.writeString(script, """
             import sys, numpy as np, h5py, zarr
@@ -190,9 +193,19 @@ class SequenceArraysTest {
             g = zarr.open_group(sys.argv[2], mode="r")[".BG/arrays/i64_7"]
             z = np.ma.masked_array(g["values"][:], mask=g["mask"][:])
             assert (z == h).all() and (z.mask == h.mask).all()
+            with h5py.File(sys.argv[3]) as f:
+                assert int(f["/.BG"].attrs["formatVersion"]) == 8
+                c = f["/.BG/arrays/i64_7"]
+                v8 = np.ma.masked_array(c["values"][()], mask=c["mask"][()])
+                assert (v8 == h).all() and (v8.mask == h.mask).all()
+                assert int(c.attrs["shared"]) in (0, 1)
+            g = zarr.open_group(sys.argv[4], mode="r")[".BG/arrays/i64_7"]
+            z8 = np.ma.masked_array(g["values"][:], mask=g["mask"][:])
+            assert (z8 == h).all() and (z8.mask == h.mask).all()
             print("ok")
             """);
-        assertTrue(runs(python, script.toString(), h5.toString(), zarr.toString()), "the Python reads failed");
+        assertTrue(runs(python, script.toString(), h5.toString(), zarr.toString(), h5v8.toString(), zarrv8.toString()),
+                "the Python reads failed");
     }
 
     private static boolean runs(String... command) throws Exception {
